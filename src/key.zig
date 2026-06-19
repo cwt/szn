@@ -41,7 +41,7 @@ pub const MouseButton = enum(u8) {
 };
 
 pub const Key = union(enum) {
-    char: u21,
+    char: struct { code: u21, mod: Modifier = .{} },
     function: struct { key: Function, mod: Modifier = .{} },
     arrow: struct { key: Arrow, mod: Modifier = .{} },
     special: struct { key: Special, mod: Modifier = .{} },
@@ -72,11 +72,16 @@ pub fn parseCsi(seq: []const u8) ParseError!Key {
         break :blk std.fmt.parseInt(u8, param_str, 10) catch null;
     } else null;
 
-    const mod = if (mod_param) |mp| Modifier{
-        .shift = mp & 1 != 0,
-        .alt = mp & 2 != 0,
-        .ctrl = mp & 4 != 0,
-        .meta = mp & 8 != 0,
+    // Xterm uses 1-based modifiers (1=none, 2=shift, 3=alt, ...).
+    // Convert to 0-based bitmask: shift=1, alt=2, ctrl=4, meta=8.
+    const mod = if (mod_param) |mp| blk: {
+        const bits = if (final == 'u') mp else if (mp > 0) mp - 1 else mp;
+        break :blk Modifier{
+            .shift = bits & 1 != 0,
+            .alt = bits & 2 != 0,
+            .ctrl = bits & 4 != 0,
+            .meta = bits & 8 != 0,
+        };
     } else Modifier{};
 
     // CSI final byte determines the key
@@ -122,14 +127,24 @@ pub fn parseCsi(seq: []const u8) ParseError!Key {
             const parts = seq[0 .. u_pos];
             var it = std.mem.splitScalar(u8, parts, ';');
             const codepoint = std.fmt.parseInt(u32, it.first(), 10) catch return error.InvalidCsi;
-            _ = if (it.next()) |m| std.fmt.parseInt(u8, m, 10) catch 0 else 0;
 
-            return Key{
-                .char = @intCast(codepoint),
-            };
+            return Key{ .char = .{ .code = @intCast(codepoint), .mod = mod } };
         },
         else => return error.UnknownKey,
     }
+}
+
+/// Parse an SS3 sequence: ESC O <byte> — return the Key for the SS3 final byte.
+pub fn parseSs3(byte: u8) ParseError!Key {
+    return switch (byte) {
+        'P' => Key{ .function = .{ .key = .f1 } },
+        'Q' => Key{ .function = .{ .key = .f2 } },
+        'R' => Key{ .function = .{ .key = .f3 } },
+        'S' => Key{ .function = .{ .key = .f4 } },
+        'H' => Key{ .special = .{ .key = .home } },
+        'F' => Key{ .special = .{ .key = .end } },
+        else => error.UnknownKey,
+    };
 }
 
 /// Parse a raw sequence (which may or may not start with ESC) into a Key.
@@ -139,7 +154,7 @@ pub fn parse(seq: []const u8) ParseError!Key {
     // Single char (no escape)
     if (seq[0] != '\x1b') {
         if (seq.len == 1) {
-            return Key{ .char = seq[0] };
+            return Key{ .char = .{ .code = seq[0] } };
         }
         return error.InvalidCsi;
     }
@@ -168,7 +183,7 @@ pub fn parse(seq: []const u8) ParseError!Key {
 
     // ESC followed by a single char (Alt+char)
     if (seq.len == 2) {
-        return Key{ .char = seq[1] };
+        return Key{ .char = .{ .code = seq[1] } };
     }
 
     return error.UnknownKey;
@@ -178,18 +193,18 @@ pub fn parse(seq: []const u8) ParseError!Key {
 pub fn format(key: Key, buf: []u8) []const u8 {
     return switch (key) {
         .char => |c| blk: {
-            if (c == ' ') break :blk @as([]const u8, "Space");
-            if (c == 0x7f) break :blk @as([]const u8, "BSpace");
-            if (c < 0x20) {
+            if (c.code == ' ') break :blk @as([]const u8, "Space");
+            if (c.code == 0x7f) break :blk @as([]const u8, "BSpace");
+            if (c.code < 0x20) {
                 const names = [_][]const u8{
                     "NUL", "SOH", "STX", "ETX", "EOT", "ENQ", "ASC", "BEL",
                     "BS",  "HT",  "LF",  "VT",  "FF",  "CR",  "SO",  "SI",
                     "DLE", "DC1", "DC2", "DC3", "DC4", "NAK", "SYN", "ETB",
                     "CAN", "EM",  "SUB", "ESC", "FS",  "GS",  "RS",  "US",
                 };
-                if (c < names.len) break :blk names[c];
+                if (c.code < names.len) break :blk names[c.code];
             }
-            break :blk std.fmt.bufPrint(buf, "{u}", .{@as(u21, c)}) catch "[?]";
+            break :blk std.fmt.bufPrint(buf, "{u}", .{@as(u21, c.code)}) catch "[?]";
         },
         .function => |f| {
             const name = switch (f.key) {
@@ -262,12 +277,12 @@ fn prependModifiers(mod: Modifier, name: []const u8, buf: []u8) []const u8 {
 
 test "parse single char" {
     const key = try parse("a");
-    try testing.expectEqual(@as(u21, 'a'), key.char);
+    try testing.expectEqual(@as(u21, 'a'), key.char.code);
 }
 
-test "parse single char uppercase" {
+test "parse literal A" {
     const key = try parse("A");
-    try testing.expectEqual(@as(u21, 'A'), key.char);
+    try testing.expectEqual(@as(u21, 'A'), key.char.code);
 }
 
 test "parse arrow up" {
@@ -294,10 +309,11 @@ test "parse ctrl up" {
     const key = try parse("\x1b[1;5A");
     try testing.expectEqual(.up, key.arrow.key);
     try testing.expect(key.arrow.mod.ctrl);
+    try testing.expect(!key.arrow.mod.shift);
 }
 
 test "parse ctrl shift up" {
-    const key = try parse("\x1b[1;5A");
+    const key = try parse("\x1b[1;6A");
     try testing.expectEqual(.up, key.arrow.key);
     try testing.expect(key.arrow.mod.ctrl);
     try testing.expect(key.arrow.mod.shift);
@@ -356,23 +372,23 @@ test "parse ss3 function keys" {
 
 test "parse alt char" {
     const key = try parse("\x1ba");
-    try testing.expectEqual(@as(u21, 'a'), key.char);
+    try testing.expectEqual(@as(u21, 'a'), key.char.code);
 }
 
 test "parse kitty extended" {
     const key = try parse("\x1b[97;5u");
-    try testing.expectEqual(@as(u21, 'a'), key.char);
+    try testing.expectEqual(@as(u21, 'a'), key.char.code);
 }
 
 test "format single char" {
     var buf: [32]u8 = undefined;
-    const s = format(Key{ .char = 'x' }, &buf);
+    const s = format(Key{ .char = .{ .code = 'x' } }, &buf);
     try testing.expectEqualStrings("x", s);
 }
 
 test "format space" {
     var buf: [32]u8 = undefined;
-    const s = format(Key{ .char = ' ' }, &buf);
+    const s = format(Key{ .char = .{ .code = ' ' } }, &buf);
     try testing.expectEqualStrings("Space", s);
 }
 

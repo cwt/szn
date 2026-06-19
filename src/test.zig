@@ -11,4 +11,5 @@ comptime {
     _ = @import("options.zig");
     _ = @import("cfg.zig");
     _ = @import("tty/tty.zig");
+    _ = @import("tty/tty_key.zig");
 }

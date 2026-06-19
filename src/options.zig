@@ -175,7 +175,7 @@ pub const SESSION_OPTIONS = &[_]OptionDef{
     .{ .name = "status-interval", .type = .number, .default = OptionValue{ .number = 15 }, .min = 0, .max = 86400 },
     .{ .name = "history-limit", .type = .number, .default = OptionValue{ .number = 2000 }, .min = 0, .max = 1000000 },
     .{ .name = "mouse", .type = .flag, .default = OptionValue{ .flag = false } },
-    .{ .name = "prefix", .type = .key, .default = OptionValue{ .key = Key{ .char = 0x01 } } }, // C-b
+    .{ .name = "prefix", .type = .key, .default = OptionValue{ .key = Key{ .char = .{ .code = 0x01 } } } }, // C-b
     .{ .name = "prefix2", .type = .key, .default = OptionValue{ .key = .{ .special = .{ .key = .escape } } } },
     .{ .name = "escape-time", .type = .number, .default = OptionValue{ .number = 500 }, .min = 0, .max = 10000 },
     .{ .name = "base-index", .type = .number, .default = OptionValue{ .number = 0 }, .min = 0, .max = 9999 },
