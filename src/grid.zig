@@ -96,7 +96,10 @@ pub const Grid = struct {
         if (x >= self.width or y >= self.height) return;
         const line = &self.lines.items[y];
         if (x >= line.cells.items.len) {
-            line.cells.resize(self.allocator, @as(usize, x) + 1) catch return;
+            line.cells.resize(self.allocator, @as(usize, x) + 1) catch {
+                std.log.warn("grid.setCell: resize failed at ({d},{d})", .{ x, y });
+                return;
+            };
             // Fill new cells with empty
             for (line.cells.items[0..]) |*c| {
                 if (c.char == 0) c.* = Cell.empty();

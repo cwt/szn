@@ -140,7 +140,10 @@ pub const InputReader = struct {
 
     fn feedSs3(rd: *InputReader, byte: u8) ?Event {
         rd.state = .ground;
-        const k = key.parseSs3(byte) catch return null;
+        const k = key.parseSs3(byte) catch {
+            std.log.debug("input: unknown SS3 sequence ESC O {c}", .{byte});
+            return null;
+        };
         return Event{ .key = k };
     }
 
@@ -153,7 +156,10 @@ pub const InputReader = struct {
         rd.pos += 1;
         if (rd.pos < expected) return null;
         rd.state = .ground;
-        const codepoint = std.unicode.utf8Decode(rd.buf[0..expected]) catch return null;
+        const codepoint = std.unicode.utf8Decode(rd.buf[0..expected]) catch {
+            std.log.debug("input: invalid UTF-8 sequence", .{});
+            return null;
+        };
         return Event{ .key = .{ .char = .{ .code = codepoint } } };
     }
 
@@ -167,12 +173,18 @@ pub const InputReader = struct {
 
         if (final == '~') {
             const tilde_params = params;
-            const num = std.fmt.parseInt(u16, tilde_params, 10) catch return null;
+            const num = std.fmt.parseInt(u16, tilde_params, 10) catch {
+                std.log.debug("input: invalid tilde params '{s}'", .{tilde_params});
+                return null;
+            };
             if (num == 200) return Event{ .paste_start = {} };
             if (num == 201) return Event{ .paste_end = {} };
         }
 
-        const k = key.parseCsi(seq) catch return null;
+        const k = key.parseCsi(seq) catch {
+            std.log.debug("input: unknown CSI sequence ESC[{s}", .{seq});
+            return null;
+        };
         return Event{ .key = k };
     }
 };
@@ -180,11 +192,26 @@ pub const InputReader = struct {
 pub fn parseSgrMouse(params: []const u8, release: bool) ?Event {
     var it = std.mem.splitScalar(u8, params, ';');
     const btn_str = it.first();
-    const btn = std.fmt.parseInt(u32, btn_str, 10) catch return null;
-    const x_str = it.next() orelse return null;
-    const x = std.fmt.parseInt(u32, x_str, 10) catch return null;
-    const y_str = it.next() orelse return null;
-    const y = std.fmt.parseInt(u32, y_str, 10) catch return null;
+    const btn = std.fmt.parseInt(u32, btn_str, 10) catch {
+        std.log.debug("input: invalid SGR mouse button '{s}'", .{btn_str});
+        return null;
+    };
+    const x_str = it.next() orelse {
+        std.log.debug("input: SGR mouse missing X coordinate", .{});
+        return null;
+    };
+    const x = std.fmt.parseInt(u32, x_str, 10) catch {
+        std.log.debug("input: invalid SGR mouse X '{s}'", .{x_str});
+        return null;
+    };
+    const y_str = it.next() orelse {
+        std.log.debug("input: SGR mouse missing Y coordinate", .{});
+        return null;
+    };
+    const y = std.fmt.parseInt(u32, y_str, 10) catch {
+        std.log.debug("input: invalid SGR mouse Y '{s}'", .{y_str});
+        return null;
+    };
 
     const col: u32 = if (x > 0) x - 1 else 0;
     const row: u32 = if (y > 0) y - 1 else 0;

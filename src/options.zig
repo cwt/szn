@@ -162,7 +162,7 @@ fn cloneValue(allocator: std.mem.Allocator, value: OptionValue) !OptionValue {
 fn freeValue(allocator: std.mem.Allocator, value: OptionValue) void {
     switch (value) {
         .string => |s| allocator.free(s),
-        else => {},
+        .number, .colour, .key, .flag, .choice => {},
     }
 }
 

@@ -175,7 +175,7 @@ fn parseSet(allocator: std.mem.Allocator, args: []const u8, result: *ParseResult
     }
 
     // Parse option name
-    const space_pos = std.mem.indexOfScalar(u8, remaining, ' ') orelse return error.MissingValue;
+    const space_pos = std.mem.indexOfAny(u8, remaining, " \t") orelse return error.MissingValue;
     flags.option = try allocator.dupe(u8, remaining[0..space_pos]);
     const val_str = std.mem.trim(u8, remaining[space_pos + 1 ..], " \t");
 
@@ -247,7 +247,7 @@ fn parseSetEnv(allocator: std.mem.Allocator, args: []const u8, result: *ParseRes
         const val_str = remaining[eq_pos + 1 ..];
         const value = try allocator.dupe(u8, val_str);
         try result.directives.append(allocator, Directive{ .set_environment = SetEnv{ .flags = .{ .global = global }, .name = name, .value = value } });
-    } else if (std.mem.indexOfScalar(u8, remaining, ' ')) |sp_pos| {
+    } else if (std.mem.indexOfAny(u8, remaining, " \t")) |sp_pos| {
         const name = try allocator.dupe(u8, remaining[0..sp_pos]);
         const val_str = std.mem.trim(u8, remaining[sp_pos + 1 ..], " \t");
         const value = try allocator.dupe(u8, val_str);
@@ -298,6 +298,19 @@ test "parse set flag option" {
     try testing.expectEqualStrings("mouse", d.set.option);
     try testing.expect(d.set.value == .flag);
     try testing.expect(d.set.value.flag);
+}
+
+test "parse set with tab separator" {
+    var result = try parseConfig(testing.allocator, "set -g\thistory-limit\t5000");
+    defer result.deinit(testing.allocator);
+
+    try testing.expectEqual(@as(usize, 1), result.directives.items.len);
+    const d = result.directives.items[0];
+    try testing.expect(d == .set);
+    try testing.expect(d.set.flags.global);
+    try testing.expectEqualStrings("history-limit", d.set.option);
+    try testing.expect(d.set.value == .number);
+    try testing.expectEqual(@as(i64, 5000), d.set.value.number);
 }
 
 test "parse set string option" {
