@@ -8,4 +8,6 @@ comptime {
     _ = @import("window.zig");
     _ = @import("session.zig");
     _ = @import("layout.zig");
+    _ = @import("options.zig");
+    _ = @import("cfg.zig");
 }
