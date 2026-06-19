@@ -148,6 +148,76 @@ pub const Grid = struct {
         line.dirty = true;
     }
 
+    pub fn insertLine(self: *Grid, y: u32) !void {
+        if (y >= self.height) return;
+        var line = self.lines.pop().?;
+        line.cells.clearRetainingCapacity();
+        line.dirty = true;
+        try self.lines.insert(self.allocator, @as(usize, y), line);
+    }
+
+    pub fn deleteLine(self: *Grid, y: u32) !void {
+        if (y >= self.height) return;
+        var line = self.lines.orderedRemove(@as(usize, y));
+        line.cells.clearRetainingCapacity();
+        line.dirty = true;
+        try self.lines.append(self.allocator, line);
+    }
+
+    fn ensureFullWidth(self: *Grid, y: u32) bool {
+        const line = &self.lines.items[y];
+        if (line.cells.items.len >= self.width) return true;
+        line.cells.resize(self.allocator, self.width) catch return false;
+        for (line.cells.items) |*c| {
+            if (c.char == 0) c.* = Cell.empty();
+        }
+        return true;
+    }
+
+    pub fn insertChars(self: *Grid, x: u32, y: u32, n: u32) void {
+        if (y >= self.height) return;
+        const num = @min(n, self.width -| x);
+        if (num == 0) return;
+        if (!self.ensureFullWidth(y)) return;
+        const line = &self.lines.items[y];
+        var i = self.width - 1;
+        while (i >= x + num) : (i -= 1) {
+            line.cells.items[i] = line.cells.items[i - num];
+        }
+        const end = @min(x + num, self.width);
+        for (x..end) |col| {
+            line.cells.items[col] = Cell.empty();
+        }
+        line.dirty = true;
+    }
+
+    pub fn deleteChars(self: *Grid, x: u32, y: u32, n: u32) void {
+        if (y >= self.height) return;
+        const num = @min(n, self.width -| x);
+        if (num == 0) return;
+        if (!self.ensureFullWidth(y)) return;
+        const line = &self.lines.items[y];
+        var i = x;
+        while (i + num < self.width) : (i += 1) {
+            line.cells.items[i] = line.cells.items[i + num];
+        }
+        while (i < self.width) : (i += 1) {
+            line.cells.items[i] = Cell.empty();
+        }
+        line.dirty = true;
+    }
+
+    pub fn eraseChars(self: *Grid, x: u32, y: u32, n: u32) void {
+        if (y >= self.height) return;
+        if (!self.ensureFullWidth(y)) return;
+        const line = &self.lines.items[y];
+        const end = @min(x + n, self.width);
+        for (x..end) |col| {
+            line.cells.items[col] = Cell.empty();
+        }
+        line.dirty = true;
+    }
+
     pub fn clearArea(self: *Grid, sx: u32, sy: u32, ex: u32, ey: u32) void {
         var y = sy;
         while (y <= ey and y < self.height) : (y += 1) {

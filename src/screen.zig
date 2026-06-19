@@ -4,6 +4,8 @@ const colour = @import("colour.zig");
 const grid = @import("grid.zig");
 const Cell = grid.Cell;
 const Grid = grid.Grid;
+const GridLine = grid.GridLine;
+const Colour = colour.Colour;
 
 pub const Cursor = struct {
     x: u32 = 0,
@@ -40,8 +42,10 @@ pub const Screen = struct {
     grid: Grid,
     alt_grid: ?Grid = null,
     cursor: Cursor = .{},
+    saved_cursor: ?Cursor = null,
     mode: Mode = .{},
     scroll_region: ?[2]u32 = null,
+    cur_cell: Cell = Cell.empty(),
     dirty: bool = true,
 
     pub fn init(allocator: std.mem.Allocator, width: u32, height: u32) !Screen {
@@ -67,11 +71,39 @@ pub const Screen = struct {
         self.cursor.y = @min(self.cursor.y, height -| 1);
     }
 
+    fn scrollUpInRegion(self: *Screen) !void {
+        const top = if (self.scroll_region) |r| r[0] else 0;
+        const bottom = if (self.scroll_region) |r| r[1] else self.grid.height - 1;
+        if (self.cursor.y != bottom) return;
+        var y = top;
+        while (y < bottom) : (y += 1) {
+            const line = &self.grid.lines.items[y];
+            const next = &self.grid.lines.items[y + 1];
+            std.mem.swap(GridLine, line, next);
+        }
+        self.grid.clearLine(bottom);
+    }
+
+    fn scrollDownInRegion(self: *Screen) !void {
+        const top = if (self.scroll_region) |r| r[0] else 0;
+        const bottom = if (self.scroll_region) |r| r[1] else self.grid.height - 1;
+        if (self.cursor.y != top) return;
+        var y = bottom;
+        while (y > top) : (y -= 1) {
+            const line = &self.grid.lines.items[y];
+            const prev = &self.grid.lines.items[y - 1];
+            std.mem.swap(GridLine, line, prev);
+        }
+        self.grid.clearLine(top);
+    }
+
     pub fn writeChar(self: *Screen, char: u21) !void {
         if (char == '\n') {
             self.cursor.x = 0;
             if (self.cursor.y + 1 >= self.grid.height) {
                 try self.grid.scrollUp();
+            } else if (self.scroll_region != null and self.cursor.y == self.scroll_region.?[1]) {
+                try self.scrollUpInRegion();
             } else {
                 self.cursor.y += 1;
             }
@@ -92,6 +124,15 @@ pub const Screen = struct {
             self.dirty = true;
             return;
         }
+        if (char == 0x07) {
+            // BEL — ignored for now
+            return;
+        }
+        if (char == 0x08) {
+            // BS
+            if (self.cursor.x > 0) self.cursor.x -= 1;
+            return;
+        }
         if (char < 0x20 and char != '\x1b') return;
 
         if (self.mode.insert) {
@@ -102,7 +143,9 @@ pub const Screen = struct {
             }
         }
 
-        self.grid.setCell(self.cursor.x, self.cursor.y, Cell.withChar(char));
+        var cell = self.cur_cell;
+        cell.char = @intCast(char);
+        self.grid.setCell(self.cursor.x, self.cursor.y, cell);
         self.dirty = true;
 
         if (self.mode.line_wrap) {
@@ -126,9 +169,305 @@ pub const Screen = struct {
         }
     }
 
-    pub fn setCursor(self: *Screen, x: u32, y: u32) void {
+    pub fn setCursorAbs(self: *Screen, x: u32, y: u32) void {
         self.cursor.x = @min(x, self.grid.width -| 1);
         self.cursor.y = @min(y, self.grid.height -| 1);
+        self.dirty = true;
+    }
+
+    pub fn cursorUp(self: *Screen, n: u32) void {
+        const top = if (self.mode.origin) blk: {
+            break :blk if (self.scroll_region) |r| r[0] else 0;
+        } else 0;
+        const count = @min(n, self.cursor.y -| top);
+        self.cursor.y -= count;
+        self.dirty = true;
+    }
+
+    pub fn cursorDown(self: *Screen, n: u32) void {
+        const bottom: u32 = if (self.mode.origin) blk: {
+            break :blk if (self.scroll_region) |r| r[1] else self.grid.height - 1;
+        } else self.grid.height - 1;
+        const count = @min(n, bottom -| self.cursor.y);
+        self.cursor.y += count;
+        self.dirty = true;
+    }
+
+    pub fn cursorForward(self: *Screen, n: u32) void {
+        self.cursor.x = @min(self.cursor.x + n, self.grid.width - 1);
+        self.dirty = true;
+    }
+
+    pub fn cursorBack(self: *Screen, n: u32) void {
+        self.cursor.x -|= n;
+        self.dirty = true;
+    }
+
+    pub fn cursorColumn(self: *Screen, x: u32) void {
+        self.cursor.x = @min(x, self.grid.width -| 1);
+        self.dirty = true;
+    }
+
+    pub fn cursorLine(self: *Screen, y: u32) void {
+        const origin_y = if (self.mode.origin) blk: {
+            break :blk if (self.scroll_region) |r| r[0] else 0;
+        } else 0;
+        const actual = @min(y +| origin_y, self.grid.height -| 1);
+        self.cursor.y = actual;
+        self.dirty = true;
+    }
+
+    pub fn cursorPosition(self: *Screen, col: u32, row: u32) void {
+        const y: u32 = if (self.mode.origin) blk: {
+            if (self.scroll_region) |r| {
+                break :blk @min(row + r[0], r[1]);
+            }
+            break :blk @min(row, self.grid.height -| 1);
+        } else @min(row, self.grid.height -| 1);
+        self.cursor.y = y;
+        self.cursor.x = @min(col, self.grid.width -| 1);
+        self.dirty = true;
+    }
+
+    pub fn eraseLine(self: *Screen, mode: u8) void {
+        switch (mode) {
+            0 => {
+                var x = self.cursor.x;
+                while (x < self.grid.width) : (x += 1) {
+                    self.grid.setCell(x, self.cursor.y, Cell.empty());
+                }
+            },
+            1 => {
+                var x: u32 = 0;
+                while (x <= self.cursor.x) : (x += 1) {
+                    self.grid.setCell(x, self.cursor.y, Cell.empty());
+                }
+            },
+            2 => self.grid.clearLine(self.cursor.y),
+            else => {},
+        }
+        self.dirty = true;
+    }
+
+    pub fn eraseDisplay(self: *Screen, mode: u8) void {
+        switch (mode) {
+            0 => {
+                var y = self.cursor.y;
+                while (y < self.grid.height) : (y += 1) {
+                    if (y == self.cursor.y) {
+                        self.eraseLine(0);
+                    } else {
+                        self.grid.clearLine(y);
+                    }
+                }
+            },
+            1 => {
+                var y: u32 = 0;
+                while (y <= self.cursor.y) : (y += 1) {
+                    if (y == self.cursor.y) {
+                        self.eraseLine(1);
+                    } else {
+                        self.grid.clearLine(y);
+                    }
+                }
+            },
+            2 => self.grid.clear(),
+            else => {},
+        }
+        self.dirty = true;
+    }
+
+    pub fn eraseChars(self: *Screen, n: u32) void {
+        self.grid.eraseChars(self.cursor.x, self.cursor.y, n);
+        self.dirty = true;
+    }
+
+    pub fn insertLines(self: *Screen, n: u32) !void {
+        const top = if (self.scroll_region) |r| r[0] else 0;
+        const bottom = if (self.scroll_region) |r| r[1] else self.grid.height - 1;
+        const y = @max(self.cursor.y, top);
+        const count = @min(n, bottom + 1 - y);
+        var i: u32 = 0;
+        while (i < count) : (i += 1) {
+            try self.grid.insertLine(y);
+            self.grid.clearLine(bottom);
+        }
+    }
+
+    pub fn deleteLines(self: *Screen, n: u32) !void {
+        const top = if (self.scroll_region) |r| r[0] else 0;
+        const bottom = if (self.scroll_region) |r| r[1] else self.grid.height - 1;
+        const y = @max(self.cursor.y, top);
+        const count = @min(n, bottom + 1 - y);
+        var i: u32 = 0;
+        while (i < count) : (i += 1) {
+            try self.grid.deleteLine(y);
+            self.grid.clearLine(bottom);
+        }
+    }
+
+    pub fn insertChars(self: *Screen, n: u32) void {
+        self.grid.insertChars(self.cursor.x, self.cursor.y, n);
+        self.dirty = true;
+    }
+
+    pub fn deleteChars(self: *Screen, n: u32) void {
+        self.grid.deleteChars(self.cursor.x, self.cursor.y, n);
+        self.dirty = true;
+    }
+
+    pub fn index(self: *Screen) !void {
+        if (self.scroll_region) |r| {
+            if (self.cursor.y == r[1]) {
+                try self.scrollUpInRegion();
+                return;
+            }
+        } else if (self.cursor.y + 1 >= self.grid.height) {
+            try self.grid.scrollUp();
+            return;
+        }
+        self.cursor.y += 1;
+    }
+
+    pub fn reverseIndex(self: *Screen) !void {
+        if (self.scroll_region) |r| {
+            if (self.cursor.y == r[0]) {
+                try self.scrollDownInRegion();
+                return;
+            }
+        } else if (self.cursor.y == 0) {
+            try self.grid.scrollDown();
+            return;
+        }
+        self.cursor.y -|= 1;
+    }
+
+    pub fn scrollUp(self: *Screen, n: u32) !void {
+        const count = @min(n, self.grid.height);
+        var i: u32 = 0;
+        while (i < count) : (i += 1) {
+            try self.grid.scrollUp();
+        }
+    }
+
+    pub fn scrollDown(self: *Screen, n: u32) !void {
+        const count = @min(n, self.grid.height);
+        var i: u32 = 0;
+        while (i < count) : (i += 1) {
+            try self.grid.scrollDown();
+        }
+    }
+
+    pub fn setScrollRegion(self: *Screen, top: u32, bottom: u32) void {
+        self.scroll_region = .{ @min(top, self.grid.height -| 1), @min(bottom, self.grid.height -| 1) };
+        self.cursor.x = 0;
+        self.cursor.y = if (self.mode.origin) self.scroll_region.?[0] else 0;
+        self.dirty = true;
+    }
+
+    pub fn setOriginMode(self: *Screen, enable: bool) void {
+        self.mode.origin = enable;
+        self.cursor.x = 0;
+        self.cursor.y = if (enable and self.scroll_region != null) self.scroll_region.?[0] else 0;
+        self.dirty = true;
+    }
+
+    pub fn saveCursor(self: *Screen) void {
+        self.saved_cursor = self.cursor;
+    }
+
+    pub fn restoreCursor(self: *Screen) void {
+        if (self.saved_cursor) |saved| {
+            self.cursor = saved;
+            self.dirty = true;
+        }
+    }
+
+    pub fn setSgr(self: *Screen, params: []const u8) void {
+        if (params.len == 0 or params[0] == '0') {
+            self.cur_cell = Cell.empty();
+            return;
+        }
+        var it = std.mem.splitScalar(u8, params, ';');
+        while (it.next()) |p_str| {
+            const p = std.fmt.parseInt(u8, p_str, 10) catch continue;
+            switch (p) {
+                0 => self.cur_cell = Cell.empty(),
+                1 => self.cur_cell.attr.bold = true,
+                2 => self.cur_cell.attr.dim = true,
+                3 => self.cur_cell.attr.italic = true,
+                4 => self.cur_cell.attr.underline = true,
+                5 => self.cur_cell.attr.blink = true,
+                7 => self.cur_cell.attr.reverse = true,
+                8 => self.cur_cell.attr.concealed = true,
+                9 => self.cur_cell.attr.strikethrough = true,
+                21 => self.cur_cell.attr.double_underline = true,
+                22 => {
+                    self.cur_cell.attr.bold = false;
+                    self.cur_cell.attr.dim = false;
+                },
+                23 => self.cur_cell.attr.italic = false,
+                24 => self.cur_cell.attr.underline = false,
+                25 => self.cur_cell.attr.blink = false,
+                27 => self.cur_cell.attr.reverse = false,
+                28 => self.cur_cell.attr.concealed = false,
+                29 => self.cur_cell.attr.strikethrough = false,
+                30...37 => {
+                    const idx = p - 30;
+                    self.cur_cell.fg = Colour{ .tag = .indexed, .value = idx };
+                },
+                38 => {
+                    const next = it.next() orelse continue;
+                    if (std.mem.eql(u8, next, "5")) {
+                        const idx_str = it.next() orelse continue;
+                        const idx = std.fmt.parseInt(u8, idx_str, 10) catch continue;
+                        self.cur_cell.fg = Colour{ .tag = .indexed, .value = idx };
+                    } else if (std.mem.eql(u8, next, "2")) {
+                        const r = std.fmt.parseInt(u8, it.next() orelse continue, 10) catch continue;
+                        const g = std.fmt.parseInt(u8, it.next() orelse continue, 10) catch continue;
+                        const b = std.fmt.parseInt(u8, it.next() orelse continue, 10) catch continue;
+                        self.cur_cell.fg = Colour{ .tag = .rgb, .value = @as(u24, r) << 16 | @as(u24, g) << 8 | b };
+                    }
+                },
+                39 => self.cur_cell.fg = Colour.default_(),
+                40...47 => {
+                    const idx = p - 40;
+                    self.cur_cell.bg = Colour{ .tag = .indexed, .value = idx };
+                },
+                48 => {
+                    const next = it.next() orelse continue;
+                    if (std.mem.eql(u8, next, "5")) {
+                        const idx_str = it.next() orelse continue;
+                        const idx = std.fmt.parseInt(u8, idx_str, 10) catch continue;
+                        self.cur_cell.bg = Colour{ .tag = .indexed, .value = idx };
+                    } else if (std.mem.eql(u8, next, "2")) {
+                        const r = std.fmt.parseInt(u8, it.next() orelse continue, 10) catch continue;
+                        const g = std.fmt.parseInt(u8, it.next() orelse continue, 10) catch continue;
+                        const b = std.fmt.parseInt(u8, it.next() orelse continue, 10) catch continue;
+                        self.cur_cell.bg = Colour{ .tag = .rgb, .value = @as(u24, r) << 16 | @as(u24, g) << 8 | b };
+                    }
+                },
+                49 => self.cur_cell.bg = Colour.default_(),
+                90...97 => {
+                    const idx = p - 90 + 8;
+                    self.cur_cell.fg = Colour{ .tag = .indexed, .value = idx };
+                },
+                100...107 => {
+                    const idx = p - 100 + 8;
+                    self.cur_cell.bg = Colour{ .tag = .indexed, .value = idx };
+                },
+                else => {},
+            }
+        }
+    }
+
+    pub fn resetHard(self: *Screen) !void {
+        self.cursor = .{};
+        self.saved_cursor = null;
+        self.mode = .{};
+        self.scroll_region = null;
+        self.cur_cell = Cell.empty();
+        self.grid.clear();
         self.dirty = true;
     }
 
@@ -155,6 +494,7 @@ pub const Screen = struct {
         }
         self.mode.alt_screen = enable;
         self.cursor = .{};
+        self.saved_cursor = null;
         self.dirty = true;
     }
 };
@@ -231,7 +571,7 @@ test "cursor positioning" {
     var screen = try Screen.init(testing.allocator, 80, 24);
     defer screen.deinit();
 
-    screen.setCursor(40, 12);
+    screen.setCursorAbs(40, 12);
     try testing.expectEqual(@as(u32, 40), screen.cursor.x);
     try testing.expectEqual(@as(u32, 12), screen.cursor.y);
 }
@@ -240,7 +580,7 @@ test "set cursor clamps to bounds" {
     var screen = try Screen.init(testing.allocator, 80, 24);
     defer screen.deinit();
 
-    screen.setCursor(999, 999);
+    screen.setCursorAbs(999, 999);
     try testing.expectEqual(@as(u32, 79), screen.cursor.x);
     try testing.expectEqual(@as(u32, 23), screen.cursor.y);
 }
@@ -291,7 +631,7 @@ test "insert mode shifts cells right" {
     try screen.writeStr("ABCDE");
 
     screen.mode.insert = true;
-    screen.setCursor(2, 0);
+    screen.setCursorAbs(2, 0);
     try screen.writeChar('X');
 
     try testing.expectEqual(@as(u21, 'A'), screen.grid.getCell(0, 0).char);
@@ -316,4 +656,183 @@ test "control chars are ignored" {
     try screen.writeChar(0x01);
     try testing.expectEqual(@as(u32, 0), screen.cursor.x);
     try testing.expectEqual(@as(u21, ' '), screen.grid.getCell(0, 0).char);
+}
+
+test "cursorUp clamped to top" {
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+    screen.cursor.y = 2;
+    screen.cursorUp(10);
+    try testing.expectEqual(@as(u32, 0), screen.cursor.y);
+}
+
+test "cursorDown clamped to bottom" {
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+    screen.cursor.y = 20;
+    screen.cursorDown(10);
+    try testing.expectEqual(@as(u32, 23), screen.cursor.y);
+}
+
+test "cursorForward clamped to right" {
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+    screen.cursor.x = 75;
+    screen.cursorForward(10);
+    try testing.expectEqual(@as(u32, 79), screen.cursor.x);
+}
+
+test "cursorBack won't underflow" {
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+    screen.cursorBack(5);
+    try testing.expectEqual(@as(u32, 0), screen.cursor.x);
+}
+
+test "eraseLine mode 1 clears from start to cursor" {
+    var screen = try Screen.init(testing.allocator, 10, 3);
+    defer screen.deinit();
+    try screen.writeStr("ABCDE");
+    screen.cursor.x = 2;
+    screen.eraseLine(1);
+    try testing.expectEqual(@as(u21, ' '), screen.grid.getCell(0, 0).char);
+    try testing.expectEqual(@as(u21, ' '), screen.grid.getCell(1, 0).char);
+    try testing.expectEqual(@as(u21, ' '), screen.grid.getCell(2, 0).char);
+    try testing.expectEqual(@as(u21, 'D'), screen.grid.getCell(3, 0).char);
+}
+
+test "eraseLine mode 2 clears entire line" {
+    var screen = try Screen.init(testing.allocator, 10, 3);
+    defer screen.deinit();
+    try screen.writeStr("ABCDE");
+    screen.eraseLine(2);
+    try testing.expect(screen.grid.isEmpty());
+}
+
+test "eraseDisplay mode 2 clears all" {
+    var screen = try Screen.init(testing.allocator, 10, 3);
+    defer screen.deinit();
+    try screen.writeStr("line1\nline2\nline3");
+    screen.eraseDisplay(2);
+    try testing.expect(screen.grid.isEmpty());
+}
+
+test "cursor save and restore" {
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+    screen.cursor.x = 10;
+    screen.cursor.y = 5;
+    screen.saveCursor();
+    screen.cursor.x = 99;
+    screen.cursor.y = 99;
+    screen.restoreCursor();
+    try testing.expectEqual(@as(u32, 10), screen.cursor.x);
+    try testing.expectEqual(@as(u32, 5), screen.cursor.y);
+}
+
+test "setSgr bold + italic" {
+    var screen = try Screen.init(testing.allocator, 10, 3);
+    defer screen.deinit();
+    screen.setSgr("1;3");
+    try screen.writeChar('X');
+    try testing.expect(screen.grid.getCell(0, 0).attr.bold);
+    try testing.expect(screen.grid.getCell(0, 0).attr.italic);
+}
+
+test "setSgr empty resets" {
+    var screen = try Screen.init(testing.allocator, 10, 3);
+    defer screen.deinit();
+    screen.setSgr("1");
+    screen.setSgr("");
+    try testing.expect(!screen.cur_cell.attr.bold);
+}
+
+test "origin mode clamps cursor" {
+    var screen = try Screen.init(testing.allocator, 10, 5);
+    defer screen.deinit();
+    screen.setScrollRegion(1, 3);
+    screen.setOriginMode(true);
+    try testing.expectEqual(@as(u32, 1), screen.cursor.y);
+}
+
+test "scroll region with cursor up (origin mode)" {
+    var screen = try Screen.init(testing.allocator, 10, 5);
+    defer screen.deinit();
+    screen.setScrollRegion(1, 3);
+    screen.setOriginMode(true);
+    screen.cursor.y = 2;
+    screen.cursorUp(5);
+    try testing.expectEqual(@as(u32, 1), screen.cursor.y);
+}
+
+test "scroll region with cursor down (origin mode)" {
+    var screen = try Screen.init(testing.allocator, 10, 5);
+    defer screen.deinit();
+    screen.setScrollRegion(1, 3);
+    screen.setOriginMode(true);
+    screen.cursor.y = 2;
+    screen.cursorDown(5);
+    try testing.expectEqual(@as(u32, 3), screen.cursor.y);
+}
+
+test "index within scroll region" {
+    var screen = try Screen.init(testing.allocator, 10, 5);
+    defer screen.deinit();
+    screen.setScrollRegion(1, 3);
+    try screen.writeStr("aaa\nbbb\nccc\nddd\neee");
+    screen.cursor.y = 3;
+    try screen.index();
+    try testing.expectEqual(@as(u32, 3), screen.cursor.y);
+}
+
+test "reverse index within scroll region" {
+    var screen = try Screen.init(testing.allocator, 10, 5);
+    defer screen.deinit();
+    screen.setScrollRegion(1, 3);
+    screen.cursor.y = 1;
+    try screen.reverseIndex();
+    try testing.expectEqual(@as(u32, 1), screen.cursor.y);
+}
+
+test "hard reset restores defaults" {
+    var screen = try Screen.init(testing.allocator, 10, 3);
+    defer screen.deinit();
+    screen.mode.line_wrap = false;
+    screen.mode.insert = true;
+    screen.setSgr("1;31");
+    try screen.resetHard();
+    try testing.expect(screen.mode.line_wrap);
+    try testing.expect(!screen.mode.insert);
+    try testing.expect(!screen.cur_cell.attr.bold);
+    try testing.expect(screen.grid.isEmpty());
+}
+
+test "setCursorAbs absolute positioning" {
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+    screen.setCursorAbs(40, 12);
+    try testing.expectEqual(@as(u32, 40), screen.cursor.x);
+    try testing.expectEqual(@as(u32, 12), screen.cursor.y);
+}
+
+test "BEL is ignored" {
+    var screen = try Screen.init(testing.allocator, 10, 3);
+    defer screen.deinit();
+    try screen.writeChar(0x07);
+    try testing.expectEqual(@as(u32, 0), screen.cursor.x);
+}
+
+test "BS moves cursor left" {
+    var screen = try Screen.init(testing.allocator, 10, 3);
+    defer screen.deinit();
+    screen.cursor.x = 5;
+    try screen.writeChar(0x08);
+    try testing.expectEqual(@as(u32, 4), screen.cursor.x);
+}
+
+test "BS at column 0 does nothing" {
+    var screen = try Screen.init(testing.allocator, 10, 3);
+    defer screen.deinit();
+    try screen.writeChar(0x08);
+    try testing.expectEqual(@as(u32, 0), screen.cursor.x);
 }
