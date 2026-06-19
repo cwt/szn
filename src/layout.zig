@@ -131,7 +131,7 @@ pub const Layout = struct {
         }
     }
 
-    fn calculateChildSize(self: *Layout, direction: SplitDir, proportion: f64) struct { u32, u32 } {
+    pub fn calculateChildSize(self: *Layout, direction: SplitDir, proportion: f64) struct { u32, u32 } {
         if (direction == .horizontal) {
             const child_w = @max(1, @as(u32, @intFromFloat(@as(f64, @floatFromInt(self.width)) * proportion)));
             return .{ child_w, self.height };

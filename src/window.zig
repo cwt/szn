@@ -33,6 +33,7 @@ pub const Window = struct {
     active_pane: ?*Pane = null,
     width: u32,
     height: u32,
+    next_pane_id: u32 = 1,
 
     pub fn init(allocator: std.mem.Allocator, id: u32, name: []const u8, width: u32, height: u32) !Window {
         var window = Window{
@@ -41,7 +42,6 @@ pub const Window = struct {
             .width = width,
             .height = height,
         };
-        // Create initial pane
         var pane = try allocator.create(Pane);
         pane.* = try Pane.init(allocator, 0, width, height);
         pane.active = true;
@@ -61,8 +61,20 @@ pub const Window = struct {
 
     pub fn addPane(self: *Window, allocator: std.mem.Allocator) !*Pane {
         const new_pane = try allocator.create(Pane);
-        const pane_id = self.panes.items.len;
-        new_pane.* = try Pane.init(allocator, @intCast(pane_id), self.width, self.height);
+        const pane_id = self.next_pane_id;
+        self.next_pane_id += 1;
+        new_pane.* = try Pane.init(allocator, pane_id, self.width, self.height);
+        try self.panes.append(allocator, new_pane);
+        return new_pane;
+    }
+
+    pub fn splitPane(self: *Window, allocator: std.mem.Allocator, pane: *Pane, vertical: bool, proportion: f64) !*Pane {
+        _ = pane;
+        _ = vertical;
+        _ = proportion;
+        const new_pane = try allocator.create(Pane);
+        new_pane.* = try Pane.init(allocator, self.next_pane_id, self.width, self.height);
+        self.next_pane_id += 1;
         try self.panes.append(allocator, new_pane);
         return new_pane;
     }
@@ -76,7 +88,6 @@ pub const Window = struct {
         pane.deinit();
         allocator.destroy(pane);
 
-        // Fix active pane
         if (self.active_pane == pane) {
             self.active_pane = if (self.panes.items.len > 0) self.panes.items[0] else null;
             if (self.active_pane) |p| p.active = true;

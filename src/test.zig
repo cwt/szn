@@ -13,4 +13,7 @@ comptime {
     _ = @import("tty/tty.zig");
     _ = @import("tty/tty_key.zig");
     _ = @import("input.zig");
+    _ = @import("server/protocol.zig");
+    _ = @import("server/server.zig");
+    _ = @import("cmd/cmd.zig");
 }
