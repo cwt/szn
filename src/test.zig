@@ -15,5 +15,11 @@ comptime {
     _ = @import("input.zig");
     _ = @import("server/protocol.zig");
     _ = @import("server/server.zig");
+    _ = @import("server/socket.zig");
+    _ = @import("server/loop.zig");
     _ = @import("cmd/cmd.zig");
+    _ = @import("client/connect.zig");
+    _ = @import("client/raw.zig");
+    _ = @import("client/client.zig");
+    _ = @import("server/pty.zig");
 }

@@ -2,12 +2,15 @@ const std = @import("std");
 const testing = std.testing;
 const screen = @import("screen.zig");
 const Screen = screen.Screen;
+const pty_mod = @import("server/pty.zig");
+const Pty = pty_mod.Pty;
 
 /// Pane represents a single terminal pane within a window.
 pub const Pane = struct {
     id: u32,
     screen: Screen,
     active: bool = false,
+    pty: ?Pty = null,
 
     pub fn init(allocator: std.mem.Allocator, id: u32, width: u32, height: u32) !Pane {
         return Pane{
@@ -18,10 +21,18 @@ pub const Pane = struct {
 
     pub fn deinit(self: *Pane) void {
         self.screen.deinit();
+        if (self.pty) |*p| p.deinit();
     }
 
     pub fn writeStr(self: *Pane, s: []const u8) !void {
         try self.screen.writeStr(s);
+    }
+
+    pub fn spawn(self: *Pane, allocator: std.mem.Allocator, argv: ?[]const []const u8) !void {
+        var pty = try Pty.open();
+        errdefer pty.deinit();
+        try pty.spawn(allocator, argv);
+        self.pty = pty;
     }
 };
 

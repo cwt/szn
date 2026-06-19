@@ -1,13 +1,14 @@
 const std = @import("std");
+const c = std.c;
 const testing = std.testing;
 const session_mod = @import("../session.zig");
 const Session = session_mod.Session;
 const window_mod = @import("../window.zig");
 const Window = window_mod.Window;
 const Pane = window_mod.Pane;
-const layout_mod = @import("../layout.zig");
-const Layout = layout_mod.Layout;
-const SplitDir = layout_mod.SplitDir;
+const loop_mod = @import("loop.zig");
+const Loop = loop_mod.Loop;
+const socket_mod = @import("socket.zig");
 
 pub const Server = struct {
     allocator: std.mem.Allocator,
@@ -15,17 +16,88 @@ pub const Server = struct {
     next_session_id: u32 = 1,
     next_window_id: u32 = 1,
     next_pane_id: u32 = 1,
+    listener_fd: ?i32 = null,
+    client_fds: std.ArrayListUnmanaged(i32) = .empty,
+    loop: Loop = .{},
 
     pub fn init(allocator: std.mem.Allocator) !Server {
-        return Server{ .allocator = allocator };
+        return Server{
+            .allocator = allocator,
+        };
     }
 
     pub fn deinit(self: *Server) void {
+        self.loop.deinit(self.allocator);
         for (self.sessions.items) |s| {
             s.deinit(self.allocator);
             self.allocator.destroy(s);
         }
         self.sessions.deinit(self.allocator);
+        for (self.client_fds.items) |fd| {
+            _ = c.close(fd);
+        }
+        self.client_fds.deinit(self.allocator);
+        if (self.listener_fd) |fd| {
+            socket_mod.closeAndUnlink(fd);
+        }
+    }
+
+    pub fn listen(self: *Server) !void {
+        const fd = try socket_mod.createListener();
+        self.listener_fd = fd;
+        try self.loop.addFd(self.allocator, fd, @as(i16, @intCast(std.posix.POLL.IN)), @ptrCast(self));
+    }
+
+    pub fn run(self: *Server) !void {
+        const events = try self.loop.pollOnce(100);
+        for (events) |ev| {
+            if (ev.revents & @as(i16, @intCast(std.posix.POLL.IN)) != 0) {
+                if (self.listener_fd) |lfd| {
+                    if (ev.fd == lfd) {
+                        self.handleAccept() catch |err| {
+                            std.log.err("accept failed: {any}", .{err});
+                        };
+                    }
+                }
+                for (self.client_fds.items) |cfd| {
+                    if (ev.fd == cfd) {
+                        self.handleClient(cfd) catch |err| {
+                            std.log.err("client {d} error: {any}", .{ cfd, err });
+                        };
+                    }
+                }
+            }
+        }
+    }
+
+    fn handleAccept(self: *Server) !void {
+        const fd = try socket_mod.acceptClient(self.listener_fd.?);
+        try self.client_fds.append(self.allocator, fd);
+        try self.loop.addFd(self.allocator, fd, @as(i16, @intCast(std.posix.POLL.IN)), @ptrCast(self));
+    }
+
+    fn handleClient(self: *Server, fd: i32) !void {
+        var buf: [4096]u8 = undefined;
+        const n = std.posix.read(fd, &buf) catch |err| {
+            self.removeClient(fd);
+            return err;
+        };
+        if (n == 0) {
+            self.removeClient(fd);
+            return;
+        }
+        _ = buf[0..n];
+    }
+
+    fn removeClient(self: *Server, fd: i32) void {
+        self.loop.removeFd(fd);
+        for (self.client_fds.items, 0..) |cfd, i| {
+            if (cfd == fd) {
+                _ = self.client_fds.swapRemove(i);
+                break;
+            }
+        }
+        _ = c.close(fd);
     }
 
     pub fn newSession(self: *Server, name: []const u8) !*Session {
@@ -145,4 +217,11 @@ test "new session increments id" {
     const s1 = try server.newSession("a");
     const s2 = try server.newSession("b");
     try testing.expect(s1.id < s2.id);
+}
+
+test "server listen creates socket" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+    try server.listen();
+    try testing.expect(server.listener_fd != null);
 }

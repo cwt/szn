@@ -9,6 +9,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    exe_module.link_libc = true;
 
     const exe = b.addExecutable(.{
         .name = "zmux",
@@ -26,6 +27,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    test_module.link_libc = true;
 
     const test_exe = b.addTest(.{
         .root_module = test_module,
