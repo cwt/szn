@@ -48,11 +48,11 @@ pub const Term = struct {
         self.scroll_region = null;
     }
 
-    fn write(self: *Term, bytes: []const u8) !void {
+    pub fn write(self: *Term, bytes: []const u8) !void {
         try self.writer.writeAll(bytes);
     }
 
-    fn writeByte(self: *Term, byte: u8) !void {
+    pub fn writeByte(self: *Term, byte: u8) !void {
         try self.writer.writeByte(byte);
     }
 
@@ -360,7 +360,12 @@ pub const Term = struct {
         try self.setBackground(cell.bg);
         try self.setAttributes(cell.attr);
         var buf: [4]u8 = undefined;
-        const encoded_len = std.unicode.utf8Encode(@intCast(cell.char), &buf) catch unreachable;
+        const encoded_len = std.unicode.utf8Encode(cell.char, &buf) catch {
+            // If encoding fails, write a placeholder '?' and skip
+            try self.write("?");
+            if (self.cx >= 0) self.cx += 1;
+            return;
+        };
         try self.write(buf[0..encoded_len]);
         if (self.cx >= 0) self.cx += 1;
     }

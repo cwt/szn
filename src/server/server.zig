@@ -18,12 +18,11 @@ pub const Server = struct {
     next_pane_id: u32 = 1,
     listener_fd: ?i32 = null,
     client_fds: std.ArrayListUnmanaged(i32) = .empty,
+    stdin_fd: ?i32 = null,
     loop: Loop = .{},
 
     pub fn init(allocator: std.mem.Allocator) !Server {
-        return Server{
-            .allocator = allocator,
-        };
+        return Server{ .allocator = allocator };
     }
 
     pub fn deinit(self: *Server) void {
@@ -51,23 +50,104 @@ pub const Server = struct {
     pub fn run(self: *Server) !void {
         const events = try self.loop.pollOnce(100);
         for (events) |ev| {
-            if (ev.revents & @as(i16, @intCast(std.posix.POLL.IN)) != 0) {
-                if (self.listener_fd) |lfd| {
-                    if (ev.fd == lfd) {
+            if (self.handlePtyEvent(ev)) continue;
+
+            const has_in = (ev.revents & @as(i16, @intCast(std.posix.POLL.IN))) != 0;
+            const has_hup = (ev.revents & @as(i16, @intCast(std.posix.POLL.HUP))) != 0;
+            const has_err = (ev.revents & @as(i16, @intCast(std.posix.POLL.ERR))) != 0;
+
+            if (self.stdin_fd) |sfd| {
+                if (ev.fd == sfd) {
+                    if (has_in) {
+                        self.handleStdin() catch |err| {
+                            std.log.err("stdin error: {any}", .{err});
+                        };
+                    } else if (has_hup or has_err) {
+                        self.loop.running = false;
+                        self.loop.removeFd(ev.fd);
+                    }
+                    continue;
+                }
+            }
+
+            if (self.listener_fd) |lfd| {
+                if (ev.fd == lfd) {
+                    if (has_in) {
                         self.handleAccept() catch |err| {
                             std.log.err("accept failed: {any}", .{err});
                         };
+                    } else if (has_hup or has_err) {
+                        self.loop.removeFd(ev.fd);
                     }
+                    continue;
                 }
-                for (self.client_fds.items) |cfd| {
-                    if (ev.fd == cfd) {
+            }
+
+            var is_client = false;
+            for (self.client_fds.items) |cfd| {
+                if (ev.fd == cfd) {
+                    is_client = true;
+                    if (has_in) {
                         self.handleClient(cfd) catch |err| {
                             std.log.err("client {d} error: {any}", .{ cfd, err });
                         };
+                    } else if (has_hup or has_err) {
+                        self.removeClient(cfd);
                     }
+                    break;
                 }
             }
+            if (is_client) continue;
         }
+    }
+
+    fn handlePtyEvent(self: *Server, ev: loop_mod.PollEvent) bool {
+        if (ev.fd == self.listener_fd or ev.fd == self.stdin_fd) return false;
+        for (self.client_fds.items) |cfd| {
+            if (ev.fd == cfd) return false;
+        }
+        const pane: *Pane = @alignCast(@ptrCast(ev.udata orelse return false));
+        const has_in = (ev.revents & @as(i16, @intCast(std.posix.POLL.IN))) != 0;
+        const has_hup = (ev.revents & @as(i16, @intCast(std.posix.POLL.HUP))) != 0;
+        const has_err = (ev.revents & @as(i16, @intCast(std.posix.POLL.ERR))) != 0;
+
+        if (has_in) {
+            pane.feedPty() catch |err| {
+                std.log.warn("pty exited: {any}", .{err});
+                self.loop.removeFd(ev.fd);
+            };
+        } else if (has_hup or has_err) {
+            std.log.warn("pty hangup/error: revents={X}", .{ev.revents});
+            if (pane.pty) |*pty| {
+                pty.deinit();
+            }
+            pane.pty = null;
+            self.loop.removeFd(ev.fd);
+        }
+        return true;
+    }
+
+    fn handleStdin(self: *Server) !void {
+        var buf: [4096]u8 = undefined;
+        const n = c.read(std.c.STDIN_FILENO, &buf, buf.len);
+        if (n <= 0) {
+            self.loop.running = false;
+            return;
+        }
+        const session = self.activeSession() orelse return;
+        const window = session.active_window orelse return;
+        const pane = window.active_pane orelse return;
+        if (pane.pty) |*pty| {
+            pty.writeInput(buf[0..@intCast(n)]) catch |err| {
+                if (err == error.WriteFailed) return;
+                return err;
+            };
+        }
+    }
+
+    pub fn watchPanePty(self: *Server, pane: *Pane) !void {
+        const pty = pane.pty orelse return;
+        try self.loop.addFd(self.allocator, pty.master, @as(i16, @intCast(std.posix.POLL.IN)), @ptrCast(pane));
     }
 
     fn handleAccept(self: *Server) !void {
@@ -100,9 +180,9 @@ pub const Server = struct {
         _ = c.close(fd);
     }
 
-    pub fn newSession(self: *Server, name: []const u8) !*Session {
+    pub fn newSession(self: *Server, name: []const u8, width: u32, height: u32) !*Session {
         const session = try self.allocator.create(Session);
-        session.* = try Session.init(self.allocator, self.next_session_id, name, 80, 24);
+        session.* = try Session.init(self.allocator, self.next_session_id, name, width, height);
         self.next_session_id += 1;
         try self.sessions.append(self.allocator, session);
         return session;
@@ -150,7 +230,7 @@ test "create empty server" {
 test "new session creates session" {
     var server = try Server.init(testing.allocator);
     defer server.deinit();
-    const s = try server.newSession("test");
+    const s = try server.newSession("test", 80, 24);
     try testing.expectEqualStrings("test", s.name);
     try testing.expectEqual(@as(usize, 1), server.sessions.items.len);
 }
@@ -158,8 +238,8 @@ test "new session creates session" {
 test "kill session by name" {
     var server = try Server.init(testing.allocator);
     defer server.deinit();
-    _ = try server.newSession("one");
-    _ = try server.newSession("two");
+    _ = try server.newSession("one", 80, 24);
+    _ = try server.newSession("two", 80, 24);
     try testing.expectEqual(@as(usize, 2), server.sessions.items.len);
     try server.killSession("one");
     try testing.expectEqual(@as(usize, 1), server.sessions.items.len);
@@ -176,8 +256,8 @@ test "active session returns first session" {
     var server = try Server.init(testing.allocator);
     defer server.deinit();
     try testing.expect(server.activeSession() == null);
-    _ = try server.newSession("first");
-    const s = try server.newSession("second");
+    _ = try server.newSession("first", 80, 24);
+    const s = try server.newSession("second", 80, 24);
     _ = s;
     try testing.expectEqualStrings("first", server.activeSession().?.name);
 }
@@ -185,8 +265,8 @@ test "active session returns first session" {
 test "get session by name" {
     var server = try Server.init(testing.allocator);
     defer server.deinit();
-    _ = try server.newSession("alpha");
-    _ = try server.newSession("beta");
+    _ = try server.newSession("alpha", 80, 24);
+    _ = try server.newSession("beta", 80, 24);
     try testing.expect(server.getSession("alpha") != null);
     try testing.expect(server.getSession("beta") != null);
     try testing.expect(server.getSession("gamma") == null);
@@ -195,9 +275,9 @@ test "get session by name" {
 test "kill all sessions" {
     var server = try Server.init(testing.allocator);
     defer server.deinit();
-    _ = try server.newSession("a");
-    _ = try server.newSession("b");
-    _ = try server.newSession("c");
+    _ = try server.newSession("a", 80, 24);
+    _ = try server.newSession("b", 80, 24);
+    _ = try server.newSession("c", 80, 24);
     try testing.expectEqual(@as(usize, 3), server.sessions.items.len);
     server.killAllSessions();
     try testing.expectEqual(@as(usize, 0), server.sessions.items.len);
@@ -206,7 +286,7 @@ test "kill all sessions" {
 test "session windows have correct size" {
     var server = try Server.init(testing.allocator);
     defer server.deinit();
-    const s = try server.newSession("test");
+    const s = try server.newSession("test", 80, 24);
     try testing.expectEqual(@as(u32, 80), s.windows.items[0].width);
     try testing.expectEqual(@as(u32, 24), s.windows.items[0].height);
 }
@@ -214,8 +294,8 @@ test "session windows have correct size" {
 test "new session increments id" {
     var server = try Server.init(testing.allocator);
     defer server.deinit();
-    const s1 = try server.newSession("a");
-    const s2 = try server.newSession("b");
+    const s1 = try server.newSession("a", 80, 24);
+    const s2 = try server.newSession("b", 80, 24);
     try testing.expect(s1.id < s2.id);
 }
 

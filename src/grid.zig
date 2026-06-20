@@ -19,12 +19,12 @@ pub const Attr = packed struct(u16) {
 };
 
 pub const Cell = packed struct(u128) {
-    char: u24,
+    char: u21,
     attr: Attr,
     fg: Colour,
     bg: Colour,
     _padding: u6 = 0,
-    _pad2: u18 = 0,
+    _pad2: u21 = 0,
 
     pub fn empty() Cell {
         return .{
@@ -37,7 +37,7 @@ pub const Cell = packed struct(u128) {
 
     pub fn withChar(c: u21) Cell {
         var cell = Cell.empty();
-        cell.char = @intCast(c);
+        cell.char = c;
         return cell;
     }
 
@@ -92,17 +92,28 @@ pub const Grid = struct {
         self.height = new_height;
     }
 
+    pub fn setSize(self: *Grid, new_width: u32, new_height: u32) !void {
+        self.width = new_width;
+        for (self.lines.items) |*line| {
+            if (line.cells.items.len > new_width) {
+                line.cells.shrinkRetainingCapacity(new_width);
+            }
+        }
+        try self.resize(new_height);
+    }
+
     pub fn setCell(self: *Grid, x: u32, y: u32, cell: Cell) void {
         if (x >= self.width or y >= self.height) return;
         const line = &self.lines.items[y];
-        if (x >= line.cells.items.len) {
+        const old_len = line.cells.items.len;
+        if (x >= old_len) {
             line.cells.resize(self.allocator, @as(usize, x) + 1) catch {
                 std.log.warn("grid.setCell: resize failed at ({d},{d})", .{ x, y });
                 return;
             };
-            // Fill new cells with empty
-            for (line.cells.items[0..]) |*c| {
-                if (c.char == 0) c.* = Cell.empty();
+            // Fill newly added cells with empty Cell
+            for (line.cells.items[old_len..]) |*c| {
+                c.* = Cell.empty();
             }
         }
         line.cells.items[x] = cell;
@@ -166,10 +177,11 @@ pub const Grid = struct {
 
     fn ensureFullWidth(self: *Grid, y: u32) bool {
         const line = &self.lines.items[y];
-        if (line.cells.items.len >= self.width) return true;
+        const old_len = line.cells.items.len;
+        if (old_len >= self.width) return true;
         line.cells.resize(self.allocator, self.width) catch return false;
-        for (line.cells.items) |*c| {
-            if (c.char == 0) c.* = Cell.empty();
+        for (line.cells.items[old_len..]) |*c| {
+            c.* = Cell.empty();
         }
         return true;
     }

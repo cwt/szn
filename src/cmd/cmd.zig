@@ -21,7 +21,7 @@ pub const CmdEntry = struct {
 
 fn cmdNewSession(server: *Server, args: []const []const u8) CmdResult {
     const name = if (args.len > 1) args[1] else "default";
-    _ = server.newSession(name) catch return .err;
+    _ = server.newSession(name, 80, 24) catch return .err;
     return .ok;
 }
 

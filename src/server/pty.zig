@@ -9,8 +9,10 @@ extern "c" fn read(fd: c_int, buf: [*]u8, nbyte: usize) isize;
 extern "c" fn write(fd: c_int, buf: [*]const u8, nbyte: usize) isize;
 extern "c" fn execvp(path: [*:0]const u8, argv: [*:null]?[*:0]const u8) c_int;
 extern "c" fn ioctl(fd: c_int, request: c_ulong, ...) c_int;
+extern "c" fn waitpid(pid: c_int, stat_loc: ?*c_int, options: c_int) c_int;
+extern "c" fn login_tty(fd: c_int) c_int;
 
-const TIOCSWINSZ: c_ulong = 0x40087468;
+const TIOCSWINSZ: c_ulong = 0x80087467;
 const DEFAULT_SHELL: []const u8 = "/bin/zsh";
 
 pub const Pty = struct {
@@ -30,19 +32,16 @@ pub const Pty = struct {
         if (pid < 0) return error.ForkFailed;
         if (pid == 0) {
             _ = close(self.master);
-            _ = dup2(self.slave, 0);
-            _ = dup2(self.slave, 1);
-            _ = dup2(self.slave, 2);
-            if (self.slave > 2) _ = close(self.slave);
+            _ = login_tty(self.slave);
 
             const args = argv orelse &.{DEFAULT_SHELL};
-            var argv_z = try allocator.alloc([*:0]const u8, args.len + 1);
+            var argv_z = try allocator.alloc(?[*:0]const u8, args.len + 1);
             for (args, 0..) |arg, i| {
                 argv_z[i] = try allocator.dupeZ(u8, arg);
             }
             argv_z[args.len] = null;
 
-            _ = execvp(argv_z[0], argv_z.ptr);
+            _ = execvp(argv_z[0].?, @ptrCast(argv_z.ptr));
             std.process.exit(1);
         }
         self.pid = pid;
@@ -50,9 +49,18 @@ pub const Pty = struct {
         self.slave = -1;
     }
 
+    pub fn reap(self: *Pty) void {
+        if (self.pid > 0) {
+            var status: c_int = 0;
+            _ = waitpid(self.pid, &status, 0);
+            self.pid = -1;
+        }
+    }
+
     pub fn deinit(self: *Pty) void {
         _ = close(self.master);
         if (self.slave >= 0) _ = close(self.slave);
+        self.reap();
     }
 
     pub fn readOutput(self: *Pty, buf: []u8) !usize {

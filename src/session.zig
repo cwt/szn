@@ -35,6 +35,14 @@ pub const Session = struct {
         self.windows.deinit(allocator);
     }
 
+    pub fn resize(self: *Session, new_width: u32, new_height: u32) !void {
+        self.width = new_width;
+        self.height = new_height;
+        for (self.windows.items) |win| {
+            try win.resize(new_width, new_height);
+        }
+    }
+
     pub fn newWindow(self: *Session, allocator: std.mem.Allocator, name: []const u8) !*Window {
         const win_id = self.windows.items.len;
         const new_win = try allocator.create(Window);

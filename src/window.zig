@@ -1,9 +1,12 @@
 const std = @import("std");
 const testing = std.testing;
+const c = std.c;
 const screen = @import("screen.zig");
 const Screen = screen.Screen;
 const pty_mod = @import("server/pty.zig");
 const Pty = pty_mod.Pty;
+const input_mod = @import("input.zig");
+const InputParser = input_mod.InputParser;
 
 /// Pane represents a single terminal pane within a window.
 pub const Pane = struct {
@@ -11,6 +14,8 @@ pub const Pane = struct {
     screen: Screen,
     active: bool = false,
     pty: ?Pty = null,
+    parser: ?InputParser = null,
+    dirty: bool = false,
 
     pub fn init(allocator: std.mem.Allocator, id: u32, width: u32, height: u32) !Pane {
         return Pane{
@@ -26,13 +31,64 @@ pub const Pane = struct {
 
     pub fn writeStr(self: *Pane, s: []const u8) !void {
         try self.screen.writeStr(s);
+        self.dirty = true;
     }
 
     pub fn spawn(self: *Pane, allocator: std.mem.Allocator, argv: ?[]const []const u8) !void {
         var pty = try Pty.open();
         errdefer pty.deinit();
+        const ws = std.c.winsize{
+            .row = @intCast(self.screen.grid.height),
+            .col = @intCast(self.screen.grid.width),
+            .xpixel = 0,
+            .ypixel = 0,
+        };
+        try pty.setWinSize(&ws);
         try pty.spawn(allocator, argv);
         self.pty = pty;
+    }
+
+    pub fn getParser(self: *Pane) *InputParser {
+        if (self.parser == null) {
+            self.parser = InputParser.init(&self.screen);
+        }
+        if (self.pty) |*p| {
+            self.parser.?.pty = p;
+        } else {
+            self.parser.?.pty = null;
+        }
+        return &(self.parser.?);
+    }
+
+    pub fn resizeTerminal(self: *Pane, new_width: u32, new_height: u32) !void {
+        try self.screen.resize(new_width, new_height);
+        if (self.pty) |*pty| {
+            const ws = std.c.winsize{
+                .row = @intCast(new_height),
+                .col = @intCast(new_width),
+                .xpixel = 0,
+                .ypixel = 0,
+            };
+            try pty.setWinSize(&ws);
+            // Notify the pane's process that its window size changed
+            _ = c.kill(pty.pid, c.SIG.WINCH);
+        }
+    }
+
+    pub fn feedPty(self: *Pane) !void {
+        const pty = &(self.pty orelse return);
+        var buf: [4096]u8 = undefined;
+        const n = pty.readOutput(&buf) catch |err| {
+            std.log.warn("feedPty read error: {any}", .{err});
+            pty.deinit();
+            self.pty = null;
+            return err;
+        };
+        const parser = self.getParser();
+        for (buf[0..n]) |byte| {
+            try parser.advance(byte);
+        }
+        self.dirty = true;
     }
 };
 
@@ -68,6 +124,14 @@ pub const Window = struct {
             allocator.destroy(pane);
         }
         self.panes.deinit(allocator);
+    }
+
+    pub fn resize(self: *Window, new_width: u32, new_height: u32) !void {
+        self.width = new_width;
+        self.height = new_height;
+        for (self.panes.items) |pane| {
+            try pane.resizeTerminal(new_width, new_height);
+        }
     }
 
     pub fn addPane(self: *Window, allocator: std.mem.Allocator) !*Pane {

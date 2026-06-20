@@ -15,6 +15,7 @@ pub const InputParser = struct {
     intermediate: u8 = 0,
     osc_buf: [256]u8 = undefined,
     osc_len: u32 = 0,
+    pty: ?*@import("server/pty.zig").Pty = null,
 
     const State = enum {
         ground,
@@ -413,6 +414,16 @@ pub const InputParser = struct {
                 const bottom = (self.paramDefault(1, self.screen.grid.height) -| 1);
                 self.screen.setScrollRegion(top, bottom);
             },
+            'n' => {
+                const n = self.param(0);
+                if (n == 6) {
+                    if (self.pty) |pty| {
+                        var rep_buf: [32]u8 = undefined;
+                        const rep = std.fmt.bufPrint(&rep_buf, "\x1b[{d};{d}R", .{ self.screen.cursor.y + 1, self.screen.cursor.x + 1 }) catch return;
+                        _ = pty.writeInput(rep) catch {};
+                    }
+                }
+            },
             else => {},
         }
     }
@@ -430,9 +441,7 @@ pub const InputParser = struct {
                 1004 => self.screen.mode.focus = enable,
                 1006 => self.screen.mode.mouse_sgr = enable,
                 1049 => {
-                    if (enable) {
-                        try self.screen.useAltScreen(true);
-                    }
+                    try self.screen.useAltScreen(enable);
                 },
                 2004 => self.screen.mode.paste = enable,
                 else => {},

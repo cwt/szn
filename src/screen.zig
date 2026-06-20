@@ -61,11 +61,9 @@ pub const Screen = struct {
     }
 
     pub fn resize(self: *Screen, width: u32, height: u32) !void {
-        self.grid.width = width;
-        try self.grid.resize(height);
+        try self.grid.setSize(width, height);
         if (self.alt_grid) |*g| {
-            g.width = width;
-            try g.resize(height);
+            try g.setSize(width, height);
         }
         self.cursor.x = @min(self.cursor.x, width -| 1);
         self.cursor.y = @min(self.cursor.y, height -| 1);
@@ -144,7 +142,7 @@ pub const Screen = struct {
         }
 
         var cell = self.cur_cell;
-        cell.char = @intCast(char);
+        cell.char = char;
         self.grid.setCell(self.cursor.x, self.cursor.y, cell);
         self.dirty = true;
 
@@ -384,7 +382,7 @@ pub const Screen = struct {
     }
 
     pub fn setSgr(self: *Screen, params: []const u8) void {
-        if (params.len == 0 or params[0] == '0') {
+        if (params.len == 0) {
             self.cur_cell = Cell.empty();
             return;
         }

@@ -1,4 +1,8 @@
 const std = @import("std");
+const c = std.c;
+
+const VMIN: usize = 16;
+const VTIME: usize = 17;
 
 pub const RawTerminal = struct {
     fd: i32,
@@ -6,11 +10,21 @@ pub const RawTerminal = struct {
 
     pub fn init(fd: i32) !RawTerminal {
         var original: std.c.termios = undefined;
-        if (std.c.tcgetattr(fd, &original) < 0) return error.GetAttrFailed;
+        if (c.tcgetattr(fd, &original) < 0) return error.GetAttrFailed;
         return RawTerminal{ .fd = fd, .original = original };
     }
 
     pub fn deinit(self: *RawTerminal) void {
-        _ = std.c.tcsetattr(self.fd, std.c.TCSAFLUSH, &self.original);
+        _ = c.tcsetattr(self.fd, c.TCSA.FLUSH, &self.original);
+    }
+
+    pub fn setRaw(self: *RawTerminal) !void {
+        var raw = self.original;
+        raw.iflag = .{ .BRKINT = true };
+        raw.lflag = .{};
+        raw.oflag = .{};
+        raw.cc[VMIN] = 1;
+        raw.cc[VTIME] = 0;
+        if (c.tcsetattr(self.fd, c.TCSA.FLUSH, &raw) < 0) return error.SetRawFailed;
     }
 };

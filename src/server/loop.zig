@@ -16,6 +16,7 @@ pub const PollEvent = struct {
 pub const Loop = struct {
     fds: std.ArrayListUnmanaged(FdEntry) = .empty,
     running: bool = true,
+    event_buf: [64]PollEvent = undefined,
 
     pub fn init() Loop {
         return Loop{};
@@ -55,14 +56,12 @@ pub const Loop = struct {
         }
 
         const ready = try std.posix.poll(pollfds[0..self.fds.items.len], timeout);
-
         if (ready == 0) return &[0]PollEvent{};
 
-        var out: [64]PollEvent = undefined;
         var out_count: usize = 0;
         for (pollfds[0..self.fds.items.len], 0..) |pfd, i| {
             if (pfd.revents != 0) {
-                out[out_count] = PollEvent{
+                self.event_buf[out_count] = PollEvent{
                     .fd = pfd.fd,
                     .revents = pfd.revents,
                     .udata = self.fds.items[i].udata,
@@ -71,7 +70,7 @@ pub const Loop = struct {
             }
         }
 
-        return out[0..out_count];
+        return self.event_buf[0..out_count];
     }
 
     pub fn stop(self: *Loop) void {

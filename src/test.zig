@@ -22,4 +22,6 @@ comptime {
     _ = @import("client/raw.zig");
     _ = @import("client/client.zig");
     _ = @import("server/pty.zig");
+    _ = @import("server/render.zig");
+    _ = @import("tty/fd_writer.zig");
 }
