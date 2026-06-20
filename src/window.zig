@@ -79,7 +79,6 @@ pub const Pane = struct {
         const pty = &(self.pty orelse return);
         var buf: [4096]u8 = undefined;
         const n = pty.readOutput(&buf) catch |err| {
-            std.log.warn("feedPty read error: {any}", .{err});
             pty.deinit();
             self.pty = null;
             return err;

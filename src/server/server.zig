@@ -113,11 +113,14 @@ pub const Server = struct {
 
         if (has_in) {
             pane.feedPty() catch |err| {
-                std.log.warn("pty exited: {any}", .{err});
-                self.loop.removeFd(ev.fd);
+                if (err == error.ProcessExited) {
+                    self.loop.removeFd(ev.fd);
+                } else {
+                    std.log.warn("pty feed error: {any}", .{err});
+                    self.loop.removeFd(ev.fd);
+                }
             };
         } else if (has_hup or has_err) {
-            std.log.warn("pty hangup/error: revents={X}", .{ev.revents});
             if (pane.pty) |*pty| {
                 pty.deinit();
             }

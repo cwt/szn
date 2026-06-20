@@ -276,7 +276,6 @@ test "error on invalid command" {
 test "error on missing args" {
     var server = try setupServer(testing.allocator);
     defer server.deinit();
-    _ = &server;
     inline for (&.{ "send-keys", "rename-session", "select-window", "select-pane" }) |name| {
         if (parse(name, testing.allocator)) |_| {
             try testing.expect(false);
