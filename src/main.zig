@@ -110,6 +110,11 @@ pub fn main(init: std.process.Init) !void {
     var server = try Server.init(allocator);
     defer server.deinit();
 
+    // Load startup configurations if available
+    server.loadDefaultConfig() catch |err| {
+        std.log.warn("Failed to load default config: {any}", .{err});
+    };
+
     // Create session matching host window size. Pane size leaves 1 row for status bar.
     const session = try server.newSession("default", sx, sy - 1);
     const pane = session.active_window.?.active_pane.?;

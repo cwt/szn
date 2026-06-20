@@ -19,6 +19,7 @@ pub const DispatchResult = struct {
 };
 
 pub fn dispatchCommand(allocator: std.mem.Allocator, server: *Server, cmd_line: []const u8) DispatchResult {
+    server.response_buf.clearRetainingCapacity();
     var parsed = cmd_mod.parse(cmd_line, allocator) catch |err| {
         const msg = switch (err) {
             error.UnknownCommand => "unknown command",
@@ -38,12 +39,18 @@ pub fn dispatchCommand(allocator: std.mem.Allocator, server: *Server, cmd_line: 
     return switch (result) {
         .ok => .{
             .response_type = .ready,
-            .data = allocator.dupe(u8, "ok") catch "ok",
+            .data = if (server.response_buf.items.len > 0)
+                allocator.dupe(u8, server.response_buf.items) catch allocator.dupe(u8, "ok") catch "ok"
+            else
+                allocator.dupe(u8, "ok") catch "ok",
             .allocator = allocator,
         },
         .err => .{
             .response_type = .err,
-            .data = allocator.dupe(u8, "command failed") catch "error",
+            .data = if (server.response_buf.items.len > 0)
+                allocator.dupe(u8, server.response_buf.items) catch allocator.dupe(u8, "command failed") catch "error"
+            else
+                allocator.dupe(u8, "command failed") catch "error",
             .allocator = allocator,
         },
         .wait => .{

@@ -422,3 +422,39 @@ test "dispatcher two prefixes in sequence" {
     const result = disp.dispatch(k);
     try testing.expectEqual(Action.new_window, result.?);
 }
+
+pub fn mapCommandToAction(cmd: []const u8) ?Action {
+    const trimmed = std.mem.trim(u8, cmd, " \t\"");
+    if (std.mem.eql(u8, trimmed, "new-window") or std.mem.eql(u8, trimmed, "neww")) return .new_window;
+    
+    if (std.mem.startsWith(u8, trimmed, "split-window") or std.mem.startsWith(u8, trimmed, "splitw")) {
+        if (std.mem.containsAtLeast(u8, trimmed, 1, "-h")) return .split_vertical;
+        return .split_horizontal;
+    }
+    
+    if (std.mem.eql(u8, trimmed, "select-pane -L")) return .select_pane_left;
+    if (std.mem.eql(u8, trimmed, "select-pane -R")) return .select_pane_right;
+    if (std.mem.eql(u8, trimmed, "select-pane -U")) return .select_pane_up;
+    if (std.mem.eql(u8, trimmed, "select-pane -D")) return .select_pane_down;
+    
+    if (std.mem.eql(u8, trimmed, "kill-pane") or std.mem.eql(u8, trimmed, "killp")) return .kill_pane;
+    if (std.mem.eql(u8, trimmed, "next-window") or std.mem.eql(u8, trimmed, "next")) return .next_window;
+    if (std.mem.eql(u8, trimmed, "previous-window") or std.mem.eql(u8, trimmed, "prev")) return .prev_window;
+    if (std.mem.eql(u8, trimmed, "last-window") or std.mem.eql(u8, trimmed, "last")) return .last_window;
+    if (std.mem.eql(u8, trimmed, "copy-mode")) return .copy_mode;
+    if (std.mem.eql(u8, trimmed, "paste-buffer")) return .paste_buffer;
+    if (std.mem.eql(u8, trimmed, "detach-client") or std.mem.eql(u8, trimmed, "detach")) return .detach;
+    if (std.mem.eql(u8, trimmed, "clock-mode")) return .clock_mode;
+    if (std.mem.eql(u8, trimmed, "rename-window")) return .rename_window;
+    if (std.mem.eql(u8, trimmed, "command-prompt")) return .command_prompt;
+    
+    if (std.mem.startsWith(u8, trimmed, "select-window -t ") or std.mem.startsWith(u8, trimmed, "selectw -t ")) {
+        const idx_str = trimmed[std.mem.lastIndexOfScalar(u8, trimmed, ' ').? + 1..];
+        if (std.fmt.parseInt(u8, idx_str, 10)) |val| {
+            if (val >= 0 and val <= 9) {
+                return @enumFromInt(@intFromEnum(Action.select_window_0) + val);
+            }
+        } else |_| {}
+    }
+    return null;
+}

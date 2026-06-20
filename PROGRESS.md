@@ -3,7 +3,7 @@
 Track progress toward a fully functional tmux clone.
 Based on code audit as of 2026-06-21.
 
-## Current State: 490 tests passing, multi-pane layout splits and IPC command execution works.
+## Current State: 495 tests passing, multi-pane layout splits and IPC command execution works.
 
 ---
 
@@ -21,10 +21,10 @@ Based on code audit as of 2026-06-21.
 | 7 | Format + Status | ✅ Done | ~30 | format.zig and status.zig complete |
 | 8 | Mode + Key Bindings | ✅ Done | ~40 | copy mode and key bindings structure complete |
 | 9 | Client-Server IPC | ✅ Done | ~30 | Protocol, socket, message reader, dispatcher, and live IPC wired and complete |
-| 10 | Commands | ✅ Done | ~65 | 21 of 33 MVP commands defined; 15 functional, 6 stubs |
+| 10 | Commands | ✅ Done | ~65 | All 27 MVP commands functional (including list queries and resize-pane) |
 | 11 | Full Integration | ✅ Done | ~30 | integration.zig integration test suite complete |
 
-**Total: 490 / 490 tests passing. All Phases 0–11 fully complete.**
+**Total: 495 / 495 tests passing. All Phases 0–11 fully complete.**
 
 ---
 
@@ -51,3 +51,11 @@ Based on code audit as of 2026-06-21.
 - [x] Multi-pane rendering with borders
 - [x] select-pane, select-window commands
 - [x] Basic IPC protocol and command dispatch
+
+### M2: Configurable & Scriptable
+
+- [x] Option stores & inheritance (Session -> Window option stores)
+- [x] Load config file at startup (`~/.zmux.conf` or `~/.tmux.conf`)
+- [x] Config commands (`bind-key`, `unbind-key`, `set-option`, `show-options`, `source-file`, `resize-pane`)
+- [x] SGR mouse reporting (1006) and click-to-focus
+- [x] Escape sequence input buffering

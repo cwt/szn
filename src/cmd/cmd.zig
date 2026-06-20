@@ -26,7 +26,11 @@ fn cmdNewSession(server: *Server, args: []const []const u8) CmdResult {
 }
 
 fn cmdListSessions(server: *Server, _: []const []const u8) CmdResult {
-    _ = server;
+    for (server.sessions.items) |session| {
+        var buf: [256]u8 = undefined;
+        const line = std.fmt.bufPrint(&buf, "{s}: {d} windows\n", .{session.name, session.windows.items.len}) catch return .err;
+        server.response_buf.appendSlice(server.allocator, line) catch return .err;
+    }
     return .ok;
 }
 
@@ -88,7 +92,13 @@ fn cmdSplitWindow(server: *Server, args: []const []const u8) CmdResult {
 }
 
 fn cmdListWindows(server: *Server, _: []const []const u8) CmdResult {
-    _ = server;
+    const session = server.activeSession() orelse return .err;
+    for (session.windows.items, 0..) |w, idx| {
+        const active_char = if (session.active_window == w) @as(u8, '*') else @as(u8, ' ');
+        var buf: [256]u8 = undefined;
+        const line = std.fmt.bufPrint(&buf, "{d}: {s}{c} ({d} panes)\n", .{idx, w.name, active_char, w.panes.items.len}) catch return .err;
+        server.response_buf.appendSlice(server.allocator, line) catch return .err;
+    }
     return .ok;
 }
 
@@ -151,21 +161,53 @@ fn cmdRotateWindow(server: *Server, _: []const []const u8) CmdResult {
 fn cmdCapturePane(server: *Server, _: []const []const u8) CmdResult {
     const session = server.activeSession() orelse return .err;
     const window = session.active_window orelse return .err;
-    _ = window.active_pane orelse return .err;
+    const pane = window.active_pane orelse return .err;
+
+    var y: u32 = 0;
+    while (y < pane.screen.grid.height) : (y += 1) {
+        var x: u32 = 0;
+        while (x < pane.screen.grid.width) : (x += 1) {
+            const cell = pane.screen.grid.getCell(x, y);
+            var utf8_buf: [4]u8 = undefined;
+            const len = std.unicode.utf8Encode(cell.char, &utf8_buf) catch blk: {
+                utf8_buf[0] = ' ';
+                break :blk 1;
+            };
+            server.response_buf.appendSlice(server.allocator, utf8_buf[0..len]) catch return .err;
+        }
+        server.response_buf.appendSlice(server.allocator, "\n") catch return .err;
+    }
     return .ok;
 }
 
 fn cmdListPanes(server: *Server, _: []const []const u8) CmdResult {
+    const session = server.activeSession() orelse return .err;
+    const window = session.active_window orelse return .err;
+    for (window.panes.items, 0..) |p, idx| {
+        const active_char = if (window.active_pane == p) @as(u8, '*') else @as(u8, ' ');
+        var buf: [256]u8 = undefined;
+        const line = std.fmt.bufPrint(&buf, "{d}: [{d}x{d}]{c}\n", .{idx, p.screen.grid.width, p.screen.grid.height, active_char}) catch return .err;
+        server.response_buf.appendSlice(server.allocator, line) catch return .err;
+    }
+    return .ok;
+}
+
+fn cmdListCommands(server: *Server, _: []const []const u8) CmdResult {
+    const table = cmdTable();
+    for (table) |entry| {
+        var buf: [256]u8 = undefined;
+        const line = if (entry.args_usage.len > 0)
+            std.fmt.bufPrint(&buf, "{s} {s}\n", .{entry.name, entry.args_usage}) catch return .err
+        else
+            std.fmt.bufPrint(&buf, "{s}\n", .{entry.name}) catch return .err;
+        server.response_buf.appendSlice(server.allocator, line) catch return .err;
+    }
+    return .ok;
+}
+
+fn cmdDetachClient(server: *Server, _: []const []const u8) CmdResult {
     _ = server;
-    return .ok;
-}
-
-fn cmdListCommands(_: *Server, _: []const []const u8) CmdResult {
-    return .ok;
-}
-
-fn cmdDetachClient(_: *Server, _: []const []const u8) CmdResult {
-    return .ok;
+    return .stop;
 }
 
 fn cmdLastWindow(server: *Server, _: []const []const u8) CmdResult {
@@ -204,7 +246,235 @@ fn cmdPrevWindow(server: *Server, _: []const []const u8) CmdResult {
             return .ok;
         }
     }
+    for (session.windows.items, 0..) |w, i| {
+        if (w == current) {
+            const prev = if (i == 0) session.windows.items.len - 1 else i - 1;
+            session.setActiveWindow(session.windows.items[prev]);
+            return .ok;
+        }
+    }
     return .err;
+}
+
+fn cmdSetOption(server: *Server, args: []const []const u8) CmdResult {
+    if (args.len < 3) return .err;
+    var is_global = false;
+    var is_window = false;
+    var opt_idx: usize = 1;
+    while (opt_idx < args.len and std.mem.startsWith(u8, args[opt_idx], "-")) {
+        if (std.mem.eql(u8, args[opt_idx], "-g")) {
+            is_global = true;
+        } else if (std.mem.eql(u8, args[opt_idx], "-w")) {
+            is_window = true;
+        }
+        opt_idx += 1;
+    }
+    if (args.len - opt_idx < 2) return .err;
+    const option_name = args[opt_idx];
+    const value_str = args[opt_idx + 1];
+
+    const cfg_mod = @import("../cfg.zig");
+    const parsed_val = cfg_mod.parseValue(server.allocator, value_str) catch return .err;
+    // Note: OptionValue duplicates strings internally when set, so we can free parsed_val.string on exit.
+    defer {
+        if (parsed_val == .string) server.allocator.free(parsed_val.string);
+    }
+
+    if (is_global) {
+        if (is_window) {
+            server.global_window_options.set(option_name, parsed_val) catch return .err;
+        } else {
+            server.global_options.set(option_name, parsed_val) catch return .err;
+            if (std.mem.eql(u8, option_name, "prefix")) {
+                if (parsed_val == .key) {
+                    server.dispatcher.prefix = parsed_val.key;
+                }
+            }
+        }
+    } else {
+        const session = server.activeSession() orelse return .err;
+        if (is_window) {
+            const window = session.active_window orelse return .err;
+            window.options.set(option_name, parsed_val) catch return .err;
+        } else {
+            session.options.set(option_name, parsed_val) catch return .err;
+        }
+    }
+    return .ok;
+}
+
+fn printOptionValue(server: *Server, val: @import("../options.zig").OptionValue) !void {
+    switch (val) {
+        .number => |n| {
+            var buf: [64]u8 = undefined;
+            const s = try std.fmt.bufPrint(&buf, "{d}", .{n});
+            try server.response_buf.appendSlice(server.allocator, s);
+        },
+        .string => |s| {
+            try server.response_buf.appendSlice(server.allocator, "\"");
+            try server.response_buf.appendSlice(server.allocator, s);
+            try server.response_buf.appendSlice(server.allocator, "\"");
+        },
+        .colour => |col| {
+            var buf: [64]u8 = undefined;
+            try server.response_buf.appendSlice(server.allocator, col.fmt(&buf));
+        },
+        .key => |k| {
+            var buf: [64]u8 = undefined;
+            try server.response_buf.appendSlice(server.allocator, @import("../key.zig").format(k, &buf));
+        },
+        .flag => |b| {
+            try server.response_buf.appendSlice(server.allocator, if (b) "on" else "off");
+        },
+        .choice => |c| {
+            try server.response_buf.appendSlice(server.allocator, c);
+        },
+    }
+}
+
+fn cmdShowOptions(server: *Server, args: []const []const u8) CmdResult {
+    _ = args;
+    const session = server.activeSession() orelse return .err;
+
+    var it = session.options.map.iterator();
+    while (it.next()) |entry| {
+        server.response_buf.appendSlice(server.allocator, entry.key_ptr.*) catch return .err;
+        server.response_buf.appendSlice(server.allocator, " ") catch return .err;
+        printOptionValue(server, entry.value_ptr.*) catch return .err;
+        server.response_buf.appendSlice(server.allocator, "\n") catch return .err;
+    }
+
+    if (session.active_window) |window| {
+        var win_it = window.options.map.iterator();
+        while (win_it.next()) |entry| {
+            server.response_buf.appendSlice(server.allocator, entry.key_ptr.*) catch return .err;
+            server.response_buf.appendSlice(server.allocator, " ") catch return .err;
+            printOptionValue(server, entry.value_ptr.*) catch return .err;
+            server.response_buf.appendSlice(server.allocator, "\n") catch return .err;
+        }
+    }
+    return .ok;
+}
+
+fn cmdResizePane(server: *Server, args: []const []const u8) CmdResult {
+    const session = server.activeSession() orelse return .err;
+    const window = session.active_window orelse return .err;
+    const pane = window.active_pane orelse return .err;
+
+    var adjust_w: i32 = 0;
+    var adjust_h: i32 = 0;
+    var exact_w: ?u32 = null;
+    var exact_h: ?u32 = null;
+
+    var i: usize = 1;
+    while (i < args.len) : (i += 1) {
+        if (std.mem.eql(u8, args[i], "-D")) {
+            var val: i32 = 1;
+            if (i + 1 < args.len) {
+                if (std.fmt.parseInt(i32, args[i + 1], 10)) |v| {
+                    val = v;
+                    i += 1;
+                } else |_| {}
+            }
+            adjust_h += val;
+        } else if (std.mem.eql(u8, args[i], "-U")) {
+            var val: i32 = 1;
+            if (i + 1 < args.len) {
+                if (std.fmt.parseInt(i32, args[i + 1], 10)) |v| {
+                    val = v;
+                    i += 1;
+                } else |_| {}
+            }
+            adjust_h -= val;
+        } else if (std.mem.eql(u8, args[i], "-L")) {
+            var val: i32 = 1;
+            if (i + 1 < args.len) {
+                if (std.fmt.parseInt(i32, args[i + 1], 10)) |v| {
+                    val = v;
+                    i += 1;
+                } else |_| {}
+            }
+            adjust_w -= val;
+        } else if (std.mem.eql(u8, args[i], "-R")) {
+            var val: i32 = 1;
+            if (i + 1 < args.len) {
+                if (std.fmt.parseInt(i32, args[i + 1], 10)) |v| {
+                    val = v;
+                    i += 1;
+                } else |_| {}
+            }
+            adjust_w += val;
+        } else if (std.mem.eql(u8, args[i], "-x")) {
+            if (i + 1 >= args.len) return .err;
+            exact_w = std.fmt.parseUnsigned(u32, args[i + 1], 10) catch return .err;
+            i += 1;
+        } else if (std.mem.eql(u8, args[i], "-y")) {
+            if (i + 1 >= args.len) return .err;
+            exact_h = std.fmt.parseUnsigned(u32, args[i + 1], 10) catch return .err;
+            i += 1;
+        }
+    }
+
+    const current_w = pane.screen.grid.width;
+    const current_h = pane.screen.grid.height;
+
+    const target_w = exact_w orelse @as(u32, @intCast(@max(1, @as(i32, @intCast(current_w)) + adjust_w)));
+    const target_h = exact_h orelse @as(u32, @intCast(@max(1, @as(i32, @intCast(current_h)) + adjust_h)));
+
+    pane.resizeTerminal(target_w, target_h) catch return .err;
+    return .ok;
+}
+
+fn cmdBindKey(server: *Server, args: []const []const u8) CmdResult {
+    if (args.len < 3) return .err;
+    var is_root = false;
+    var opt_idx: usize = 1;
+    while (opt_idx < args.len and std.mem.startsWith(u8, args[opt_idx], "-")) {
+        if (std.mem.eql(u8, args[opt_idx], "-n")) {
+            is_root = true;
+        }
+        opt_idx += 1;
+    }
+    if (args.len - opt_idx < 2) return .err;
+    const key_name = args[opt_idx];
+    const cmd_str = args[opt_idx + 1];
+
+    const key_mod = @import("../key.zig");
+    const parsed_key = key_mod.parseKeyName(key_name) catch return .err;
+
+    const key_binding = @import("../key_binding.zig");
+    const action = key_binding.mapCommandToAction(cmd_str) orelse return .err;
+
+    const table = if (is_root) &server.dispatcher.root_table else &server.dispatcher.prefix_table;
+    table.bind(parsed_key, action) catch return .err;
+    return .ok;
+}
+
+fn cmdUnbindKey(server: *Server, args: []const []const u8) CmdResult {
+    if (args.len < 2) return .err;
+    var is_root = false;
+    var opt_idx: usize = 1;
+    while (opt_idx < args.len and std.mem.startsWith(u8, args[opt_idx], "-")) {
+        if (std.mem.eql(u8, args[opt_idx], "-n")) {
+            is_root = true;
+        }
+        opt_idx += 1;
+    }
+    if (args.len - opt_idx < 1) return .err;
+    const key_name = args[opt_idx];
+
+    const key_mod = @import("../key.zig");
+    const parsed_key = key_mod.parseKeyName(key_name) catch return .err;
+
+    const table = if (is_root) &server.dispatcher.root_table else &server.dispatcher.prefix_table;
+    table.unbind(parsed_key);
+    return .ok;
+}
+
+fn cmdSourceFile(server: *Server, args: []const []const u8) CmdResult {
+    if (args.len < 2) return .err;
+    server.loadConfigFile(args[1]) catch return .err;
+    return .ok;
 }
 
 pub const commands = struct {
@@ -336,6 +606,36 @@ pub const commands = struct {
         .alias = "detach",
         .exec = cmdDetachClient,
     };
+    pub const set_option = CmdEntry{
+        .name = "set-option",
+        .alias = "set",
+        .exec = cmdSetOption,
+    };
+    pub const show_options = CmdEntry{
+        .name = "show-options",
+        .alias = "show",
+        .exec = cmdShowOptions,
+    };
+    pub const resize_pane = CmdEntry{
+        .name = "resize-pane",
+        .alias = "resizep",
+        .exec = cmdResizePane,
+    };
+    pub const bind_key = CmdEntry{
+        .name = "bind-key",
+        .alias = "bind",
+        .exec = cmdBindKey,
+    };
+    pub const unbind_key = CmdEntry{
+        .name = "unbind-key",
+        .alias = "unbind",
+        .exec = cmdUnbindKey,
+    };
+    pub const source_file = CmdEntry{
+        .name = "source-file",
+        .alias = "source",
+        .exec = cmdSourceFile,
+    };
 };
 
 fn cmdTable() []const *const CmdEntry {
@@ -362,6 +662,12 @@ fn cmdTable() []const *const CmdEntry {
             &commands.list_panes,
             &commands.list_commands,
             &commands.detach_client,
+            &commands.set_option,
+            &commands.show_options,
+            &commands.bind_key,
+            &commands.unbind_key,
+            &commands.source_file,
+            &commands.resize_pane,
         };
         break :blk &entries;
     };
@@ -777,9 +1083,9 @@ test "last-window switches to non-active" {
     try testing.expectEqual(session.windows.items[0], session.active_window.?);
 }
 
-test "cmd table has 21 entries" {
+test "cmd table has 27 entries" {
     const table = cmdTable();
-    try testing.expectEqual(@as(usize, 21), table.len);
+    try testing.expectEqual(@as(usize, 27), table.len);
 }
 
 test "lookup all new commands" {
@@ -796,6 +1102,12 @@ test "lookup all new commands" {
     try testing.expect(lookup("list-panes") != null);
     try testing.expect(lookup("list-commands") != null);
     try testing.expect(lookup("detach-client") != null);
+    try testing.expect(lookup("set-option") != null);
+    try testing.expect(lookup("show-options") != null);
+    try testing.expect(lookup("bind-key") != null);
+    try testing.expect(lookup("unbind-key") != null);
+    try testing.expect(lookup("source-file") != null);
+    try testing.expect(lookup("resize-pane") != null);
 }
 
 test "lookup aliases" {
@@ -810,4 +1122,96 @@ test "lookup aliases" {
     try testing.expectEqualStrings("next-window", lookup("next").?.name);
     try testing.expectEqualStrings("previous-window", lookup("prev").?.name);
     try testing.expectEqualStrings("last-window", lookup("last").?.name);
+    try testing.expectEqualStrings("set-option", lookup("set").?.name);
+    try testing.expectEqualStrings("show-options", lookup("show").?.name);
+    try testing.expectEqualStrings("bind-key", lookup("bind").?.name);
+    try testing.expectEqualStrings("unbind-key", lookup("unbind").?.name);
+    try testing.expectEqualStrings("source-file", lookup("source").?.name);
+}
+
+test "config commands exec" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    // Spawn session to have active state
+    _ = try server.newSession("test", 80, 24);
+
+    {
+        var c = try parse("set-option -g mouse on", testing.allocator);
+        defer c.deinit(testing.allocator);
+        try testing.expectEqual(CmdResult.ok, c.exec(&server));
+        try testing.expect(server.global_options.asFlag("mouse").?);
+    }
+
+    {
+        var c = try parse("bind-key -n Escape split-window", testing.allocator);
+        defer c.deinit(testing.allocator);
+        try testing.expectEqual(CmdResult.ok, c.exec(&server));
+
+        const k = try @import("../key.zig").parseKeyName("Escape");
+        const act = server.dispatcher.root_table.lookup(k);
+        try testing.expectEqual(@import("../key_binding.zig").Action.split_horizontal, act.?);
+    }
+}
+
+test "query commands and resize-pane" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    _ = try server.newSession("testsession", 80, 24);
+
+    {
+        var c = try parse("list-sessions", testing.allocator);
+        defer c.deinit(testing.allocator);
+        server.response_buf.clearRetainingCapacity();
+        try testing.expectEqual(CmdResult.ok, c.exec(&server));
+        try testing.expect(std.mem.indexOf(u8, server.response_buf.items, "testsession") != null);
+    }
+
+    {
+        var c = try parse("list-windows", testing.allocator);
+        defer c.deinit(testing.allocator);
+        server.response_buf.clearRetainingCapacity();
+        try testing.expectEqual(CmdResult.ok, c.exec(&server));
+        try testing.expect(std.mem.indexOf(u8, server.response_buf.items, "testsession*") != null);
+    }
+
+    {
+        var c = try parse("list-panes", testing.allocator);
+        defer c.deinit(testing.allocator);
+        server.response_buf.clearRetainingCapacity();
+        try testing.expectEqual(CmdResult.ok, c.exec(&server));
+        try testing.expect(std.mem.indexOf(u8, server.response_buf.items, "0:") != null);
+    }
+
+    {
+        var c = try parse("list-commands", testing.allocator);
+        defer c.deinit(testing.allocator);
+        server.response_buf.clearRetainingCapacity();
+        try testing.expectEqual(CmdResult.ok, c.exec(&server));
+        try testing.expect(std.mem.indexOf(u8, server.response_buf.items, "resize-pane") != null);
+    }
+
+    {
+        var c = try parse("resize-pane -x 90 -y 30", testing.allocator);
+        defer c.deinit(testing.allocator);
+        try testing.expectEqual(CmdResult.ok, c.exec(&server));
+
+        const session = server.activeSession().?;
+        const window = session.active_window orelse session.windows.items[0];
+        const pane = window.active_pane.?;
+        try testing.expectEqual(@as(u32, 90), pane.screen.grid.width);
+        try testing.expectEqual(@as(u32, 30), pane.screen.grid.height);
+    }
+
+    {
+        var c = try parse("resize-pane -D 5", testing.allocator);
+        defer c.deinit(testing.allocator);
+        try testing.expectEqual(CmdResult.ok, c.exec(&server));
+
+        const session = server.activeSession().?;
+        const window = session.active_window orelse session.windows.items[0];
+        const pane = window.active_pane.?;
+        try testing.expectEqual(@as(u32, 35), pane.screen.grid.height);
+    }
 }

@@ -69,8 +69,11 @@ pub const ParseResult = struct {
                 },
                 .bind_key => |b| {
                     allocator.free(b.command);
+                    if (b.flags.key_table) |kt| allocator.free(kt);
                 },
-                .unbind_key => {},
+                .unbind_key => |u| {
+                    if (u.flags.key_table) |kt| allocator.free(kt);
+                },
                 .set_environment => |e| {
                     allocator.free(e.name);
                     if (e.value) |v| allocator.free(v);
@@ -185,7 +188,7 @@ fn parseSet(allocator: std.mem.Allocator, args: []const u8, result: *ParseResult
     try result.directives.append(allocator, Directive{ .set = flags });
 }
 
-fn parseValue(allocator: std.mem.Allocator, s: []const u8) !OptionValue {
+pub fn parseValue(allocator: std.mem.Allocator, s: []const u8) !OptionValue {
     // Boolean values
     if (std.mem.eql(u8, s, "true") or std.mem.eql(u8, s, "on")) return OptionValue{ .flag = true };
     if (std.mem.eql(u8, s, "false") or std.mem.eql(u8, s, "off")) return OptionValue{ .flag = false };
@@ -221,15 +224,95 @@ fn parseValue(allocator: std.mem.Allocator, s: []const u8) !OptionValue {
     return OptionValue{ .string = try allocator.dupe(u8, s) };
 }
 
+fn trimLeft(slice: []const u8, chars: []const u8) []const u8 {
+    var start: usize = 0;
+    while (start < slice.len) : (start += 1) {
+        var found = false;
+        for (chars) |c| {
+            if (slice[start] == c) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) break;
+    }
+    return slice[start..];
+}
+
 fn parseBindKey(allocator: std.mem.Allocator, args: []const u8, result: *ParseResult) !void {
     const trimmed = std.mem.trim(u8, args, " \t");
-    const msg = try std.fmt.allocPrint(allocator, "bind-key: {s}", .{trimmed});
-    try result.errors.append(allocator, msg);
+    var remaining = trimmed;
+    var key_table: ?[]const u8 = null;
+    var reverse = false;
+
+    // Parse flags
+    while (remaining.len > 0 and remaining[0] == '-') {
+        if (std.mem.startsWith(u8, remaining, "-T")) {
+            remaining = trimLeft(remaining[2..], " \t");
+            const space = std.mem.indexOfAny(u8, remaining, " \t") orelse return error.InvalidBind;
+            key_table = try allocator.dupe(u8, remaining[0..space]);
+            remaining = trimLeft(remaining[space..], " \t");
+        } else if (std.mem.startsWith(u8, remaining, "-n")) {
+            key_table = try allocator.dupe(u8, "root");
+            remaining = trimLeft(remaining[2..], " \t");
+        } else if (std.mem.startsWith(u8, remaining, "-r")) {
+            reverse = true;
+            remaining = trimLeft(remaining[2..], " \t");
+        } else {
+            break;
+        }
+    }
+
+    // Now remaining contains: "key command"
+    const space = std.mem.indexOfAny(u8, remaining, " \t") orelse return error.InvalidBind;
+    const key_str = remaining[0..space];
+    const cmd_str = trimLeft(remaining[space..], " \t");
+
+    const parsed_key = try key.parseKeyName(key_str);
+    const command = try allocator.dupe(u8, cmd_str);
+
+    try result.directives.append(allocator, Directive{
+        .bind_key = BindKey{
+            .flags = .{
+                .reverse = reverse,
+                .key_table = key_table,
+            },
+            .key = parsed_key,
+            .command = command,
+        },
+    });
 }
 
 fn parseUnbindKey(allocator: std.mem.Allocator, args: []const u8, result: *ParseResult) !void {
-    const msg = try std.fmt.allocPrint(allocator, "unbind-key: {s}", .{args});
-    try result.errors.append(allocator, msg);
+    const trimmed = std.mem.trim(u8, args, " \t");
+    var remaining = trimmed;
+    var key_table: ?[]const u8 = null;
+
+    // Parse flags
+    while (remaining.len > 0 and remaining[0] == '-') {
+        if (std.mem.startsWith(u8, remaining, "-T")) {
+            remaining = trimLeft(remaining[2..], " \t");
+            const space = std.mem.indexOfAny(u8, remaining, " \t") orelse return error.InvalidBind;
+            key_table = try allocator.dupe(u8, remaining[0..space]);
+            remaining = trimLeft(remaining[space..], " \t");
+        } else if (std.mem.startsWith(u8, remaining, "-n")) {
+            key_table = try allocator.dupe(u8, "root");
+            remaining = trimLeft(remaining[2..], " \t");
+        } else {
+            break;
+        }
+    }
+
+    const parsed_key = try key.parseKeyName(remaining);
+
+    try result.directives.append(allocator, Directive{
+        .unbind_key = UnbindKey{
+            .flags = .{
+                .key_table = key_table,
+            },
+            .key = parsed_key,
+        },
+    });
 }
 
 fn parseSetEnv(allocator: std.mem.Allocator, args: []const u8, result: *ParseResult) !void {
@@ -407,4 +490,31 @@ test "if-shell directive" {
     try testing.expect(d == .if_shell);
     try testing.expectEqualStrings("test -f /tmp/x", d.if_shell.condition);
     try testing.expectEqualStrings("set -g mouse on", d.if_shell.command);
+}
+
+test "bind-key directive" {
+    var result = try parseConfig(testing.allocator, "bind-key -n C-b split-window -h");
+    defer result.deinit(testing.allocator);
+
+    try testing.expectEqual(@as(usize, 0), result.errors.items.len);
+    try testing.expectEqual(@as(usize, 1), result.directives.items.len);
+    const d = result.directives.items[0];
+    try testing.expect(d == .bind_key);
+    try testing.expectEqualStrings("root", d.bind_key.flags.key_table.?);
+    try testing.expectEqual(@as(u21, 'b'), d.bind_key.key.char.code);
+    try testing.expect(d.bind_key.key.char.mod.ctrl);
+    try testing.expectEqualStrings("split-window -h", d.bind_key.command);
+}
+
+test "unbind-key directive" {
+    var result = try parseConfig(testing.allocator, "unbind-key -n C-b");
+    defer result.deinit(testing.allocator);
+
+    try testing.expectEqual(@as(usize, 0), result.errors.items.len);
+    try testing.expectEqual(@as(usize, 1), result.directives.items.len);
+    const d = result.directives.items[0];
+    try testing.expect(d == .unbind_key);
+    try testing.expectEqualStrings("root", d.unbind_key.flags.key_table.?);
+    try testing.expectEqual(@as(u21, 'b'), d.unbind_key.key.char.code);
+    try testing.expect(d.unbind_key.key.char.mod.ctrl);
 }

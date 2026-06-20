@@ -13,10 +13,12 @@ pub const Display = struct {
 
     pub fn enterAltScreen(self: Display) !void {
         if (c.write(self.fd, "\x1b[?1049h", 8) < 0) return error.WriteFailed;
+        if (c.write(self.fd, "\x1b[?1000h\x1b[?1006h", 16) < 0) return error.WriteFailed;
         if (c.write(self.fd, "\x1b[?25l", 6) < 0) return error.WriteFailed;
     }
 
     pub fn exitAltScreen(self: Display) !void {
+        _ = c.write(self.fd, "\x1b[?1000l\x1b[?1006l", 16);
         _ = c.write(self.fd, "\x1b[?25h", 6);
         _ = c.write(self.fd, "\x1b[?1049l", 8);
     }

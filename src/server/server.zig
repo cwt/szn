@@ -13,6 +13,13 @@ const message_reader = @import("message_reader.zig");
 const MessageReader = message_reader.MessageReader;
 const protocol = @import("protocol.zig");
 
+extern "c" fn fopen(filename: [*c]const u8, modes: [*c]const u8) ?*anyopaque;
+extern "c" fn fclose(stream: ?*anyopaque) c_int;
+extern "c" fn fseek(stream: ?*anyopaque, offset: c_long, whence: c_int) c_int;
+extern "c" fn ftell(stream: ?*anyopaque) c_long;
+extern "c" fn fread(ptr: ?*anyopaque, size: usize, n: usize, stream: ?*anyopaque) usize;
+extern "c" fn access(pathname: [*c]const u8, mode: c_int) c_int;
+
 pub const Server = struct {
     allocator: std.mem.Allocator,
     sessions: std.ArrayListUnmanaged(*Session) = .empty,
@@ -26,22 +33,39 @@ pub const Server = struct {
     dispatcher: @import("../key_binding.zig").KeyDispatcher,
     stdin_fd: ?i32 = null,
     loop: Loop = .{},
+    global_options: @import("../options.zig").Options,
+    global_window_options: @import("../options.zig").Options,
+    response_buf: std.ArrayList(u8),
 
     pub fn init(allocator: std.mem.Allocator) !Server {
         const key_binding = @import("../key_binding.zig");
         const key_mod = @import("../key.zig");
-        const prefix = key_mod.Key{ .char = .{ .code = 'b', .mod = .{ .ctrl = true } } };
+        const options_mod = @import("../options.zig");
+        var global_options = try options_mod.Options.init(allocator, options_mod.SESSION_OPTIONS);
+        errdefer global_options.deinit();
+
+        var global_window_options = try options_mod.Options.init(allocator, options_mod.WINDOW_OPTIONS);
+        errdefer global_window_options.deinit();
+
+        const prefix_val = global_options.get("prefix") orelse options_mod.OptionValue{ .key = key_mod.Key{ .char = .{ .code = 'b', .mod = .{ .ctrl = true } } } };
+        const prefix = prefix_val.key;
+
         var dispatcher = key_binding.KeyDispatcher.init(allocator, prefix);
+        errdefer dispatcher.deinit();
         try key_binding.loadDefaults(&dispatcher.prefix_table);
 
         return Server{
             .allocator = allocator,
             .client_readers = std.AutoHashMap(i32, MessageReader).init(allocator),
             .dispatcher = dispatcher,
+            .global_options = global_options,
+            .global_window_options = global_window_options,
+            .response_buf = .empty,
         };
     }
 
     pub fn deinit(self: *Server) void {
+        self.response_buf.deinit(self.allocator);
         self.loop.deinit(self.allocator);
         for (self.sessions.items) |s| {
             s.deinit(self.allocator);
@@ -57,6 +81,8 @@ pub const Server = struct {
         }
         self.client_readers.deinit();
         self.dispatcher.deinit();
+        self.global_options.deinit();
+        self.global_window_options.deinit();
     }
 
     pub fn listen(self: *Server) !void {
@@ -257,40 +283,103 @@ pub const Server = struct {
         const pty = &(pane.pty orelse return);
 
         var i: usize = 0;
+        var esc_buf = std.ArrayList(u8).init(self.allocator);
+        defer esc_buf.deinit();
+
         while (i < n) : (i += 1) {
             const byte = buf[i];
-            if (self.dispatcher.prefix_state == .normal) {
+
+            if (self.input_reader.state != .ground or byte == 0x1b) {
+                try esc_buf.append(byte);
                 if (self.input_reader.feed(byte)) |event| {
+                    var handled = false;
                     switch (event) {
                         .key => |k| {
-                            if (@import("../key_binding.zig").keysEqual(k, self.dispatcher.prefix)) {
-                                self.dispatcher.prefix_state = .prefix_seen;
-                                self.input_reader.reset();
-                                continue;
+                            if (self.dispatcher.prefix_state == .normal) {
+                                if (@import("../key_binding.zig").keysEqual(k, self.dispatcher.prefix)) {
+                                    self.dispatcher.prefix_state = .prefix_seen;
+                                    handled = true;
+                                }
+                            } else {
+                                self.dispatcher.prefix_state = .normal;
+                                if (self.dispatcher.prefix_table.lookup(k)) |action| {
+                                    self.executeAction(action) catch {};
+                                }
+                                handled = true;
+                            }
+                        },
+                        .mouse => |m| {
+                            const mouse_opt = session.options.asFlag("mouse") orelse false;
+                            if (mouse_opt and m.button == .left) {
+                                self.handleMouseFocus(m.x, m.y) catch {};
+                                handled = true;
                             }
                         },
                         else => {},
                     }
-                    pty.writeInput(&[_]u8{byte}) catch {};
-                } else {
-                    pty.writeInput(&[_]u8{byte}) catch {};
+
+                    if (!handled) {
+                        pty.writeInput(esc_buf.items) catch {};
+                    }
+                    esc_buf.clearRetainingCapacity();
+                } else if (self.input_reader.state == .ground) {
+                    pty.writeInput(esc_buf.items) catch {};
+                    esc_buf.clearRetainingCapacity();
                 }
             } else {
-                if (self.input_reader.feed(byte)) |event| {
-                    self.dispatcher.prefix_state = .normal;
-                    switch (event) {
-                        .key => |k| {
-                            if (self.dispatcher.prefix_table.lookup(k)) |action| {
-                                self.executeAction(action) catch |err| {
-                                    std.log.err("action failed: {any}", .{err});
-                                };
-                            }
-                        },
-                        else => {},
+                if (self.dispatcher.prefix_state == .normal) {
+                    pty.writeInput(&[_]u8{byte}) catch {};
+                } else {
+                    if (self.input_reader.feed(byte)) |event| {
+                        self.dispatcher.prefix_state = .normal;
+                        switch (event) {
+                            .key => |k| {
+                                if (self.dispatcher.prefix_table.lookup(k)) |action| {
+                                    self.executeAction(action) catch {};
+                                }
+                            },
+                            else => {},
+                        }
                     }
                     self.input_reader.reset();
                 }
             }
+        }
+    }
+
+    pub fn handleMouseFocus(self: *Server, x: u32, y: u32) !void {
+        const session = self.activeSession() orelse return;
+        const window = session.active_window orelse return;
+        const layout = &window.layout;
+        const found_pane = self.findPaneAtNode(layout.root, x, y, 0, 0, layout.width, layout.height) orelse return;
+        window.setActivePane(found_pane);
+    }
+
+    fn findPaneAtNode(self: *Server, node: *const @import("../layout.zig").Node, x: u32, y: u32, lx: u32, ly: u32, lw: u32, lh: u32) ?*Pane {
+        switch (node.*) {
+            .leaf => |pane| {
+                if (x >= lx and x < lx + lw and y >= ly and y < ly + lh) {
+                    return pane;
+                }
+                return null;
+            },
+            .split => |s| {
+                if (s.direction == .horizontal) {
+                    const split_w = @max(1, @as(u32, @intFromFloat(@as(f64, @floatFromInt(lw)) * s.proportion)));
+                    if (x < lx + split_w) {
+                        return self.findPaneAtNode(s.a, x, y, lx, ly, split_w, lh);
+                    } else {
+                        return self.findPaneAtNode(s.b, x, y, lx + split_w, ly, lw - split_w, lh);
+                    }
+                } else {
+                    const split_h = @max(1, @as(u32, @intFromFloat(@as(f64, @floatFromInt(lh)) * s.proportion)));
+                    if (y < ly + split_h) {
+                        return self.findPaneAtNode(s.a, x, y, lx, ly, lw, split_h);
+                    } else {
+                        return self.findPaneAtNode(s.b, x, y, lx, ly + split_h, lw, lh - split_h);
+                    }
+                }
+            },
         }
     }
 
@@ -360,7 +449,7 @@ pub const Server = struct {
 
     pub fn newSession(self: *Server, name: []const u8, width: u32, height: u32) !*Session {
         const session = try self.allocator.create(Session);
-        session.* = try Session.init(self.allocator, self.next_session_id, name, width, height);
+        session.* = try Session.init(self.allocator, self.next_session_id, name, width, height, &self.global_options, &self.global_window_options);
         self.next_session_id += 1;
         try self.sessions.append(self.allocator, session);
         return session;
@@ -392,6 +481,116 @@ pub const Server = struct {
             if (std.mem.eql(u8, s.name, name)) return s;
         }
         return null;
+    }
+
+    pub fn applyDirectives(self: *Server, parsed: *const @import("../cfg.zig").ParseResult) anyerror!void {
+        const key_binding = @import("../key_binding.zig");
+        for (parsed.directives.items) |d| {
+            switch (d) {
+                .set => |s| {
+                    self.global_options.set(s.option, s.value) catch |err| {
+                        if (err == error.UnknownOption) {
+                            try self.global_window_options.set(s.option, s.value);
+                        } else {
+                            return err;
+                        }
+                    };
+                    if (std.mem.eql(u8, s.option, "prefix")) {
+                        if (s.value == .key) {
+                            self.dispatcher.prefix = s.value.key;
+                        }
+                    }
+                },
+                .bind_key => |b| {
+                    const action = key_binding.mapCommandToAction(b.command) orelse continue;
+                    const table = if (b.flags.key_table) |kt| blk: {
+                        if (std.mem.eql(u8, kt, "root")) {
+                            break :blk &self.dispatcher.root_table;
+                        } else {
+                            break :blk &self.dispatcher.prefix_table;
+                        }
+                    } else &self.dispatcher.prefix_table;
+                    try table.bind(b.key, action);
+                },
+                .unbind_key => |u| {
+                    const table = if (u.flags.key_table) |kt| blk: {
+                        if (std.mem.eql(u8, kt, "root")) {
+                            break :blk &self.dispatcher.root_table;
+                        } else {
+                            break :blk &self.dispatcher.prefix_table;
+                        }
+                    } else &self.dispatcher.prefix_table;
+                    table.unbind(u.key);
+                },
+                .set_environment => {},
+                .source_file => |path| {
+                    try self.loadConfigFile(path);
+                },
+                .if_shell => {},
+            }
+        }
+    }
+
+    pub fn loadConfigFile(self: *Server, path: []const u8) anyerror!void {
+        var resolved_path: []const u8 = path;
+        var free_path = false;
+        if (std.mem.startsWith(u8, path, "~/")) {
+            if (std.c.getenv("HOME")) |home_ptr| {
+                const home = std.mem.span(home_ptr);
+                resolved_path = try std.fs.path.join(self.allocator, &[_][]const u8{ home, path[2..] });
+                free_path = true;
+            }
+        }
+        defer if (free_path) self.allocator.free(resolved_path);
+
+        const resolved_path_z = try self.allocator.dupeZ(u8, resolved_path);
+        defer self.allocator.free(resolved_path_z);
+
+        const f = fopen(resolved_path_z.ptr, "r") orelse return;
+        defer _ = fclose(f);
+
+        _ = fseek(f, 0, 2); // SEEK_END = 2
+        const size = ftell(f);
+        if (size < 0) return error.ReadFailed;
+        _ = fseek(f, 0, 0); // SEEK_SET = 0
+
+        const content = try self.allocator.alloc(u8, @intCast(size));
+        defer self.allocator.free(content);
+
+        const read_bytes = fread(content.ptr, 1, content.len, f);
+        if (read_bytes == 0 and content.len > 0) return error.ReadFailed;
+
+        const cfg_mod = @import("../cfg.zig");
+        var parsed = try cfg_mod.parseConfig(self.allocator, content[0..read_bytes]);
+        defer parsed.deinit(self.allocator);
+
+        try self.applyDirectives(&parsed);
+    }
+
+    pub fn loadDefaultConfig(self: *Server) !void {
+        if (std.c.getenv("HOME")) |home_ptr| {
+            const home = std.mem.span(home_ptr);
+            const zmux_path = try std.fs.path.join(self.allocator, &[_][]const u8{ home, ".zmux.conf" });
+            defer self.allocator.free(zmux_path);
+
+            const zmux_path_z = try self.allocator.dupeZ(u8, zmux_path);
+            defer self.allocator.free(zmux_path_z);
+
+            if (access(zmux_path_z.ptr, 0) == 0) {
+                try self.loadConfigFile(zmux_path);
+                return;
+            }
+
+            const tmux_path = try std.fs.path.join(self.allocator, &[_][]const u8{ home, ".tmux.conf" });
+            defer self.allocator.free(tmux_path);
+
+            const tmux_path_z = try self.allocator.dupeZ(u8, tmux_path);
+            defer self.allocator.free(tmux_path_z);
+
+            if (access(tmux_path_z.ptr, 0) == 0) {
+                try self.loadConfigFile(tmux_path);
+            }
+        }
     }
 };
 

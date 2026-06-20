@@ -46,6 +46,18 @@ pub const Options = struct {
         return Options{ .allocator = allocator, .map = map, .table = table };
     }
 
+    pub fn clone(self: *const Options, allocator: std.mem.Allocator) !Options {
+        var new_map = std.StringHashMap(OptionValue).init(allocator);
+        var it = self.map.iterator();
+        while (it.next()) |entry| {
+            const name = try allocator.dupe(u8, entry.key_ptr.*);
+            errdefer allocator.free(name);
+            const val = try cloneValue(allocator, entry.value_ptr.*);
+            try new_map.put(name, val);
+        }
+        return Options{ .allocator = allocator, .map = new_map, .table = self.table };
+    }
+
     pub fn deinit(self: *Options) void {
         var it = self.map.iterator();
         while (it.next()) |entry| {

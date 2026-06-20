@@ -273,6 +273,77 @@ fn prependModifiers(mod: Modifier, name: []const u8, buf: []u8) []const u8 {
     return buf[0 .. pos + name.len];
 }
 
+pub fn parseKeyName(name: []const u8) !Key {
+    if (name.len == 0) return error.UnknownKey;
+    
+    var remaining = name;
+    var mod = Modifier{};
+    
+    // Parse modifiers
+    while (remaining.len > 2 and remaining[1] == '-') {
+        switch (remaining[0]) {
+            'C', 'c' => mod.ctrl = true,
+            'M', 'm' => mod.alt = true,
+            'S', 's' => mod.shift = true,
+            else => return error.UnknownKey,
+        }
+        remaining = remaining[2..];
+    }
+    
+    if (remaining.len == 0) return error.UnknownKey;
+    
+    // Check for named keys
+    if (std.mem.eql(u8, remaining, "Space")) return Key{ .char = .{ .code = ' ', .mod = mod } };
+    if (std.mem.eql(u8, remaining, "BSpace")) return Key{ .special = .{ .key = .backspace, .mod = mod } };
+    if (std.mem.eql(u8, remaining, "Tab")) return Key{ .special = .{ .key = .tab, .mod = mod } };
+    if (std.mem.eql(u8, remaining, "Enter")) return Key{ .special = .{ .key = .enter, .mod = mod } };
+    if (std.mem.eql(u8, remaining, "Escape")) return Key{ .special = .{ .key = .escape, .mod = mod } };
+    if (std.mem.eql(u8, remaining, "Home")) return Key{ .special = .{ .key = .home, .mod = mod } };
+    if (std.mem.eql(u8, remaining, "End")) return Key{ .special = .{ .key = .end, .mod = mod } };
+    if (std.mem.eql(u8, remaining, "PageUp")) return Key{ .special = .{ .key = .page_up, .mod = mod } };
+    if (std.mem.eql(u8, remaining, "PageDown")) return Key{ .special = .{ .key = .page_down, .mod = mod } };
+    if (std.mem.eql(u8, remaining, "Insert")) return Key{ .special = .{ .key = .insert, .mod = mod } };
+    if (std.mem.eql(u8, remaining, "Delete")) return Key{ .special = .{ .key = .delete_, .mod = mod } };
+    
+    if (std.mem.eql(u8, remaining, "Up")) return Key{ .arrow = .{ .key = .up, .mod = mod } };
+    if (std.mem.eql(u8, remaining, "Down")) return Key{ .arrow = .{ .key = .down, .mod = mod } };
+    if (std.mem.eql(u8, remaining, "Left")) return Key{ .arrow = .{ .key = .left, .mod = mod } };
+    if (std.mem.eql(u8, remaining, "Right")) return Key{ .arrow = .{ .key = .right, .mod = mod } };
+    
+    if (std.mem.eql(u8, remaining, "F1")) return Key{ .function = .{ .key = .f1, .mod = mod } };
+    if (std.mem.eql(u8, remaining, "F2")) return Key{ .function = .{ .key = .f2, .mod = mod } };
+    if (std.mem.eql(u8, remaining, "F3")) return Key{ .function = .{ .key = .f3, .mod = mod } };
+    if (std.mem.eql(u8, remaining, "F4")) return Key{ .function = .{ .key = .f4, .mod = mod } };
+    if (std.mem.eql(u8, remaining, "F5")) return Key{ .function = .{ .key = .f5, .mod = mod } };
+    if (std.mem.eql(u8, remaining, "F6")) return Key{ .function = .{ .key = .f6, .mod = mod } };
+    if (std.mem.eql(u8, remaining, "F7")) return Key{ .function = .{ .key = .f7, .mod = mod } };
+    if (std.mem.eql(u8, remaining, "F8")) return Key{ .function = .{ .key = .f8, .mod = mod } };
+    if (std.mem.eql(u8, remaining, "F9")) return Key{ .function = .{ .key = .f9, .mod = mod } };
+    if (std.mem.eql(u8, remaining, "F10")) return Key{ .function = .{ .key = .f10, .mod = mod } };
+    if (std.mem.eql(u8, remaining, "F11")) return Key{ .function = .{ .key = .f11, .mod = mod } };
+    if (std.mem.eql(u8, remaining, "F12")) return Key{ .function = .{ .key = .f12, .mod = mod } };
+    
+    if (remaining.len == 1) {
+        return Key{ .char = .{ .code = remaining[0], .mod = mod } };
+    }
+    
+    return error.UnknownKey;
+}
+
+test "parseKeyName basic" {
+    const k1 = try parseKeyName("C-b");
+    try testing.expectEqual(@as(u21, 'b'), k1.char.code);
+    try testing.expect(k1.char.mod.ctrl);
+
+    const k2 = try parseKeyName("M-S-Left");
+    try testing.expectEqual(.left, k2.arrow.key);
+    try testing.expect(k2.arrow.mod.alt);
+    try testing.expect(k2.arrow.mod.shift);
+
+    const k3 = try parseKeyName("Escape");
+    try testing.expectEqual(.escape, k3.special.key);
+}
+
 // ── Tests ──
 
 test "parse single char" {
