@@ -59,6 +59,8 @@ pub fn main() !void {
     raw.setRaw() catch {
         return;
     };
+    // Drain any stale input that might have been buffered before raw mode
+    _ = c.tcflush(stdin_fd, c.TCIFLUSH);
     defer raw.deinit();
 
     var display = Display{
