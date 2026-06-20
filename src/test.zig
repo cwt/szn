@@ -18,6 +18,8 @@ comptime {
     _ = @import("tty/tty_key.zig");
     _ = @import("input.zig");
     _ = @import("server/protocol.zig");
+    _ = @import("server/message_reader.zig");
+    _ = @import("server/dispatch.zig");
     _ = @import("server/server.zig");
     _ = @import("server/socket.zig");
     _ = @import("server/loop.zig");
