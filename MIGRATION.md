@@ -58,12 +58,12 @@ Phase 2:  Key + Session + Window + Layout (zig build test: 60+ tests, no I/O)
 Phase 3:  Options + Config                (zig build test: 80+ tests, no I/O)
 Phase 4:  TTY output engine               (zig build test: 100+ tests, strings only)
 Phase 5:  TTY input parsing               (zig build test: 120+ tests, strings only)
-Phase 6:  Input escape parser             (zig build test: 200+ tests, strings only)
-Phase 7:  Format + Status                 (zig build test: 220+ tests, strings only)
-Phase 8:  Mode + Key bindings             (zig build test: 250+ tests, strings only)
-Phase 9:  Client-server IPC               (zig build test: 260+ tests, integration)
-Phase 10: Commands                        (zig build test: 300+ tests, integration)
-Phase 11: Full integration                (zig build test: 300+ tests, full stack)
+Phase 6:  Input escape parser             (zig build test: 240+ tests, strings only)
+Phase 7:  Format + Status                 (zig build test: 270+ tests, strings only)
+Phase 8:  Mode + Key bindings             (zig build test: 300+ tests, strings only)
+Phase 9:  Client-server IPC               (zig build test: 330+ tests, integration)
+Phase 10: Commands                        (zig build test: 450+ tests, integration)
+Phase 11: Full integration                (zig build test: 490+ tests, full stack)
 ```
 
 ---
@@ -670,7 +670,7 @@ Replaces `client.c` (~1,500 lines of C).
 ### Phase 9 Acceptance
 ```
 $ zig build test
-All 315 tests passed.
+All 330 tests passed.
 ```
 
 ---
@@ -713,7 +713,7 @@ Misc:         show-messages, list-keys, list-commands
 ### Phase 10 Acceptance
 ```
 $ zig build test
-All 365 tests passed.
+All 450 tests passed.
 ```
 
 ---
@@ -734,6 +734,12 @@ test "full session lifecycle" {
     const output = try zmux.sendCommand("list-panes -a -F '#{pane_id}'");
     try testing.expectEqualStrings("%0\n%1\n", output);
 }
+```
+
+### Phase 11 Acceptance
+```
+$ zig build test
+All 490 tests passed.
 ```
 
 ---
