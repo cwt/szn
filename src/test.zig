@@ -12,6 +12,8 @@ comptime {
     _ = @import("cfg.zig");
     _ = @import("format.zig");
     _ = @import("status.zig");
+    _ = @import("key_binding.zig");
+    _ = @import("mode_copy.zig");
     _ = @import("tty/tty.zig");
     _ = @import("tty/tty_key.zig");
     _ = @import("input.zig");
