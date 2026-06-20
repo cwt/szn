@@ -9,6 +9,9 @@ const Pane = window_mod.Pane;
 const loop_mod = @import("loop.zig");
 const Loop = loop_mod.Loop;
 const socket_mod = @import("socket.zig");
+const message_reader = @import("message_reader.zig");
+const MessageReader = message_reader.MessageReader;
+const protocol = @import("protocol.zig");
 
 pub const Server = struct {
     allocator: std.mem.Allocator,
@@ -18,11 +21,24 @@ pub const Server = struct {
     next_pane_id: u32 = 1,
     listener_fd: ?i32 = null,
     client_fds: std.ArrayListUnmanaged(i32) = .empty,
+    client_readers: std.AutoHashMap(i32, MessageReader),
+    input_reader: @import("../tty/tty_key.zig").InputReader = .{},
+    dispatcher: @import("../key_binding.zig").KeyDispatcher,
     stdin_fd: ?i32 = null,
     loop: Loop = .{},
 
     pub fn init(allocator: std.mem.Allocator) !Server {
-        return Server{ .allocator = allocator };
+        const key_binding = @import("../key_binding.zig");
+        const key_mod = @import("../key.zig");
+        const prefix = key_mod.Key{ .char = .{ .code = 'b', .mod = .{ .ctrl = true } } };
+        var dispatcher = key_binding.KeyDispatcher.init(allocator, prefix);
+        try key_binding.loadDefaults(&dispatcher.prefix_table);
+
+        return Server{
+            .allocator = allocator,
+            .client_readers = std.AutoHashMap(i32, MessageReader).init(allocator),
+            .dispatcher = dispatcher,
+        };
     }
 
     pub fn deinit(self: *Server) void {
@@ -39,6 +55,8 @@ pub const Server = struct {
         if (self.listener_fd) |fd| {
             socket_mod.closeAndUnlink(fd);
         }
+        self.client_readers.deinit();
+        self.dispatcher.deinit();
     }
 
     pub fn listen(self: *Server) !void {
@@ -130,6 +148,101 @@ pub const Server = struct {
         return true;
     }
 
+    pub fn setupPane(self: *Server, pane: *Pane) !void {
+        try pane.spawn(self.allocator, null);
+        try self.watchPanePty(pane);
+    }
+
+    pub fn executeAction(self: *Server, action: @import("../key_binding.zig").Action) !void {
+        const session = self.activeSession() orelse return;
+        const window = session.active_window orelse return;
+        const pane = window.active_pane orelse return;
+
+        switch (action) {
+            .new_window => {
+                const win = try session.newWindow(self.allocator, "window");
+                if (win.active_pane) |p| {
+                    try self.setupPane(p);
+                }
+            },
+            .split_horizontal => {
+                const new_pane = try window.splitPane(self.allocator, pane, false, 0.5);
+                try self.setupPane(new_pane);
+            },
+            .split_vertical => {
+                const new_pane = try window.splitPane(self.allocator, pane, true, 0.5);
+                try self.setupPane(new_pane);
+            },
+            .kill_pane => {
+                if (window.panes.items.len > 1) {
+                    window.removePane(self.allocator, pane);
+                }
+            },
+            .next_window => {
+                if (session.windows.items.len > 1) {
+                    for (session.windows.items, 0..) |w, idx| {
+                        if (w == window) {
+                            const next = (idx + 1) % session.windows.items.len;
+                            session.setActiveWindow(session.windows.items[next]);
+                            break;
+                        }
+                    }
+                }
+            },
+            .prev_window => {
+                if (session.windows.items.len > 1) {
+                    for (session.windows.items, 0..) |w, idx| {
+                        if (w == window) {
+                            const prev = if (idx == 0) session.windows.items.len - 1 else idx - 1;
+                            session.setActiveWindow(session.windows.items[prev]);
+                            break;
+                        }
+                    }
+                }
+            },
+            .last_window => {
+                if (session.windows.items.len > 1) {
+                    for (session.windows.items) |w| {
+                        if (w != window) {
+                            session.setActiveWindow(w);
+                            break;
+                        }
+                    }
+                }
+            },
+            .rotate_window => {
+                if (window.panes.items.len > 1) {
+                    const first = window.panes.items[0];
+                    for (0..window.panes.items.len - 1) |i| {
+                        window.panes.items[i] = window.panes.items[i + 1];
+                    }
+                    window.panes.items[window.panes.items.len - 1] = first;
+                }
+            },
+            .select_pane_left, .select_pane_right, .select_pane_up, .select_pane_down => {
+                if (window.panes.items.len > 1) {
+                    for (window.panes.items, 0..) |p, idx| {
+                        if (p == pane) {
+                            const next = (idx + 1) % window.panes.items.len;
+                            window.setActivePane(window.panes.items[next]);
+                            break;
+                        }
+                    }
+                }
+            },
+            .detach => {
+                self.loop.running = false;
+            },
+            .select_window_0, .select_window_1, .select_window_2, .select_window_3, .select_window_4, .select_window_5, .select_window_6, .select_window_7, .select_window_8, .select_window_9 => {
+                const idx = @intFromEnum(action) - @intFromEnum(@import("../key_binding.zig").Action.select_window_0);
+                if (idx < session.windows.items.len) {
+                    session.setActiveWindow(session.windows.items[idx]);
+                }
+            },
+            else => {},
+        }
+    }
+
     fn handleStdin(self: *Server) !void {
         var buf: [4096]u8 = undefined;
         const n = c.read(std.c.STDIN_FILENO, &buf, buf.len);
@@ -137,14 +250,47 @@ pub const Server = struct {
             self.loop.running = false;
             return;
         }
+
         const session = self.activeSession() orelse return;
         const window = session.active_window orelse return;
         const pane = window.active_pane orelse return;
-        if (pane.pty) |*pty| {
-            pty.writeInput(buf[0..@intCast(n)]) catch |err| {
-                if (err == error.WriteFailed) return;
-                return err;
-            };
+        const pty = &(pane.pty orelse return);
+
+        var i: usize = 0;
+        while (i < n) : (i += 1) {
+            const byte = buf[i];
+            if (self.dispatcher.prefix_state == .normal) {
+                if (self.input_reader.feed(byte)) |event| {
+                    switch (event) {
+                        .key => |k| {
+                            if (@import("../key_binding.zig").keysEqual(k, self.dispatcher.prefix)) {
+                                self.dispatcher.prefix_state = .prefix_seen;
+                                self.input_reader.reset();
+                                continue;
+                            }
+                        },
+                        else => {},
+                    }
+                    pty.writeInput(&[_]u8{byte}) catch {};
+                } else {
+                    pty.writeInput(&[_]u8{byte}) catch {};
+                }
+            } else {
+                if (self.input_reader.feed(byte)) |event| {
+                    self.dispatcher.prefix_state = .normal;
+                    switch (event) {
+                        .key => |k| {
+                            if (self.dispatcher.prefix_table.lookup(k)) |action| {
+                                self.executeAction(action) catch |err| {
+                                    std.log.err("action failed: {any}", .{err});
+                                };
+                            }
+                        },
+                        else => {},
+                    }
+                    self.input_reader.reset();
+                }
+            }
         }
     }
 
@@ -156,6 +302,7 @@ pub const Server = struct {
     fn handleAccept(self: *Server) !void {
         const fd = try socket_mod.acceptClient(self.listener_fd.?);
         try self.client_fds.append(self.allocator, fd);
+        try self.client_readers.put(fd, .{});
         try self.loop.addFd(self.allocator, fd, @as(i16, @intCast(std.posix.POLL.IN)), @ptrCast(self));
     }
 
@@ -169,7 +316,34 @@ pub const Server = struct {
             self.removeClient(fd);
             return;
         }
-        _ = buf[0..n];
+
+        const reader = self.client_readers.getPtr(fd) orelse return;
+        reader.feed(buf[0..n]);
+
+        while (try reader.tryParse()) |pkt| {
+            defer reader.consume(pkt);
+            const msg_type = @as(protocol.MessageType, @enumFromInt(pkt.header.msg_type));
+            switch (msg_type) {
+                .command => {
+                    const dispatch = @import("dispatch.zig");
+                    var result = dispatch.dispatchCommand(self.allocator, self, pkt.data);
+                    defer result.deinit();
+                    try dispatch.sendResponse(fd, &result);
+                },
+                .identify_term => {
+                    // Just acknowledge identify with a ready packet
+                    const reply = protocol.Packet.make(.ready, "ok");
+                    var reply_buf: [128]u8 = undefined;
+                    const serialized = reply.serialize(&reply_buf);
+                    const written = std.posix.write(fd, serialized) catch |err| {
+                        self.removeClient(fd);
+                        return err;
+                    };
+                    _ = written;
+                },
+                else => {},
+            }
+        }
     }
 
     fn removeClient(self: *Server, fd: i32) void {
@@ -180,6 +354,7 @@ pub const Server = struct {
                 break;
             }
         }
+        _ = self.client_readers.remove(fd);
         _ = c.close(fd);
     }
 

@@ -100,6 +100,7 @@ pub const Window = struct {
     width: u32,
     height: u32,
     next_pane_id: u32 = 1,
+    layout: @import("layout.zig").Layout,
 
     pub fn init(allocator: std.mem.Allocator, id: u32, name: []const u8, width: u32, height: u32) !Window {
         var window = Window{
@@ -107,21 +108,20 @@ pub const Window = struct {
             .name = try allocator.dupe(u8, name),
             .width = width,
             .height = height,
+            .layout = undefined,
         };
         var pane = try allocator.create(Pane);
         pane.* = try Pane.init(allocator, 0, width, height);
         pane.active = true;
         try window.panes.append(allocator, pane);
         window.active_pane = pane;
+        window.layout = try @import("layout.zig").Layout.init(allocator, pane, width, height);
         return window;
     }
 
     pub fn deinit(self: *Window, allocator: std.mem.Allocator) void {
         allocator.free(self.name);
-        for (self.panes.items) |pane| {
-            pane.deinit();
-            allocator.destroy(pane);
-        }
+        self.layout.deinit();
         self.panes.deinit(allocator);
     }
 
@@ -134,6 +134,9 @@ pub const Window = struct {
     }
 
     pub fn addPane(self: *Window, allocator: std.mem.Allocator) !*Pane {
+        if (self.active_pane) |pane| {
+            return self.splitPane(allocator, pane, false, 0.5);
+        }
         const new_pane = try allocator.create(Pane);
         const pane_id = self.next_pane_id;
         self.next_pane_id += 1;
@@ -143,24 +146,23 @@ pub const Window = struct {
     }
 
     pub fn splitPane(self: *Window, allocator: std.mem.Allocator, pane: *Pane, vertical: bool, proportion: f64) !*Pane {
-        _ = pane;
-        _ = vertical;
-        _ = proportion;
-        const new_pane = try allocator.create(Pane);
-        new_pane.* = try Pane.init(allocator, self.next_pane_id, self.width, self.height);
+        const dir = if (vertical) @import("layout.zig").SplitDir.vertical else @import("layout.zig").SplitDir.horizontal;
+        const new_pane = try self.layout.splitPane(allocator, pane, dir, proportion);
+        new_pane.id = self.next_pane_id;
         self.next_pane_id += 1;
         try self.panes.append(allocator, new_pane);
+        self.setActivePane(new_pane);
         return new_pane;
     }
 
     pub fn removePane(self: *Window, allocator: std.mem.Allocator, pane: *Pane) void {
+        _ = allocator;
         const idx = for (self.panes.items, 0..) |p, i| {
             if (p == pane) break i;
         } else return;
 
         _ = self.panes.swapRemove(idx);
-        pane.deinit();
-        allocator.destroy(pane);
+        self.layout.removePane(pane);
 
         if (self.active_pane == pane) {
             self.active_pane = if (self.panes.items.len > 0) self.panes.items[0] else null;

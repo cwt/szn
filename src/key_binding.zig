@@ -134,7 +134,7 @@ pub const KeyDispatcher = struct {
     }
 };
 
-fn keysEqual(a: Key, b: Key) bool {
+pub fn keysEqual(a: Key, b: Key) bool {
     if (std.meta.activeTag(a) != std.meta.activeTag(b)) return false;
 
     return switch (a) {

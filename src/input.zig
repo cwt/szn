@@ -309,6 +309,7 @@ pub const InputParser = struct {
     fn dispatchCsi(self: *InputParser, final: u8) !void {
         defer self.toGround();
         const p = self.paramDefault(0, 1);
+        std.log.warn("CSI dispatch: final=0x{x}('{c}') p0={d} count={d}", .{ final, final, self.param(0), self.param_count });
 
         switch (final) {
             '@' => {
@@ -420,7 +421,9 @@ pub const InputParser = struct {
                     if (self.pty) |pty| {
                         var rep_buf: [32]u8 = undefined;
                         const rep = std.fmt.bufPrint(&rep_buf, "\x1b[{d};{d}R", .{ self.screen.cursor.y + 1, self.screen.cursor.x + 1 }) catch return;
-                        _ = pty.writeInput(rep) catch {};
+                        pty.writeInput(rep) catch |err| {
+                            std.log.warn("DSR writeInput error: {any}", .{err});
+                        };
                     }
                 }
             },
@@ -1176,4 +1179,65 @@ test "cursorPosition honours origin mode" {
     try parser.feed("\x1b[2;1H");
     try testing.expectEqual(@as(u32, 2), screen.cursor.y);
     try testing.expectEqual(@as(u32, 0), screen.cursor.x);
+}
+
+const VMIN: usize = 16;
+const VTIME: usize = 17;
+
+fn setRaw(fd: i32) void {
+    var raw: std.c.termios = undefined;
+    _ = std.c.tcgetattr(fd, &raw);
+    raw.iflag = .{ .BRKINT = true };
+    raw.lflag = .{};
+    raw.oflag = .{};
+    raw.cc[VMIN] = 1;
+    raw.cc[VTIME] = 0;
+    _ = std.c.tcsetattr(fd, std.c.TCSA.FLUSH, &raw);
+}
+
+test "DSR cursor position report" {
+    const pty_mod = @import("server/pty.zig");
+    var pty = try pty_mod.Pty.open();
+    defer pty.deinit();
+    setRaw(pty.slave);
+
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+
+    var parser = InputParser.init(&screen);
+    parser.pty = &pty;
+
+    try parser.feed("\x1b[6n");
+
+    // Read response from the slave end: \x1b[<row>;<col>R
+    var resp: [32]u8 = undefined;
+    const n = std.c.read(pty.slave, &resp, resp.len);
+    try testing.expect(n > 0);
+    const expected = "\x1b[1;1R";
+    try testing.expectEqual(@as(usize, expected.len), @as(usize, @intCast(n)));
+    try testing.expectEqualStrings(expected, resp[0..@as(usize, @intCast(n))]);
+}
+
+test "DSR cursor position report with cursor moved" {
+    const pty_mod = @import("server/pty.zig");
+    var pty = try pty_mod.Pty.open();
+    defer pty.deinit();
+    setRaw(pty.slave);
+
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+    screen.cursor.x = 5;
+    screen.cursor.y = 3;
+
+    var parser = InputParser.init(&screen);
+    parser.pty = &pty;
+
+    try parser.feed("\x1b[6n");
+
+    var resp: [32]u8 = undefined;
+    const n = std.c.read(pty.slave, &resp, resp.len);
+    try testing.expect(n > 0);
+    const expected = "\x1b[4;6R";
+    try testing.expectEqual(@as(usize, expected.len), @as(usize, @intCast(n)));
+    try testing.expectEqualStrings(expected, resp[0..@as(usize, @intCast(n))]);
 }

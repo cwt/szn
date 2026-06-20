@@ -7,6 +7,9 @@ const Display = render.Display;
 const raw_mod = @import("client/raw.zig");
 const cmd_mod = @import("cmd/cmd.zig");
 
+extern "c" fn tcflush(fd: c_int, queue_selector: c_int) c_int;
+const TCIFLUSH = 1;
+
 var sigwinchFlag = std.atomic.Value(bool).init(false);
 
 export fn sigwinch_handler(sig: c.SIG) callconv(.c) void {
@@ -18,6 +21,58 @@ pub fn main() !void {
     const allocator = std.heap.page_allocator;
     const stdin_fd = c.STDIN_FILENO;
     const stdout_fd = c.STDOUT_FILENO;
+
+    var args = try std.process.argsAlloc(allocator);
+    defer std.process.argsFree(allocator, args);
+
+    if (args.len > 1) {
+        // Run as client
+        var client = @import("client/client.zig").Client.init() catch |err| {
+            std.debug.print("Could not connect to zmux server: {any}\n", .{err});
+            std.process.exit(1);
+        };
+        defer client.deinit();
+
+        var cmd_len: usize = 0;
+        for (args[1..]) |arg| {
+            cmd_len += arg.len + 1;
+        }
+        var cmd_buf = try allocator.alloc(u8, cmd_len);
+        defer allocator.free(cmd_buf);
+
+        var offset: usize = 0;
+        for (args[1..], 0..) |arg, idx| {
+            if (idx > 0) {
+                cmd_buf[offset] = ' ';
+                offset += 1;
+            }
+            @memcpy(cmd_buf[offset..][0..arg.len], arg);
+            offset += arg.len;
+        }
+        const cmd = cmd_buf[0..offset];
+
+        try client.sendCommand(cmd);
+        const reply = try client.recvPacket();
+        const msg_type = @as(@import("server/protocol.zig").MessageType, @enumFromInt(reply.header.msg_type));
+        switch (msg_type) {
+            .ready => {
+                std.debug.print("{s}\n", .{reply.data});
+                std.process.exit(0);
+            },
+            .err => {
+                std.debug.print("Error: {s}\n", .{reply.data});
+                std.process.exit(1);
+            },
+            .exit => {
+                const code = if (reply.data.len > 0) reply.data[0] else 0;
+                std.process.exit(code);
+            },
+            else => {
+                std.debug.print("Unexpected response: {any}\n", .{msg_type});
+                std.process.exit(1);
+            },
+        }
+    }
 
     // Install SIGWINCH handler to detect terminal resize
     var act: std.posix.Sigaction = .{
@@ -60,7 +115,7 @@ pub fn main() !void {
         return;
     };
     // Drain any stale input that might have been buffered before raw mode
-    _ = c.tcflush(stdin_fd, c.TCIFLUSH);
+    _ = tcflush(stdin_fd, TCIFLUSH);
     defer raw.deinit();
 
     var display = Display{
