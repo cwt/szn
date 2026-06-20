@@ -12,7 +12,7 @@ pub fn connectToServer() !i32 {
     @memcpy(addr.path[0..SOCKET_PATH.len], SOCKET_PATH);
 
     const rc = c.connect(fd, @ptrCast(&addr), @sizeOf(c.sockaddr.un));
-    try mapErr(rc);
+    _ = try mapErr(rc);
 
     return fd;
 }

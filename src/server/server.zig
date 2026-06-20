@@ -335,11 +335,11 @@ pub const Server = struct {
                     const reply = protocol.Packet.make(.ready, "ok");
                     var reply_buf: [128]u8 = undefined;
                     const serialized = reply.serialize(&reply_buf);
-                    const written = std.posix.write(fd, serialized) catch |err| {
+                    const written = c.write(fd, serialized.ptr, serialized.len);
+                    if (written < 0) {
                         self.removeClient(fd);
-                        return err;
-                    };
-                    _ = written;
+                        return error.WriteFailed;
+                    }
                 },
                 else => {},
             }

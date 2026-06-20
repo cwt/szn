@@ -17,15 +17,28 @@ export fn sigwinch_handler(sig: c.SIG) callconv(.c) void {
     sigwinchFlag.store(true, .seq_cst);
 }
 
-pub fn main() !void {
-    const allocator = std.heap.page_allocator;
+pub fn main(init: std.process.Init) !void {
+    const allocator = init.gpa;
     const stdin_fd = c.STDIN_FILENO;
     const stdout_fd = c.STDOUT_FILENO;
 
-    var args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, args);
+    var args: std.ArrayListUnmanaged([]const u8) = .empty;
+    defer args.deinit(allocator);
 
-    if (args.len > 1) {
+    var arg_it = try std.process.Args.Iterator.initAllocator(init.minimal.args, allocator);
+    defer arg_it.deinit();
+
+    while (arg_it.next()) |arg| {
+        const arg_dupe = try allocator.dupe(u8, arg);
+        try args.append(allocator, arg_dupe);
+    }
+    defer {
+        for (args.items) |arg| {
+            allocator.free(arg);
+        }
+    }
+
+    if (args.items.len > 1) {
         // Run as client
         var client = @import("client/client.zig").Client.init() catch |err| {
             std.debug.print("Could not connect to zmux server: {any}\n", .{err});
@@ -34,14 +47,14 @@ pub fn main() !void {
         defer client.deinit();
 
         var cmd_len: usize = 0;
-        for (args[1..]) |arg| {
+        for (args.items[1..]) |arg| {
             cmd_len += arg.len + 1;
         }
         var cmd_buf = try allocator.alloc(u8, cmd_len);
         defer allocator.free(cmd_buf);
 
         var offset: usize = 0;
-        for (args[1..], 0..) |arg, idx| {
+        for (args.items[1..], 0..) |arg, idx| {
             if (idx > 0) {
                 cmd_buf[offset] = ' ';
                 offset += 1;

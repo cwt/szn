@@ -4,17 +4,13 @@ const protocol = @import("../server/protocol.zig");
 const connect = @import("connect.zig");
 
 fn fdWrite(fd: i32, buf: []const u8) !usize {
-    const iov = [_]c.iovec_const{ .{
-        .iov_base = buf.ptr,
-        .iov_len = buf.len,
-    }};
-    const n = c.writev(fd, &iov, 1);
+    const n = std.c.write(fd, buf.ptr, buf.len);
     if (n < 0) return error.WriteFailed;
     return @as(usize, @intCast(n));
 }
 
 fn fdRead(fd: i32, buf: []u8) !usize {
-    const n = c.read(fd, buf.ptr, buf.len);
+    const n = std.c.read(fd, buf.ptr, buf.len);
     if (n < 0) return error.ReadFailed;
     return @as(usize, @intCast(n));
 }
