@@ -10,6 +10,8 @@ comptime {
     _ = @import("layout.zig");
     _ = @import("options.zig");
     _ = @import("cfg.zig");
+    _ = @import("format.zig");
+    _ = @import("status.zig");
     _ = @import("tty/tty.zig");
     _ = @import("tty/tty_key.zig");
     _ = @import("input.zig");
