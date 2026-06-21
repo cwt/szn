@@ -162,24 +162,26 @@ pub const Window = struct {
     }
 
     pub fn addPane(self: *Window, allocator: std.mem.Allocator) Error!*Pane {
+        _ = allocator;
         if (self.active_pane) |pane| {
-            return self.splitPane(allocator, pane, false, 0.5);
+            return self.splitPane(self.allocator, pane, false, 0.5);
         }
-        const new_pane = try allocator.create(Pane);
+        const new_pane = try self.allocator.create(Pane);
         const pane_id = self.next_pane_id;
         self.next_pane_id += 1;
-        new_pane.* = try Pane.init(allocator, pane_id, self.width, self.height);
-        try self.panes.append(allocator, new_pane);
+        new_pane.* = try Pane.init(self.allocator, pane_id, self.width, self.height);
+        try self.panes.append(self.allocator, new_pane);
         self.registerPane(new_pane);
         return new_pane;
     }
 
     pub fn splitPane(self: *Window, allocator: std.mem.Allocator, pane: *Pane, vertical: bool, proportion: f64) Error!*Pane {
+        _ = allocator;
         const dir = if (vertical) layout.SplitDir.vertical else layout.SplitDir.horizontal;
-        const new_pane = try self.layout.splitPane(allocator, pane, dir, proportion);
+        const new_pane = try self.layout.splitPane(self.allocator, pane, dir, proportion);
         new_pane.id = self.next_pane_id;
         self.next_pane_id += 1;
-        try self.panes.append(allocator, new_pane);
+        try self.panes.append(self.allocator, new_pane);
         self.registerPane(new_pane);
         self.setActivePane(new_pane);
         return new_pane;
@@ -235,7 +237,6 @@ fn windowTitleCallback(ctx: ?*anyopaque, title: []const u8) void {
     if (std.mem.eql(u8, self.name, title)) return;
 
     const new_name = self.allocator.dupe(u8, title) catch return;
-    self.allocator.free(self.name);
     self.name = new_name;
     for (self.panes.items) |p| {
         p.dirty = true;

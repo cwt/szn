@@ -978,6 +978,16 @@ pub const Server = struct {
     pub fn newSession(self: *Server, name: []const u8, width: u32, height: u32) ServerError!*Session {
         const session = try self.allocator.create(Session);
         session.* = try Session.init(self.allocator, self.next_session_id, name, width, height, &self.global_options, &self.global_window_options);
+        // Re-point child allocators to the arena at its final GPA address
+        const a = session.arenaAllocator();
+        for (session.windows.items) |win| {
+            win.allocator = a;
+            win.layout.allocator = a;
+            for (win.panes.items) |pane| {
+                pane.screen.allocator = a;
+                pane.screen.grid.allocator = a;
+            }
+        }
         self.next_session_id += 1;
         try self.sessions.append(self.allocator, session);
         return session;

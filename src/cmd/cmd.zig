@@ -152,9 +152,8 @@ fn cmdRenameWindow(server: *Server, args: []const []const u8) CmdResult {
     if (args.len < 2) return .err;
     const session = server.activeSession() orelse return .err;
     const window = session.active_window orelse return .err;
-    const new_name = server.allocator.dupe(u8, args[1]) catch return .err;
-    server.allocator.free(window.name);
-    window.name = new_name;
+    const a = session.arenaAllocator();
+    window.name = a.dupe(u8, args[1]) catch return .err;
     return .ok;
 }
 
@@ -335,8 +334,9 @@ fn cmdJoinPane(server: *Server, args: []const []const u8) CmdResult {
 
     src_win.extractPane(server.allocator, src_pane);
     if (src_win.panes.items.len == 0) {
-        const dummy = server.allocator.create(Pane) catch return .err;
-        dummy.* = Pane.init(server.allocator, 9999, 1, 1) catch return .err;
+        const a = session.arenaAllocator();
+        const dummy = a.create(Pane) catch return .err;
+        dummy.* = Pane.init(a, 9999, 1, 1) catch return .err;
         src_win.layout.root.leaf = dummy;
         session.killWindow(server.allocator, src_win);
     }
@@ -355,9 +355,6 @@ fn cmdJoinPane(server: *Server, args: []const []const u8) CmdResult {
 
     src_pane.resizeTerminal(dummy_pane.screen.grid.width, dummy_pane.screen.grid.height) catch return .err;
 
-    dummy_pane.deinit();
-    server.allocator.destroy(dummy_pane);
-
     dst_win.setActivePane(src_pane);
     return .ok;
 }
@@ -374,14 +371,11 @@ fn cmdBreakPane(server: *Server, args: []const []const u8) CmdResult {
 
     const new_win = session.newWindow(server.allocator, "window") catch return .err;
     if (new_win.panes.items.len > 0) {
-        const default_p = new_win.panes.items[0];
         new_win.panes.items[0] = pane;
         new_win.registerPane(pane);
         new_win.layout.root.leaf = pane;
         new_win.setActivePane(pane);
         pane.resizeTerminal(new_win.width, new_win.height) catch return .err;
-        default_p.deinit();
-        server.allocator.destroy(default_p);
     }
 
     return .ok;

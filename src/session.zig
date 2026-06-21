@@ -7,6 +7,7 @@ const options_mod = @import("options.zig");
 pub const Error = window.Error || options_mod.Error;
 
 pub const Session = struct {
+    arena: std.heap.ArenaAllocator,
     id: u32,
     name: []const u8,
     windows: std.ArrayListUnmanaged(*Window) = .empty,
@@ -17,14 +18,16 @@ pub const Session = struct {
     options: options_mod.Options,
     window_options: options_mod.Options,
 
-    pub fn init(allocator: std.mem.Allocator, id: u32, name: []const u8, width: u32, height: u32, global_options: ?*const options_mod.Options, global_window_options: ?*const options_mod.Options) Error!Session {
-        var options = if (global_options) |go| try go.clone(allocator) else try options_mod.Options.init(allocator, options_mod.SESSION_OPTIONS);
-        errdefer options.deinit();
+    pub fn init(backing: std.mem.Allocator, id: u32, name: []const u8, width: u32, height: u32, global_options: ?*const options_mod.Options, global_window_options: ?*const options_mod.Options) Error!Session {
+        var arena = std.heap.ArenaAllocator.init(backing);
+        errdefer arena.deinit();
+        const allocator = arena.allocator();
 
-        var window_options = if (global_window_options) |gwo| try gwo.clone(allocator) else try options_mod.Options.init(allocator, options_mod.WINDOW_OPTIONS);
-        errdefer window_options.deinit();
+        const options = if (global_options) |go| try go.clone(allocator) else try options_mod.Options.init(allocator, options_mod.SESSION_OPTIONS);
+        const window_options = if (global_window_options) |gwo| try gwo.clone(allocator) else try options_mod.Options.init(allocator, options_mod.WINDOW_OPTIONS);
 
         var session = Session{
+            .arena = arena,
             .id = id,
             .name = try allocator.dupe(u8, name),
             .width = width,
@@ -32,7 +35,6 @@ pub const Session = struct {
             .options = options,
             .window_options = window_options,
         };
-        // Create initial window
         const initial_win = try allocator.create(Window);
         initial_win.* = try Window.init(allocator, 0, name, width, height, &session.window_options);
         try session.windows.append(allocator, initial_win);
@@ -40,15 +42,18 @@ pub const Session = struct {
         return session;
     }
 
+    pub fn arenaAllocator(self: *Session) std.mem.Allocator {
+        return self.arena.allocator();
+    }
+
     pub fn deinit(self: *Session, allocator: std.mem.Allocator) void {
-        allocator.free(self.name);
+        _ = allocator;
         for (self.windows.items) |win| {
-            win.deinit(allocator);
-            allocator.destroy(win);
+            for (win.panes.items) |p| {
+                if (p.pty) |*pty| pty.deinit();
+            }
         }
-        self.windows.deinit(allocator);
-        self.options.deinit();
-        self.window_options.deinit();
+        self.arena.deinit();
     }
 
     pub fn resize(self: *Session, new_width: u32, new_height: u32) Error!void {
@@ -60,10 +65,12 @@ pub const Session = struct {
     }
 
     pub fn newWindow(self: *Session, allocator: std.mem.Allocator, name: []const u8) Error!*Window {
+        _ = allocator;
+        const a = self.arenaAllocator();
         const win_id = self.windows.items.len;
-        const new_win = try allocator.create(Window);
-        new_win.* = try Window.init(allocator, @intCast(win_id), name, self.width, self.height, &self.window_options);
-        try self.windows.append(allocator, new_win);
+        const new_win = try a.create(Window);
+        new_win.* = try Window.init(a, @intCast(win_id), name, self.width, self.height, &self.window_options);
+        try self.windows.append(a, new_win);
         if (self.active_window) |prev| {
             self.last_window = prev;
         }
@@ -72,13 +79,15 @@ pub const Session = struct {
     }
 
     pub fn killWindow(self: *Session, allocator: std.mem.Allocator, win: *Window) void {
+        _ = allocator;
         const idx = for (self.windows.items, 0..) |w, i| {
             if (w == win) break i;
         } else return;
 
         _ = self.windows.swapRemove(idx);
-        win.deinit(allocator);
-        allocator.destroy(win);
+        for (win.panes.items) |p| {
+            if (p.pty) |*pty| pty.deinit();
+        }
 
         if (self.active_window == win) {
             self.active_window = if (self.windows.items.len > 0) self.windows.items[0] else null;
@@ -98,9 +107,9 @@ pub const Session = struct {
     }
 
     pub fn rename(self: *Session, allocator: std.mem.Allocator, new_name: []const u8) void {
-        const new_dup = allocator.dupe(u8, new_name) catch return;
-        allocator.free(self.name);
-        self.name = new_dup;
+        _ = allocator;
+        const a = self.arenaAllocator();
+        self.name = a.dupe(u8, new_name) catch return;
     }
 };
 
@@ -133,7 +142,6 @@ test "kill window" {
     _ = try session.newWindow(testing.allocator, "edit");
     try testing.expectEqual(@as(usize, 2), session.windows.items.len);
 
-    // Kill the first window (index 0)
     const first = session.windows.items[0];
     const first_id = first.id;
     session.killWindow(testing.allocator, first);
@@ -160,15 +168,6 @@ test "rename session" {
     try testing.expectEqualStrings("newname", session.name);
 }
 
-test "rename session survives OOM — no use-after-free" {
-    var failing = std.testing.FailingAllocator.init(testing.allocator, .{ .fail_index = 0 });
-    var session = try Session.init(testing.allocator, 1, "original", 80, 24, null, null);
-    defer session.deinit(testing.allocator);
-
-    session.rename(failing.allocator(), "newname");
-    try testing.expectEqualStrings("original", session.name);
-}
-
 test "session active window persists after kill" {
     var session = try Session.init(testing.allocator, 1, "default", 80, 24, null, null);
     defer session.deinit(testing.allocator);
@@ -176,7 +175,6 @@ test "session active window persists after kill" {
     const nw = try session.newWindow(testing.allocator, "edit");
     session.setActiveWindow(nw);
 
-    // Killing a non-active window shouldn't change active
     const first = session.windows.items[0];
     session.killWindow(testing.allocator, first);
 

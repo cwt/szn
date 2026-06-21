@@ -64,15 +64,17 @@ pub const Layout = struct {
     }
 
     pub fn splitPane(self: *Layout, allocator: std.mem.Allocator, pane: *Pane, direction: SplitDir, proportion: f64) window.Error!*Pane {
+        _ = allocator;
+        const a = self.allocator;
         const leaf_node = self.findLeafParent(self.root, pane) orelse return error.PaneNotFound;
 
         const child_w, const child_h = self.calculateChildSize(direction, proportion);
-        const new_pane = try allocator.create(Pane);
-        new_pane.* = try Pane.init(allocator, 0, child_w, child_h);
+        const new_pane = try a.create(Pane);
+        new_pane.* = try Pane.init(a, 0, child_w, child_h);
 
-        const split = try allocator.create(Split);
-        const a_node = try allocator.create(Node);
-        const b_node = try allocator.create(Node);
+        const split = try a.create(Split);
+        const a_node = try a.create(Node);
+        const b_node = try a.create(Node);
 
         a_node.* = Node{ .leaf = leaf_node.leaf };
         b_node.* = Node{ .leaf = new_pane };

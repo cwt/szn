@@ -197,8 +197,8 @@ Should use `$XDG_STATE_HOME/szn/` or similar for proper filesystem hierarchy com
 **File:** Removed `src/err.zig` — `SznError` was dead code.
 Every subsystem now has its own `pub const Error` set: grid, screen, tty, fd_writer, layout, options, cfg, key_binding, input, pty, render, loop, protocol, socket, dispatch, client, connect, raw, window, session, server, main, cmd (ParseError), status, mode_copy, socket_path.
 
-### 37. Arena allocation not used
-AGENTS.md requirement: "Always use arena allocators per session/pane lifecycle." Code uses GeneralPurposeAllocator with individual alloc/free everywhere.
+### 37. Arena allocation not used  ✅ Fixed
+AGENTS.md requirement: "Always use arena allocators per session/pane lifecycle." `Session` now owns a `std.heap.ArenaAllocator`. All window/grid/screen/layout/option allocations go through the session arena. Individual `allocator.free`/`allocator.destroy` calls for arena-owned memory removed.
 
 ### 38. Duplicate fd registration allowed in event loop ✅ Fixed
 **File:** `src/server/loop.zig:29`
@@ -250,5 +250,5 @@ If data exceeds remaining buffer space, excess bytes are silently dropped. Calle
 | Critical | 8 | 5 | 3 | 0 |
 | High | 14 | 13 | 1 | 0 |
 | Medium | 12 | 12 | 0 | 0 |
-| Low | 13 | 11 | 1 | 1 |
-| **Total** | **47** | **41** | **5** | **1** |
+| Low | 13 | 12 | 1 | 0 |
+| **Total** | **47** | **42** | **5** | **0** |
