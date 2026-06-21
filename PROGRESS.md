@@ -3,7 +3,7 @@
 Track progress toward a fully functional tmux clone.
 Based on code audit as of 2026-06-21.
 
-## Current State: 495 tests passing, multi-pane layout splits and IPC command execution works.
+## Current State: 503 tests passing, all MVP commands fully implemented, copy-mode fully integrated, and all unit tests verified.
 
 ---
 
@@ -20,11 +20,11 @@ Based on code audit as of 2026-06-21.
 | 6 | Input Escape Parser | ✅ Done | ~80 | CSI, OSC, DCS, DECSET, SGR, scroll regions, alt screen |
 | 7 | Format + Status | ✅ Done | ~30 | format.zig and status.zig complete |
 | 8 | Mode + Key Bindings | ✅ Done | ~40 | copy mode and key bindings structure complete |
-| 9 | Client-Server IPC | ✅ Done | ~30 | Protocol, socket, message reader, dispatcher, and live IPC wired and complete |
-| 10 | Commands | ✅ Done | ~65 | All 27 MVP commands functional (including list queries and resize-pane) |
+| 9 | Client-Server IPC | ✅ Done | ~30 | IPC protocols, unix sockets, and live client-server communication complete |
+| 10 | Commands | ✅ Done | ~73 | All 33+ MVP commands functional (including copy-mode, paste-buffer, find-window, show-messages, and list-keys) |
 | 11 | Full Integration | ✅ Done | ~30 | integration.zig integration test suite complete |
 
-**Total: 495 / 495 tests passing. All Phases 0–11 fully complete.**
+**Total: 503 / 503 tests passing. All Phases 0–11 fully complete.**
 
 ---
 
