@@ -73,7 +73,7 @@ pub const Server = struct {
         errdefer global_window_options.deinit();
 
         const prefix_val = global_options.get("prefix") orelse options_mod.OptionValue{ .key = key_mod.Key{ .char = .{ .code = 'b', .mod = .{ .ctrl = true } } } };
-        const prefix = prefix_val.key;
+        const prefix = if (prefix_val == .key) prefix_val.key else key_mod.Key{ .char = .{ .code = 'b', .mod = .{ .ctrl = true } } };
 
         var dispatcher = key_binding.KeyDispatcher.init(allocator, prefix);
         errdefer dispatcher.deinit();

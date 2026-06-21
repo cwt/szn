@@ -400,6 +400,7 @@ test "parse set string option" {
     try testing.expectEqual(@as(usize, 1), result.directives.items.len);
     const d = result.directives.items[0];
     try testing.expect(d == .set);
+    try testing.expect(d.set.value == .string);
     try testing.expectEqualStrings("/bin/zsh", d.set.value.string);
 }
 
@@ -429,6 +430,7 @@ test "inline comment stripped" {
 
     try testing.expectEqual(@as(usize, 1), result.directives.items.len);
     const d = result.directives.items[0];
+    try testing.expect(d.set.value == .flag);
     try testing.expect(d.set.value.flag);
 }
 
