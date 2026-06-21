@@ -19,6 +19,8 @@ pub const InputParser = struct {
     utf8_buf: [4]u8 = undefined,
     utf8_len: u8 = 0,
     utf8_expected: u8 = 0,
+    title_cb: ?*const fn (ctx: ?*anyopaque, title: []const u8) void = null,
+    title_ctx: ?*anyopaque = null,
 
     const State = enum {
         ground,
@@ -39,6 +41,8 @@ pub const InputParser = struct {
             .screen = screen,
             .utf8_len = 0,
             .utf8_expected = 0,
+            .title_cb = null,
+            .title_ctx = null,
         };
     }
 
@@ -52,6 +56,8 @@ pub const InputParser = struct {
         self.osc_len = 0;
         self.utf8_len = 0;
         self.utf8_expected = 0;
+        self.title_cb = null;
+        self.title_ctx = null;
     }
 
     fn clearParams(self: *InputParser) void {
@@ -506,7 +512,9 @@ pub const InputParser = struct {
 
         switch (cmd) {
             0, 2 => {
-                // Set window title / icon name — ignore for now
+                if (self.title_cb) |cb| {
+                    cb(self.title_ctx, data);
+                }
             },
             52 => {
                 // Set clipboard: 52;Pc;data
@@ -1124,6 +1132,32 @@ test "UTF-8 multi-byte character parsing" {
     try testing.expectEqual(@as(u21, 'c'), screen.grid.getCell(3, 0).char);
     try testing.expectEqual(@as(u32, 4), screen.cursor.x);
     try testing.expectEqual(@as(u8, @intFromEnum(InputParser.State.ground)), @intFromEnum(parser.state));
+}
+
+const TitleMock = struct {
+    called: bool = false,
+    title: [64]u8 = undefined,
+    len: usize = 0,
+
+    fn callback(ctx: ?*anyopaque, title: []const u8) void {
+        const self: *TitleMock = @ptrCast(@alignCast(ctx orelse return));
+        self.called = true;
+        @memcpy(self.title[0..title.len], title);
+        self.len = title.len;
+    }
+};
+
+test "OSC 2 window title parsing" {
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+    var parser = InputParser.init(&screen);
+    var mock = TitleMock{};
+    parser.title_cb = TitleMock.callback;
+    parser.title_ctx = &mock;
+
+    try parser.feed("\x1b]2;Python Editor\x07");
+    try testing.expect(mock.called);
+    try testing.expectEqualStrings("Python Editor", mock.title[0..mock.len]);
 }
 
 test "DCS string ignored" {

@@ -331,6 +331,7 @@ fn cmdJoinPane(server: *Server, args: []const []const u8) CmdResult {
     for (dst_win.panes.items) |*p| {
         if (p.* == dummy_pane) {
             p.* = src_pane;
+            dst_win.registerPane(src_pane);
             break;
         }
     }
@@ -360,6 +361,7 @@ fn cmdBreakPane(server: *Server, args: []const []const u8) CmdResult {
     if (new_win.panes.items.len > 0) {
         const default_p = new_win.panes.items[0];
         new_win.panes.items[0] = pane;
+        new_win.registerPane(pane);
         new_win.layout.root.leaf = pane;
         new_win.setActivePane(pane);
         pane.resizeTerminal(new_win.width, new_win.height) catch return .err;

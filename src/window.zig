@@ -16,11 +16,17 @@ pub const Pane = struct {
     pty: ?Pty = null,
     parser: ?InputParser = null,
     dirty: bool = false,
+    window: ?*Window = null,
+    title_cb: ?*const fn (ctx: ?*anyopaque, title: []const u8) void = null,
+    title_ctx: ?*anyopaque = null,
 
     pub fn init(allocator: std.mem.Allocator, id: u32, width: u32, height: u32) !Pane {
         return Pane{
             .id = id,
             .screen = try Screen.init(allocator, width, height),
+            .window = null,
+            .title_cb = null,
+            .title_ctx = null,
         };
     }
 
@@ -51,6 +57,8 @@ pub const Pane = struct {
     pub fn getParser(self: *Pane) *InputParser {
         if (self.parser == null) {
             self.parser = InputParser.init(&self.screen);
+            self.parser.?.title_cb = paneTitleCallback;
+            self.parser.?.title_ctx = self;
         }
         if (self.pty) |*p| {
             self.parser.?.pty = p;
@@ -93,6 +101,7 @@ pub const Pane = struct {
 
 /// Window represents a window containing one or more panes.
 pub const Window = struct {
+    allocator: std.mem.Allocator,
     id: u32,
     name: []const u8,
     panes: std.ArrayListUnmanaged(*Pane) = .empty,
@@ -109,6 +118,7 @@ pub const Window = struct {
         errdefer options.deinit();
 
         var window = Window{
+            .allocator = allocator,
             .id = id,
             .name = try allocator.dupe(u8, name),
             .width = width,
@@ -120,9 +130,16 @@ pub const Window = struct {
         pane.* = try Pane.init(allocator, 0, width, height);
         pane.active = true;
         try window.panes.append(allocator, pane);
+        window.registerPane(pane);
         window.active_pane = pane;
         window.layout = try @import("layout.zig").Layout.init(allocator, pane, width, height);
         return window;
+    }
+
+    pub fn registerPane(self: *Window, pane: *Pane) void {
+        pane.window = self;
+        pane.title_cb = windowTitleCallback;
+        pane.title_ctx = self;
     }
 
     pub fn deinit(self: *Window, allocator: std.mem.Allocator) void {
@@ -149,6 +166,7 @@ pub const Window = struct {
         self.next_pane_id += 1;
         new_pane.* = try Pane.init(allocator, pane_id, self.width, self.height);
         try self.panes.append(allocator, new_pane);
+        self.registerPane(new_pane);
         return new_pane;
     }
 
@@ -158,6 +176,7 @@ pub const Window = struct {
         new_pane.id = self.next_pane_id;
         self.next_pane_id += 1;
         try self.panes.append(allocator, new_pane);
+        self.registerPane(new_pane);
         self.setActivePane(new_pane);
         return new_pane;
     }
@@ -198,6 +217,26 @@ pub const Window = struct {
         self.active_pane = pane;
     }
 };
+
+fn paneTitleCallback(ctx: ?*anyopaque, title: []const u8) void {
+    const self: *Pane = @ptrCast(@alignCast(ctx orelse return));
+    if (self.title_cb) |cb| {
+        cb(self.title_ctx, title);
+    }
+}
+
+fn windowTitleCallback(ctx: ?*anyopaque, title: []const u8) void {
+    const self: *Window = @ptrCast(@alignCast(ctx orelse return));
+    if (title.len == 0) return;
+    if (std.mem.eql(u8, self.name, title)) return;
+
+    const new_name = self.allocator.dupe(u8, title) catch return;
+    self.allocator.free(self.name);
+    self.name = new_name;
+    for (self.panes.items) |p| {
+        p.dirty = true;
+    }
+}
 
 // ── Tests ──
 
