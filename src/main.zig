@@ -7,6 +7,35 @@ const Display = render.Display;
 const raw_mod = @import("client/raw.zig");
 const cmd_mod = @import("cmd/cmd.zig");
 
+extern "c" fn fopen(filename: [*:0]const u8, modes: [*:0]const u8) ?*anyopaque;
+extern "c" fn fclose(stream: ?*anyopaque) c_int;
+extern "c" fn fwrite(ptr: [*]const u8, size: usize, nmemb: usize, stream: ?*anyopaque) usize;
+extern "c" fn fflush(stream: ?*anyopaque) c_int;
+
+pub const std_options: std.Options = .{
+    .logFn = logFn,
+};
+
+pub fn logFn(
+    comptime level: std.log.Level,
+    comptime scope: @EnumLiteral(),
+    comptime format: []const u8,
+    args: anytype,
+) void {
+    _ = scope;
+    const f = fopen("/tmp/zmux.log", "a") orelse return;
+    defer _ = fclose(f);
+
+    var buf: [4096]u8 = undefined;
+    const prefix = std.fmt.bufPrint(&buf, "[{s}] ", .{@tagName(level)}) catch return;
+    _ = fwrite(prefix.ptr, 1, prefix.len, f);
+
+    const msg = std.fmt.bufPrint(&buf, format, args) catch "log message too long\n";
+    _ = fwrite(msg.ptr, 1, msg.len, f);
+    _ = fwrite("\n", 1, 1, f);
+    _ = fflush(f);
+}
+
 extern "c" fn tcflush(fd: c_int, queue_selector: c_int) c_int;
 const TCIFLUSH = 1;
 
