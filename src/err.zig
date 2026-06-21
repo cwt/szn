@@ -1,6 +1,6 @@
 const std = @import("std");
 
-pub const ZmuxError = error{
+pub const SznError = error{
     OutOfMemory,
     InvalidColour,
     InvalidKey,

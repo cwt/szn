@@ -475,11 +475,11 @@ test "expand plain text" {
 test "expand variable" {
     var ctx = Context.init(testing.allocator);
     defer ctx.deinit();
-    try ctx.set("name", "zmux");
+    try ctx.set("name", "szn");
 
     const result = try expand(testing.allocator, "hello #{name}", &ctx);
     defer testing.allocator.free(result);
-    try testing.expectEqualStrings("hello zmux", result);
+    try testing.expectEqualStrings("hello szn", result);
 }
 
 test "expand missing variable returns empty" {

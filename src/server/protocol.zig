@@ -9,6 +9,7 @@ pub const MessageType = enum(u8) {
     resize = 0x05,
     detach = 0x06,
     shell = 0x07,
+    stdin_data = 0x08,
 
     ready = 0x80,
     output = 0x81,

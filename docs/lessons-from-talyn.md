@@ -1,7 +1,7 @@
 # Lessons from Talyn (Zig Project)
 
-Lessons learned from [Talyn](https://github.com/cwt/talyn) that apply to zmux.
-Each lesson has been adapted from its original context to zmux's arena-based,
+Lessons learned from [Talyn](https://github.com/cwt/talyn) that apply to szn.
+Each lesson has been adapted from its original context to szn's arena-based,
 terminal-multiplexer domain.
 
 ---
@@ -30,7 +30,7 @@ opt.* = Options{
 };
 ```
 
-**Applies to zmux:** Arena allocations for sessions, windows, panes, layout
+**Applies to szn:** Arena allocations for sessions, windows, panes, layout
 nodes. If a new field is added to any struct allocated via `create`, the
 literal form catches it at compile time.
 
@@ -55,7 +55,7 @@ errdefer std.os.close(fd);
 2. `errdefer cleanup(R);` immediately
 3. Continue with fallible code
 
-**Applies to zmux:** Socket FDs (client-server IPC), PTY FDs, log files,
+**Applies to szn:** Socket FDs (client-server IPC), PTY FDs, log files,
 event loop FDs (epoll/kqueue), any `mmap` call.
 
 ---
@@ -84,7 +84,7 @@ switch (ev) {
 If you have an `else => {}` that is genuinely unreachable, annotate with
 `else => unreachable` so the compiler catches a future variant addition.
 
-**Applies to zmux:** Event dispatch, escape parser state machine, command
+**Applies to szn:** Event dispatch, escape parser state machine, command
 dispatch, key binding tables, option type handling.
 
 ---
@@ -108,7 +108,7 @@ if (someInvariantViolated()) {
 if (someImpossibleCondition()) unreachable;
 ```
 
-**Applies to zmux:** Grid cell access bounds, layout tree invariants,
+**Applies to szn:** Grid cell access bounds, layout tree invariants,
 option validation, config parser error recovery.
 
 ---
@@ -138,8 +138,8 @@ fn walkTree(root: *Node) void {
 }
 ```
 
-**Applies to zmux:** Layout tree traversal, grid line walking, session
-window iteration (though most zmux trees are shallow — <100 nodes).
+**Applies to szn:** Layout tree traversal, grid line walking, session
+window iteration (though most szn trees are shallow — <100 nodes).
 
 ---
 
@@ -165,7 +165,7 @@ const pane = session.activePane orelse {
 const x = try someOptionalReturningFunc();
 ```
 
-**Applies to zmux:** `active_window`/`active_pane` lookups, option value
+**Applies to szn:** `active_window`/`active_pane` lookups, option value
 retrieval, key binding lookups, `std.StringHashMap.get()` results.
 
 ---
@@ -183,7 +183,7 @@ var it = std.mem.splitScalar(u8, line, ' ');
 var it = std.mem.splitAny(u8, line, " \t");
 ```
 
-**Applies to zmux:** Config parser (`cfg.zig`) — tmux configs may use tabs
+**Applies to szn:** Config parser (`cfg.zig`) — tmux configs may use tabs
 between `set -g option value`. Add `\t`, `\r` handling.
 
 ---
@@ -203,5 +203,5 @@ will hold 1 item.
 if (self.capacity == 0) return;
 ```
 
-**Applies to zmux:** Options max-history, scrollback limits, any
+**Applies to szn:** Options max-history, scrollback limits, any
 user-configurable numeric limit.

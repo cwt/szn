@@ -1,11 +1,11 @@
-# zmux
+# szn
 
 A modern terminal multiplexer forked from [tmux](https://github.com/tmux/tmux), rewritten in [Zig](https://ziglang.org).
 
 ## Why
 
 tmux is battle-tested but carries decades of terminal compatibility baggage.
-zmux keeps only what matters for modern terminals — no terminfo, no ACS,
+szn keeps only what matters for modern terminals — no terminfo, no ACS,
 no X10 mouse, no HP-UX support — and expresses the rest in idiomatic Zig.
 
 ## Goals

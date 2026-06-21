@@ -447,7 +447,7 @@ test "write string across grid" {
     var grid = try Grid.init(testing.allocator, 80, 24);
     defer grid.deinit();
 
-    const text = "Hello, zmux!";
+    const text = "Hello, szn!";
     for (text, 0..) |c, i| {
         grid.writeChar(@intCast(i), 0, c);
     }

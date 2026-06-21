@@ -17,6 +17,7 @@ pub const CmdEntry = struct {
     min_args: u32 = 0,
     max_args: u32 = std.math.maxInt(u32),
     args_usage: []const u8 = "",
+    description: []const u8 = "",
     exec: *const fn (server: *Server, args: []const []const u8) CmdResult,
 };
 
@@ -509,13 +510,65 @@ fn cmdListPanes(server: *Server, _: []const []const u8) CmdResult {
 fn cmdListCommands(server: *Server, _: []const []const u8) CmdResult {
     const table = cmdTable();
     for (table) |entry| {
-        var buf: [256]u8 = undefined;
-        const line = if (entry.args_usage.len > 0)
-            std.fmt.bufPrint(&buf, "{s} {s}\n", .{entry.name, entry.args_usage}) catch return .err
+        var buf: [512]u8 = undefined;
+        const line = if (entry.description.len > 0)
+            std.fmt.bufPrint(&buf, "{s} {s}\n", .{entry.name, entry.description}) catch return .err
         else
             std.fmt.bufPrint(&buf, "{s}\n", .{entry.name}) catch return .err;
         server.response_buf.appendSlice(server.allocator, line) catch return .err;
     }
+    return .ok;
+}
+
+fn cmdHelp(server: *Server, args: []const []const u8) CmdResult {
+    if (args.len < 2) {
+        const table = cmdTable();
+        for (table) |entry| {
+            var buf: [256]u8 = undefined;
+            const line = if (entry.args_usage.len > 0)
+                std.fmt.bufPrint(&buf, "  {s}  {s}\n", .{ entry.name, entry.args_usage }) catch return .err
+            else
+                std.fmt.bufPrint(&buf, "  {s}\n", .{entry.name}) catch return .err;
+            server.response_buf.appendSlice(server.allocator, line) catch return .err;
+        }
+        const footer = "\nUse `szn help <command>` for details on a specific command.\n";
+        server.response_buf.appendSlice(server.allocator, footer) catch return .err;
+        return .ok;
+    }
+
+    const name = args[1];
+    const entry = lookup(name) orelse {
+        var buf: [256]u8 = undefined;
+        const msg = std.fmt.bufPrint(&buf, "Unknown command: {s}\n", .{name}) catch return .err;
+        server.response_buf.appendSlice(server.allocator, msg) catch return .err;
+        return .err;
+    };
+
+    var buf: [512]u8 = undefined;
+    const lf = "\n";
+
+    var line = std.fmt.bufPrint(&buf, "  Name:    {s}\n", .{entry.name}) catch return .err;
+    server.response_buf.appendSlice(server.allocator, line) catch return .err;
+
+    if (entry.alias) |a| {
+        line = std.fmt.bufPrint(&buf, "  Alias:   {s}\n", .{a}) catch return .err;
+        server.response_buf.appendSlice(server.allocator, line) catch return .err;
+    }
+
+    line = std.fmt.bufPrint(&buf, "  Usage:   szn {s}", .{entry.name}) catch return .err;
+    server.response_buf.appendSlice(server.allocator, line) catch return .err;
+    if (entry.args_usage.len > 0) {
+        line = std.fmt.bufPrint(&buf, " {s}", .{entry.args_usage}) catch return .err;
+        server.response_buf.appendSlice(server.allocator, line) catch return .err;
+    }
+    server.response_buf.appendSlice(server.allocator, lf) catch return .err;
+
+    if (entry.description.len > 0) {
+        line = std.fmt.bufPrint(&buf, "  Details: {s}\n", .{entry.description}) catch return .err;
+        server.response_buf.appendSlice(server.allocator, line) catch return .err;
+    }
+
+    server.response_buf.appendSlice(server.allocator, lf) catch return .err;
     return .ok;
 }
 
@@ -798,16 +851,19 @@ pub const commands = struct {
         .min_args = 0,
         .max_args = 2,
         .args_usage = "[name]",
+        .description = "Create a new session with an optional name",
         .exec = cmdNewSession,
     };
     pub const list_sessions = CmdEntry{
         .name = "list-sessions",
         .alias = "ls",
+        .description = "List all sessions",
         .exec = cmdListSessions,
     };
     pub const kill_session = CmdEntry{
         .name = "kill-session",
         .alias = null,
+        .description = "Kill a session by name, or the active session if no name given",
         .exec = cmdKillSession,
     };
     pub const rename_session = CmdEntry{
@@ -816,6 +872,7 @@ pub const commands = struct {
         .min_args = 1,
         .max_args = 1,
         .args_usage = "new-name",
+        .description = "Rename the current session",
         .exec = cmdRenameSession,
     };
     pub const new_window = CmdEntry{
@@ -824,11 +881,13 @@ pub const commands = struct {
         .min_args = 0,
         .max_args = 2,
         .args_usage = "[name]",
+        .description = "Create a new window in the current session",
         .exec = cmdNewWindow,
     };
     pub const kill_window = CmdEntry{
         .name = "kill-window",
         .alias = "killw",
+        .description = "Kill a window by index, or the active window if none given",
         .exec = cmdKillWindow,
     };
     pub const rename_window = CmdEntry{
@@ -837,6 +896,7 @@ pub const commands = struct {
         .min_args = 1,
         .max_args = 1,
         .args_usage = "new-name",
+        .description = "Rename the current window",
         .exec = cmdRenameWindow,
     };
     pub const select_window = CmdEntry{
@@ -845,6 +905,7 @@ pub const commands = struct {
         .min_args = 1,
         .max_args = 1,
         .args_usage = "index",
+        .description = "Select a window by index",
         .exec = cmdSelectWindow,
     };
     pub const move_window = CmdEntry{
@@ -853,6 +914,7 @@ pub const commands = struct {
         .min_args = 1,
         .max_args = 2,
         .args_usage = "[src-index] dst-index",
+        .description = "Move a window to a new index",
         .exec = cmdMoveWindow,
     };
     pub const swap_window = CmdEntry{
@@ -861,21 +923,25 @@ pub const commands = struct {
         .min_args = 0,
         .max_args = 2,
         .args_usage = "[src-index] [dst-index]",
+        .description = "Swap two windows by index",
         .exec = cmdSwapWindow,
     };
     pub const next_window = CmdEntry{
         .name = "next-window",
         .alias = "next",
+        .description = "Move to the next window",
         .exec = cmdNextWindow,
     };
     pub const prev_window = CmdEntry{
         .name = "previous-window",
         .alias = "prev",
+        .description = "Move to the previous window",
         .exec = cmdPrevWindow,
     };
     pub const last_window = CmdEntry{
         .name = "last-window",
         .alias = "last",
+        .description = "Move to the last used window",
         .exec = cmdLastWindow,
     };
     pub const send_keys = CmdEntry{
@@ -883,6 +949,7 @@ pub const commands = struct {
         .alias = "send",
         .min_args = 1,
         .args_usage = "key ...",
+        .description = "Send keys to the active pane",
         .exec = cmdSendKeys,
     };
     pub const split_window = CmdEntry{
@@ -891,6 +958,7 @@ pub const commands = struct {
         .min_args = 0,
         .max_args = 3,
         .args_usage = "[-v] [proportion]",
+        .description = "Split the current pane horizontally (-v for vertical)",
         .exec = cmdSplitWindow,
     };
     pub const select_pane = CmdEntry{
@@ -899,71 +967,85 @@ pub const commands = struct {
         .min_args = 1,
         .max_args = 1,
         .args_usage = "index",
+        .description = "Select a pane by index",
         .exec = cmdSelectPane,
     };
     pub const kill_pane = CmdEntry{
         .name = "kill-pane",
         .alias = "killp",
+        .description = "Kill the active pane",
         .exec = cmdKillPane,
     };
     pub const rotate_window = CmdEntry{
         .name = "rotate-window",
         .alias = "rotatew",
+        .description = "Rotate panes within the current window",
         .exec = cmdRotateWindow,
     };
     pub const capture_pane = CmdEntry{
         .name = "capture-pane",
         .alias = "capturep",
+        .description = "Capture the contents of the active pane",
         .exec = cmdCapturePane,
     };
     pub const list_windows = CmdEntry{
         .name = "list-windows",
         .alias = "lsw",
+        .description = "List all windows in the current session",
         .exec = cmdListWindows,
     };
     pub const list_panes = CmdEntry{
         .name = "list-panes",
         .alias = "lsp",
+        .description = "List all panes in the current window",
         .exec = cmdListPanes,
     };
     pub const list_commands = CmdEntry{
         .name = "list-commands",
         .alias = "lscm",
+        .description = "List all available commands",
         .exec = cmdListCommands,
     };
     pub const detach_client = CmdEntry{
         .name = "detach-client",
         .alias = "detach",
+        .description = "Detach the current client from the server",
         .exec = cmdDetachClient,
     };
     pub const set_option = CmdEntry{
         .name = "set-option",
         .alias = "set",
+        .description = "Set a session or window option",
         .exec = cmdSetOption,
     };
     pub const show_options = CmdEntry{
         .name = "show-options",
         .alias = "show",
+        .description = "Show all session and window options",
         .exec = cmdShowOptions,
     };
     pub const resize_pane = CmdEntry{
         .name = "resize-pane",
         .alias = "resizep",
+        .description = "Resize the active pane",
         .exec = cmdResizePane,
     };
     pub const bind_key = CmdEntry{
         .name = "bind-key",
         .alias = "bind",
+        .description = "Bind a key to a command",
         .exec = cmdBindKey,
     };
     pub const unbind_key = CmdEntry{
         .name = "unbind-key",
         .alias = "unbind",
+        .description = "Unbind a key binding",
         .exec = cmdUnbindKey,
     };
     pub const source_file = CmdEntry{
         .name = "source-file",
         .alias = "source",
+        .description = "Load and execute commands from a file",
         .exec = cmdSourceFile,
     };
     pub const attach_session = CmdEntry{
@@ -972,6 +1054,7 @@ pub const commands = struct {
         .min_args = 1,
         .max_args = 1,
         .args_usage = "target-session",
+        .description = "Attach to an existing session",
         .exec = cmdSwitchClient,
     };
     pub const switch_client = CmdEntry{
@@ -980,6 +1063,7 @@ pub const commands = struct {
         .min_args = 1,
         .max_args = 1,
         .args_usage = "target-session",
+        .description = "Switch the attached client to another session",
         .exec = cmdSwitchClient,
     };
     pub const swap_pane = CmdEntry{
@@ -988,6 +1072,7 @@ pub const commands = struct {
         .min_args = 0,
         .max_args = 2,
         .args_usage = "[src-index] [dst-index]",
+        .description = "Swap two panes in the current window",
         .exec = cmdSwapPane,
     };
     pub const join_pane = CmdEntry{
@@ -996,6 +1081,7 @@ pub const commands = struct {
         .min_args = 0,
         .max_args = 3,
         .args_usage = "[-h] [-v] [src-window:src-pane]",
+        .description = "Join a pane from another window into the current one",
         .exec = cmdJoinPane,
     };
     pub const break_pane = CmdEntry{
@@ -1004,6 +1090,7 @@ pub const commands = struct {
         .min_args = 0,
         .max_args = 0,
         .args_usage = "",
+        .description = "Break the active pane into a new window",
         .exec = cmdBreakPane,
     };
     pub const paste_buffer = CmdEntry{
@@ -1012,6 +1099,7 @@ pub const commands = struct {
         .min_args = 0,
         .max_args = 0,
         .args_usage = "",
+        .description = "Paste the most recent copy buffer into the active pane",
         .exec = cmdPasteBuffer,
     };
     pub const copy_mode = CmdEntry{
@@ -1020,6 +1108,7 @@ pub const commands = struct {
         .min_args = 0,
         .max_args = 0,
         .args_usage = "",
+        .description = "Enter copy mode in the active pane",
         .exec = cmdCopyMode,
     };
     pub const find_window = CmdEntry{
@@ -1028,6 +1117,7 @@ pub const commands = struct {
         .min_args = 1,
         .max_args = 1,
         .args_usage = "query",
+        .description = "Search for a window by name",
         .exec = cmdFindWindow,
     };
     pub const show_messages = CmdEntry{
@@ -1036,6 +1126,7 @@ pub const commands = struct {
         .min_args = 0,
         .max_args = 0,
         .args_usage = "",
+        .description = "Show recent log messages",
         .exec = cmdShowMessages,
     };
     pub const list_keys = CmdEntry{
@@ -1044,7 +1135,17 @@ pub const commands = struct {
         .min_args = 0,
         .max_args = 0,
         .args_usage = "",
+        .description = "List all current key bindings",
         .exec = cmdListKeys,
+    };
+    pub const help = CmdEntry{
+        .name = "help",
+        .alias = "?",
+        .min_args = 0,
+        .max_args = 1,
+        .args_usage = "[command]",
+        .description = "Show help for all commands or a specific command",
+        .exec = cmdHelp,
     };
 };
 
@@ -1090,6 +1191,7 @@ fn cmdTable() []const *const CmdEntry {
             &commands.find_window,
             &commands.show_messages,
             &commands.list_keys,
+            &commands.help,
         };
         break :blk &entries;
     };
@@ -1104,6 +1206,55 @@ pub fn lookup(name: []const u8) ?*const CmdEntry {
         }
     }
     return null;
+}
+
+pub fn formatHelp(allocator: std.mem.Allocator, command_name: ?[]const u8) ![]const u8 {
+    var buf: std.ArrayList(u8) = .empty;
+
+    if (command_name) |name| {
+        const entry = lookup(name) orelse {
+            try buf.appendSlice(allocator, "Unknown command: ");
+            try buf.appendSlice(allocator, name);
+            try buf.appendSlice(allocator, "\n");
+            return try buf.toOwnedSlice(allocator);
+        };
+
+        var line_buf: [512]u8 = undefined;
+        var line = try std.fmt.bufPrint(&line_buf, "  Name:    {s}\n", .{entry.name});
+        try buf.appendSlice(allocator, line);
+
+        if (entry.alias) |a| {
+            line = try std.fmt.bufPrint(&line_buf, "  Alias:   {s}\n", .{a});
+            try buf.appendSlice(allocator, line);
+        }
+
+        line = try std.fmt.bufPrint(&line_buf, "  Usage:   szn {s}", .{entry.name});
+        try buf.appendSlice(allocator, line);
+        if (entry.args_usage.len > 0) {
+            line = try std.fmt.bufPrint(&line_buf, " {s}", .{entry.args_usage});
+            try buf.appendSlice(allocator, line);
+        }
+        try buf.appendSlice(allocator, "\n");
+
+        if (entry.description.len > 0) {
+            line = try std.fmt.bufPrint(&line_buf, "  Details: {s}\n", .{entry.description});
+            try buf.appendSlice(allocator, line);
+        }
+        try buf.appendSlice(allocator, "\n");
+    } else {
+        const table = cmdTable();
+        for (table) |entry| {
+            var line_buf: [256]u8 = undefined;
+            const line = if (entry.args_usage.len > 0)
+                try std.fmt.bufPrint(&line_buf, "  {s}  {s}\n", .{ entry.name, entry.args_usage })
+            else
+                try std.fmt.bufPrint(&line_buf, "  {s}\n", .{entry.name});
+            try buf.appendSlice(allocator, line);
+        }
+        try buf.appendSlice(allocator, "\nUse `szn help <command>` for details on a specific command.\n");
+    }
+
+    return try buf.toOwnedSlice(allocator);
 }
 
 pub fn parse(input: []const u8, allocator: std.mem.Allocator) !CmdArgs {
@@ -1505,9 +1656,9 @@ test "last-window switches to non-active" {
     try testing.expectEqual(session.windows.items[0], session.active_window.?);
 }
 
-test "cmd table has 39 entries" {
+test "cmd table has 40 entries" {
     const table = cmdTable();
-    try testing.expectEqual(@as(usize, 39), table.len);
+    try testing.expectEqual(@as(usize, 40), table.len);
 }
 
 test "lookup all new commands" {

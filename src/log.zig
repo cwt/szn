@@ -14,7 +14,7 @@ pub fn log(comptime level: Level, comptime msg: []const u8, args: anytype) void 
         .warn => "WARN",
         .err => "ERROR",
     };
-    std.log.scoped(.zmux).log(
+    std.log.scoped(.szn).log(
         switch (level) {
             .debug => .debug,
             .info => .info,

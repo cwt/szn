@@ -1,6 +1,6 @@
 .{
-    .name = .zmux,
+    .name = .szn,
     .version = "0.0.0",
     .paths = .{""},
-    .fingerprint = 0x695fb32a8686e637,
+    .fingerprint = 0xd62cd238fa72e5d9,
 }

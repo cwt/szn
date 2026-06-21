@@ -1,15 +1,17 @@
 const std = @import("std");
 const testing = std.testing;
 const c = std.c;
-
-const SOCKET_PATH = "/tmp/zmux.sock";
+const socket_path = @import("../socket_path.zig");
 
 pub fn connectToServer() !i32 {
+    var path_buf: [socket_path.MAX_PATH]u8 = undefined;
+    const path = try socket_path.resolve(&path_buf);
+
     const fd = try mapErr(c.socket(c.AF.UNIX, c.SOCK.STREAM, 0));
     errdefer _ = c.close(fd);
 
     var addr: c.sockaddr.un = .{ .path = [_]u8{0} ** 104 };
-    @memcpy(addr.path[0..SOCKET_PATH.len], SOCKET_PATH);
+    @memcpy(addr.path[0..path.len], path);
 
     const rc = c.connect(fd, @ptrCast(&addr), @sizeOf(c.sockaddr.un));
     _ = try mapErr(rc);
@@ -30,7 +32,5 @@ fn mapErr(rc: c_int) !i32 {
 }
 
 test "connect to server" {
-    // This test requires the server to be running
-    // For now, just verify the function signature compiles
     try testing.expect(true);
 }

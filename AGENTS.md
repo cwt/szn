@@ -1,8 +1,8 @@
-# Agent Guidelines — zmux
+# Agent Guidelines — szn
 
 ## Project Context
 
-zmux is a rewrite of tmux in Zig. The upstream C source lives in `tmux/` and
+szn is a rewrite of tmux in Zig. The upstream C source lives in `tmux/` and
 serves as the *reference implementation* for behaviour. All new code goes into
 the repository root as Zig source files.
 

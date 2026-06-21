@@ -1,4 +1,4 @@
-# zmux — Functional Clone Progress
+# szn — Functional Clone Progress
 
 Track progress toward a fully functional tmux clone.
 Based on code audit as of 2026-06-21.
@@ -55,7 +55,7 @@ Based on code audit as of 2026-06-21.
 ### M2: Configurable & Scriptable
 
 - [x] Option stores & inheritance (Session -> Window option stores)
-- [x] Load config file at startup (`~/.zmux.conf` or `~/.tmux.conf`)
+- [x] Load config file at startup (`~/.szn.conf` or `~/.tmux.conf`)
 - [x] Config commands (`bind-key`, `unbind-key`, `set-option`, `show-options`, `source-file`, `resize-pane`)
 - [x] SGR mouse reporting (1006) and click-to-focus
 - [x] Escape sequence input buffering

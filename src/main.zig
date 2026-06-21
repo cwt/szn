@@ -6,6 +6,9 @@ const render = @import("server/render.zig");
 const Display = render.Display;
 const raw_mod = @import("client/raw.zig");
 const cmd_mod = @import("cmd/cmd.zig");
+const protocol = @import("server/protocol.zig");
+const socket_mod = @import("server/socket.zig");
+const connect = @import("client/connect.zig");
 
 extern "c" fn fopen(filename: [*:0]const u8, modes: [*:0]const u8) ?*anyopaque;
 extern "c" fn fclose(stream: ?*anyopaque) c_int;
@@ -23,7 +26,7 @@ pub fn logFn(
     args: anytype,
 ) void {
     _ = scope;
-    const f = fopen("/tmp/zmux.log", "a") orelse return;
+    const f = fopen("/tmp/szn.log", "a") orelse return;
     defer _ = fclose(f);
 
     var buf: [4096]u8 = undefined;
@@ -48,8 +51,6 @@ export fn sigwinch_handler(sig: c.SIG) callconv(.c) void {
 
 pub fn main(init: std.process.Init) !void {
     const allocator = init.gpa;
-    const stdin_fd = c.STDIN_FILENO;
-    const stdout_fd = c.STDOUT_FILENO;
 
     var args: std.ArrayListUnmanaged([]const u8) = .empty;
     defer args.deinit(allocator);
@@ -68,9 +69,32 @@ pub fn main(init: std.process.Init) !void {
     }
 
     if (args.items.len > 1) {
-        // Run as client
+        const is_attach = std.mem.eql(u8, args.items[1], "attach") or
+            std.mem.eql(u8, args.items[1], "attach-session");
+        if (is_attach) {
+            if (socket_mod.socketExists()) {
+                try runInteractiveClient();
+            } else {
+                std.debug.print("No szn server running\n", .{});
+                std.process.exit(1);
+            }
+        }
+
+        const is_help = std.mem.eql(u8, args.items[1], "help") or
+            std.mem.eql(u8, args.items[1], "?");
+        if (is_help and !socket_mod.socketExists()) {
+            const target = if (args.items.len > 2) args.items[2] else null;
+            const text = cmd_mod.formatHelp(allocator, target) catch {
+                std.debug.print("Failed to format help\n", .{});
+                std.process.exit(1);
+            };
+            defer allocator.free(text);
+            std.debug.print("{s}", .{text});
+            std.process.exit(0);
+        }
+
         var client = @import("client/client.zig").Client.init(allocator) catch |err| {
-            std.debug.print("Could not connect to zmux server: {any}\n", .{err});
+            std.debug.print("Could not connect to szn server: {any}\n", .{err});
             std.process.exit(1);
         };
         defer client.deinit();
@@ -96,7 +120,7 @@ pub fn main(init: std.process.Init) !void {
         try client.sendCommand(cmd);
         const reply = try client.recvPacket();
         defer allocator.free(reply.data);
-        const msg_type = @as(@import("server/protocol.zig").MessageType, @enumFromInt(reply.header.msg_type));
+        const msg_type = @as(protocol.MessageType, @enumFromInt(reply.header.msg_type));
         switch (msg_type) {
             .ready => {
                 std.debug.print("{s}\n", .{reply.data});
@@ -117,15 +141,74 @@ pub fn main(init: std.process.Init) !void {
         }
     }
 
-    // Install SIGWINCH handler to detect terminal resize
-    var act: std.posix.Sigaction = .{
-        .handler = .{ .handler = sigwinch_handler },
-        .mask = std.posix.sigemptyset(),
-        .flags = 0,
-    };
-    std.posix.sigaction(.WINCH, &act, null);
+    if (socket_mod.socketExists()) {
+        try runInteractiveClient();
+    } else {
+        const pid = c.fork();
+        if (pid < 0) {
+            std.debug.print("Failed to fork\n", .{});
+            std.process.exit(1);
+        }
+        if (pid == 0) {
+            try runServerDaemon(allocator);
+        } else {
+            waitForSocket() catch {
+                std.debug.print("Server failed to start\n", .{});
+                std.process.exit(1);
+            };
+            try runInteractiveClient();
+        }
+    }
+}
 
-    // Query terminal size first to initialize session/window/pane to the actual host size
+fn waitForSocket() !void {
+    var attempts: u32 = 0;
+    while (attempts < 100) : (attempts += 1) {
+        if (socket_mod.socketExists()) return;
+        _ = std.posix.poll(&[0]std.posix.pollfd{}, 50) catch 0;
+    }
+    return error.SocketNotFound;
+}
+
+fn runServerDaemon(allocator: std.mem.Allocator) !void {
+    _ = c.setsid();
+
+    const sx: u32 = 80;
+    const sy: u32 = 24;
+
+    var server = try Server.init(allocator);
+    defer server.deinit();
+
+    server.loadDefaultConfig() catch |err| {
+        std.log.warn("Failed to load default config: {any}", .{err});
+    };
+
+    const session = try server.newSession("default", sx, sy - 1);
+    const pane = session.active_window.?.active_pane.?;
+
+    const shell = try server.resolveShell(allocator, session);
+    defer allocator.free(shell);
+    try pane.spawn(allocator, &[_][]const u8{shell});
+    try server.watchPanePty(pane);
+
+    server.display_sx = sx;
+    server.display_sy = sy;
+    try server.listen();
+
+    while (server.loop.running) {
+        try server.run();
+        server.renderToDisplayClient();
+    }
+
+    server.shutdownServer();
+}
+
+fn runInteractiveClient() !void {
+    const stdin_fd = c.STDIN_FILENO;
+    const stdout_fd = c.STDOUT_FILENO;
+    const server_fd = try connect.connectToServer();
+    defer _ = c.close(server_fd);
+
     var ws: c.winsize = undefined;
     var sx: u32 = 80;
     var sy: u32 = 24;
@@ -137,34 +220,28 @@ pub fn main(init: std.process.Init) !void {
         sy = @max(ws.row, 24);
     }
 
-    var server = try Server.init(allocator);
-    defer server.deinit();
+    const identify = protocol.Packet.make(.identify_term, "xterm-256color");
+    var id_buf: [128]u8 = undefined;
+    const id_ser = identify.serialize(&id_buf);
+    if (c.write(server_fd, id_ser.ptr, id_ser.len) < 0) return error.WriteFailed;
 
-    // Load startup configurations if available
-    server.loadDefaultConfig() catch |err| {
-        std.log.warn("Failed to load default config: {any}", .{err});
+    var resize_buf: [16]u8 = undefined;
+    std.mem.writeInt(u32, resize_buf[0..4], sx, .little);
+    std.mem.writeInt(u32, resize_buf[4..8], sy, .little);
+    const resize_pkt = protocol.Packet.make(.resize, resize_buf[0..8]);
+    var r_buf: [128]u8 = undefined;
+    const r_ser = resize_pkt.serialize(&r_buf);
+    _ = c.write(server_fd, r_ser.ptr, r_ser.len);
+
+    var act: std.posix.Sigaction = .{
+        .handler = .{ .handler = sigwinch_handler },
+        .mask = std.posix.sigemptyset(),
+        .flags = 0,
     };
+    std.posix.sigaction(.WINCH, &act, null);
 
-    // Create session matching host window size. Pane size leaves 1 row for status bar.
-    const session = try server.newSession("default", sx, sy - 1);
-    const pane = session.active_window.?.active_pane.?;
-
-    const shell = try server.resolveShell(allocator, session);
-    defer allocator.free(shell);
-    try pane.spawn(allocator, &[_][]const u8{shell});
-    try server.watchPanePty(pane);
-
-    server.stdin_fd = stdin_fd;
-    try server.loop.addFd(allocator, stdin_fd, @as(i16, @intCast(std.posix.POLL.IN)), @ptrCast(&server));
-    try server.listen();
-
-    var raw = raw_mod.RawTerminal.init(stdin_fd) catch {
-        return;
-    };
-    raw.setRaw() catch {
-        return;
-    };
-    // Drain any stale input that might have been buffered before raw mode
+    var raw = raw_mod.RawTerminal.init(stdin_fd) catch return;
+    raw.setRaw() catch return;
     _ = tcflush(stdin_fd, TCIFLUSH);
     defer raw.deinit();
 
@@ -176,11 +253,16 @@ pub fn main(init: std.process.Init) !void {
     display.enterAltScreen() catch {};
     defer display.exitAltScreen() catch {};
 
-    while (server.loop.running) {
-        try server.run();
-        const active_session = server.activeSession() orelse continue;
-        const active_window = active_session.active_window orelse continue;
-        const active_pane = active_window.active_pane orelse continue;
+    var read_buf: [8192]u8 = undefined;
+    var read_pos: usize = 0;
+    var running = true;
+
+    while (running) {
+        var pollfds: [2]std.posix.pollfd = undefined;
+        pollfds[0] = .{ .fd = server_fd, .events = @as(i16, @intCast(std.posix.POLL.IN)), .revents = 0 };
+        pollfds[1] = .{ .fd = stdin_fd, .events = @as(i16, @intCast(std.posix.POLL.IN)), .revents = 0 };
+
+        _ = std.posix.poll(&pollfds, 10) catch continue;
 
         if (sigwinchFlag.load(.seq_cst)) {
             sigwinchFlag.store(false, .seq_cst);
@@ -188,18 +270,68 @@ pub fn main(init: std.process.Init) !void {
             if (c.ioctl(stdout_fd, c.T.IOCGWINSZ, &new_ws) == 0) {
                 if (new_ws.col != ws.col or new_ws.row != ws.row) {
                     ws = new_ws;
-                    display.sx = @max(ws.col, 80);
-                    display.sy = @max(ws.row, 24);
-                    // Resize active session, which resizes active window and panes inside it
-                    active_session.resize(display.sx, display.sy - 1) catch {};
+                    sx = @max(ws.col, 80);
+                    sy = @max(ws.row, 24);
+                    std.mem.writeInt(u32, resize_buf[0..4], sx, .little);
+                    std.mem.writeInt(u32, resize_buf[4..8], sy, .little);
+                    const rs_pkt = protocol.Packet.make(.resize, resize_buf[0..8]);
+                    var rs_buf: [128]u8 = undefined;
+                    const rs_ser = rs_pkt.serialize(&rs_buf);
+                    _ = c.write(server_fd, rs_ser.ptr, rs_ser.len);
                 }
             }
         }
-        if (active_pane.dirty) {
-            display.renderAll(&active_pane.screen, active_session.name, active_session.windows.items, active_session.active_window) catch |err| {
-                std.log.warn("render error: {any}", .{err});
-            };
-            active_pane.dirty = false;
+
+        if (pollfds[1].revents != 0) {
+            var stdin_buf: [4096]u8 = undefined;
+            const n = c.read(stdin_fd, &stdin_buf, stdin_buf.len);
+            if (n > 0) {
+                const sd_pkt = protocol.Packet.make(.stdin_data, stdin_buf[0..@as(usize, @intCast(n))]);
+                var sd_buf: [4096 + 5]u8 = undefined;
+                const sd_ser = sd_pkt.serialize(&sd_buf);
+                _ = c.write(server_fd, sd_ser.ptr, sd_ser.len);
+            } else {
+                const detach_pkt = protocol.Packet.make(.detach, "");
+                var d_buf: [128]u8 = undefined;
+                const d_ser = detach_pkt.serialize(&d_buf);
+                _ = c.write(server_fd, d_ser.ptr, d_ser.len);
+                running = false;
+            }
+        }
+
+        if (pollfds[0].revents != 0) {
+            const n = c.read(server_fd, read_buf[read_pos..].ptr, read_buf.len - read_pos);
+            if (n <= 0) {
+                running = false;
+                continue;
+            }
+            read_pos += @as(usize, @intCast(n));
+
+            while (read_pos >= 5) {
+                const pkt_len = std.mem.readInt(u32, read_buf[0..4], .little);
+                if (pkt_len < 5 or pkt_len > read_buf.len) break;
+                if (read_pos < pkt_len) break;
+
+                const msg_type = @as(protocol.MessageType, @enumFromInt(read_buf[4]));
+                const data = read_buf[5..pkt_len];
+
+                switch (msg_type) {
+                    .ready => {},
+                    .output => {
+                        _ = c.write(stdout_fd, data.ptr, data.len);
+                    },
+                    .detach => {
+                        running = false;
+                    },
+                    else => {},
+                }
+
+                const remaining = read_pos - pkt_len;
+                if (remaining > 0) {
+                    std.mem.copyForwards(u8, read_buf[0..remaining], read_buf[pkt_len..read_pos]);
+                }
+                read_pos = remaining;
+            }
         }
     }
 }

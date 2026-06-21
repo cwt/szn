@@ -1,4 +1,4 @@
-# Migration Plan: tmux (C) → zmux (Zig)
+# Migration Plan: tmux (C) → szn (Zig)
 
 ## Why Zig?
 
@@ -639,7 +639,7 @@ Replaces `proc.c` (~700 lines of C).
 
 ```zig
 pub const Message = packed struct {
-    magic: u32 = 0x5A4D5558,  // "ZMUX"
+    magic: u32 = 0x5A4D5558,  // "SZN"
     length: u32,
     type: MessageType,
     data: [4096]u8,
@@ -724,14 +724,14 @@ All 450 tests passed.
 
 ```zig
 test "full session lifecycle" {
-    const zmux = try zmuxProcess.start(test_allocator, .{});
-    defer zmux.kill();
+    const szn = try sznProcess.start(test_allocator, .{});
+    defer szn.kill();
 
-    _ = try zmux.sendCommand("new-session -d -s test");
-    _ = try zmux.sendCommand("split-window -h");
-    _ = try zmux.sendCommand("select-pane -t 1");
+    _ = try szn.sendCommand("new-session -d -s test");
+    _ = try szn.sendCommand("split-window -h");
+    _ = try szn.sendCommand("select-pane -t 1");
     
-    const output = try zmux.sendCommand("list-panes -a -F '#{pane_id}'");
+    const output = try szn.sendCommand("list-panes -a -F '#{pane_id}'");
     try testing.expectEqualStrings("%0\n%1\n", output);
 }
 ```
@@ -797,7 +797,7 @@ The `tmux/` directory tracks the upstream C source. Use it as follows:
 Simple packet protocol over Unix sockets:
 ```zig
 const Packet = packed struct {
-    magic: u32 = 0x5A4D5558,  // "ZMUX"
+    magic: u32 = 0x5A4D5558,  // "SZN"
     length: u32,
     type: MessageType,
     data: [4096]u8,

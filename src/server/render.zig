@@ -11,34 +11,51 @@ pub const Display = struct {
     fd: i32,
     sx: u32,
     sy: u32,
+    capture: ?*std.ArrayList(u8) = null,
+    capture_allocator: ?std.mem.Allocator = null,
+
+    fn writeBytes(self: Display, bytes: []const u8) !void {
+        if (self.capture) |cap| {
+            try cap.appendSlice(self.capture_allocator.?, bytes);
+        } else {
+            if (c.write(self.fd, bytes.ptr, bytes.len) < 0) return error.WriteFailed;
+        }
+    }
+
+    fn writeString(self: Display, str: []const u8) !void {
+        try self.writeBytes(str);
+    }
+
+    fn writeStr(self2: Display, str: [*:0]const u8) !void {
+        const len = std.mem.len(str);
+        try self2.writeBytes(str[0..len]);
+    }
 
     pub fn enterAltScreen(self: Display) !void {
-        if (c.write(self.fd, "\x1b[?1049h", 8) < 0) return error.WriteFailed;
-        if (c.write(self.fd, "\x1b[?1000h\x1b[?1006h", 16) < 0) return error.WriteFailed;
-        if (c.write(self.fd, "\x1b[?25l", 6) < 0) return error.WriteFailed;
+        try self.writeBytes("\x1b[?1049h");
+        try self.writeBytes("\x1b[?1000h\x1b[?1006h");
+        try self.writeBytes("\x1b[?25l");
     }
 
     pub fn exitAltScreen(self: Display) !void {
-        _ = c.write(self.fd, "\x1b[?1000l\x1b[?1006l", 16);
-        _ = c.write(self.fd, "\x1b[?25h", 6);
-        _ = c.write(self.fd, "\x1b[?1049l", 8);
+        try self.writeBytes("\x1b[?1000l\x1b[?1006l");
+        try self.writeBytes("\x1b[?25h");
+        try self.writeBytes("\x1b[?1049l");
     }
 
     pub fn renderAll(self: Display, screen: *Screen, session_name: []const u8, windows: []const *Window, active_window: ?*Window) !void {
-        // Hide the cursor during rendering to prevent it from jumping/flickering around the screen
-        _ = c.write(self.fd, "\x1b[?25l", 6);
+        try self.writeBytes("\x1b[?25l");
 
         try self.renderContent(screen);
         try self.renderStatusBar(session_name, windows, active_window);
 
-        // Restore physical cursor to the pane's virtual cursor position
         if (screen.cursor.visible) {
             if (screen.copy_mode) |cm| {
                 try self.moveTo(cm.cursor_x, cm.cursor_y);
             } else {
                 try self.moveTo(screen.cursor.x, screen.cursor.y);
             }
-            _ = c.write(self.fd, "\x1b[?25h", 6);
+            try self.writeBytes("\x1b[?25h");
         }
     }
 
@@ -50,8 +67,7 @@ pub const Display = struct {
         var active_bg = Colour.default_();
         var active_attr = Attr{};
 
-        // Reset attributes at the start
-        if (c.write(self.fd, "\x1b[m", 3) < 0) return error.WriteFailed;
+        try self.writeBytes("\x1b[m");
 
         for (0..h) |y| {
             const combined_idx = (@as(isize, @intCast(screen.grid.history.items.len)) - @as(isize, @intCast(if (screen.copy_mode) |cm| cm.scroll_offset else 0))) + @as(isize, @intCast(y));
@@ -91,7 +107,7 @@ pub const Display = struct {
 
                     const attrFields = comptime blk: {
                         const all = std.meta.fields(Attr);
-                        break :blk all[0 .. all.len - 1]; // exclude _padding
+                        break :blk all[0 .. all.len - 1];
                     };
                     const attrCodes = [_]u8{ 1, 2, 3, 4, 5, 7, 8, 9, 53, 4, 4 };
 
@@ -123,71 +139,65 @@ pub const Display = struct {
                         },
                     }
 
-                    if (c.write(self.fd, sgr_buf[0..sgr_pos].ptr, @intCast(sgr_pos)) < 0) return error.WriteFailed;
+                    try self.writeBytes(sgr_buf[0..sgr_pos]);
                 }
 
                 const cp = cell.char;
                 if (cp == 0 or cp == ' ') {
-                    if (c.write(self.fd, " ", 1) < 0) return error.WriteFailed;
+                    try self.writeBytes(" ");
                 } else if (cp >= 0x20 and cp != 0x7F) {
                     var buf: [4]u8 = undefined;
                     const len = std.unicode.utf8Encode(@intCast(cp), &buf) catch {
-                        if (c.write(self.fd, "?", 1) < 0) return error.WriteFailed;
+                        try self.writeBytes("?");
                         continue;
                     };
-                    if (c.write(self.fd, &buf, len) < 0) return error.WriteFailed;
+                    try self.writeBytes(buf[0..len]);
                 } else {
-                    if (c.write(self.fd, "?", 1) < 0) return error.WriteFailed;
+                    try self.writeBytes("?");
                 }
             }
         }
 
-        // Reset attributes at the end
-        if (c.write(self.fd, "\x1b[m", 3) < 0) return error.WriteFailed;
+        try self.writeBytes("\x1b[m");
     }
 
     fn renderStatusBar(self: Display, session_name: []const u8, windows: []const *Window, active_window: ?*Window) !void {
         try self.moveTo(0, self.sy - 1);
-        if (c.write(self.fd, "\x1b[7m", 4) < 0) return;
+        try self.writeBytes("\x1b[7m");
 
         var col: u32 = 0;
 
-        // Render Session Name Prefix: " [session_name]"
         var buf: [256]u8 = undefined;
         const prefix = std.fmt.bufPrint(&buf, " [{s}]", .{session_name}) catch " [default]";
-        if (c.write(self.fd, prefix.ptr, @intCast(prefix.len)) < 0) return;
+        try self.writeBytes(prefix);
         col += @intCast(prefix.len);
 
-        // Render Windows
         for (windows, 0..) |win, idx| {
             const is_active = (win == active_window);
             const suffix = if (is_active) "*" else "";
             const win_str = std.fmt.bufPrint(&buf, " {d}:{s}{s}", .{ idx, win.name, suffix }) catch " win";
 
             if (is_active) {
-                // Enable underline
-                if (c.write(self.fd, "\x1b[4m", 4) < 0) return;
+                try self.writeBytes("\x1b[4m");
             }
-            if (c.write(self.fd, win_str.ptr, @intCast(win_str.len)) < 0) return;
+            try self.writeBytes(win_str);
             if (is_active) {
-                // Disable underline
-                if (c.write(self.fd, "\x1b[24m", 5) < 0) return;
+                try self.writeBytes("\x1b[24m");
             }
             col += @intCast(win_str.len);
         }
 
-        // Fill the rest of the status line with spaces
         const max_len = self.sx -| 1;
         while (col < max_len) : (col += 1) {
-            if (c.write(self.fd, " ", 1) < 0) return;
+            try self.writeBytes(" ");
         }
 
-        if (c.write(self.fd, "\x1b[m", 3) < 0) return;
+        try self.writeBytes("\x1b[m");
     }
 
     fn moveTo(self: Display, x: u32, y: u32) !void {
         var buf: [32]u8 = undefined;
         const seq = std.fmt.bufPrint(&buf, "\x1b[{d};{d}H", .{ y + 1, x + 1 }) catch unreachable;
-        if (c.write(self.fd, seq.ptr, @intCast(seq.len)) < 0) return error.WriteFailed;
+        try self.writeBytes(seq);
     }
 };
