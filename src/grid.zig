@@ -64,10 +64,15 @@ pub const Grid = struct {
     history_limit: u32 = 2000,
 
     pub fn init(allocator: std.mem.Allocator, width: u32, height: u32) !Grid {
+        return initWithLimit(allocator, width, height, 2000);
+    }
+
+    pub fn initWithLimit(allocator: std.mem.Allocator, width: u32, height: u32, history_limit: u32) !Grid {
         var grid = Grid{
             .allocator = allocator,
             .width = width,
             .height = height,
+            .history_limit = history_limit,
         };
         try grid.lines.ensureTotalCapacity(allocator, height);
         try grid.resize(height);

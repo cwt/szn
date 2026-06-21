@@ -48,6 +48,7 @@ pub const Screen = struct {
     cur_cell: Cell = Cell.empty(),
     dirty: bool = true,
     copy_mode: ?@import("mode_copy.zig").CopyMode = null,
+    tab_stop: u32 = 8,
 
     pub fn init(allocator: std.mem.Allocator, width: u32, height: u32) !Screen {
         return Screen{
@@ -116,8 +117,7 @@ pub const Screen = struct {
             return;
         }
         if (char == '\t') {
-            const tab_stop: u32 = 8;
-            self.cursor.x = ((self.cursor.x / tab_stop) + 1) * tab_stop;
+            self.cursor.x = ((self.cursor.x / self.tab_stop) + 1) * self.tab_stop;
             if (self.cursor.x >= self.grid.width) {
                 self.cursor.x = self.grid.width - 1;
             }

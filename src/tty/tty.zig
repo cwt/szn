@@ -15,6 +15,11 @@ const attrFields = blk: {
 };
 const attrCodes = [_]u8{ 1, 2, 3, 4, 5, 7, 8, 9, 53, 4, 4 };
 
+comptime {
+    // Guard against Attr field reordering: field count must match attrCodes
+    std.debug.assert(attrFields.len == attrCodes.len);
+}
+
 pub const Term = struct {
     writer: Writer,
     sx: u32,

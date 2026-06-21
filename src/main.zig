@@ -17,6 +17,19 @@ pub const std_options: std.Options = .{
     .logFn = logFn,
 };
 
+fn resolveLogPath(buf: *[256]u8) ![]const u8 {
+    if (std.posix.getenv("XDG_STATE_HOME")) |xdg_raw| {
+        const xdg = std.mem.span(xdg_raw);
+        const dir_path = try std.fmt.bufPrint(buf, "{s}/szn", .{xdg});
+        std.fs.makeDirAbsolute(dir_path) catch |err| switch (err) {
+            error.PathAlreadyExists => {},
+            else => return err,
+        };
+        return try std.fmt.bufPrint(buf, "{s}/szn/szn.log", .{xdg});
+    }
+    return try std.fmt.bufPrint(buf, "/tmp/szn.log", .{});
+}
+
 pub fn logFn(
     comptime level: std.log.Level,
     comptime scope: @EnumLiteral(),
@@ -25,7 +38,9 @@ pub fn logFn(
 ) void {
     _ = scope;
     if (log_file == null) {
-        log_file = std.fs.createFileAbsolute("/tmp/szn.log", .{ .append = true }) catch return;
+        var path_buf: [256]u8 = undefined;
+        const path = resolveLogPath(&path_buf) catch return;
+        log_file = std.fs.createFileAbsolute(path, .{ .append = true }) catch return;
     }
     const file = log_file.?;
     var buf: [4096]u8 = undefined;
