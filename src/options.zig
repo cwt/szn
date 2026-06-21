@@ -186,7 +186,7 @@ pub const SESSION_OPTIONS = &[_]OptionDef{
     .{ .name = "status", .type = .choice, .default = OptionValue{ .choice = "on" }, .choices = &[_][]const u8{ "off", "on", "2", "3", "4", "5" } },
     .{ .name = "status-interval", .type = .number, .default = OptionValue{ .number = 15 }, .min = 0, .max = 86400 },
     .{ .name = "history-limit", .type = .number, .default = OptionValue{ .number = 2000 }, .min = 0, .max = 1000000 },
-    .{ .name = "mouse", .type = .flag, .default = OptionValue{ .flag = false } },
+    .{ .name = "mouse", .type = .flag, .default = OptionValue{ .flag = true } },
     .{ .name = "prefix", .type = .key, .default = OptionValue{ .key = Key{ .char = .{ .code = 'b', .mod = .{ .ctrl = true } } } } }, // C-b
     .{ .name = "prefix2", .type = .key, .default = OptionValue{ .key = .{ .special = .{ .key = .escape } } } },
     .{ .name = "escape-time", .type = .number, .default = OptionValue{ .number = 500 }, .min = 0, .max = 10000 },
@@ -220,7 +220,7 @@ test "create options with defaults" {
 
     try testing.expectEqual(@as(i64, 15), opts.asNumber("status-interval").?);
     try testing.expectEqualStrings("xterm-256color", opts.asString("default-terminal").?);
-    try testing.expect(!opts.asFlag("mouse").?);
+    try testing.expect(opts.asFlag("mouse").?);
 }
 
 test "set and get number option" {
