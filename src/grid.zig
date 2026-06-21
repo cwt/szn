@@ -135,6 +135,7 @@ pub const Grid = struct {
         if (self.lines.items.len == 0) return;
         var line = self.lines.orderedRemove(0);
         line.dirty = false;
+        errdefer line.deinit(self.allocator);
 
         try self.history.append(self.allocator, line);
         if (self.history.items.len > self.history_limit) {
@@ -147,9 +148,13 @@ pub const Grid = struct {
 
     pub fn scrollDown(self: *Grid) !void {
         if (self.history.items.len == 0) return;
-        const line = self.history.pop().?;
+        var line = self.history.pop().?;
+        errdefer line.deinit(self.allocator);
         try self.lines.insert(self.allocator, 0, line);
-        if (self.lines.pop()) |_| {}
+        if (self.lines.pop()) |discarded| {
+            var d = discarded;
+            d.deinit(self.allocator);
+        }
     }
 
     pub fn clearLine(self: *Grid, y: u32) void {
