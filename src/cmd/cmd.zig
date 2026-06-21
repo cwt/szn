@@ -2,6 +2,7 @@ const std = @import("std");
 const testing = std.testing;
 const server_mod = @import("../server/server.zig");
 const Server = server_mod.Server;
+const Pane = @import("../window.zig").Pane;
 
 pub const CmdResult = enum(u8) {
     ok,
@@ -225,6 +226,147 @@ fn cmdKillPane(server: *Server, _: []const []const u8) CmdResult {
     const pane = window.active_pane orelse return .err;
     if (window.panes.items.len <= 1) return .err;
     window.removePane(server.allocator, pane);
+    return .ok;
+}
+
+fn cmdSwapPane(server: *Server, args: []const []const u8) CmdResult {
+    const session = server.activeSession() orelse return .err;
+    const window = session.active_window orelse return .err;
+    if (window.panes.items.len <= 1) return .err;
+
+    var src_idx: usize = 0;
+    var dst_idx: usize = 0;
+
+    const active = window.active_pane orelse window.panes.items[0];
+    src_idx = for (window.panes.items, 0..) |p, idx| {
+        if (p == active) break idx;
+    } else return .err;
+
+    if (args.len < 2) {
+        dst_idx = (src_idx + 1) % window.panes.items.len;
+    } else if (args.len == 2) {
+        dst_idx = std.fmt.parseInt(usize, args[1], 10) catch return .err;
+    } else {
+        src_idx = std.fmt.parseInt(usize, args[1], 10) catch return .err;
+        dst_idx = std.fmt.parseInt(usize, args[2], 10) catch return .err;
+    }
+
+    if (src_idx >= window.panes.items.len or dst_idx >= window.panes.items.len) return .err;
+    if (src_idx == dst_idx) return .ok;
+
+    const pane1 = window.panes.items[src_idx];
+    const pane2 = window.panes.items[dst_idx];
+
+    const node1 = window.layout.findLeafParent(window.layout.root, pane1) orelse return .err;
+    const node2 = window.layout.findLeafParent(window.layout.root, pane2) orelse return .err;
+    node1.leaf = pane2;
+    node2.leaf = pane1;
+
+    window.panes.items[src_idx] = pane2;
+    window.panes.items[dst_idx] = pane1;
+
+    return .ok;
+}
+
+fn cmdJoinPane(server: *Server, args: []const []const u8) CmdResult {
+    const session = server.activeSession() orelse return .err;
+    const dst_win = session.active_window orelse return .err;
+    const dst_pane = dst_win.active_pane orelse return .err;
+
+    var vertical = true;
+    var src_arg: ?[]const u8 = null;
+
+    var i: usize = 1;
+    while (i < args.len) : (i += 1) {
+        if (std.mem.eql(u8, args[i], "-h")) {
+            vertical = false;
+        } else if (std.mem.eql(u8, args[i], "-v")) {
+            vertical = true;
+        } else {
+            src_arg = args[i];
+        }
+    }
+
+    var src_win = dst_win;
+    var src_pane: *@import("../window.zig").Pane = undefined;
+
+    if (src_arg) |sa| {
+        const colon = std.mem.indexOfScalar(u8, sa, ':');
+        if (colon) |c_pos| {
+            const win_idx = std.fmt.parseInt(usize, sa[0..c_pos], 10) catch return .err;
+            const pane_idx = std.fmt.parseInt(usize, sa[c_pos + 1 ..], 10) catch return .err;
+            if (win_idx >= session.windows.items.len) return .err;
+            src_win = session.windows.items[win_idx];
+            if (pane_idx >= src_win.panes.items.len) return .err;
+            src_pane = src_win.panes.items[pane_idx];
+        } else {
+            const win_idx = std.fmt.parseInt(usize, sa, 10) catch return .err;
+            if (win_idx >= session.windows.items.len) return .err;
+            src_win = session.windows.items[win_idx];
+            src_pane = src_win.active_pane orelse return .err;
+        }
+    } else {
+        if (session.windows.items.len <= 1) return .err;
+        for (session.windows.items) |w| {
+            if (w != dst_win) {
+                src_win = w;
+                src_pane = w.active_pane orelse return .err;
+                break;
+            }
+        }
+    }
+
+    if (src_pane == dst_pane) return .err;
+
+    src_win.extractPane(server.allocator, src_pane);
+    if (src_win.panes.items.len == 0) {
+        const dummy = server.allocator.create(Pane) catch return .err;
+        dummy.* = Pane.init(server.allocator, 9999, 1, 1) catch return .err;
+        src_win.layout.root.leaf = dummy;
+        session.killWindow(server.allocator, src_win);
+    }
+
+    const dummy_pane = dst_win.splitPane(server.allocator, dst_pane, vertical, 0.5) catch return .err;
+
+    for (dst_win.panes.items) |*p| {
+        if (p.* == dummy_pane) {
+            p.* = src_pane;
+            break;
+        }
+    }
+    const dummy_node = dst_win.layout.findLeafParent(dst_win.layout.root, dummy_pane) orelse return .err;
+    dummy_node.leaf = src_pane;
+
+    src_pane.resizeTerminal(dummy_pane.screen.grid.width, dummy_pane.screen.grid.height) catch return .err;
+
+    dummy_pane.deinit();
+    server.allocator.destroy(dummy_pane);
+
+    dst_win.setActivePane(src_pane);
+    return .ok;
+}
+
+fn cmdBreakPane(server: *Server, args: []const []const u8) CmdResult {
+    _ = args;
+    const session = server.activeSession() orelse return .err;
+    const window = session.active_window orelse return .err;
+    const pane = window.active_pane orelse return .err;
+
+    if (window.panes.items.len <= 1) return .err;
+
+    window.extractPane(server.allocator, pane);
+
+    const new_win = session.newWindow(server.allocator, "window") catch return .err;
+    if (new_win.panes.items.len > 0) {
+        const default_p = new_win.panes.items[0];
+        new_win.panes.items[0] = pane;
+        new_win.layout.root.leaf = pane;
+        new_win.setActivePane(pane);
+        pane.resizeTerminal(new_win.width, new_win.height) catch return .err;
+        default_p.deinit();
+        server.allocator.destroy(default_p);
+    }
+
     return .ok;
 }
 
@@ -750,6 +892,30 @@ pub const commands = struct {
         .args_usage = "target-session",
         .exec = cmdSwitchClient,
     };
+    pub const swap_pane = CmdEntry{
+        .name = "swap-pane",
+        .alias = "swapp",
+        .min_args = 0,
+        .max_args = 2,
+        .args_usage = "[src-index] [dst-index]",
+        .exec = cmdSwapPane,
+    };
+    pub const join_pane = CmdEntry{
+        .name = "join-pane",
+        .alias = "joinp",
+        .min_args = 0,
+        .max_args = 3,
+        .args_usage = "[-h] [-v] [src-window:src-pane]",
+        .exec = cmdJoinPane,
+    };
+    pub const break_pane = CmdEntry{
+        .name = "break-pane",
+        .alias = "breakp",
+        .min_args = 0,
+        .max_args = 0,
+        .args_usage = "",
+        .exec = cmdBreakPane,
+    };
 };
 
 fn cmdTable() []const *const CmdEntry {
@@ -786,6 +952,9 @@ fn cmdTable() []const *const CmdEntry {
             &commands.resize_pane,
             &commands.attach_session,
             &commands.switch_client,
+            &commands.swap_pane,
+            &commands.join_pane,
+            &commands.break_pane,
         };
         break :blk &entries;
     };
@@ -1201,9 +1370,9 @@ test "last-window switches to non-active" {
     try testing.expectEqual(session.windows.items[0], session.active_window.?);
 }
 
-test "cmd table has 31 entries" {
+test "cmd table has 34 entries" {
     const table = cmdTable();
-    try testing.expectEqual(@as(usize, 31), table.len);
+    try testing.expectEqual(@as(usize, 34), table.len);
 }
 
 test "lookup all new commands" {
@@ -1230,6 +1399,9 @@ test "lookup all new commands" {
     try testing.expect(lookup("switch-client") != null);
     try testing.expect(lookup("move-window") != null);
     try testing.expect(lookup("swap-window") != null);
+    try testing.expect(lookup("swap-pane") != null);
+    try testing.expect(lookup("join-pane") != null);
+    try testing.expect(lookup("break-pane") != null);
 }
 
 test "lookup aliases" {
@@ -1253,6 +1425,9 @@ test "lookup aliases" {
     try testing.expectEqualStrings("switch-client", lookup("switchc").?.name);
     try testing.expectEqualStrings("move-window", lookup("movew").?.name);
     try testing.expectEqualStrings("swap-window", lookup("swapw").?.name);
+    try testing.expectEqualStrings("swap-pane", lookup("swapp").?.name);
+    try testing.expectEqualStrings("join-pane", lookup("joinp").?.name);
+    try testing.expectEqualStrings("break-pane", lookup("breakp").?.name);
 }
 
 test "config commands exec" {
@@ -1397,5 +1572,51 @@ test "move-window and swap-window exec" {
         try testing.expectEqualStrings("win2", session.windows.items[0].name);
         try testing.expectEqualStrings("win1", session.windows.items[1].name);
         try testing.expectEqualStrings("test", session.windows.items[2].name);
+    }
+}
+
+test "swap-pane, join-pane, and break-pane exec" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    const session = try server.newSession("test", 80, 24);
+    const win = session.active_window.?;
+    const pane1 = win.active_pane.?;
+
+    // Split pane1 vertically -> creates pane2
+    const pane2 = try win.splitPane(server.allocator, pane1, true, 0.5);
+    try testing.expectEqual(@as(usize, 2), win.panes.items.len);
+    try testing.expectEqual(pane2, win.active_pane.?);
+
+    // swap-pane 0 1
+    {
+        var c = try parse("swap-pane 0 1", testing.allocator);
+        defer c.deinit(testing.allocator);
+        try testing.expectEqual(CmdResult.ok, c.exec(&server));
+        try testing.expectEqual(pane2, win.panes.items[0]);
+        try testing.expectEqual(pane1, win.panes.items[1]);
+    }
+
+    // break-pane -> promotes the active pane (pane1) to a new window
+    win.setActivePane(pane1);
+    {
+        var c = try parse("break-pane", testing.allocator);
+        defer c.deinit(testing.allocator);
+        try testing.expectEqual(CmdResult.ok, c.exec(&server));
+        try testing.expectEqual(@as(usize, 1), win.panes.items.len);
+        try testing.expectEqual(@as(usize, 2), session.windows.items.len);
+
+        const new_win = session.windows.items[1];
+        try testing.expectEqual(pane1, new_win.panes.items[0]);
+    }
+
+    // join-pane from window 1 (pane1) to window 0
+    session.setActiveWindow(win);
+    {
+        var c = try parse("join-pane 1:0", testing.allocator);
+        defer c.deinit(testing.allocator);
+        try testing.expectEqual(CmdResult.ok, c.exec(&server));
+        try testing.expectEqual(@as(usize, 2), win.panes.items.len);
+        try testing.expectEqual(pane1, win.active_pane.?);
     }
 }

@@ -82,7 +82,7 @@ pub const Layout = struct {
         return new_pane;
     }
 
-    fn findLeafParent(self: *Layout, node: *Node, target: *Pane) ?*Node {
+    pub fn findLeafParent(self: *Layout, node: *Node, target: *Pane) ?*Node {
         switch (node.*) {
             .leaf => |p| {
                 if (p == target) return node;
@@ -99,6 +99,39 @@ pub const Layout = struct {
     pub fn removePane(self: *Layout, pane: *Pane) void {
         if (self.root.* == .leaf) return;
         _ = self.removeFromNode(self.root, null, pane);
+    }
+
+    pub fn extractPane(self: *Layout, pane: *Pane) void {
+        if (self.root.* == .leaf) return;
+        _ = self.extractFromNode(self.root, null, pane);
+    }
+
+    fn extractFromNode(self: *Layout, node: *Node, parent_split: ?*Split, target: *Pane) bool {
+        switch (node.*) {
+            .leaf => |p| {
+                if (p == target and parent_split != null) return true;
+                return false;
+            },
+            .split => |s| {
+                if (self.extractFromNode(s.a, s, target)) {
+                    const survivor_value = s.b.*;
+                    self.allocator.destroy(s.a);
+                    self.allocator.destroy(s.b);
+                    self.allocator.destroy(s);
+                    node.* = survivor_value;
+                    return false;
+                }
+                if (self.extractFromNode(s.b, s, target)) {
+                    const survivor_value = s.a.*;
+                    self.allocator.destroy(s.a);
+                    self.allocator.destroy(s.b);
+                    self.allocator.destroy(s);
+                    node.* = survivor_value;
+                    return false;
+                }
+                return false;
+            },
+        }
     }
 
     fn removeFromNode(self: *Layout, node: *Node, parent_split: ?*Split, target: *Pane) bool {

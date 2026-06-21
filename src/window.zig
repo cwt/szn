@@ -177,6 +177,21 @@ pub const Window = struct {
         }
     }
 
+    pub fn extractPane(self: *Window, allocator: std.mem.Allocator, pane: *Pane) void {
+        _ = allocator;
+        const idx = for (self.panes.items, 0..) |p, i| {
+            if (p == pane) break i;
+        } else return;
+
+        _ = self.panes.swapRemove(idx);
+        self.layout.extractPane(pane);
+
+        if (self.active_pane == pane) {
+            self.active_pane = if (self.panes.items.len > 0) self.panes.items[0] else null;
+            if (self.active_pane) |p| p.active = true;
+        }
+    }
+
     pub fn setActivePane(self: *Window, pane: *Pane) void {
         if (self.active_pane) |prev| prev.active = false;
         pane.active = true;
