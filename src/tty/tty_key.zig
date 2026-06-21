@@ -435,7 +435,7 @@ test "sgr mouse wheel up" {
     try testing.expectEqual(.scroll_up, ev.mouse.button);
 }
 
-test "kitty key" {
+test "kitty key basic" {
     var rd = InputReader{};
     try testing.expect(rd.feed(0x1b) == null);
     try testing.expect(rd.feed('[') == null);
@@ -447,6 +447,56 @@ test "kitty key" {
     try testing.expect(ev == .key);
     try testing.expectEqual(@as(u21, 'a'), ev.key.char.code);
     try testing.expect(ev.key.char.mod.ctrl);
+}
+
+test "kitty key disambiguate" {
+    var rd = InputReader{};
+    try testing.expect(rd.feed(0x1b) == null);
+    try testing.expect(rd.feed('[') == null);
+    try testing.expect(rd.feed('>') == null);
+    try testing.expect(rd.feed('9') == null);
+    try testing.expect(rd.feed('7') == null);
+    try testing.expect(rd.feed(';') == null);
+    try testing.expect(rd.feed('1') == null);
+    const ev = rd.feed('u').?;
+    try testing.expect(ev == .key);
+    try testing.expectEqual(@as(u21, 'a'), ev.key.char.code);
+    try testing.expect(ev.key.char.mod.shift);
+}
+
+test "kitty key with event" {
+    var rd = InputReader{};
+    try testing.expect(rd.feed(0x1b) == null);
+    try testing.expect(rd.feed('[') == null);
+    try testing.expect(rd.feed('=') == null);
+    try testing.expect(rd.feed('9') == null);
+    try testing.expect(rd.feed('7') == null);
+    try testing.expect(rd.feed(';') == null);
+    try testing.expect(rd.feed('4') == null);
+    try testing.expect(rd.feed(';') == null);
+    try testing.expect(rd.feed('1') == null);
+    const ev = rd.feed('u').?;
+    try testing.expect(ev == .key);
+    try testing.expectEqual(@as(u21, 'a'), ev.key.char.code);
+    try testing.expect(ev.key.char.mod.ctrl);
+}
+
+test "kitty key disambiguate with event" {
+    var rd = InputReader{};
+    try testing.expect(rd.feed(0x1b) == null);
+    try testing.expect(rd.feed('[') == null);
+    try testing.expect(rd.feed('=') == null);
+    try testing.expect(rd.feed('>') == null);
+    try testing.expect(rd.feed('9') == null);
+    try testing.expect(rd.feed('7') == null);
+    try testing.expect(rd.feed(';') == null);
+    try testing.expect(rd.feed('1') == null);
+    try testing.expect(rd.feed(';') == null);
+    try testing.expect(rd.feed('2') == null);
+    const ev = rd.feed('u').?;
+    try testing.expect(ev == .key);
+    try testing.expectEqual(@as(u21, 'a'), ev.key.char.code);
+    try testing.expect(ev.key.char.mod.shift);
 }
 
 test "ss3 function key f1" {

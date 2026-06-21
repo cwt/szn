@@ -122,13 +122,35 @@ pub fn parseCsi(seq: []const u8) ParseError!Key {
             };
         },
         'u' => {
-            // Kitty extended protocol: codepoint;modifier u
+            // Kitty extended protocol.
+            // Variants:
+            //   basic:         CSI code;modifiers u
+            //   disambiguate:  CSI > code;modifiers u      (codepoint is the base key, shift in modifiers)
+            //   events:        CSI [>] code;modifiers;event u  (event=1 press, 2 repeat, 3 release)
             const u_pos = std.mem.lastIndexOfScalar(u8, seq, 'u') orelse return error.InvalidCsi;
-            const parts = seq[0 .. u_pos];
-            var it = std.mem.splitScalar(u8, parts, ';');
-            const codepoint = std.fmt.parseInt(u32, it.first(), 10) catch return error.InvalidCsi;
+            const inner = seq[0..u_pos];
 
-            return Key{ .char = .{ .code = @intCast(codepoint), .mod = mod } };
+            var body = inner;
+            while (body.len > 0 and (body[0] == '>' or body[0] == '=')) {
+                body = body[1..];
+            }
+
+            var it = std.mem.splitScalar(u8, body, ';');
+
+            const codepoint_str = it.first();
+            const codepoint = std.fmt.parseInt(u32, codepoint_str, 10) catch return error.InvalidCsi;
+
+            const k_mod: Modifier = if (it.next()) |mod_str| blk: {
+                const mp = std.fmt.parseInt(u8, mod_str, 10) catch return error.InvalidCsi;
+                break :blk Modifier{
+                    .shift = mp & 1 != 0,
+                    .alt = mp & 2 != 0,
+                    .ctrl = mp & 4 != 0,
+                    .meta = mp & 8 != 0,
+                };
+            } else Modifier{};
+
+            return Key{ .char = .{ .code = @intCast(codepoint), .mod = k_mod } };
         },
         else => return error.UnknownKey,
     }
@@ -462,9 +484,39 @@ test "parse alt char" {
     try testing.expectEqual(@as(u21, 'a'), key.char.code);
 }
 
-test "parse kitty extended" {
-    const key = try parse("\x1b[97;5u");
+test "parse kitty extended basic" {
+    const key = try parse("\x1b[97;4u");
     try testing.expectEqual(@as(u21, 'a'), key.char.code);
+    try testing.expect(key.char.mod.ctrl);
+}
+
+test "parse kitty disambiguate" {
+    // > prefix: codepoint is the base key, modifiers in the bitmask
+    const key = try parse("\x1b[>97;1u");
+    try testing.expectEqual(@as(u21, 'a'), key.char.code);
+    try testing.expect(key.char.mod.shift);
+}
+
+test "parse kitty with event flags" {
+    // = prefix: event field after modifiers (1=press, 2=repeat, 3=release)
+    const key = try parse("\x1b[=97;4;1u");
+    try testing.expectEqual(@as(u21, 'a'), key.char.code);
+    try testing.expect(key.char.mod.ctrl);
+}
+
+test "parse kitty disambiguate with event" {
+    // Both > and =: >code;mod;event u
+    const key = try parse("\x1b[=>97;1;2u");
+    try testing.expectEqual(@as(u21, 'a'), key.char.code);
+    try testing.expect(key.char.mod.shift);
+}
+
+test "parse kitty unmodified" {
+    const key = try parse("\x1b[97;0u");
+    try testing.expectEqual(@as(u21, 'a'), key.char.code);
+    try testing.expect(!key.char.mod.ctrl);
+    try testing.expect(!key.char.mod.shift);
+    try testing.expect(!key.char.mod.alt);
 }
 
 test "format single char" {

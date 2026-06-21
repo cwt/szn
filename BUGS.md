@@ -177,9 +177,9 @@ All four directions (up/down/left/right) do `(idx + 1) % len` — pure circular 
 **File:** `src/server/server.zig:354–363`
 Selects the first window that is not current — does not store/restore the "last previously active" window index per session.
 
-### 33. Kitty keyboard protocol incomplete ⏸ Unresolved
+### 33. Kitty keyboard protocol incomplete ✅ Fixed
 **File:** `src/tty/tty_key.zig` → `src/key.zig:124–132`
-Handles basic `CSI codepoint ; modifier u` but missing: keypad disambiguation (`CSI 1 ; modifier u`), shifted keys (`CSI > codepoint u`), and key events/release/repeat (`CSI = ; modifier ; event u`).
+Handles basic `CSI codepoint ; modifier u` but was missing: keypad disambiguation (`>codepoint`), shifted keys (`>codepoint`), and key events (`=codepoint;mod;event`).
 
 ### 34. split-window direction flag only works as first arg ✅ Fixed
 **File:** `src/cmd/cmd.zig:112`
@@ -249,6 +249,6 @@ If data exceeds remaining buffer space, excess bytes are silently dropped. Calle
 |----------|-------|-------|----------------|------------|
 | Critical | 8 | 5 | 3 | 0 |
 | High | 14 | 13 | 1 | 0 |
-| Medium | 12 | 11 | 0 | 1 |
+| Medium | 12 | 12 | 0 | 0 |
 | Low | 13 | 10 | 1 | 2 |
-| **Total** | **47** | **39** | **5** | **3** |
+| **Total** | **47** | **40** | **5** | **2** |
