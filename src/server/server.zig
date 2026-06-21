@@ -283,6 +283,12 @@ pub const Server = struct {
             },
             else => {},
         }
+
+        if (session.active_window) |w| {
+            if (w.active_pane) |ap| {
+                ap.dirty = true;
+            }
+        }
     }
 
     fn handleStdin(self: *Server) !void {
