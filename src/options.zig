@@ -82,7 +82,10 @@ pub const Options = struct {
         }
 
         const key_name = try self.allocator.dupe(u8, name);
-        try self.map.put(key_name, try cloneValue(self.allocator, value));
+        errdefer self.allocator.free(key_name);
+        const cloned = try cloneValue(self.allocator, value);
+        errdefer freeValue(self.allocator, cloned);
+        try self.map.put(key_name, cloned);
     }
 
     pub fn get(self: *Options, name: []const u8) ?OptionValue {

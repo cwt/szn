@@ -2,6 +2,13 @@ const std = @import("std");
 const c = std.c;
 const testing = std.testing;
 const session_mod = @import("../session.zig");
+
+var sigchldFlag = std.atomic.Value(bool).init(false);
+
+pub export fn sigchld_handler(sig: c.SIG) callconv(.c) void {
+    _ = sig;
+    sigchldFlag.store(true, .seq_cst);
+}
 const Session = session_mod.Session;
 const window_mod = @import("../window.zig");
 const Window = window_mod.Window;
@@ -143,7 +150,15 @@ pub const Server = struct {
         try self.loop.addFd(self.allocator, fd, @as(i16, @intCast(std.posix.POLL.IN)), @ptrCast(self));
     }
 
+    pub fn reapZombies() void {
+        if (sigchldFlag.load(.seq_cst)) {
+            sigchldFlag.store(false, .seq_cst);
+            while (c.waitpid(-1, null, 1) > 0) {}
+        }
+    }
+
     pub fn run(self: *Server) !void {
+        reapZombies();
         const events = try self.loop.pollOnce(self.allocator, 100);
         for (events) |ev| {
             if (self.handlePtyEvent(ev)) continue;

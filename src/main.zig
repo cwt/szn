@@ -195,6 +195,13 @@ fn runServerDaemon(allocator: std.mem.Allocator) !void {
     server.display_sy = sy;
     try server.listen();
 
+    var chld_act: std.posix.Sigaction = .{
+        .handler = .{ .handler = server_mod.sigchld_handler },
+        .mask = std.posix.sigemptyset(),
+        .flags = 0,
+    };
+    std.posix.sigaction(.CHLD, &chld_act, null);
+
     while (server.loop.running) {
         try server.run();
         server.renderToDisplayClient();

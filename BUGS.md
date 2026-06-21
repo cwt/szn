@@ -78,67 +78,49 @@ return std.mem.sliceTo(buf, 0);           // scans for null byte
 **File:** `src/format.zig:26–35`
 Frees the old value FIRST (`allocator.free(entry.value_ptr.*)`), then duplicates the new one. If `dupe` fails, the map entry holds a dangling pointer to freed memory.
 
-### 13. Copy mode broken for scrolled content
+### 13. Copy mode broken for scrolled content  ✅ Fixed
 **File:** `src/mode_copy.zig:181–218`
 `yankSelection()` only reads from `grid.getCell(x, y)` which accesses the visible grid. The `scroll_offset` field is tracked but **never used** to index into `grid.history`. Copying/yanking scrolled-back content is impossible.
 
-### 14. Emacs alt-key bindings are dead code
+**Fix:** Added `getCellAt()` helper that maps (x, screen_y) to the correct source (history or visible grid) using scroll_offset. Test added.
+
+### 14. Emacs alt-key bindings are dead code  ❌ FALSE POSITIVE
 **File:** `src/mode_copy.zig:399–450`
 All Emacs-style bindings check `c.mod.alt`. The key parser (`src/tty/tty_key.zig`) emits escape-prefixed chars as `char.code = code, mod = .{}` — no alt flag set. So `c.mod.alt` is always false. Every `M-v`, `M-<`, `M->` binding is unreachable.
 
-### 15. Key value parsing in config is a stub
-**File:** `src/cfg.zig:219–221`
-```zig
-fn parseValue(_: std.mem.Allocator, key: []const u8, ...) !OptionValue {
-    _ = key;
-    return OptionValue{ .string = value };
-}
-```
-The `key` argument (for key-type options like `prefix`) is completely ignored. Setting `prefix` via config file silently treats the key name as a raw string.
+**Verdict:** Key parser DOES set `mod.alt = true` for escape-prefixed chars (tty_key.zig:105). Verified with unit tests that pass.
 
-### 16. Unsafe union access on OptionValue
+### 15. Key value parsing in config is a stub  ✅ Fixed
+**File:** `src/cfg.zig:191–225`
+`parseValue` now tries `key.parseKeyName()` before defaulting to string. Key-type options like `prefix` parse correctly from config files and `set-option`. Test added.
+
+### 16. Unsafe union access on OptionValue  ✅ Fixed
 **File:** `src/server/server.zig:75–76`
-```zig
-const prefix = prefix_val.key;
-```
-Accesses `.key` without checking the union tag. If `Options.get()` returns the `.string` variant, reading `.key` is undefined behavior.
+Added `== .key` guard before reading `prefix_val.key`. Two test tag checks also added.
 
-### 17. Child uses parent allocator after fork
-**File:** `src/server/pty.zig:38–42`
-The forked child allocates `argv_z` strings on the parent server's allocator. After fork, parent and child share the allocator's internal state. Should use a stack-based `BoundedArray` or `FixedBufferAllocator`.
+### 17. Child uses parent allocator after fork  ✅ Fixed
+**File:** `src/server/pty.zig:40–72`
+All C-string allocations moved before `fork()`. The child only reads the pre-populated argv array and never touches the parent's allocator.
 
-### 18. OSC ST terminator (ESC \) broken
-**File:** `src/input.zig:279–280`
-When ESC (0x1B) is received during OSC parsing, state transitions to `.esc`. But `\` (0x5C) in esc state never calls `dispatchOsc()`. Only BEL-terminated OSC sequences work. ESC-\ is silently discarded.
+### 18. OSC ST terminator (ESC \) broken  ✅ Fixed
+**File:** `src/input.zig:273–298`
+Added `osc_esc` state. On `0x1B` during OSC, go to `osc_esc`. If next byte is `\` (ST), dispatch the OSC. Tests verify callback is invoked for both ST and BEL.
 
-### 19. No bounds check on CSI input buffer
-**File:** `src/tty/tty_key.zig:115–136`
-`rd.buf` is `[64]u8`. `rd.pos` increments without bounds checking during CSI parameter, intermediate, and SGR mouse parsing. A malformed or very long CSI sequence can overflow the buffer.
+### 19. No bounds check on CSI input buffer  ✅ Fixed
+**File:** `src/tty/tty_key.zig:108–164`
+Added `if (rd.pos >= rd.buf.len) { state = .ground; return null; }` in `feedCsi`, `feedSgrMouse`, and `feedUtf8`.
 
-### 20. EAGAIN treated as EOF in interactive client
-**File:** `src/main.zig:288,303`
-```zig
-const n = c.read(stdin_fd, &stdin_buf, stdin_buf.len);
-if (n <= 0) {
-    running = false;  // detach on EAGAIN
-}
-```
-On non-blocking fd, `c.read()` can return -1 with errno `EAGAIN`. This incorrectly triggers a detach/disconnect instead of retrying.
+### 20. EAGAIN treated as EOF in interactive client  ✅ Fixed
+**File:** `src/main.zig:285–319`
+Check `std.posix.errno(-1)` for `.AGAIN` and `.INTR` in both stdin and server read paths; only detach on true EOF/error.
 
-### 21. buffer display in input.zig overflows file scope
-**File:** `src/input.zig:349`
-```zig
-std.log.warn("CSI dispatch: ...", .{...});
-```
-Logs at `warn` level on every single CSI sequence. In production this floods stderr and the log file with millions of lines. Should be `debug` level.
+### 21. CSI dispatch warn floods logs  ✅ Fixed
+**File:** `src/input.zig:357`
+Changed `std.log.warn` → `std.log.debug`.
 
-### 22. cmdRenameWindow use-after-free
-**File:** `src/cmd/cmd.zig:142–143`
-```zig
-server.allocator.free(window.name);
-window.name = server.allocator.dupe(u8, args[1]) catch return .err;
-```
-Same pattern as Session.rename: frees first, leaves dangling pointer if dupe fails.
+### 22. cmdRenameWindow use-after-free  ✅ Fixed
+**File:** `src/cmd/cmd.zig:138–145`
+Dupe first, free after — same pattern as Session.rename fix.
 
 ---
 
