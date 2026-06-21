@@ -220,9 +220,10 @@ If `Attr` fields are reordered, the `attrCodes` array silently mismatches, apply
 **File:** `src/grid.zig`
 `history_limit: u32 = 2000` should come from session options.
 
-### 43. cmdCopyMode overwrites previous copy mode without deinit
+### 43. cmdCopyMode overwrites previous copy mode without deinit ✅ FALSE POSITIVE
 **File:** `src/cmd/cmd.zig:392–393`
 Setting `pane.screen.copy_mode = CopyMode.init(...)` discards the previous copy mode if one exists. Should set to null or call deinit first.
+**Verdict:** `CopyMode` is a plain struct with no heap-allocated resources and no `deinit`. Overwriting the field does not leak memory.
 
 ### 44. resize-pane can't set size below 1
 **File:** `src/cmd/cmd.zig:786–789`

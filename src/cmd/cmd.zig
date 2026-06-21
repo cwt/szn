@@ -109,8 +109,21 @@ fn cmdSplitWindow(server: *Server, args: []const []const u8) CmdResult {
     const window = session.active_window orelse return .err;
     const pane = window.active_pane orelse return .err;
 
-    const direction: enum { horizontal, vertical } = if (args.len > 1 and std.mem.eql(u8, args[1], "-v")) .vertical else .horizontal;
-    const proportion: f64 = if (args.len > 2) std.fmt.parseFloat(f64, args[2]) catch 0.5 else 0.5;
+    var direction: enum { horizontal, vertical } = .horizontal;
+    var prop_arg: ?[]const u8 = null;
+
+    for (args, 0..) |arg, i| {
+        if (i == 0) continue;
+        if (std.mem.eql(u8, arg, "-v")) {
+            direction = .vertical;
+        } else if (std.mem.eql(u8, arg, "-h")) {
+            direction = .horizontal;
+        } else if (prop_arg == null) {
+            prop_arg = arg;
+        }
+    }
+
+    const proportion: f64 = if (prop_arg) |p| std.fmt.parseFloat(f64, p) catch 0.5 else 0.5;
 
     const new_pane = window.splitPane(server.allocator, pane, direction == .vertical, proportion) catch return .err;
     _ = new_pane;
@@ -614,13 +627,6 @@ fn cmdPrevWindow(server: *Server, _: []const []const u8) CmdResult {
             return .ok;
         }
     }
-    for (session.windows.items, 0..) |w, i| {
-        if (w == current) {
-            const prev = if (i == 0) session.windows.items.len - 1 else i - 1;
-            session.setActiveWindow(session.windows.items[prev]);
-            return .ok;
-        }
-    }
     return .err;
 }
 
@@ -786,8 +792,12 @@ fn cmdResizePane(server: *Server, args: []const []const u8) CmdResult {
     const current_w = pane.screen.grid.width;
     const current_h = pane.screen.grid.height;
 
-    const target_w = exact_w orelse @as(u32, @intCast(@max(1, @as(i32, @intCast(current_w)) + adjust_w)));
-    const target_h = exact_h orelse @as(u32, @intCast(@max(1, @as(i32, @intCast(current_h)) + adjust_h)));
+    const new_w = @as(i32, @intCast(current_w)) + adjust_w;
+    if (new_w < 1) return .err;
+    const target_w = exact_w orelse @as(u32, @intCast(new_w));
+    const new_h = @as(i32, @intCast(current_h)) + adjust_h;
+    if (new_h < 1) return .err;
+    const target_h = exact_h orelse @as(u32, @intCast(new_h));
 
     pane.resizeTerminal(target_w, target_h) catch return .err;
     return .ok;

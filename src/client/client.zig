@@ -30,6 +30,7 @@ pub const Client = struct {
 
     pub fn sendIdentify(self: *Client, term: []const u8) !void {
         var it: protocol.IdentifyTerm = .{ .term_len = @intCast(term.len) };
+        if (term.len > it.term.len) return error.TermTooLong;
         @memcpy(it.term[0..term.len], term);
         var buf: [128]u8 = undefined;
         const data = it.encode(&buf);

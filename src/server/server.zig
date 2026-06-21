@@ -739,7 +739,7 @@ pub const Server = struct {
         }
 
         const reader = self.client_readers.getPtr(fd) orelse return;
-        reader.feed(buf[0..n]);
+        try reader.feed(buf[0..n]);
 
         while (try reader.tryParse()) |pkt| {
             defer reader.consume(pkt);
@@ -918,11 +918,11 @@ pub const Server = struct {
                     } else &self.dispatcher.prefix_table;
                     table.unbind(u.key);
                 },
-                .set_environment => {},
+                .set_environment => { std.log.debug("set_environment: TODO", .{}); },
                 .source_file => |path| {
                     try self.loadConfigFile(path);
                 },
-                .if_shell => {},
+                .if_shell => { std.log.debug("if_shell: TODO", .{}); },
             }
         }
     }

@@ -430,7 +430,10 @@ pub fn mapCommandToAction(cmd: []const u8) ?Action {
     if (std.mem.eql(u8, trimmed, "new-window") or std.mem.eql(u8, trimmed, "neww")) return .new_window;
     
     if (std.mem.startsWith(u8, trimmed, "split-window") or std.mem.startsWith(u8, trimmed, "splitw")) {
-        if (std.mem.containsAtLeast(u8, trimmed, 1, "-h")) return .split_vertical;
+        if (std.mem.indexOf(u8, trimmed, " -h")) |idx| {
+            const after = idx + 3;
+            if (after >= trimmed.len or trimmed[after] == ' ') return .split_vertical;
+        }
         return .split_horizontal;
     }
     

@@ -18,6 +18,7 @@ pub const FdWriter = struct {
         var b = byte;
         const n = c.write(self.fd, &b, 1);
         if (n < 0) return error.WriteFailed;
+        if (n == 0) return error.WriteZero;
     }
 
     pub fn print(self: FdWriter, comptime fmt: []const u8, args: anytype) !void {

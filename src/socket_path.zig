@@ -3,7 +3,10 @@ const c = std.c;
 
 extern "c" fn getuid() c.uid_t;
 
-pub const MAX_PATH = 104;
+pub const MAX_PATH = blk: {
+    const addr: c.sockaddr.un = undefined;
+    break :blk @sizeOf(@TypeOf(addr.path));
+};
 
 pub fn resolve(buf: []u8) ![:0]const u8 {
     if (buf.len < MAX_PATH) return error.BufferTooSmall;

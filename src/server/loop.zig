@@ -28,6 +28,9 @@ pub const Loop = struct {
     }
 
     pub fn addFd(self: *Loop, allocator: std.mem.Allocator, fd: i32, events: i16, udata: ?*anyopaque) !void {
+        for (self.fds.items) |f| {
+            if (f.fd == fd) return;
+        }
         try self.fds.append(allocator, FdEntry{
             .fd = fd,
             .events = events,

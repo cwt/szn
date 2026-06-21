@@ -9,6 +9,7 @@ pub const ReadError = error{
     PacketTooLarge,
     ConnectionClosed,
     ReadFailed,
+    BufferFull,
 };
 
 pub const MessageReader = struct {
@@ -19,10 +20,10 @@ pub const MessageReader = struct {
         self.pos = 0;
     }
 
-    pub fn feed(self: *MessageReader, data: []const u8) void {
-        const copy_len = @min(data.len, self.buf.len - self.pos);
-        @memcpy(self.buf[self.pos..][0..copy_len], data[0..copy_len]);
-        self.pos += copy_len;
+    pub fn feed(self: *MessageReader, data: []const u8) ReadError!void {
+        if (data.len > self.buf.len - self.pos) return error.BufferFull;
+        @memcpy(self.buf[self.pos..][0..data.len], data);
+        self.pos += data.len;
     }
 
     pub fn tryParse(self: *MessageReader) ReadError!?Packet {
@@ -93,7 +94,7 @@ test "message reader empty buffer" {
 
 test "message reader partial header" {
     var reader = MessageReader{};
-    reader.feed(&[_]u8{ 0x06, 0x00, 0x00 });
+    try reader.feed(&[_]u8{ 0x06, 0x00, 0x00 });
     const pkt = try reader.tryParse();
     try testing.expect(pkt == null);
 }
@@ -103,7 +104,7 @@ test "message reader complete packet" {
     const original = Packet.make(.command, "hello");
     var buf: [128]u8 = undefined;
     const serialized = original.serialize(&buf);
-    reader.feed(serialized);
+    try reader.feed(serialized);
 
     const pkt = (try reader.tryParse()).?;
     try testing.expectEqual(@as(u8, @intFromEnum(MessageType.command)), pkt.header.msg_type);
@@ -119,11 +120,11 @@ test "message reader partial body" {
     var buf: [128]u8 = undefined;
     const serialized = original.serialize(&buf);
 
-    reader.feed(serialized[0..5]);
+    try reader.feed(serialized[0..5]);
     const pkt1 = try reader.tryParse();
     try testing.expect(pkt1 == null);
 
-    reader.feed(serialized[5..]);
+    try reader.feed(serialized[5..]);
     const pkt2 = (try reader.tryParse()).?;
     try testing.expectEqualStrings("hello", pkt2.data);
 }
@@ -138,8 +139,8 @@ test "message reader two packets" {
     const s1 = pkt1.serialize(&buf1);
     const s2 = pkt2.serialize(&buf2);
 
-    reader.feed(s1);
-    reader.feed(s2);
+    try reader.feed(s1);
+    try reader.feed(s2);
 
     const parsed1 = (try reader.tryParse()).?;
     try testing.expectEqualStrings("cmd1", parsed1.data);
@@ -152,13 +153,13 @@ test "message reader two packets" {
 
 test "message reader invalid packet" {
     var reader = MessageReader{};
-    reader.feed(&[_]u8{ 0x03, 0x00, 0x00, 0x00, 0x01 });
+    try reader.feed(&[_]u8{ 0x03, 0x00, 0x00, 0x00, 0x01 });
     try testing.expectError(error.InvalidPacket, reader.tryParse());
 }
 
 test "message reader reset" {
     var reader = MessageReader{};
-    reader.feed("some data");
+    try reader.feed("some data");
     reader.reset();
     try testing.expectEqual(@as(usize, 0), reader.pos);
 }
@@ -202,7 +203,7 @@ test "serialize and parse round trip" {
     const original = makeCommandPacket("split-window -v");
     var buf: [128]u8 = undefined;
     const serialized = serializePacket(original, &buf);
-    reader.feed(serialized);
+    try reader.feed(serialized);
 
     const parsed = (try reader.tryParse()).?;
     try testing.expectEqual(MessageType.command, packetType(parsed));
@@ -217,7 +218,7 @@ test "message reader large packet" {
     const pkt = Packet.make(.output, &data);
     var buf: [512]u8 = undefined;
     const serialized = pkt.serialize(&buf);
-    reader.feed(serialized);
+    try reader.feed(serialized);
 
     const parsed = (try reader.tryParse()).?;
     try testing.expectEqual(@as(usize, 256), parsed.data.len);
@@ -236,7 +237,7 @@ test "message reader consume partial remaining" {
     var combined: [128]u8 = undefined;
     @memcpy(combined[0..s1.len], s1);
     @memcpy(combined[s1.len..][0..s2.len], s2);
-    reader.feed(combined[0 .. s1.len + s2.len]);
+    try reader.feed(combined[0 .. s1.len + s2.len]);
 
     const p1 = (try reader.tryParse()).?;
     try testing.expectEqualStrings("a", p1.data);
