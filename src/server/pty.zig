@@ -38,25 +38,29 @@ pub const Pty = struct {
     }
 
     pub fn spawn(self: *Pty, allocator: std.mem.Allocator, argv: ?[]const []const u8) !void {
+        const args = argv orelse &.{DEFAULT_SHELL};
+
+        var argv_z = try allocator.alloc(?[*:0]const u8, args.len + 1);
+        for (args, 0..) |arg, i| {
+            argv_z[i] = try allocator.dupeZ(u8, arg);
+        }
+        argv_z[args.len] = null;
+
         const pid = fork();
         if (pid < 0) return error.ForkFailed;
         if (pid == 0) {
             _ = close(self.master);
             _ = login_tty(self.slave);
-
-            const args = argv orelse &.{DEFAULT_SHELL};
-            var argv_z = try allocator.alloc(?[*:0]const u8, args.len + 1);
-            for (args, 0..) |arg, i| {
-                argv_z[i] = try allocator.dupeZ(u8, arg);
-            }
-            argv_z[args.len] = null;
-
             _ = execvp(argv_z[0].?, @ptrCast(argv_z.ptr));
             std.process.exit(1);
         }
         self.pid = pid;
         _ = close(self.slave);
         self.slave = -1;
+        for (argv_z) |z| {
+            if (z) |s| allocator.free(std.mem.span(s));
+        }
+        allocator.free(argv_z);
     }
 
     pub fn reap(self: *Pty) void {
