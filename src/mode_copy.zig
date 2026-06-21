@@ -927,6 +927,30 @@ test "emacs key ctrl-e moves to line end" {
     try testing.expectEqual(@as(u32, 79), cm.cursor_x);
 }
 
+test "emacs key alt-v page up" {
+    var cm = CopyMode.init(.emacs);
+    var g = try Grid.init(testing.allocator, 80, 24);
+    defer g.deinit();
+
+    cm.enter(&g);
+    cm.cursor_y = 20;
+    const result = cm.handleKey(Key{ .char = .{ .code = 'V', .mod = .{ .alt = true } } }, &g);
+    try testing.expectEqual(@as(@TypeOf(result), .consumed), result);
+    try testing.expect(cm.cursor_y < 20);
+}
+
+test "emacs key alt-< moves to top" {
+    var cm = CopyMode.init(.emacs);
+    var g = try Grid.init(testing.allocator, 80, 24);
+    defer g.deinit();
+
+    cm.enter(&g);
+    cm.cursor_y = 15;
+    const result = cm.handleKey(Key{ .char = .{ .code = '<', .mod = .{ .alt = true } } }, &g);
+    try testing.expectEqual(@as(@TypeOf(result), .consumed), result);
+    try testing.expectEqual(@as(u32, 0), cm.cursor_y);
+}
+
 test "emacs key escape exits" {
     var cm = CopyMode.init(.emacs);
     var g = try Grid.init(testing.allocator, 80, 24);
