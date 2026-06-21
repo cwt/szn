@@ -392,6 +392,38 @@ fn cmdCopyMode(server: *Server, args: []const []const u8) CmdResult {
     return .ok;
 }
 
+fn indexOfIgnoreCase(haystack: []const u8, needle: []const u8) ?usize {
+    if (needle.len == 0) return 0;
+    if (haystack.len < needle.len) return null;
+    var i: usize = 0;
+    while (i <= haystack.len - needle.len) : (i += 1) {
+        var match = true;
+        for (needle, 0..) |nc, j| {
+            const hc = haystack[i + j];
+            if (std.ascii.toLower(hc) != std.ascii.toLower(nc)) {
+                match = false;
+                break;
+            }
+        }
+        if (match) return i;
+    }
+    return null;
+}
+
+fn cmdFindWindow(server: *Server, args: []const []const u8) CmdResult {
+    if (args.len < 2) return .err;
+    const query = args[1];
+    const session = server.activeSession() orelse return .err;
+
+    for (session.windows.items) |w| {
+        if (indexOfIgnoreCase(w.name, query) != null) {
+            session.setActiveWindow(w);
+            return .ok;
+        }
+    }
+    return .err;
+}
+
 fn cmdRotateWindow(server: *Server, _: []const []const u8) CmdResult {
     const session = server.activeSession() orelse return .err;
     const window = session.active_window orelse return .err;
@@ -954,6 +986,14 @@ pub const commands = struct {
         .args_usage = "",
         .exec = cmdCopyMode,
     };
+    pub const find_window = CmdEntry{
+        .name = "find-window",
+        .alias = "findw",
+        .min_args = 1,
+        .max_args = 1,
+        .args_usage = "query",
+        .exec = cmdFindWindow,
+    };
 };
 
 fn cmdTable() []const *const CmdEntry {
@@ -995,6 +1035,7 @@ fn cmdTable() []const *const CmdEntry {
             &commands.break_pane,
             &commands.paste_buffer,
             &commands.copy_mode,
+            &commands.find_window,
         };
         break :blk &entries;
     };
@@ -1410,13 +1451,14 @@ test "last-window switches to non-active" {
     try testing.expectEqual(session.windows.items[0], session.active_window.?);
 }
 
-test "cmd table has 36 entries" {
+test "cmd table has 37 entries" {
     const table = cmdTable();
-    try testing.expectEqual(@as(usize, 36), table.len);
+    try testing.expectEqual(@as(usize, 37), table.len);
 }
 
 test "lookup all new commands" {
     try testing.expect(lookup("copy-mode") != null);
+    try testing.expect(lookup("find-window") != null);
     try testing.expect(lookup("paste-buffer") != null);
     try testing.expect(lookup("rename-session") != null);
     try testing.expect(lookup("rename-window") != null);
@@ -1471,6 +1513,7 @@ test "lookup aliases" {
     try testing.expectEqualStrings("join-pane", lookup("joinp").?.name);
     try testing.expectEqualStrings("break-pane", lookup("breakp").?.name);
     try testing.expectEqualStrings("paste-buffer", lookup("pasteb").?.name);
+    try testing.expectEqualStrings("find-window", lookup("findw").?.name);
 }
 
 test "config commands exec" {
@@ -1700,4 +1743,36 @@ test "copy-mode exec" {
 
     try testing.expect(pane.screen.copy_mode != null);
     try testing.expect(pane.screen.copy_mode.?.active);
+}
+
+test "find-window exec" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    const session = try server.newSession("test", 80, 24);
+    const w1 = session.active_window.?; // Name is "test" (created in newSession)
+    _ = w1;
+
+    // Create new windows
+    const w2 = try session.newWindow(server.allocator, "shell_window");
+    const w3 = try session.newWindow(server.allocator, "editor_window");
+
+    // Make sure w3 is active
+    try testing.expectEqual(w3, session.active_window.?);
+
+    // Search for case-insensitive "shell" -> should switch to w2
+    {
+        var c = try parse("find-window shell", testing.allocator);
+        defer c.deinit(testing.allocator);
+        try testing.expectEqual(CmdResult.ok, c.exec(&server));
+        try testing.expectEqual(w2, session.active_window.?);
+    }
+
+    // Search for case-insensitive "EDIT" -> should switch to w3
+    {
+        var c = try parse("find-window EDIT", testing.allocator);
+        defer c.deinit(testing.allocator);
+        try testing.expectEqual(CmdResult.ok, c.exec(&server));
+        try testing.expectEqual(w3, session.active_window.?);
+    }
 }
