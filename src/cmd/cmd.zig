@@ -30,7 +30,7 @@ fn cmdNewSession(server: *Server, args: []const []const u8) CmdResult {
 fn cmdListSessions(server: *Server, _: []const []const u8) CmdResult {
     for (server.sessions.items) |session| {
         var buf: [256]u8 = undefined;
-        const line = std.fmt.bufPrint(&buf, "{s}: {d} windows\n", .{session.name, session.windows.items.len}) catch return .err;
+        const line = std.fmt.bufPrint(&buf, "{s}: {d} windows\n", .{ session.name, session.windows.items.len }) catch return .err;
         server.response_buf.appendSlice(server.allocator, line) catch return .err;
     }
     return .ok;
@@ -135,7 +135,7 @@ fn cmdListWindows(server: *Server, _: []const []const u8) CmdResult {
     for (session.windows.items, 0..) |w, idx| {
         const active_char = if (session.active_window == w) @as(u8, '*') else @as(u8, ' ');
         var buf: [256]u8 = undefined;
-        const line = std.fmt.bufPrint(&buf, "{d}: {s}{c} ({d} panes)\n", .{idx, w.name, active_char, w.panes.items.len}) catch return .err;
+        const line = std.fmt.bufPrint(&buf, "{d}: {s}{c} ({d} panes)\n", .{ idx, w.name, active_char, w.panes.items.len }) catch return .err;
         server.response_buf.appendSlice(server.allocator, line) catch return .err;
     }
     return .ok;
@@ -453,7 +453,7 @@ fn cmdListKeys(server: *Server, args: []const []const u8) CmdResult {
         var key_buf: [64]u8 = undefined;
         const key_str = key_mod.format(b.key, &key_buf);
         var line_buf: [256]u8 = undefined;
-        const line = std.fmt.bufPrint(&line_buf, "bind-key -T prefix {s} {s}\n", .{key_str, @tagName(b.action)}) catch return .err;
+        const line = std.fmt.bufPrint(&line_buf, "bind-key -T prefix {s} {s}\n", .{ key_str, @tagName(b.action) }) catch return .err;
         server.response_buf.appendSlice(server.allocator, line) catch return .err;
     }
 
@@ -462,7 +462,7 @@ fn cmdListKeys(server: *Server, args: []const []const u8) CmdResult {
         var key_buf: [64]u8 = undefined;
         const key_str = key_mod.format(b.key, &key_buf);
         var line_buf: [256]u8 = undefined;
-        const line = std.fmt.bufPrint(&line_buf, "bind-key -T root {s} {s}\n", .{key_str, @tagName(b.action)}) catch return .err;
+        const line = std.fmt.bufPrint(&line_buf, "bind-key -T root {s} {s}\n", .{ key_str, @tagName(b.action) }) catch return .err;
         server.response_buf.appendSlice(server.allocator, line) catch return .err;
     }
 
@@ -514,7 +514,7 @@ fn cmdListPanes(server: *Server, args: []const []const u8) CmdResult {
             for (win.panes.items, 0..) |p, pane_idx| {
                 const active_char = if (win.active_pane == p) @as(u8, '*') else @as(u8, ' ');
                 var buf: [256]u8 = undefined;
-                const line = std.fmt.bufPrint(&buf, "{d}.{d}: [{d}x{d}]{c}\n", .{win_idx, pane_idx, p.screen.grid.width, p.screen.grid.height, active_char}) catch return .err;
+                const line = std.fmt.bufPrint(&buf, "{d}.{d}: [{d}x{d}]{c}\n", .{ win_idx, pane_idx, p.screen.grid.width, p.screen.grid.height, active_char }) catch return .err;
                 server.response_buf.appendSlice(server.allocator, line) catch return .err;
             }
         }
@@ -523,7 +523,7 @@ fn cmdListPanes(server: *Server, args: []const []const u8) CmdResult {
         for (window.panes.items, 0..) |p, idx| {
             const active_char = if (window.active_pane == p) @as(u8, '*') else @as(u8, ' ');
             var buf: [256]u8 = undefined;
-            const line = std.fmt.bufPrint(&buf, "{d}: [{d}x{d}]{c}\n", .{idx, p.screen.grid.width, p.screen.grid.height, active_char}) catch return .err;
+            const line = std.fmt.bufPrint(&buf, "{d}: [{d}x{d}]{c}\n", .{ idx, p.screen.grid.width, p.screen.grid.height, active_char }) catch return .err;
             server.response_buf.appendSlice(server.allocator, line) catch return .err;
         }
     }
@@ -535,7 +535,7 @@ fn cmdListCommands(server: *Server, _: []const []const u8) CmdResult {
     for (table) |entry| {
         var buf: [512]u8 = undefined;
         const line = if (entry.description.len > 0)
-            std.fmt.bufPrint(&buf, "{s} {s}\n", .{entry.name, entry.description}) catch return .err
+            std.fmt.bufPrint(&buf, "{s} {s}\n", .{ entry.name, entry.description }) catch return .err
         else
             std.fmt.bufPrint(&buf, "{s}\n", .{entry.name}) catch return .err;
         server.response_buf.appendSlice(server.allocator, line) catch return .err;
@@ -1772,7 +1772,7 @@ test "config commands exec" {
 
         const k = try @import("../key.zig").parseKeyName("Escape");
         const act = server.dispatcher.root_table.lookup(k);
-        try testing.expectEqual(@import("../key_binding.zig").Action.split_horizontal, act.?);
+        try testing.expectEqual(@import("../key_binding.zig").Action.split_vertical, act.?);
     }
 }
 

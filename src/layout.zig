@@ -68,13 +68,37 @@ pub const Layout = struct {
         const a = self.allocator;
         const leaf_node = self.findLeafParent(self.root, pane) orelse return error.PaneNotFound;
 
-        const child_w, const child_h = self.calculateChildSize(direction, proportion);
+        const parent_w = pane.screen.grid.width;
+        const parent_h = pane.screen.grid.height;
+
+        var child_w1 = parent_w;
+        var child_h1 = parent_h;
+        var child_w2 = parent_w;
+        var child_h2 = parent_h;
+
+        if (direction == .horizontal) {
+            child_w1 = @max(1, @as(u32, @intFromFloat(@as(f64, @floatFromInt(parent_w)) * proportion)));
+            child_w2 = parent_w -| child_w1;
+        } else {
+            child_h1 = @max(1, @as(u32, @intFromFloat(@as(f64, @floatFromInt(parent_h)) * proportion)));
+            child_h2 = parent_h -| child_h1;
+        }
+
         const new_pane = try a.create(Pane);
-        new_pane.* = try Pane.init(a, 0, child_w, child_h);
+        new_pane.* = try Pane.init(a, 0, child_w2, child_h2);
+        errdefer {
+            new_pane.deinit();
+            a.destroy(new_pane);
+        }
+
+        try pane.resizeTerminal(child_w1, child_h1);
 
         const split = try a.create(Split);
+        errdefer a.destroy(split);
         const a_node = try a.create(Node);
+        errdefer a.destroy(a_node);
         const b_node = try a.create(Node);
+        errdefer a.destroy(b_node);
 
         a_node.* = Node{ .leaf = leaf_node.leaf };
         b_node.* = Node{ .leaf = new_pane };
@@ -168,16 +192,6 @@ pub const Layout = struct {
                 }
                 return false;
             },
-        }
-    }
-
-    pub fn calculateChildSize(self: *Layout, direction: SplitDir, proportion: f64) struct { u32, u32 } {
-        if (direction == .horizontal) {
-            const child_w = @max(1, @as(u32, @intFromFloat(@as(f64, @floatFromInt(self.width)) * proportion)));
-            return .{ child_w, self.height };
-        } else {
-            const child_h = @max(1, @as(u32, @intFromFloat(@as(f64, @floatFromInt(self.height)) * proportion)));
-            return .{ self.width, child_h };
         }
     }
 
