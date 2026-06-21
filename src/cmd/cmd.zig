@@ -424,6 +424,15 @@ fn cmdFindWindow(server: *Server, args: []const []const u8) CmdResult {
     return .err;
 }
 
+fn cmdShowMessages(server: *Server, args: []const []const u8) CmdResult {
+    _ = args;
+    for (server.log_messages.items) |msg| {
+        server.response_buf.appendSlice(server.allocator, msg) catch return .err;
+        server.response_buf.appendSlice(server.allocator, "\n") catch return .err;
+    }
+    return .ok;
+}
+
 fn cmdRotateWindow(server: *Server, _: []const []const u8) CmdResult {
     const session = server.activeSession() orelse return .err;
     const window = session.active_window orelse return .err;
@@ -994,6 +1003,14 @@ pub const commands = struct {
         .args_usage = "query",
         .exec = cmdFindWindow,
     };
+    pub const show_messages = CmdEntry{
+        .name = "show-messages",
+        .alias = "showmsgs",
+        .min_args = 0,
+        .max_args = 0,
+        .args_usage = "",
+        .exec = cmdShowMessages,
+    };
 };
 
 fn cmdTable() []const *const CmdEntry {
@@ -1036,6 +1053,7 @@ fn cmdTable() []const *const CmdEntry {
             &commands.paste_buffer,
             &commands.copy_mode,
             &commands.find_window,
+            &commands.show_messages,
         };
         break :blk &entries;
     };
@@ -1451,13 +1469,14 @@ test "last-window switches to non-active" {
     try testing.expectEqual(session.windows.items[0], session.active_window.?);
 }
 
-test "cmd table has 37 entries" {
+test "cmd table has 38 entries" {
     const table = cmdTable();
-    try testing.expectEqual(@as(usize, 37), table.len);
+    try testing.expectEqual(@as(usize, 38), table.len);
 }
 
 test "lookup all new commands" {
     try testing.expect(lookup("copy-mode") != null);
+    try testing.expect(lookup("show-messages") != null);
     try testing.expect(lookup("find-window") != null);
     try testing.expect(lookup("paste-buffer") != null);
     try testing.expect(lookup("rename-session") != null);
@@ -1514,6 +1533,7 @@ test "lookup aliases" {
     try testing.expectEqualStrings("break-pane", lookup("breakp").?.name);
     try testing.expectEqualStrings("paste-buffer", lookup("pasteb").?.name);
     try testing.expectEqualStrings("find-window", lookup("findw").?.name);
+    try testing.expectEqualStrings("show-messages", lookup("showmsgs").?.name);
 }
 
 test "config commands exec" {
@@ -1775,4 +1795,20 @@ test "find-window exec" {
         try testing.expectEqual(CmdResult.ok, c.exec(&server));
         try testing.expectEqual(w3, session.active_window.?);
     }
+}
+
+test "show-messages exec" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    try server.addLogMessage("test log message 1");
+    try server.addLogMessage("test log message 2");
+
+    var c = try parse("show-messages", testing.allocator);
+    defer c.deinit(testing.allocator);
+    try testing.expectEqual(CmdResult.ok, c.exec(&server));
+
+    // Verify response buffer contains the log messages
+    try testing.expect(std.mem.indexOf(u8, server.response_buf.items, "test log message 1") != null);
+    try testing.expect(std.mem.indexOf(u8, server.response_buf.items, "test log message 2") != null);
 }

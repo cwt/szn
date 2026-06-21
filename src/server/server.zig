@@ -37,6 +37,7 @@ pub const Server = struct {
     global_window_options: @import("../options.zig").Options,
     response_buf: std.ArrayList(u8),
     paste_buffer: ?[]const u8 = null,
+    log_messages: std.ArrayListUnmanaged([]const u8) = .empty,
 
     pub fn init(allocator: std.mem.Allocator) !Server {
         const key_binding = @import("../key_binding.zig");
@@ -63,10 +64,15 @@ pub const Server = struct {
             .global_window_options = global_window_options,
             .response_buf = .empty,
             .paste_buffer = null,
+            .log_messages = .empty,
         };
     }
 
     pub fn deinit(self: *Server) void {
+        for (self.log_messages.items) |m| {
+            self.allocator.free(m);
+        }
+        self.log_messages.deinit(self.allocator);
         if (self.paste_buffer) |pb| {
             self.allocator.free(pb);
         }
@@ -88,6 +94,11 @@ pub const Server = struct {
         self.dispatcher.deinit();
         self.global_options.deinit();
         self.global_window_options.deinit();
+    }
+
+    pub fn addLogMessage(self: *Server, msg: []const u8) !void {
+        const duped = try self.allocator.dupe(u8, msg);
+        try self.log_messages.append(self.allocator, duped);
     }
 
     pub fn listen(self: *Server) !void {
