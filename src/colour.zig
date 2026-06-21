@@ -45,12 +45,10 @@ pub const Colour = packed struct(u32) {
         return switch (self.tag) {
             .rgb => {
                 const rgb = self.toRgb().?;
-                _ = std.fmt.bufPrint(buf, "#{X:0>2}{X:0>2}{X:0>2}", .{ rgb[0], rgb[1], rgb[2] }) catch return "<err>";
-                return std.mem.sliceTo(buf, 0);
+                return std.fmt.bufPrint(buf, "#{X:0>2}{X:0>2}{X:0>2}", .{ rgb[0], rgb[1], rgb[2] }) catch "<err>";
             },
             .indexed => {
-                _ = std.fmt.bufPrint(buf, "colour{d}", .{@as(u8, @truncate(self.value))}) catch return "<err>";
-                return std.mem.sliceTo(buf, 0);
+                return std.fmt.bufPrint(buf, "colour{d}", .{@as(u8, @truncate(self.value))}) catch "<err>";
             },
             .default_ => @as([]const u8, "default"),
             .terminal => "terminal",
@@ -333,4 +331,22 @@ test "format indexed colour" {
 test "format default colour" {
     const c = Colour.default_();
     try testing.expectEqual(Tag.default_, c.tag);
+}
+
+test "fmt produces correct string for rgb colour" {
+    var buf: [32]u8 = undefined;
+    const c = Colour.fromRgb(0xFF, 0x00, 0x80);
+    try testing.expectEqualStrings("#FF0080", c.fmt(&buf));
+}
+
+test "fmt produces correct string for indexed colour" {
+    var buf: [32]u8 = undefined;
+    const c = Colour.fromIndexed(42);
+    try testing.expectEqualStrings("colour42", c.fmt(&buf));
+}
+
+test "fmt produces correct string for named colour" {
+    var buf: [32]u8 = undefined;
+    const c = try parse("red");
+    try testing.expectEqualStrings("colour1", c.fmt(&buf));
 }
