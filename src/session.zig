@@ -84,8 +84,9 @@ pub const Session = struct {
     }
 
     pub fn rename(self: *Session, allocator: std.mem.Allocator, new_name: []const u8) void {
+        const new_dup = allocator.dupe(u8, new_name) catch return;
         allocator.free(self.name);
-        self.name = allocator.dupe(u8, new_name) catch self.name;
+        self.name = new_dup;
     }
 };
 
@@ -143,6 +144,15 @@ test "rename session" {
 
     session.rename(testing.allocator, "newname");
     try testing.expectEqualStrings("newname", session.name);
+}
+
+test "rename session survives OOM — no use-after-free" {
+    var failing = std.testing.FailingAllocator.init(testing.allocator, .{ .fail_index = 0 });
+    var session = try Session.init(testing.allocator, 1, "original", 80, 24, null, null);
+    defer session.deinit(testing.allocator);
+
+    session.rename(failing.allocator(), "newname");
+    try testing.expectEqualStrings("original", session.name);
 }
 
 test "session active window persists after kill" {
