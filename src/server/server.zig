@@ -20,6 +20,22 @@ extern "c" fn ftell(stream: ?*anyopaque) c_long;
 extern "c" fn fread(ptr: ?*anyopaque, size: usize, n: usize, stream: ?*anyopaque) usize;
 extern "c" fn access(pathname: [*c]const u8, mode: c_int) c_int;
 
+const passwd = extern struct {
+    pw_name: [*:0]const u8,
+    pw_passwd: [*:0]const u8,
+    pw_uid: c.uid_t,
+    pw_gid: c.gid_t,
+    pw_change: c_long,
+    pw_class: [*:0]const u8,
+    pw_gecos: [*:0]const u8,
+    pw_dir: [*:0]const u8,
+    pw_shell: [*:0]const u8,
+    pw_expire: c_long,
+};
+
+extern "c" fn getuid() c.uid_t;
+extern "c" fn getpwuid(uid: c.uid_t) ?*const passwd;
+
 pub const Server = struct {
     allocator: std.mem.Allocator,
     sessions: std.ArrayListUnmanaged(*Session) = .empty,
@@ -232,8 +248,39 @@ pub const Server = struct {
         }
     }
 
-    pub fn setupPane(self: *Server, pane: *Pane) !void {
-        try pane.spawn(self.allocator, null);
+    pub fn resolveShell(self: *Server, allocator: std.mem.Allocator, session: *Session) ![]const u8 {
+        _ = self;
+        // 1. Check default-shell session option
+        if (session.options.asString("default-shell")) |opt_shell| {
+            if (opt_shell.len > 0) {
+                return try allocator.dupe(u8, opt_shell);
+            }
+        }
+
+        // 2. Check SHELL environment variable
+        if (std.c.getenv("SHELL")) |env_shell_ptr| {
+            const env_shell = std.mem.span(env_shell_ptr);
+            if (env_shell.len > 0) {
+                return try allocator.dupe(u8, env_shell);
+            }
+        }
+
+        // 3. Query password database (getpwuid/getuid)
+        if (getpwuid(getuid())) |pw| {
+            const shell_span = std.mem.span(pw.pw_shell);
+            if (shell_span.len > 0) {
+                return try allocator.dupe(u8, shell_span);
+            }
+        }
+
+        // 4. Fallback
+        return try allocator.dupe(u8, "/bin/sh");
+    }
+
+    pub fn setupPane(self: *Server, session: *Session, pane: *Pane) !void {
+        const shell = try self.resolveShell(self.allocator, session);
+        defer self.allocator.free(shell);
+        try pane.spawn(self.allocator, &[_][]const u8{shell});
         try self.watchPanePty(pane);
     }
 
@@ -246,16 +293,16 @@ pub const Server = struct {
             .new_window => {
                 const win = try session.newWindow(self.allocator, "window");
                 if (win.active_pane) |p| {
-                    try self.setupPane(p);
+                    try self.setupPane(session, p);
                 }
             },
             .split_horizontal => {
                 const new_pane = try window.splitPane(self.allocator, pane, false, 0.5);
-                try self.setupPane(new_pane);
+                try self.setupPane(session, new_pane);
             },
             .split_vertical => {
                 const new_pane = try window.splitPane(self.allocator, pane, true, 0.5);
-                try self.setupPane(new_pane);
+                try self.setupPane(session, new_pane);
             },
             .kill_pane => {
                 if (window.panes.items.len > 1) {
@@ -957,4 +1004,15 @@ test "prefix interception and key dispatching" {
     const old_width = original_second_pane.screen.grid.width;
     try server.executeAction(.resize_right);
     try testing.expectEqual(old_width + 1, original_second_pane.screen.grid.width);
+}
+
+test "resolve shell option and env and database" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    const s = try server.newSession("test", 80, 24);
+    const shell = try server.resolveShell(testing.allocator, s);
+    defer testing.allocator.free(shell);
+    try testing.expect(shell.len > 0);
+    try testing.expect(shell[0] == '/');
 }

@@ -120,7 +120,9 @@ pub fn main(init: std.process.Init) !void {
     const session = try server.newSession("default", sx, sy - 1);
     const pane = session.active_window.?.active_pane.?;
 
-    try pane.spawn(allocator, null);
+    const shell = try server.resolveShell(allocator, session);
+    defer allocator.free(shell);
+    try pane.spawn(allocator, &[_][]const u8{shell});
     try server.watchPanePty(pane);
 
     server.stdin_fd = stdin_fd;
