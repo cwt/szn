@@ -1,26 +1,51 @@
 # szn
 
-A modern terminal multiplexer forked from [tmux](https://github.com/tmux/tmux), rewritten in [Zig](https://ziglang.org).
+A modern terminal multiplexer inspired by [tmux](https://github.com/tmux/tmux),
+rewritten from scratch in [Zig](https://ziglang.org).
 
-## Why
+## Why the name?
 
-tmux is battle-tested but carries decades of terminal compatibility baggage.
-szn keeps only what matters for modern terminals — no terminfo, no ACS,
-no X10 mouse, no HP-UX support — and expresses the rest in idiomatic Zig.
+The name traces a fun lineage through multiplexer history:
+
+**GNU Screen** → **scn** (shortened) → **szn** — where the `c` became `z` to
+nod at Zig, just like tmux was born from C roots and szn is its Zig successor.
+
+## Why szn?
+
+tmux is great — but open its source and you'll find it's also quietly keeping
+the lights on for terminals that haven't been relevant since the 1990s. It
+queries a terminfo database at startup (a compatibility layer invented when
+hundreds of incompatible terminal *hardware* models existed), falls back to
+VT100 ACS line-drawing for terminals that can't speak UTF-8, juggles four
+different mouse protocols on every launch, and ships dedicated shims for HP-UX,
+AIX, and Solaris going all the way back to version 2.0. There's even a
+workaround in there for a PuTTY 0.63 scroll-wheel bug.
+
+None of that is a criticism — it's what made tmux run everywhere. But if you're
+only targeting modern terminals, you're carrying all that weight for nothing.
+
+szn makes a different bet: xterm-256color or newer, full stop. That lets us
+hardcode modern behaviour — UTF-8 box-drawing, SGR mouse, kitty keys — and skip
+the entire compatibility layer. Less code, fewer surprises, and nothing left
+over from 1978.
 
 ## Goals
 
-- **Modern terminal only**: xterm-256color as baseline. SGR mouse (1006), RGB colour,
-  kitty extended keys, UTF-8, hyperlinks (OSC 8), sixel images.
-- **Clean architecture**: Zig's comptime, error unions, tagged unions, arena allocators,
-  and slice-based data structures replace C macros, goto cleanup, and manual memory.
-- **Same UX**: tmux config files, keybindings, session/window/pane model — zero
-  learning curve for tmux users.
+- **Modern terminals only** — xterm-256color as the baseline, with SGR mouse
+  (1006), true-colour RGB, kitty extended keys, UTF-8, OSC 8 hyperlinks, and
+  sixel image support out of the box.
+- **Clean architecture** — Zig's comptime, error unions, tagged unions, arena
+  allocators, and slices replace C macros, `goto`-based cleanup, and manual
+  memory management.
+- **Zero learning curve** — tmux config files, keybindings, and the familiar
+  session → window → pane model are all preserved. If you know tmux, you
+  already know szn.
 
 ## Status
 
-Planning phase. See [MIGRATION.md](MIGRATION.md) for the full breakdown.
+Still in the planning phase. Check out [MIGRATION.md](MIGRATION.md) for the
+full breakdown of what's coming and when.
 
 ## License
 
-Same as tmux — [ISC](COPYING).
+[MIT](LICENSE)
