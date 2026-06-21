@@ -288,7 +288,7 @@ pub const Term = struct {
     }
 
     pub fn reverseIndex(self: *Term) !void {
-        try self.write("\x1b[M");
+        try self.write("\x1bM");
         if (self.cy > 0) self.cy -= 1;
     }
 
@@ -645,7 +645,7 @@ test "reverse index" {
     var buf: [64]u8 = undefined;
     var term = Term.init(Writer.fixed(&buf), 80, 24);
     try term.reverseIndex();
-    try testing.expectEqualSlices(u8, "\x1b[M", written(&term.writer));
+    try testing.expectEqualSlices(u8, "\x1bM", written(&term.writer));
 }
 
 test "scroll up/down" {
