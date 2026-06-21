@@ -370,6 +370,17 @@ fn cmdBreakPane(server: *Server, args: []const []const u8) CmdResult {
     return .ok;
 }
 
+fn cmdPasteBuffer(server: *Server, args: []const []const u8) CmdResult {
+    _ = args;
+    const session = server.activeSession() orelse return .err;
+    const window = session.active_window orelse return .err;
+    const pane = window.active_pane orelse return .err;
+    if (server.paste_buffer) |pb| {
+        pane.writeStr(pb) catch return .err;
+    }
+    return .ok;
+}
+
 fn cmdRotateWindow(server: *Server, _: []const []const u8) CmdResult {
     const session = server.activeSession() orelse return .err;
     const window = session.active_window orelse return .err;
@@ -916,6 +927,14 @@ pub const commands = struct {
         .args_usage = "",
         .exec = cmdBreakPane,
     };
+    pub const paste_buffer = CmdEntry{
+        .name = "paste-buffer",
+        .alias = "pasteb",
+        .min_args = 0,
+        .max_args = 0,
+        .args_usage = "",
+        .exec = cmdPasteBuffer,
+    };
 };
 
 fn cmdTable() []const *const CmdEntry {
@@ -955,6 +974,7 @@ fn cmdTable() []const *const CmdEntry {
             &commands.swap_pane,
             &commands.join_pane,
             &commands.break_pane,
+            &commands.paste_buffer,
         };
         break :blk &entries;
     };
@@ -1370,12 +1390,13 @@ test "last-window switches to non-active" {
     try testing.expectEqual(session.windows.items[0], session.active_window.?);
 }
 
-test "cmd table has 34 entries" {
+test "cmd table has 35 entries" {
     const table = cmdTable();
-    try testing.expectEqual(@as(usize, 34), table.len);
+    try testing.expectEqual(@as(usize, 35), table.len);
 }
 
 test "lookup all new commands" {
+    try testing.expect(lookup("paste-buffer") != null);
     try testing.expect(lookup("rename-session") != null);
     try testing.expect(lookup("rename-window") != null);
     try testing.expect(lookup("select-window") != null);
@@ -1428,6 +1449,7 @@ test "lookup aliases" {
     try testing.expectEqualStrings("swap-pane", lookup("swapp").?.name);
     try testing.expectEqualStrings("join-pane", lookup("joinp").?.name);
     try testing.expectEqualStrings("break-pane", lookup("breakp").?.name);
+    try testing.expectEqualStrings("paste-buffer", lookup("pasteb").?.name);
 }
 
 test "config commands exec" {
@@ -1619,4 +1641,24 @@ test "swap-pane, join-pane, and break-pane exec" {
         try testing.expectEqual(@as(usize, 2), win.panes.items.len);
         try testing.expectEqual(pane1, win.active_pane.?);
     }
+}
+
+test "paste-buffer exec" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    const session = try server.newSession("test", 80, 24);
+    const win = session.active_window.?;
+    const pane = win.active_pane.?;
+
+    server.paste_buffer = try server.allocator.dupe(u8, "hello paste buffer");
+
+    var c = try parse("paste-buffer", testing.allocator);
+    defer c.deinit(testing.allocator);
+    try testing.expectEqual(CmdResult.ok, c.exec(&server));
+
+    // Verify cell content
+    try testing.expectEqual(@as(u21, 'h'), pane.screen.grid.getCell(0, 0).char);
+    try testing.expectEqual(@as(u21, 'e'), pane.screen.grid.getCell(1, 0).char);
+    try testing.expectEqual(@as(u21, 'l'), pane.screen.grid.getCell(2, 0).char);
 }

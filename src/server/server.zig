@@ -36,6 +36,7 @@ pub const Server = struct {
     global_options: @import("../options.zig").Options,
     global_window_options: @import("../options.zig").Options,
     response_buf: std.ArrayList(u8),
+    paste_buffer: ?[]const u8 = null,
 
     pub fn init(allocator: std.mem.Allocator) !Server {
         const key_binding = @import("../key_binding.zig");
@@ -61,10 +62,14 @@ pub const Server = struct {
             .global_options = global_options,
             .global_window_options = global_window_options,
             .response_buf = .empty,
+            .paste_buffer = null,
         };
     }
 
     pub fn deinit(self: *Server) void {
+        if (self.paste_buffer) |pb| {
+            self.allocator.free(pb);
+        }
         self.response_buf.deinit(self.allocator);
         self.loop.deinit(self.allocator);
         for (self.sessions.items) |s| {
