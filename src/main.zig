@@ -145,7 +145,6 @@ pub fn main(init: std.process.Init) !void {
     defer display.exitAltScreen() catch {};
 
     while (server.loop.running) {
-        if (pane.pty == null) break;
         try server.run();
         const active_session = server.activeSession() orelse continue;
         const active_window = active_session.active_window orelse continue;

@@ -171,13 +171,16 @@ pub const Server = struct {
         const has_hup = (ev.revents & @as(i16, @intCast(std.posix.POLL.HUP))) != 0;
         const has_err = (ev.revents & @as(i16, @intCast(std.posix.POLL.ERR))) != 0;
 
+        var exited = false;
         if (has_in) {
             pane.feedPty() catch |err| {
                 if (err == error.ProcessExited) {
                     self.loop.removeFd(ev.fd);
+                    exited = true;
                 } else {
                     std.log.warn("pty feed error: {any}", .{err});
                     self.loop.removeFd(ev.fd);
+                    exited = true;
                 }
             };
         } else if (has_hup or has_err) {
@@ -186,8 +189,38 @@ pub const Server = struct {
             }
             pane.pty = null;
             self.loop.removeFd(ev.fd);
+            exited = true;
+        }
+
+        if (exited) {
+            self.destroyPane(pane);
         }
         return true;
+    }
+
+    pub fn destroyPane(self: *Server, pane: *Pane) void {
+        for (self.sessions.items) |session| {
+            for (session.windows.items) |win| {
+                for (win.panes.items) |p| {
+                    if (p == pane) {
+                        win.removePane(self.allocator, pane);
+
+                        if (win.panes.items.len == 0) {
+                            session.killWindow(self.allocator, win);
+                        }
+
+                        if (session.windows.items.len == 0) {
+                            self.killSession(session.name) catch {};
+                        }
+
+                        if (self.sessions.items.len == 0) {
+                            self.loop.running = false;
+                        }
+                        return;
+                    }
+                }
+            }
+        }
     }
 
     pub fn setupPane(self: *Server, pane: *Pane) !void {
