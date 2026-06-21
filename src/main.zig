@@ -12,27 +12,37 @@ const connect = @import("client/connect.zig");
 const client_mod = @import("client/client.zig");
 const socket_path = @import("socket_path.zig");
 
-pub const Error = server_mod.ServerError || client_mod.Error || connect.Error || socket_path.Error || error{OutOfMemory, SocketNotFound, WriteFailed, ReadFailed};
+pub const Error = server_mod.ServerError || client_mod.Error || connect.Error || socket_path.Error || error{ OutOfMemory, SocketNotFound, WriteFailed, ReadFailed };
 
-// Cached log file handle — opened once, reused for all log calls
-var log_file: ?std.fs.File = null;
+// Cached log file descriptor — opened once, reused for all log calls
+var log_fd: ?std.posix.fd_t = null;
 
 pub const std_options: std.Options = .{
     .logFn = logFn,
 };
 
-fn resolveLogPath(buf: *[256]u8) Error![]const u8 {
-    if (std.posix.getenv("XDG_STATE_HOME")) |xdg_raw| {
+fn resolveLogPath(buf: []u8) Error![:0]const u8 {
+    if (std.c.getenv("XDG_STATE_HOME")) |xdg_raw| {
         const xdg = std.mem.span(xdg_raw);
-        const dir_path = try std.fmt.bufPrint(buf, "{s}/szn", .{xdg});
-        std.fs.makeDirAbsolute(dir_path) catch |err| switch (err) {
-            error.PathAlreadyExists => {},
-            else => return err,
-        };
-        return try std.fmt.bufPrint(buf, "{s}/szn/szn.log", .{xdg});
+        var dir_buf: [256]u8 = undefined;
+        const dir_z = try std.fmt.bufPrintZ(&dir_buf, "{s}/szn", .{xdg});
+        _ = c.mkdir(dir_z.ptr, 0o777);
+        return try std.fmt.bufPrintZ(buf, "{s}/szn/szn.log", .{xdg});
     }
-    return try std.fmt.bufPrint(buf, "/tmp/szn.log", .{});
+    return try std.fmt.bufPrintZ(buf, "/tmp/szn.log", .{});
 }
+
+const builtin = @import("builtin");
+extern "c" fn open(path: [*:0]const u8, oflag: c_int, mode: c.mode_t) c_int;
+const O_WRONLY = 1;
+const O_CREAT = switch (builtin.os.tag) {
+    .macos, .ios, .watchos, .tvos => 0x0200,
+    else => 0x0040,
+};
+const O_APPEND = switch (builtin.os.tag) {
+    .macos, .ios, .watchos, .tvos => 0x0008,
+    else => 0x0400,
+};
 
 pub fn logFn(
     comptime level: std.log.Level,
@@ -41,18 +51,29 @@ pub fn logFn(
     args: anytype,
 ) void {
     _ = scope;
-    if (log_file == null) {
+    if (log_fd == null) {
         var path_buf: [256]u8 = undefined;
         const path = resolveLogPath(&path_buf) catch return;
-        log_file = std.fs.createFileAbsolute(path, .{ .append = true }) catch return;
+        const fd = open(path, O_WRONLY | O_CREAT | O_APPEND, 0o666);
+        if (fd < 0) return;
+        log_fd = fd;
     }
-    const file = log_file.?;
+    const fd = log_fd.?;
     var buf: [4096]u8 = undefined;
     const prefix = std.fmt.bufPrint(&buf, "[{s}] ", .{@tagName(level)}) catch return;
-    file.write(prefix) catch return;
+    writeAllRaw(fd, prefix);
     const msg = std.fmt.bufPrint(&buf, format, args) catch "log message too long\n";
-    file.write(msg) catch return;
-    file.write("\n") catch return;
+    writeAllRaw(fd, msg);
+    writeAllRaw(fd, "\n");
+}
+
+fn writeAllRaw(fd: std.posix.fd_t, bytes: []const u8) void {
+    var remaining = bytes;
+    while (remaining.len > 0) {
+        const n = c.write(fd, remaining.ptr, @intCast(remaining.len));
+        if (n <= 0) return;
+        remaining = remaining[@intCast(n)..];
+    }
 }
 
 extern "c" fn tcflush(fd: c_int, queue_selector: c_int) c_int;

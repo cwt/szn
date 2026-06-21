@@ -221,7 +221,7 @@ pub const Server = struct {
         for (self.client_fds.items) |cfd| {
             if (ev.fd == cfd) return false;
         }
-        const pane: *Pane = @alignCast(@ptrCast(ev.udata orelse return false));
+        const pane: *Pane = @ptrCast(@alignCast(ev.udata orelse return false));
         const has_in = (ev.revents & @as(i16, @intCast(std.posix.POLL.IN))) != 0;
         const has_hup = (ev.revents & @as(i16, @intCast(std.posix.POLL.HUP))) != 0;
         const has_err = (ev.revents & @as(i16, @intCast(std.posix.POLL.ERR))) != 0;
@@ -621,8 +621,8 @@ pub const Server = struct {
                                     handled = true;
                                 }
                                 const wants_mouse = pane.screen.mode.mouse_standard or
-                                                    pane.screen.mode.mouse_button or
-                                                    pane.screen.mode.mouse_sgr;
+                                    pane.screen.mode.mouse_button or
+                                    pane.screen.mode.mouse_sgr;
                                 if (!wants_mouse) {
                                     handled = true;
                                 }
@@ -867,7 +867,8 @@ pub const Server = struct {
         var buf: [4096]u8 = undefined;
         const n = std.posix.read(fd, &buf) catch |err| {
             self.removeClient(fd);
-            return err;
+            std.log.err("read from client fd {d} failed: {s}", .{ fd, @errorName(err) });
+            return error.ReadFailed;
         };
         if (n == 0) {
             self.removeClient(fd);
@@ -1066,11 +1067,15 @@ pub const Server = struct {
                     } else &self.dispatcher.prefix_table;
                     table.unbind(u.key);
                 },
-                .set_environment => { std.log.debug("set_environment: TODO", .{}); },
+                .set_environment => {
+                    std.log.debug("set_environment: TODO", .{});
+                },
                 .source_file => |path| {
                     try self.loadConfigFile(path);
                 },
-                .if_shell => { std.log.debug("if_shell: TODO", .{}); },
+                .if_shell => {
+                    std.log.debug("if_shell: TODO", .{});
+                },
             }
         }
     }
@@ -1138,7 +1143,7 @@ pub const Server = struct {
     }
 };
 
-pub const ServerError = session_mod.Error || window_mod.Error || render.Error || loop_mod.Error || pty_mod.Error || protocol.Error || socket_mod.Error || cfg.Error || options.Error || key_binding_mod.Error || error{SessionNotFound, OutOfMemory};
+pub const ServerError = session_mod.Error || window_mod.Error || render.Error || loop_mod.Error || pty_mod.Error || protocol.Error || socket_mod.Error || cfg.Error || options.Error || key_binding_mod.Error || message_reader.ReadError || error{ SessionNotFound, OutOfMemory };
 
 test "create empty server" {
     var server = try Server.init(testing.allocator);
@@ -1232,7 +1237,7 @@ test "prefix interception and key dispatching" {
     const s = try server.newSession("test", 80, 24);
     const window = s.active_window.?;
     const pane = window.active_pane.?;
-    
+
     // Set up a mock pty so we don't try to spawn process/terminal in test.
     pane.pty = try @import("pty.zig").Pty.open();
 
@@ -1264,7 +1269,7 @@ test "prefix interception and key dispatching" {
     // Test paste-buffer
     server.paste_buffer = try server.allocator.dupe(u8, "pasted-content");
     try server.processInput(&[_]u8{ 0x02, ']' }); // Ctrl-b + ]
-    
+
     // Check that grid has the pasted content
     var line_buf: [14]u8 = undefined;
     var line_idx: usize = 0;
