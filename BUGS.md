@@ -138,7 +138,7 @@ Every call allocates a buffer for stdin data. On error paths, the buffer leaks. 
 **File:** `src/server/server.zig`
 `handleMouseFocus` gets a `*Pane` from the layout tree, then calls `setActivePane` which may destroy the pane. Now validates pane is still alive after operations.
 
-### 26. paneList doesn't filter by session ⏸ Unresolved
+### 26. paneList doesn't filter by session ✅ Fixed
 **File:** `src/cmd/cmd.zig:790`
 `list-panes -s` flag exists but `cmdListPanes` ignores it. The `-s` flag should limit to target session only.
 
@@ -177,7 +177,7 @@ All four directions (up/down/left/right) do `(idx + 1) % len` — pure circular 
 **File:** `src/server/server.zig:354–363`
 Selects the first window that is not current — does not store/restore the "last previously active" window index per session.
 
-### 33. Kitty keyboard protocol incomplete
+### 33. Kitty keyboard protocol incomplete ⏸ Unresolved
 **File:** `src/tty/tty_key.zig` → `src/key.zig:124–132`
 Handles basic `CSI codepoint ; modifier u` but missing: keypad disambiguation (`CSI 1 ; modifier u`), shifted keys (`CSI > codepoint u`), and key events/release/repeat (`CSI = ; modifier ; event u`).
 
@@ -249,6 +249,6 @@ If data exceeds remaining buffer space, excess bytes are silently dropped. Calle
 |----------|-------|-------|----------------|------------|
 | Critical | 8 | 5 | 3 | 0 |
 | High | 14 | 13 | 1 | 0 |
-| Medium | 12 | 10 | 1 | 1 |
-| Low | 13 | 8 | 1 | 4 |
-| **Total** | **47** | **36** | **6** | **5** |
+| Medium | 12 | 11 | 0 | 1 |
+| Low | 13 | 10 | 1 | 2 |
+| **Total** | **47** | **39** | **5** | **3** |

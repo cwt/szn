@@ -509,14 +509,29 @@ fn cmdCapturePane(server: *Server, _: []const []const u8) CmdResult {
     return .ok;
 }
 
-fn cmdListPanes(server: *Server, _: []const []const u8) CmdResult {
+fn cmdListPanes(server: *Server, args: []const []const u8) CmdResult {
     const session = server.activeSession() orelse return .err;
-    const window = session.active_window orelse return .err;
-    for (window.panes.items, 0..) |p, idx| {
-        const active_char = if (window.active_pane == p) @as(u8, '*') else @as(u8, ' ');
-        var buf: [256]u8 = undefined;
-        const line = std.fmt.bufPrint(&buf, "{d}: [{d}x{d}]{c}\n", .{idx, p.screen.grid.width, p.screen.grid.height, active_char}) catch return .err;
-        server.response_buf.appendSlice(server.allocator, line) catch return .err;
+    const session_wide = for (args) |arg| {
+        if (std.mem.eql(u8, arg, "-s")) break true;
+    } else false;
+
+    if (session_wide) {
+        for (session.windows.items, 0..) |win, win_idx| {
+            for (win.panes.items, 0..) |p, pane_idx| {
+                const active_char = if (win.active_pane == p) @as(u8, '*') else @as(u8, ' ');
+                var buf: [256]u8 = undefined;
+                const line = std.fmt.bufPrint(&buf, "{d}.{d}: [{d}x{d}]{c}\n", .{win_idx, pane_idx, p.screen.grid.width, p.screen.grid.height, active_char}) catch return .err;
+                server.response_buf.appendSlice(server.allocator, line) catch return .err;
+            }
+        }
+    } else {
+        const window = session.active_window orelse return .err;
+        for (window.panes.items, 0..) |p, idx| {
+            const active_char = if (window.active_pane == p) @as(u8, '*') else @as(u8, ' ');
+            var buf: [256]u8 = undefined;
+            const line = std.fmt.bufPrint(&buf, "{d}: [{d}x{d}]{c}\n", .{idx, p.screen.grid.width, p.screen.grid.height, active_char}) catch return .err;
+            server.response_buf.appendSlice(server.allocator, line) catch return .err;
+        }
     }
     return .ok;
 }
@@ -1012,7 +1027,7 @@ pub const commands = struct {
     pub const list_panes = CmdEntry{
         .name = "list-panes",
         .alias = "lsp",
-        .description = "List all panes in the current window",
+        .description = "List panes (-s for all windows in session)",
         .exec = cmdListPanes,
     };
     pub const list_commands = CmdEntry{
