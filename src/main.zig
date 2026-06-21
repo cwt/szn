@@ -290,6 +290,11 @@ fn runInteractiveClient() !void {
                 var sd_buf: [4096 + 5]u8 = undefined;
                 const sd_ser = sd_pkt.serialize(&sd_buf);
                 _ = c.write(server_fd, sd_ser.ptr, sd_ser.len);
+            } else if (n == -1) {
+                const err = std.posix.errno(-1);
+                if (err != .AGAIN and err != .INTR) {
+                    running = false;
+                }
             } else {
                 const detach_pkt = protocol.Packet.make(.detach, "");
                 var d_buf: [128]u8 = undefined;
@@ -301,11 +306,17 @@ fn runInteractiveClient() !void {
 
         if (pollfds[0].revents != 0) {
             const n = c.read(server_fd, read_buf[read_pos..].ptr, read_buf.len - read_pos);
-            if (n <= 0) {
+            if (n > 0) {
+                read_pos += @as(usize, @intCast(n));
+            } else if (n == -1) {
+                const err = std.posix.errno(-1);
+                if (err != .AGAIN and err != .INTR) {
+                    running = false;
+                }
+            } else {
                 running = false;
                 continue;
             }
-            read_pos += @as(usize, @intCast(n));
 
             while (read_pos >= 5) {
                 const pkt_len = std.mem.readInt(u32, read_buf[0..4], .little);

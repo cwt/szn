@@ -111,6 +111,11 @@ pub const InputReader = struct {
             rd.pos = 0;
             return null;
         }
+        if (rd.pos >= rd.buf.len) {
+            rd.state = .ground;
+            rd.pos = 0;
+            return null;
+        }
         if (byte >= 0x30 and byte <= 0x3f) {
             rd.buf[rd.pos] = byte;
             rd.pos += 1;
@@ -133,6 +138,11 @@ pub const InputReader = struct {
             rd.state = .ground;
             return parseSgrMouse(seq, byte == 'm');
         }
+        if (rd.pos >= rd.buf.len) {
+            rd.state = .ground;
+            rd.pos = 0;
+            return null;
+        }
         rd.buf[rd.pos] = byte;
         rd.pos += 1;
         return null;
@@ -150,6 +160,11 @@ pub const InputReader = struct {
     fn feedUtf8(rd: *InputReader, byte: u8, expected: usize) ?Event {
         if (byte & 0xc0 != 0x80) {
             rd.state = .ground;
+            return null;
+        }
+        if (rd.pos >= rd.buf.len) {
+            rd.state = .ground;
+            rd.pos = 0;
             return null;
         }
         rd.buf[rd.pos] = byte;
