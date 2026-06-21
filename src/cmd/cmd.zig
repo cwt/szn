@@ -44,6 +44,30 @@ fn cmdKillSession(server: *Server, args: []const []const u8) CmdResult {
     return .ok;
 }
 
+fn cmdSwitchClient(server: *Server, args: []const []const u8) CmdResult {
+    if (args.len < 2) return .err;
+    const name = args[1];
+    var target_idx: ?usize = null;
+    for (server.sessions.items, 0..) |s, idx| {
+        if (std.mem.eql(u8, s.name, name)) {
+            target_idx = idx;
+            break;
+        }
+    }
+    if (target_idx) |idx| {
+        if (idx > 0) {
+            const s = server.sessions.items[idx];
+            var i = idx;
+            while (i > 0) : (i -= 1) {
+                server.sessions.items[i] = server.sessions.items[i - 1];
+            }
+            server.sessions.items[0] = s;
+        }
+        return .ok;
+    }
+    return .err;
+}
+
 fn cmdNewWindow(server: *Server, args: []const []const u8) CmdResult {
     const session = server.activeSession() orelse return .err;
     const name = if (args.len > 1) args[1] else "window";
@@ -636,6 +660,22 @@ pub const commands = struct {
         .alias = "source",
         .exec = cmdSourceFile,
     };
+    pub const attach_session = CmdEntry{
+        .name = "attach-session",
+        .alias = "attach",
+        .min_args = 1,
+        .max_args = 1,
+        .args_usage = "target-session",
+        .exec = cmdSwitchClient,
+    };
+    pub const switch_client = CmdEntry{
+        .name = "switch-client",
+        .alias = "switchc",
+        .min_args = 1,
+        .max_args = 1,
+        .args_usage = "target-session",
+        .exec = cmdSwitchClient,
+    };
 };
 
 fn cmdTable() []const *const CmdEntry {
@@ -668,6 +708,8 @@ fn cmdTable() []const *const CmdEntry {
             &commands.unbind_key,
             &commands.source_file,
             &commands.resize_pane,
+            &commands.attach_session,
+            &commands.switch_client,
         };
         break :blk &entries;
     };
@@ -1083,9 +1125,9 @@ test "last-window switches to non-active" {
     try testing.expectEqual(session.windows.items[0], session.active_window.?);
 }
 
-test "cmd table has 27 entries" {
+test "cmd table has 29 entries" {
     const table = cmdTable();
-    try testing.expectEqual(@as(usize, 27), table.len);
+    try testing.expectEqual(@as(usize, 29), table.len);
 }
 
 test "lookup all new commands" {
@@ -1108,6 +1150,8 @@ test "lookup all new commands" {
     try testing.expect(lookup("unbind-key") != null);
     try testing.expect(lookup("source-file") != null);
     try testing.expect(lookup("resize-pane") != null);
+    try testing.expect(lookup("attach-session") != null);
+    try testing.expect(lookup("switch-client") != null);
 }
 
 test "lookup aliases" {
@@ -1127,6 +1171,8 @@ test "lookup aliases" {
     try testing.expectEqualStrings("bind-key", lookup("bind").?.name);
     try testing.expectEqualStrings("unbind-key", lookup("unbind").?.name);
     try testing.expectEqualStrings("source-file", lookup("source").?.name);
+    try testing.expectEqualStrings("attach-session", lookup("attach").?.name);
+    try testing.expectEqualStrings("switch-client", lookup("switchc").?.name);
 }
 
 test "config commands exec" {
@@ -1213,5 +1259,29 @@ test "query commands and resize-pane" {
         const window = session.active_window orelse session.windows.items[0];
         const pane = window.active_pane.?;
         try testing.expectEqual(@as(u32, 35), pane.screen.grid.height);
+    }
+}
+
+test "attach-session and switch-client exec" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    _ = try server.newSession("sess1", 80, 24);
+    _ = try server.newSession("sess2", 80, 24);
+
+    try testing.expectEqualStrings("sess1", server.activeSession().?.name);
+
+    {
+        var c = try parse("switch-client sess2", testing.allocator);
+        defer c.deinit(testing.allocator);
+        try testing.expectEqual(CmdResult.ok, c.exec(&server));
+        try testing.expectEqualStrings("sess2", server.activeSession().?.name);
+    }
+
+    {
+        var c = try parse("attach-session sess1", testing.allocator);
+        defer c.deinit(testing.allocator);
+        try testing.expectEqual(CmdResult.ok, c.exec(&server));
+        try testing.expectEqualStrings("sess1", server.activeSession().?.name);
     }
 }
