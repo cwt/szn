@@ -12,6 +12,9 @@ const socket_mod = @import("socket.zig");
 const message_reader = @import("message_reader.zig");
 const MessageReader = message_reader.MessageReader;
 const protocol = @import("protocol.zig");
+const render = @import("render.zig");
+const Display = render.Display;
+const key_binding_mod = @import("../key_binding.zig");
 
 extern "c" fn fopen(filename: [*c]const u8, modes: [*c]const u8) ?*anyopaque;
 extern "c" fn fclose(stream: ?*anyopaque) c_int;
@@ -52,8 +55,12 @@ pub const Server = struct {
     global_options: @import("../options.zig").Options,
     global_window_options: @import("../options.zig").Options,
     response_buf: std.ArrayList(u8),
+    display_client_fd: ?i32 = null,
+    render_buf: std.ArrayList(u8),
     paste_buffer: ?[]const u8 = null,
     log_messages: std.ArrayListUnmanaged([]const u8) = .empty,
+    display_sx: u32 = 80,
+    display_sy: u32 = 24,
 
     pub fn init(allocator: std.mem.Allocator) !Server {
         const key_binding = @import("../key_binding.zig");
@@ -72,6 +79,9 @@ pub const Server = struct {
         errdefer dispatcher.deinit();
         try key_binding.loadDefaults(&dispatcher.prefix_table);
 
+        var render_buf: std.ArrayList(u8) = .empty;
+        errdefer render_buf.deinit(allocator);
+
         return Server{
             .allocator = allocator,
             .client_readers = std.AutoHashMap(i32, MessageReader).init(allocator),
@@ -79,6 +89,7 @@ pub const Server = struct {
             .global_options = global_options,
             .global_window_options = global_window_options,
             .response_buf = .empty,
+            .render_buf = render_buf,
             .paste_buffer = null,
             .log_messages = .empty,
         };
@@ -92,6 +103,7 @@ pub const Server = struct {
         if (self.paste_buffer) |pb| {
             self.allocator.free(pb);
         }
+        self.render_buf.deinit(self.allocator);
         self.response_buf.deinit(self.allocator);
         self.loop.deinit(self.allocator);
         for (self.sessions.items) |s| {
@@ -104,12 +116,20 @@ pub const Server = struct {
         }
         self.client_fds.deinit(self.allocator);
         if (self.listener_fd) |fd| {
-            socket_mod.closeAndUnlink(fd);
+            socket_mod.closeSocket(fd);
         }
         self.client_readers.deinit();
         self.dispatcher.deinit();
         self.global_options.deinit();
         self.global_window_options.deinit();
+    }
+
+    pub fn shutdownServer(self: *Server) void {
+        if (self.listener_fd) |fd| {
+            socket_mod.closeSocket(fd);
+            self.listener_fd = null;
+        }
+        socket_mod.shutdown();
     }
 
     pub fn addLogMessage(self: *Server, msg: []const u8) !void {
@@ -124,7 +144,7 @@ pub const Server = struct {
     }
 
     pub fn run(self: *Server) !void {
-        const events = try self.loop.pollOnce(100);
+        const events = try self.loop.pollOnce(self.allocator, 100);
         for (events) |ev| {
             if (self.handlePtyEvent(ev)) continue;
 
@@ -362,7 +382,15 @@ pub const Server = struct {
                 }
             },
             .detach => {
-                self.loop.running = false;
+                if (self.display_client_fd) |cfd| {
+                    const detach_pkt = protocol.Packet.make(.detach, "");
+                    var buf: [128]u8 = undefined;
+                    const ser = detach_pkt.serialize(&buf);
+                    _ = c.write(cfd, ser.ptr, ser.len);
+                    self.display_client_fd = null;
+                } else {
+                    self.loop.running = false;
+                }
             },
             .select_window_0, .select_window_1, .select_window_2, .select_window_3, .select_window_4, .select_window_5, .select_window_6, .select_window_7, .select_window_8, .select_window_9 => {
                 const idx = @intFromEnum(action) - @intFromEnum(@import("../key_binding.zig").Action.select_window_0);
@@ -709,7 +737,7 @@ pub const Server = struct {
                     try dispatch.sendResponse(fd, &result);
                 },
                 .identify_term => {
-                    // Just acknowledge identify with a ready packet
+                    self.display_client_fd = fd;
                     const reply = protocol.Packet.make(.ready, "ok");
                     var reply_buf: [128]u8 = undefined;
                     const serialized = reply.serialize(&reply_buf);
@@ -718,6 +746,30 @@ pub const Server = struct {
                         self.removeClient(fd);
                         return error.WriteFailed;
                     }
+                    if (self.activeSession()) |s| {
+                        if (s.active_window) |w| {
+                            if (w.active_pane) |ap| {
+                                ap.dirty = true;
+                            }
+                        }
+                    }
+                },
+                .stdin_data => {
+                    try self.processInput(pkt.data);
+                },
+                .resize => {
+                    if (pkt.data.len >= 8) {
+                        const new_w = std.mem.readInt(u32, pkt.data[0..4], .little);
+                        const new_h = std.mem.readInt(u32, pkt.data[4..8], .little);
+                        self.display_sx = @max(new_w, 80);
+                        self.display_sy = @max(new_h, 24);
+                        if (self.activeSession()) |s| {
+                            s.resize(self.display_sx, self.display_sy - 1) catch {};
+                        }
+                    }
+                },
+                .detach => {
+                    self.display_client_fd = null;
                 },
                 else => {},
             }
@@ -734,6 +786,40 @@ pub const Server = struct {
         }
         _ = self.client_readers.remove(fd);
         _ = c.close(fd);
+        if (self.display_client_fd == fd) {
+            self.display_client_fd = null;
+        }
+    }
+
+    pub fn renderToDisplayClient(self: *Server) void {
+        const display_fd = self.display_client_fd orelse return;
+        const session = self.activeSession() orelse return;
+        const window = session.active_window orelse return;
+        const pane = window.active_pane orelse return;
+
+        self.render_buf.clearRetainingCapacity();
+
+        var display = Display{
+            .fd = display_fd,
+            .sx = self.display_sx,
+            .sy = self.display_sy,
+            .capture = &self.render_buf,
+            .capture_allocator = self.allocator,
+        };
+
+        display.renderAll(&pane.screen, session.name, session.windows.items, session.active_window) catch |err| {
+            std.log.warn("render error: {any}", .{err});
+            return;
+        };
+        pane.dirty = false;
+
+        if (self.render_buf.items.len > 0) {
+            const pkt = protocol.Packet.make(.output, self.render_buf.items);
+            var hdr: [5]u8 = undefined;
+            pkt.header.encode(&hdr);
+            _ = c.write(display_fd, &hdr, 5);
+            _ = c.write(display_fd, self.render_buf.items.ptr, self.render_buf.items.len);
+        }
     }
 
     pub fn newSession(self: *Server, name: []const u8, width: u32, height: u32) !*Session {
@@ -867,8 +953,8 @@ pub const Server = struct {
             const home = std.mem.span(home_ptr);
 
             const config_paths = &[_][]const u8{
-                ".config/zmux/zmux.conf",
-                ".zmux.conf",
+                ".config/szn/szn.conf",
+                ".szn.conf",
                 ".config/tmux/tmux.conf",
                 ".tmux.conf",
             };
