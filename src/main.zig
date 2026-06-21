@@ -196,7 +196,7 @@ pub fn main(init: std.process.Init) !void {
             }
         }
         if (active_pane.dirty) {
-            display.renderAll(&active_pane.screen, active_session.name, active_session.windows.items.len) catch |err| {
+            display.renderAll(&active_pane.screen, active_session.name, active_session.windows.items, active_session.active_window) catch |err| {
                 std.log.warn("render error: {any}", .{err});
             };
             active_pane.dirty = false;

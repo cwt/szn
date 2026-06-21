@@ -609,6 +609,35 @@ pub const Server = struct {
 
     pub fn handleMouseFocus(self: *Server, x: u32, y: u32) !void {
         const session = self.activeSession() orelse return;
+
+        if (y == session.height) {
+            var col: u32 = 0;
+            const prefix_len = 3 + @as(u32, @intCast(session.name.len));
+            col += prefix_len;
+
+            for (session.windows.items, 0..) |win, idx| {
+                const is_active = (win == session.active_window);
+                const suffix_len: u32 = if (is_active) 1 else 0;
+
+                var idx_buf: [16]u8 = undefined;
+                const idx_len = (std.fmt.bufPrint(&idx_buf, "{}", .{idx}) catch unreachable).len;
+                const entry_len = 1 + @as(u32, @intCast(idx_len)) + 1 + @as(u32, @intCast(win.name.len)) + suffix_len;
+
+                const start_x = col;
+                const end_x = col + entry_len;
+
+                if (x >= start_x and x < end_x) {
+                    session.setActiveWindow(win);
+                    if (win.active_pane) |pane| {
+                        pane.dirty = true;
+                    }
+                    return;
+                }
+                col += entry_len;
+            }
+            return;
+        }
+
         const window = session.active_window orelse return;
         const layout = &window.layout;
         const found_pane = self.findPaneAtNode(layout.root, x, y, 0, 0, layout.width, layout.height) orelse return;

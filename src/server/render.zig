@@ -5,6 +5,7 @@ const Screen = @import("../screen.zig").Screen;
 const Cell = @import("../grid.zig").Cell;
 const Colour = @import("../colour.zig").Colour;
 const Attr = @import("../grid.zig").Attr;
+const Window = @import("../window.zig").Window;
 
 pub const Display = struct {
     fd: i32,
@@ -23,12 +24,12 @@ pub const Display = struct {
         _ = c.write(self.fd, "\x1b[?1049l", 8);
     }
 
-    pub fn renderAll(self: Display, screen: *Screen, session_name: []const u8, window_count: usize) !void {
+    pub fn renderAll(self: Display, screen: *Screen, session_name: []const u8, windows: []const *Window, active_window: ?*Window) !void {
         // Hide the cursor during rendering to prevent it from jumping/flickering around the screen
         _ = c.write(self.fd, "\x1b[?25l", 6);
 
         try self.renderContent(screen);
-        try self.renderStatusBar(session_name, window_count);
+        try self.renderStatusBar(session_name, windows, active_window);
 
         // Restore physical cursor to the pane's virtual cursor position
         if (screen.cursor.visible) {
@@ -145,18 +146,39 @@ pub const Display = struct {
         if (c.write(self.fd, "\x1b[m", 3) < 0) return error.WriteFailed;
     }
 
-    fn renderStatusBar(self: Display, session_name: []const u8, window_count: usize) !void {
+    fn renderStatusBar(self: Display, session_name: []const u8, windows: []const *Window, active_window: ?*Window) !void {
         try self.moveTo(0, self.sy - 1);
         if (c.write(self.fd, "\x1b[7m", 4) < 0) return;
 
-        var buf: [256]u8 = undefined;
-        const status = try std.fmt.bufPrint(&buf, " zmux | {s} | {d} windows", .{ session_name, window_count });
-        const max_len = self.sx -| 1;
-        const write_len = @min(status.len, max_len);
-        if (c.write(self.fd, status.ptr, @intCast(write_len)) < 0) return;
+        var col: u32 = 0;
 
-        var i: u32 = @intCast(write_len);
-        while (i < max_len) : (i += 1) {
+        // Render Session Name Prefix: " [session_name]"
+        var buf: [256]u8 = undefined;
+        const prefix = std.fmt.bufPrint(&buf, " [{s}]", .{session_name}) catch " [default]";
+        if (c.write(self.fd, prefix.ptr, @intCast(prefix.len)) < 0) return;
+        col += @intCast(prefix.len);
+
+        // Render Windows
+        for (windows, 0..) |win, idx| {
+            const is_active = (win == active_window);
+            const suffix = if (is_active) "*" else "";
+            const win_str = std.fmt.bufPrint(&buf, " {d}:{s}{s}", .{ idx, win.name, suffix }) catch " win";
+
+            if (is_active) {
+                // Enable underline
+                if (c.write(self.fd, "\x1b[4m", 4) < 0) return;
+            }
+            if (c.write(self.fd, win_str.ptr, @intCast(win_str.len)) < 0) return;
+            if (is_active) {
+                // Disable underline
+                if (c.write(self.fd, "\x1b[24m", 5) < 0) return;
+            }
+            col += @intCast(win_str.len);
+        }
+
+        // Fill the rest of the status line with spaces
+        const max_len = self.sx -| 1;
+        while (col < max_len) : (col += 1) {
             if (c.write(self.fd, " ", 1) < 0) return;
         }
 
