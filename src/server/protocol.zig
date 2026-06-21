@@ -28,13 +28,13 @@ pub const MessageType = enum(u8) {
     }
 };
 
-pub const Header = packed struct {
+pub const Header = struct {
     length: u32,
     msg_type: u8,
 
     pub fn encode(self: Header, buf: *[5]u8) void {
-        const bytes = @as([5]u8, @bitCast(self));
-        buf.* = bytes;
+        std.mem.writeInt(u32, buf[0..4], self.length, .little);
+        buf[4] = self.msg_type;
     }
 };
 

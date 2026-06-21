@@ -126,7 +126,9 @@ fn cmdSplitWindow(server: *Server, args: []const []const u8) CmdResult {
     const proportion: f64 = if (prop_arg) |p| std.fmt.parseFloat(f64, p) catch 0.5 else 0.5;
 
     const new_pane = window.splitPane(server.allocator, pane, direction == .vertical, proportion) catch return .err;
-    _ = new_pane;
+    if (pane.pty != null) {
+        server.setupPane(session, new_pane) catch return .err;
+    }
     return .ok;
 }
 

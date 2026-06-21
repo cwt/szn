@@ -57,7 +57,7 @@ pub const Server = struct {
     next_pane_id: u32 = 1,
     listener_fd: ?i32 = null,
     client_fds: std.ArrayListUnmanaged(i32) = .empty,
-    client_readers: std.AutoHashMap(i32, MessageReader),
+    client_readers: std.AutoHashMap(i32, *MessageReader),
     input_reader: @import("../tty/tty_key.zig").InputReader = .{},
     dispatcher: @import("../key_binding.zig").KeyDispatcher,
     stdin_fd: ?i32 = null,
@@ -94,7 +94,7 @@ pub const Server = struct {
 
         return Server{
             .allocator = allocator,
-            .client_readers = std.AutoHashMap(i32, MessageReader).init(allocator),
+            .client_readers = std.AutoHashMap(i32, *MessageReader).init(allocator),
             .dispatcher = dispatcher,
             .global_options = global_options,
             .global_window_options = global_window_options,
@@ -127,6 +127,10 @@ pub const Server = struct {
         self.client_fds.deinit(self.allocator);
         if (self.listener_fd) |fd| {
             socket_mod.closeSocket(fd);
+        }
+        var reader_it = self.client_readers.valueIterator();
+        while (reader_it.next()) |r| {
+            self.allocator.destroy(r.*);
         }
         self.client_readers.deinit();
         self.dispatcher.deinit();
@@ -230,6 +234,7 @@ pub const Server = struct {
         if (has_in) {
             pane.feedPty() catch |err| {
                 if (err == error.ProcessExited) {
+                    std.log.info("pty process exited", .{});
                     self.loop.removeFd(ev.fd);
                     exited = true;
                 } else {
@@ -269,6 +274,7 @@ pub const Server = struct {
                         }
 
                         if (self.sessions.items.len == 0) {
+                            std.log.info("no sessions left, stopping server loop", .{});
                             self.loop.running = false;
                         } else {
                             if (self.activeSession()) |s| {
@@ -851,23 +857,23 @@ pub const Server = struct {
     fn handleAccept(self: *Server) ServerError!void {
         const fd = try socket_mod.acceptClient(self.listener_fd.?);
         try self.client_fds.append(self.allocator, fd);
-        try self.client_readers.put(fd, .{});
+        const reader = try self.allocator.create(MessageReader);
+        reader.* = .{};
+        try self.client_readers.put(fd, reader);
         try self.loop.addFd(self.allocator, fd, @as(i16, @intCast(std.posix.POLL.IN)), @ptrCast(self));
     }
 
     fn handleClient(self: *Server, fd: i32) ServerError!void {
         var buf: [4096]u8 = undefined;
         const n = std.posix.read(fd, &buf) catch |err| {
-            self.removeClient(fd);
             std.log.err("read from client fd {d} failed: {s}", .{ fd, @errorName(err) });
             return error.ReadFailed;
         };
         if (n == 0) {
-            self.removeClient(fd);
-            return;
+            return error.ConnectionClosed;
         }
 
-        const reader = self.client_readers.getPtr(fd) orelse return;
+        const reader = self.client_readers.get(fd) orelse return;
         try reader.feed(buf[0..n]);
 
         while (try reader.tryParse()) |pkt| {
@@ -887,7 +893,6 @@ pub const Server = struct {
                     const serialized = reply.serialize(&reply_buf);
                     const written = c.write(fd, serialized.ptr, serialized.len);
                     if (written < 0) {
-                        self.removeClient(fd);
                         return error.WriteFailed;
                     }
                     if (self.activeSession()) |s| {
@@ -930,7 +935,9 @@ pub const Server = struct {
                 break;
             }
         }
-        _ = self.client_readers.remove(fd);
+        if (self.client_readers.fetchRemove(fd)) |entry| {
+            self.allocator.destroy(entry.value);
+        }
         _ = c.close(fd);
         if (self.display_client_fd == fd) {
             self.display_client_fd = null;
@@ -985,17 +992,8 @@ pub const Server = struct {
 
     pub fn newSession(self: *Server, name: []const u8, width: u32, height: u32) ServerError!*Session {
         const session = try self.allocator.create(Session);
-        session.* = try Session.init(self.allocator, self.next_session_id, name, width, height, &self.global_options, &self.global_window_options);
-        // Re-point child allocators to the arena at its final GPA address
-        const a = session.arenaAllocator();
-        for (session.windows.items) |win| {
-            win.allocator = a;
-            win.layout.allocator = a;
-            for (win.panes.items) |pane| {
-                pane.screen.allocator = a;
-                pane.screen.grid.allocator = a;
-            }
-        }
+        errdefer self.allocator.destroy(session);
+        try session.init(self.allocator, self.next_session_id, name, width, height, &self.global_options, &self.global_window_options);
         self.next_session_id += 1;
         try self.sessions.append(self.allocator, session);
         return session;

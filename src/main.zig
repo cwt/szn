@@ -19,6 +19,7 @@ var log_fd: ?std.posix.fd_t = null;
 
 pub const std_options: std.Options = .{
     .logFn = logFn,
+    .log_level = .debug,
 };
 
 fn resolveLogPath(buf: []u8) Error![:0]const u8 {
@@ -86,7 +87,21 @@ export fn sigwinch_handler(sig: c.SIG) callconv(.c) void {
     sigwinchFlag.store(true, .seq_cst);
 }
 
-pub fn main(init: std.process.Init) Error!void {
+pub fn main(init: std.process.Init) void {
+    mainInner(init) catch |err| {
+        switch (err) {
+            error.SocketNotFound, error.ConnectionRefused => {
+                std.debug.print("No szn server running\n", .{});
+            },
+            else => {
+                std.debug.print("Error: {any}\n", .{err});
+            },
+        }
+        std.process.exit(1);
+    };
+}
+
+fn mainInner(init: std.process.Init) Error!void {
     const allocator = init.gpa;
 
     var args: std.ArrayListUnmanaged([]const u8) = .empty;
@@ -110,7 +125,7 @@ pub fn main(init: std.process.Init) Error!void {
             std.mem.eql(u8, args.items[1], "attach-session");
         if (is_attach) {
             if (socket_mod.socketExists()) {
-                try runInteractiveClient();
+                try runInteractiveClient(allocator);
                 std.process.exit(0);
             } else {
                 std.debug.print("No szn server running\n", .{});
@@ -132,7 +147,11 @@ pub fn main(init: std.process.Init) Error!void {
         }
 
         var client = @import("client/client.zig").Client.init(allocator) catch |err| {
-            std.debug.print("Could not connect to szn server: {any}\n", .{err});
+            if (err == error.SocketNotFound or err == error.ConnectionRefused) {
+                std.debug.print("No szn server running\n", .{});
+            } else {
+                std.debug.print("Could not connect to szn server: {any}\n", .{err});
+            }
             std.process.exit(1);
         };
         defer client.deinit();
@@ -180,7 +199,7 @@ pub fn main(init: std.process.Init) Error!void {
     }
 
     if (socket_mod.socketExists()) {
-        try runInteractiveClient();
+        try runInteractiveClient(allocator);
     } else {
         const pid = c.fork();
         if (pid < 0) {
@@ -194,7 +213,7 @@ pub fn main(init: std.process.Init) Error!void {
                 std.debug.print("Server failed to start\n", .{});
                 std.process.exit(1);
             };
-            try runInteractiveClient();
+            try runInteractiveClient(allocator);
         }
     }
 }
@@ -226,6 +245,7 @@ fn runServerDaemon(allocator: std.mem.Allocator) Error!void {
 
     const shell = try server.resolveShell(allocator, session);
     defer allocator.free(shell);
+    std.log.info("spawning shell: {s}", .{shell});
     try pane.spawn(allocator, &[_][]const u8{shell});
     try server.watchPanePty(pane);
 
@@ -248,7 +268,7 @@ fn runServerDaemon(allocator: std.mem.Allocator) Error!void {
     server.shutdownServer();
 }
 
-fn runInteractiveClient() Error!void {
+fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
     const stdin_fd = c.STDIN_FILENO;
     const stdout_fd = c.STDOUT_FILENO;
     const server_fd = try connect.connectToServer();
@@ -298,8 +318,8 @@ fn runInteractiveClient() Error!void {
     display.enterAltScreen() catch {};
     defer display.exitAltScreen() catch {};
 
-    var read_buf: [8192]u8 = undefined;
-    var read_pos: usize = 0;
+    var read_buf: std.ArrayListUnmanaged(u8) = .empty;
+    defer read_buf.deinit(allocator);
     var running = true;
 
     while (running) {
@@ -350,9 +370,11 @@ fn runInteractiveClient() Error!void {
         }
 
         if (pollfds[0].revents != 0) {
-            const n = c.read(server_fd, read_buf[read_pos..].ptr, read_buf.len - read_pos);
+            try read_buf.ensureUnusedCapacity(allocator, 4096);
+            const write_slice = read_buf.unusedCapacitySlice();
+            const n = c.read(server_fd, write_slice.ptr, write_slice.len);
             if (n > 0) {
-                read_pos += @as(usize, @intCast(n));
+                read_buf.items.len += @as(usize, @intCast(n));
             } else if (n == -1) {
                 const err = std.posix.errno(-1);
                 if (err != .AGAIN and err != .INTR) {
@@ -363,13 +385,17 @@ fn runInteractiveClient() Error!void {
                 continue;
             }
 
-            while (read_pos >= 5) {
-                const pkt_len = std.mem.readInt(u32, read_buf[0..4], .little);
-                if (pkt_len < 5 or pkt_len > read_buf.len) break;
-                if (read_pos < pkt_len) break;
+            var read_pos: usize = 0;
+            while (read_buf.items.len - read_pos >= 5) {
+                const pkt_len = std.mem.readInt(u32, read_buf.items[read_pos..][0..4], .little);
+                if (pkt_len < 5) {
+                    running = false;
+                    break;
+                }
+                if (read_buf.items.len - read_pos < pkt_len) break;
 
-                const msg_type = @as(protocol.MessageType, @enumFromInt(read_buf[4]));
-                const data = read_buf[5..pkt_len];
+                const msg_type = @as(protocol.MessageType, @enumFromInt(read_buf.items[read_pos + 4]));
+                const data = read_buf.items[read_pos + 5 .. read_pos + pkt_len];
 
                 switch (msg_type) {
                     .ready => {},
@@ -382,11 +408,12 @@ fn runInteractiveClient() Error!void {
                     else => {},
                 }
 
-                const remaining = read_pos - pkt_len;
-                if (remaining > 0) {
-                    std.mem.copyForwards(u8, read_buf[0..remaining], read_buf[pkt_len..read_pos]);
-                }
-                read_pos = remaining;
+                read_pos += pkt_len;
+            }
+
+            if (read_pos > 0) {
+                std.mem.copyForwards(u8, read_buf.items[0 .. read_buf.items.len - read_pos], read_buf.items[read_pos..]);
+                read_buf.items.len -= read_pos;
             }
         }
     }

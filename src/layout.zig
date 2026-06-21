@@ -77,11 +77,13 @@ pub const Layout = struct {
         var child_h2 = parent_h;
 
         if (direction == .horizontal) {
-            child_w1 = @max(1, @as(u32, @intFromFloat(@as(f64, @floatFromInt(parent_w)) * proportion)));
-            child_w2 = parent_w -| child_w1;
+            const usable_w = parent_w -| 1;
+            child_w1 = @max(1, @as(u32, @intFromFloat(@as(f64, @floatFromInt(usable_w)) * proportion)));
+            child_w2 = @max(1, usable_w -| child_w1);
         } else {
-            child_h1 = @max(1, @as(u32, @intFromFloat(@as(f64, @floatFromInt(parent_h)) * proportion)));
-            child_h2 = parent_h -| child_h1;
+            const usable_h = parent_h -| 1;
+            child_h1 = @max(1, @as(u32, @intFromFloat(@as(f64, @floatFromInt(usable_h)) * proportion)));
+            child_h2 = @max(1, usable_h -| child_h1);
         }
 
         const new_pane = try a.create(Pane);
@@ -124,6 +126,34 @@ pub const Layout = struct {
                 if (self.findLeafParent(s.b, target)) |found| return found;
                 return null;
             },
+        }
+    }
+
+    pub fn findSiblingPane(self: *Layout, target: *Pane) ?*Pane {
+        return self.findSiblingOfNode(self.root, target);
+    }
+
+    fn findSiblingOfNode(self: *Layout, node: *const Node, target: *Pane) ?*Pane {
+        switch (node.*) {
+            .leaf => return null,
+            .split => |s| {
+                if (s.a.* == .leaf and s.a.leaf == target) {
+                    return self.findFirstLeaf(s.b);
+                }
+                if (s.b.* == .leaf and s.b.leaf == target) {
+                    return self.findFirstLeaf(s.a);
+                }
+                if (self.findSiblingOfNode(s.a, target)) |found| return found;
+                if (self.findSiblingOfNode(s.b, target)) |found| return found;
+                return null;
+            },
+        }
+    }
+
+    fn findFirstLeaf(self: *Layout, node: *const Node) *Pane {
+        switch (node.*) {
+            .leaf => |p| return p,
+            .split => |s| return self.findFirstLeaf(s.a),
         }
     }
 
@@ -331,4 +361,25 @@ test "multiple horizontal splits" {
     }
 
     try testing.expectEqual(@as(usize, 5), layout.countLeaves());
+}
+
+test "find sibling pane basic" {
+    const pane1 = try createTestPane(testing.allocator, 1);
+    var layout = try Layout.init(testing.allocator, pane1, 80, 24);
+    defer layout.deinit();
+
+    // With 1 pane, no sibling
+    try testing.expect(layout.findSiblingPane(pane1) == null);
+
+    const pane2 = try layout.splitPane(testing.allocator, pane1, .horizontal, 0.5);
+    // pane1 and pane2 are siblings
+    try testing.expectEqual(pane2, layout.findSiblingPane(pane1));
+    try testing.expectEqual(pane1, layout.findSiblingPane(pane2));
+
+    const pane3 = try layout.splitPane(testing.allocator, pane2, .vertical, 0.5);
+    // Now pane2 and pane3 are siblings.
+    // Sibling of pane1 is first leaf of pane2's split, which is pane2 itself.
+    try testing.expectEqual(pane2, layout.findSiblingPane(pane1));
+    try testing.expectEqual(pane3, layout.findSiblingPane(pane2));
+    try testing.expectEqual(pane2, layout.findSiblingPane(pane3));
 }

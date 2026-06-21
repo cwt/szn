@@ -73,10 +73,9 @@ pub const Display = struct {
         var merged_screen = try Screen.init(allocator, merged_w, merged_h);
         defer merged_screen.deinit();
 
-        for (0..merged_h) |y| {
-            for (0..merged_w) |x| {
-                merged_screen.grid.lines.items[y].cells.items[x] = Cell.empty();
-            }
+        for (merged_screen.grid.lines.items) |*line| {
+            try line.cells.resize(allocator, merged_w);
+            @memset(line.cells.items, Cell.empty());
         }
 
         for (bounds) |pb| {

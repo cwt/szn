@@ -156,8 +156,27 @@ pub const Window = struct {
     pub fn resize(self: *Window, new_width: u32, new_height: u32) Error!void {
         self.width = new_width;
         self.height = new_height;
-        for (self.panes.items) |pane| {
-            try pane.resizeTerminal(new_width, new_height);
+        self.layout.width = new_width;
+        self.layout.height = new_height;
+        try self.resizeNode(self.layout.root, new_width, new_height);
+    }
+
+    fn resizeNode(self: *Window, node: *const @import("layout.zig").Node, lw: u32, lh: u32) Error!void {
+        switch (node.*) {
+            .leaf => |pane| {
+                try pane.resizeTerminal(lw, lh);
+            },
+            .split => |s| {
+                if (s.direction == .horizontal) {
+                    const split_w = @max(1, @as(u32, @intFromFloat(@as(f64, @floatFromInt(lw)) * s.proportion)));
+                    try self.resizeNode(s.a, split_w -| 1, lh);
+                    try self.resizeNode(s.b, lw -| split_w, lh);
+                } else {
+                    const split_h = @max(1, @as(u32, @intFromFloat(@as(f64, @floatFromInt(lh)) * s.proportion)));
+                    try self.resizeNode(s.a, lw, split_h -| 1);
+                    try self.resizeNode(s.b, lw, lh -| split_h);
+                }
+            },
         }
     }
 
@@ -193,13 +212,16 @@ pub const Window = struct {
             if (p == pane) break i;
         } else return;
 
+        const sibling = self.layout.findSiblingPane(pane);
+
         _ = self.panes.swapRemove(idx);
         self.layout.removePane(pane);
 
         if (self.active_pane == pane) {
-            self.active_pane = if (self.panes.items.len > 0) self.panes.items[0] else null;
+            self.active_pane = sibling orelse (if (self.panes.items.len > 0) self.panes.items[0] else null);
             if (self.active_pane) |p| p.active = true;
         }
+        self.resize(self.width, self.height) catch {};
     }
 
     pub fn extractPane(self: *Window, allocator: std.mem.Allocator, pane: *Pane) void {
@@ -208,13 +230,16 @@ pub const Window = struct {
             if (p == pane) break i;
         } else return;
 
+        const sibling = self.layout.findSiblingPane(pane);
+
         _ = self.panes.swapRemove(idx);
         self.layout.extractPane(pane);
 
         if (self.active_pane == pane) {
-            self.active_pane = if (self.panes.items.len > 0) self.panes.items[0] else null;
+            self.active_pane = sibling orelse (if (self.panes.items.len > 0) self.panes.items[0] else null);
             if (self.active_pane) |p| p.active = true;
         }
+        self.resize(self.width, self.height) catch {};
     }
 
     pub fn setActivePane(self: *Window, pane: *Pane) void {
@@ -312,6 +337,29 @@ test "remove active pane falls back to first" {
 
     try testing.expectEqual(original, window.active_pane);
     try testing.expect(window.active_pane.?.active);
+}
+
+test "nested split focus transition on exit" {
+    var window = try Window.init(testing.allocator, 1, "test", 80, 24, null);
+    defer window.deinit(testing.allocator);
+
+    const pane1 = window.active_pane.?;
+    // Split pane1 (horizontal) to get pane2
+    const pane2 = try window.addPane(testing.allocator);
+    window.setActivePane(pane2);
+
+    // Split pane2 (horizontal) to get pane3
+    const pane3 = try window.splitPane(testing.allocator, pane2, false, 0.5);
+    window.setActivePane(pane3);
+
+    try testing.expectEqual(pane3, window.active_pane);
+
+    // Exit pane3 (far right). Sibling pane2 (middle/right-half) should get focus, NOT pane1 (left).
+    window.removePane(testing.allocator, pane3);
+
+    try testing.expectEqual(pane2, window.active_pane);
+    try testing.expect(pane2.active);
+    try testing.expect(!pane1.active);
 }
 
 test "window name is not freed on deinit" {

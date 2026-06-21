@@ -22,7 +22,11 @@ pub fn connectToServer() Error!i32 {
     const fd = try mapErr(c.socket(c.AF.UNIX, c.SOCK.STREAM, 0));
     errdefer _ = c.close(fd);
 
-    var addr: c.sockaddr.un = .{ .path = [_]u8{0} ** 104 };
+    var addr = std.mem.zeroes(c.sockaddr.un);
+    addr.family = c.AF.UNIX;
+    if (@hasField(c.sockaddr.un, "len")) {
+        addr.len = @intCast(@offsetOf(c.sockaddr.un, "path") + path.len);
+    }
     @memcpy(addr.path[0..path.len], path);
 
     const rc = c.connect(fd, @ptrCast(&addr), @sizeOf(c.sockaddr.un));

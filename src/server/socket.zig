@@ -48,7 +48,11 @@ pub fn createListener() Error!i32 {
     const fd = try mapErr(c.socket(c.AF.UNIX, c.SOCK.STREAM, 0));
     errdefer _ = c.close(fd);
 
-    var addr: c.sockaddr.un = std.mem.zeroes(c.sockaddr.un);
+    var addr = std.mem.zeroes(c.sockaddr.un);
+    addr.family = c.AF.UNIX;
+    if (@hasField(c.sockaddr.un, "len")) {
+        addr.len = @intCast(@offsetOf(c.sockaddr.un, "path") + path.len);
+    }
     @memcpy(addr.path[0..path.len], path);
 
     _ = try mapErr(c.bind(fd, @ptrCast(&addr), @sizeOf(c.sockaddr.un)));

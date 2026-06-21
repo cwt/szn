@@ -18,28 +18,28 @@ pub const Session = struct {
     options: options_mod.Options,
     window_options: options_mod.Options,
 
-    pub fn init(backing: std.mem.Allocator, id: u32, name: []const u8, width: u32, height: u32, global_options: ?*const options_mod.Options, global_window_options: ?*const options_mod.Options) Error!Session {
-        var arena = std.heap.ArenaAllocator.init(backing);
-        errdefer arena.deinit();
-        const allocator = arena.allocator();
+    pub fn init(self: *Session, backing: std.mem.Allocator, id: u32, name: []const u8, width: u32, height: u32, global_options: ?*const options_mod.Options, global_window_options: ?*const options_mod.Options) Error!void {
+        self.arena = std.heap.ArenaAllocator.init(backing);
+        errdefer self.arena.deinit();
+        const allocator = self.arena.allocator();
 
         const options = if (global_options) |go| try go.clone(allocator) else try options_mod.Options.init(allocator, options_mod.SESSION_OPTIONS);
         const window_options = if (global_window_options) |gwo| try gwo.clone(allocator) else try options_mod.Options.init(allocator, options_mod.WINDOW_OPTIONS);
 
-        var session = Session{
-            .arena = arena,
-            .id = id,
-            .name = try allocator.dupe(u8, name),
-            .width = width,
-            .height = height,
-            .options = options,
-            .window_options = window_options,
-        };
+        self.id = id;
+        self.name = try allocator.dupe(u8, name);
+        self.width = width;
+        self.height = height;
+        self.options = options;
+        self.window_options = window_options;
+        self.windows = .empty;
+        self.active_window = null;
+        self.last_window = null;
+
         const initial_win = try allocator.create(Window);
-        initial_win.* = try Window.init(allocator, 0, name, width, height, &session.window_options);
-        try session.windows.append(allocator, initial_win);
-        session.active_window = initial_win;
-        return session;
+        initial_win.* = try Window.init(allocator, 0, name, width, height, &self.window_options);
+        try self.windows.append(allocator, initial_win);
+        self.active_window = initial_win;
     }
 
     pub fn arenaAllocator(self: *Session) std.mem.Allocator {
@@ -116,7 +116,8 @@ pub const Session = struct {
 // ── Tests ──
 
 test "create session with initial window" {
-    var session = try Session.init(testing.allocator, 1, "default", 80, 24, null, null);
+    var session: Session = undefined;
+    try session.init(testing.allocator, 1, "default", 80, 24, null, null);
     defer session.deinit(testing.allocator);
 
     try testing.expectEqual(@as(u32, 1), session.id);
@@ -126,7 +127,8 @@ test "create session with initial window" {
 }
 
 test "create new window" {
-    var session = try Session.init(testing.allocator, 1, "default", 80, 24, null, null);
+    var session: Session = undefined;
+    try session.init(testing.allocator, 1, "default", 80, 24, null, null);
     defer session.deinit(testing.allocator);
 
     const new_win = try session.newWindow(testing.allocator, "edit");
@@ -136,7 +138,8 @@ test "create new window" {
 }
 
 test "kill window" {
-    var session = try Session.init(testing.allocator, 1, "default", 80, 24, null, null);
+    var session: Session = undefined;
+    try session.init(testing.allocator, 1, "default", 80, 24, null, null);
     defer session.deinit(testing.allocator);
 
     _ = try session.newWindow(testing.allocator, "edit");
@@ -152,7 +155,8 @@ test "kill window" {
 }
 
 test "set active window" {
-    var session = try Session.init(testing.allocator, 1, "default", 80, 24, null, null);
+    var session: Session = undefined;
+    try session.init(testing.allocator, 1, "default", 80, 24, null, null);
     defer session.deinit(testing.allocator);
 
     const sw = try session.newWindow(testing.allocator, "edit");
@@ -161,7 +165,8 @@ test "set active window" {
 }
 
 test "rename session" {
-    var session = try Session.init(testing.allocator, 1, "default", 80, 24, null, null);
+    var session: Session = undefined;
+    try session.init(testing.allocator, 1, "default", 80, 24, null, null);
     defer session.deinit(testing.allocator);
 
     session.rename(testing.allocator, "newname");
@@ -169,7 +174,8 @@ test "rename session" {
 }
 
 test "session active window persists after kill" {
-    var session = try Session.init(testing.allocator, 1, "default", 80, 24, null, null);
+    var session: Session = undefined;
+    try session.init(testing.allocator, 1, "default", 80, 24, null, null);
     defer session.deinit(testing.allocator);
 
     const nw = try session.newWindow(testing.allocator, "edit");
