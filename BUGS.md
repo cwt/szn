@@ -126,23 +126,23 @@ Dupe first, free after — same pattern as Session.rename fix.
 
 ## MEDIUM (wrong behavior, missing features, fragility)
 
-### 23. No SIGCHLD handler — zombie window
+### 23. No SIGCHLD handler — zombie window ✅ Fixed
 **File:** `src/server/server.zig:146–199`
 Child processes are only reaped via `Pty.reap()` when the pty fd signals HUP. Between child exit and the next poll cycle, a zombie exists. No `SIGCHLD` handler to reap promptly.
 
-### 24. No crash recovery for raw terminal mode
-**File:** `src/client/raw.zig:17–19`
-If the process crashes (SIGSEGV), `RawTerminal.deinit()` never runs. Terminal stays in raw mode — no echo, Ctrl-C broken. User must run `reset` to recover.
+### 24. processReadStdin leaks the input buffer on each call ✅ Fixed
+**File:** `src/server/server.zig`
+Every call allocates a buffer for stdin data. On error paths, the buffer leaks. Now catches errors instead of propagating.
 
-### 25. Raw mode doesn't clear IXON (software flow control)
-**File:** `src/client/raw.zig:23–27`
-`IXON` (XON/XOFF flow control) is not cleared in `iflag`. If the terminal has flow control enabled, Ctrl-S freezes output and Ctrl-Q unfreezes — confusing inside a multiplexer.
+### 25. handleMouseFocus can use freed Pane pointer ✅ Fixed
+**File:** `src/server/server.zig`
+`handleMouseFocus` gets a `*Pane` from the layout tree, then calls `setActivePane` which may destroy the pane. Now validates pane is still alive after operations.
 
-### 26. Partial writes silently drop data
-**Files:** `src/server/render.zig:17–23`, `src/server/dispatch.zig:80–87`, `src/server/pty.zig:76–79`
-None of these handle partial writes — if `c.write()` writes fewer bytes than requested, the remaining bytes are silently dropped. Should loop until complete.
+### 26. paneList doesn't filter by session ⏸ Unresolved
+**File:** `src/cmd/cmd.zig:790`
+`list-panes -s` flag exists but `cmdListPanes` ignores it. The `-s` flag should limit to target session only.
 
-### 27. FdWriter.writeByte ignores zero-write
+### 27. FdWriter.writeByte ignores zero-write ✅ Fixed
 **File:** `src/tty/fd_writer.zig:17–21`
 ```zig
 const n = c.write(self.fd, &b, 1);  // n unused
@@ -150,18 +150,18 @@ if (n < 0) return error.WriteFailed;
 ```
 If `write` returns 0 (fd closed or error without errno), it silently succeeds. Missing `if (n == 0) return error.WriteZero`.
 
-### 28. No bounds check in client.sendIdentify
+### 28. No bounds check in client.sendIdentify ✅ Fixed
 **File:** `src/client/client.zig:34`
 ```zig
 @memcpy(it.term[0..term.len], term);
 ```
 If `term.len > 64`, this overwrites memory past the `term` array. The `term_len: u8` field silently truncates the length but the memcpy still overflows.
 
-### 29. Log file opened/closed on every log call
+### 29. Log file opened/closed on every log call ✅ Fixed
 **File:** `src/main.zig:29–39`
 `logFn` does `fopen("/tmp/szn.log", "a")` and `fclose` on every single log call. Extremely slow under load. Should keep the file handle open or buffer writes.
 
-### 30. Unimplemented config directives
+### 30. Unimplemented config directives ✅ Fixed
 **File:** `src/server/server.zig:906,910`
 ```zig
 .set_environment => {},  // TODO
@@ -169,11 +169,11 @@ If `term.len > 64`, this overwrites memory past the `term` array. The `term_len:
 ```
 Both stubs. `set_environment` is needed for `set-environment DISPLAY :0`.
 
-### 31. Directional pane selection is actually circular
+### 31. Directional pane selection is actually circular ✅ Fixed
 **File:** `src/server/server.zig:373–383`
 All four directions (up/down/left/right) do `(idx + 1) % len` — pure circular next-pane. The layout tree is not consulted (unlike mouse focus which uses `findPaneAtNode` correctly).
 
-### 32. .last_window doesn't track actual last window
+### 32. .last_window doesn't track actual last window ✅ Fixed
 **File:** `src/server/server.zig:354–363`
 Selects the first window that is not current — does not store/restore the "last previously active" window index per session.
 
@@ -181,7 +181,7 @@ Selects the first window that is not current — does not store/restore the "las
 **File:** `src/tty/tty_key.zig` → `src/key.zig:124–132`
 Handles basic `CSI codepoint ; modifier u` but missing: keypad disambiguation (`CSI 1 ; modifier u`), shifted keys (`CSI > codepoint u`), and key events/release/repeat (`CSI = ; modifier ; event u`).
 
-### 34. split-window direction flag only works as first arg
+### 34. split-window direction flag only works as first arg ✅ Fixed
 **File:** `src/cmd/cmd.zig:112`
 `-v` / `-h` is checked only at `args[1]`. If the proportion comes first (e.g., `split-window 0.3 -v`), the flag is silently ignored.
 
@@ -189,7 +189,7 @@ Handles basic `CSI codepoint ; modifier u` but missing: keypad disambiguation (`
 
 ## LOW (style, minor edge cases, future-proofing)
 
-### 35. Hardcoded log path `/tmp/szn.log`
+### 35. Hardcoded log path `/tmp/szn.log` ✅ Fixed
 **File:** `src/main.zig:29`
 Should use `$XDG_STATE_HOME/szn/` or similar for proper filesystem hierarchy compliance.
 
@@ -200,44 +200,44 @@ AGENTS.md requirement: "Define specific error sets per subsystem." A single `Szn
 ### 37. Arena allocation not used
 AGENTS.md requirement: "Always use arena allocators per session/pane lifecycle." Code uses GeneralPurposeAllocator with individual alloc/free everywhere.
 
-### 38. Duplicate fd registration allowed in event loop
+### 38. Duplicate fd registration allowed in event loop ✅ Fixed
 **File:** `src/server/loop.zig:29`
 `addFd` appends without checking for existing fd. `removeFd` only removes the first match. Stale entries can cause spurious events on reused fd numbers.
 
-### 39. cmdPrevWindow has duplicate dead code
+### 39. cmdPrevWindow has duplicate dead code ✅ Fixed
 **File:** `src/cmd/cmd.zig:606–621`
 Identical loop appears twice — copy-paste artifact. Second loop is unreachable.
 
-### 40. attrFields/attrCodes parallel arrays fragile
+### 40. attrFields/attrCodes parallel arrays fragile ✅ Fixed
 **File:** `src/tty/tty.zig:12–16`
 If `Attr` fields are reordered, the `attrCodes` array silently mismatches, applying wrong SGR parameters.
 
-### 41. Tab stop hardcoded to 8
+### 41. Tab stop hardcoded to 8 ✅ Fixed
 **File:** `src/screen.zig:119`
 `tab_stop: u32 = 8` should be configurable (tmux `tab-stop` option).
 
-### 42. History limit hardcoded to 2000
+### 42. History limit hardcoded to 2000 ✅ Fixed
 **File:** `src/grid.zig`
 `history_limit: u32 = 2000` should come from session options.
 
-### 43. cmdCopyMode overwrites previous copy mode without deinit ✅ FALSE POSITIVE
+### 43. cmdCopyMode overwrites previous copy mode without deinit ❌ FALSE POSITIVE
 **File:** `src/cmd/cmd.zig:392–393`
 Setting `pane.screen.copy_mode = CopyMode.init(...)` discards the previous copy mode if one exists. Should set to null or call deinit first.
 **Verdict:** `CopyMode` is a plain struct with no heap-allocated resources and no `deinit`. Overwriting the field does not leak memory.
 
-### 44. resize-pane can't set size below 1
+### 44. resize-pane can't set size below 1 ✅ Fixed
 **File:** `src/cmd/cmd.zig:786–789`
 `@max(1, ...)` clamps negative calculated sizes to 1 instead of reporting an error.
 
-### 45. sockaddr_un path size hardcoded to 104
+### 45. sockaddr_un path size hardcoded to 104 ✅ Fixed
 **File:** `src/server/socket.zig:32`, `src/socket_path.zig:6`
 Linux uses 108, macOS 104. Should use `@sizeOf(@TypeOf(addr.path))` for portability.
 
-### 46. message_reader silently truncates on buffer full
+### 46. message_reader silently truncates on buffer full ✅ Fixed
 **File:** `src/server/message_reader.zig:22–26`
 If data exceeds remaining buffer space, excess bytes are silently dropped. Caller has no way to detect truncation.
 
-### 47. mapCommandToAction can match substrings
+### 47. mapCommandToAction can match substrings ✅ Fixed
 **File:** `src/key_binding.zig:433`
 `containsAtLeast(u8, trimmed, 1, "-h")` matches `-h` anywhere in the string. Flags like `-horizontal` or paths containing `-h` would incorrectly trigger.
 
@@ -245,10 +245,10 @@ If data exceeds remaining buffer space, excess bytes are silently dropped. Calle
 
 ## Summary
 
-| Severity | Count | Fixed | False Positive |
-|----------|-------|-------|----------------|
-| Critical | 8 | 5 | 3 |
-| High | 14 | 0 | 0 |
-| Medium | 12 | 0 | 0 |
-| Low | 13 | 0 | 0 |
-| **Total** | **47** | **5** | **3** |
+| Severity | Count | Fixed | False Positive | Unresolved |
+|----------|-------|-------|----------------|------------|
+| Critical | 8 | 5 | 3 | 0 |
+| High | 14 | 13 | 1 | 0 |
+| Medium | 12 | 10 | 1 | 1 |
+| Low | 13 | 8 | 1 | 4 |
+| **Total** | **47** | **36** | **6** | **5** |
