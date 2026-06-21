@@ -25,12 +25,15 @@ pub const Context = struct {
 
     pub fn set(self: *Context, key: []const u8, value: []const u8) !void {
         if (self.map.getEntry(key)) |entry| {
+            const new_value = try self.map.allocator.dupe(u8, value);
             self.map.allocator.free(entry.value_ptr.*);
-            entry.value_ptr.* = try self.map.allocator.dupe(u8, value);
+            entry.value_ptr.* = new_value;
             return;
         }
         const k = try self.map.allocator.dupe(u8, key);
+        errdefer self.map.allocator.free(k);
         const v = try self.map.allocator.dupe(u8, value);
+        errdefer self.map.allocator.free(v);
         try self.map.put(k, v);
     }
 
