@@ -718,15 +718,7 @@ pub const Server = struct {
         window.setActivePane(found_pane);
     }
 
-    const PaneBounds = struct {
-        pane: *Pane,
-        x: u32,
-        y: u32,
-        w: u32,
-        h: u32,
-    };
-
-    fn collectPaneBounds(self: *Server, node: *const @import("../layout.zig").Node, lx: u32, ly: u32, lw: u32, lh: u32, result: *std.ArrayList(PaneBounds)) ServerError!void {
+    fn collectPaneBounds(self: *Server, node: *const @import("../layout.zig").Node, lx: u32, ly: u32, lw: u32, lh: u32, result: *std.ArrayList(render.PaneBounds)) ServerError!void {
         switch (node.*) {
             .leaf => |pane| {
                 try result.append(self.allocator, .{ .pane = pane, .x = lx, .y = ly, .w = lw, .h = lh });
@@ -734,11 +726,11 @@ pub const Server = struct {
             .split => |s| {
                 if (s.direction == .horizontal) {
                     const split_w = @max(1, @as(u32, @intFromFloat(@as(f64, @floatFromInt(lw)) * s.proportion)));
-                    try self.collectPaneBounds(s.a, lx, ly, split_w, lh, result);
+                    try self.collectPaneBounds(s.a, lx, ly, split_w -| 1, lh, result);
                     try self.collectPaneBounds(s.b, lx + split_w, ly, lw -| split_w, lh, result);
                 } else {
                     const split_h = @max(1, @as(u32, @intFromFloat(@as(f64, @floatFromInt(lh)) * s.proportion)));
-                    try self.collectPaneBounds(s.a, lx, ly, lw, split_h, result);
+                    try self.collectPaneBounds(s.a, lx, ly, lw, split_h -| 1, result);
                     try self.collectPaneBounds(s.b, lx, ly + split_h, lw, lh -| split_h, result);
                 }
             },
@@ -746,7 +738,7 @@ pub const Server = struct {
     }
 
     fn findDirectionalNeighbor(self: *Server, window: *Window, current: *Pane, direction: enum { left, right, up, down }) ServerError!?*Pane {
-        var bounds: std.ArrayList(PaneBounds) = .empty;
+        var bounds: std.ArrayList(render.PaneBounds) = .empty;
         defer bounds.deinit(self.allocator);
 
         try self.collectPaneBounds(window.layout.root, 0, 0, window.layout.width, window.layout.height, &bounds);
@@ -961,7 +953,22 @@ pub const Server = struct {
             .capture_allocator = self.allocator,
         };
 
-        display.renderAll(&pane.screen, session.name, session.windows.items, session.active_window) catch |err| {
+        var bounds: std.ArrayList(render.PaneBounds) = .empty;
+        defer bounds.deinit(self.allocator);
+        self.collectPaneBounds(window.layout.root, 0, 0, self.display_sx, self.display_sy - 1, &bounds) catch |err| {
+            std.log.warn("collectPaneBounds error: {any}", .{err});
+            return;
+        };
+
+        display.renderAll(
+            self.allocator,
+            bounds.items,
+            pane,
+            session.name,
+            session.windows.items,
+            session.active_window,
+            window.layout.root,
+        ) catch |err| {
             std.log.warn("render error: {any}", .{err});
             return;
         };
