@@ -10,10 +10,8 @@ const protocol = @import("server/protocol.zig");
 const socket_mod = @import("server/socket.zig");
 const connect = @import("client/connect.zig");
 
-extern "c" fn fopen(filename: [*:0]const u8, modes: [*:0]const u8) ?*anyopaque;
-extern "c" fn fclose(stream: ?*anyopaque) c_int;
-extern "c" fn fwrite(ptr: [*]const u8, size: usize, nmemb: usize, stream: ?*anyopaque) usize;
-extern "c" fn fflush(stream: ?*anyopaque) c_int;
+// Cached log file handle — opened once, reused for all log calls
+var log_file: ?std.fs.File = null;
 
 pub const std_options: std.Options = .{
     .logFn = logFn,
@@ -26,17 +24,16 @@ pub fn logFn(
     args: anytype,
 ) void {
     _ = scope;
-    const f = fopen("/tmp/szn.log", "a") orelse return;
-    defer _ = fclose(f);
-
+    if (log_file == null) {
+        log_file = std.fs.createFileAbsolute("/tmp/szn.log", .{ .append = true }) catch return;
+    }
+    const file = log_file.?;
     var buf: [4096]u8 = undefined;
     const prefix = std.fmt.bufPrint(&buf, "[{s}] ", .{@tagName(level)}) catch return;
-    _ = fwrite(prefix.ptr, 1, prefix.len, f);
-
+    file.write(prefix) catch return;
     const msg = std.fmt.bufPrint(&buf, format, args) catch "log message too long\n";
-    _ = fwrite(msg.ptr, 1, msg.len, f);
-    _ = fwrite("\n", 1, 1, f);
-    _ = fflush(f);
+    file.write(msg) catch return;
+    file.write("\n") catch return;
 }
 
 extern "c" fn tcflush(fd: c_int, queue_selector: c_int) c_int;

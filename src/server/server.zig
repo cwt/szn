@@ -367,7 +367,9 @@ pub const Server = struct {
                 }
             },
             .last_window => {
-                if (session.windows.items.len > 1) {
+                if (session.last_window) |lw| {
+                    session.setActiveWindow(lw);
+                } else if (session.windows.items.len > 1) {
                     for (session.windows.items) |w| {
                         if (w != window) {
                             session.setActiveWindow(w);
@@ -385,14 +387,31 @@ pub const Server = struct {
                     window.panes.items[window.panes.items.len - 1] = first;
                 }
             },
-            .select_pane_left, .select_pane_right, .select_pane_up, .select_pane_down => {
+            .select_pane_left => {
                 if (window.panes.items.len > 1) {
-                    for (window.panes.items, 0..) |p, idx| {
-                        if (p == pane) {
-                            const next = (idx + 1) % window.panes.items.len;
-                            window.setActivePane(window.panes.items[next]);
-                            break;
-                        }
+                    if (try self.findDirectionalNeighbor(window, pane, .left)) |neighbor| {
+                        window.setActivePane(neighbor);
+                    }
+                }
+            },
+            .select_pane_right => {
+                if (window.panes.items.len > 1) {
+                    if (try self.findDirectionalNeighbor(window, pane, .right)) |neighbor| {
+                        window.setActivePane(neighbor);
+                    }
+                }
+            },
+            .select_pane_up => {
+                if (window.panes.items.len > 1) {
+                    if (try self.findDirectionalNeighbor(window, pane, .up)) |neighbor| {
+                        window.setActivePane(neighbor);
+                    }
+                }
+            },
+            .select_pane_down => {
+                if (window.panes.items.len > 1) {
+                    if (try self.findDirectionalNeighbor(window, pane, .down)) |neighbor| {
+                        window.setActivePane(neighbor);
                     }
                 }
             },
@@ -684,7 +703,121 @@ pub const Server = struct {
         const window = session.active_window orelse return;
         const layout = &window.layout;
         const found_pane = self.findPaneAtNode(layout.root, x, y, 0, 0, layout.width, layout.height) orelse return;
+        // Safety: ensure the pane is still valid (not destroyed during handling)
+        var pane_valid = false;
+        for (window.panes.items) |p| {
+            if (p == found_pane) {
+                pane_valid = true;
+                break;
+            }
+        }
+        if (!pane_valid) return;
         window.setActivePane(found_pane);
+    }
+
+    const PaneBounds = struct {
+        pane: *Pane,
+        x: u32,
+        y: u32,
+        w: u32,
+        h: u32,
+    };
+
+    fn collectPaneBounds(self: *Server, node: *const @import("../layout.zig").Node, lx: u32, ly: u32, lw: u32, lh: u32, result: *std.ArrayList(PaneBounds)) !void {
+        switch (node.*) {
+            .leaf => |pane| {
+                try result.append(self.allocator, .{ .pane = pane, .x = lx, .y = ly, .w = lw, .h = lh });
+            },
+            .split => |s| {
+                if (s.direction == .horizontal) {
+                    const split_w = @max(1, @as(u32, @intFromFloat(@as(f64, @floatFromInt(lw)) * s.proportion)));
+                    try self.collectPaneBounds(s.a, lx, ly, split_w, lh, result);
+                    try self.collectPaneBounds(s.b, lx + split_w, ly, lw -| split_w, lh, result);
+                } else {
+                    const split_h = @max(1, @as(u32, @intFromFloat(@as(f64, @floatFromInt(lh)) * s.proportion)));
+                    try self.collectPaneBounds(s.a, lx, ly, lw, split_h, result);
+                    try self.collectPaneBounds(s.b, lx, ly + split_h, lw, lh -| split_h, result);
+                }
+            },
+        }
+    }
+
+    fn findDirectionalNeighbor(self: *Server, window: *Window, current: *Pane, direction: enum { left, right, up, down }) !?*Pane {
+        var bounds: std.ArrayList(PaneBounds) = .empty;
+        defer bounds.deinit(self.allocator);
+
+        try self.collectPaneBounds(window.layout.root, 0, 0, window.layout.width, window.layout.height, &bounds);
+
+        var cur_x: u32 = 0;
+        var cur_y: u32 = 0;
+        var cur_w: u32 = 0;
+        var cur_h: u32 = 0;
+        for (bounds.items) |b| {
+            if (b.pane == current) {
+                cur_x = b.x;
+                cur_y = b.y;
+                cur_w = b.w;
+                cur_h = b.h;
+                break;
+            }
+        }
+
+        var best: ?*Pane = null;
+        var best_dist: u32 = std.math.maxInt(u32);
+        var best_overlap: u32 = 0;
+
+        for (bounds.items) |b| {
+            if (b.pane == current) continue;
+
+            switch (direction) {
+                .left => {
+                    if (b.x + b.w <= cur_x) {
+                        const dist = cur_x -| (b.x + b.w);
+                        const overlap = @min(cur_y + cur_h, b.y + b.h) -| @max(cur_y, b.y);
+                        if (dist < best_dist or (dist == best_dist and overlap > best_overlap)) {
+                            best = b.pane;
+                            best_dist = dist;
+                            best_overlap = overlap;
+                        }
+                    }
+                },
+                .right => {
+                    if (b.x >= cur_x + cur_w) {
+                        const dist = b.x -| (cur_x + cur_w);
+                        const overlap = @min(cur_y + cur_h, b.y + b.h) -| @max(cur_y, b.y);
+                        if (dist < best_dist or (dist == best_dist and overlap > best_overlap)) {
+                            best = b.pane;
+                            best_dist = dist;
+                            best_overlap = overlap;
+                        }
+                    }
+                },
+                .up => {
+                    if (b.y + b.h <= cur_y) {
+                        const dist = cur_y -| (b.y + b.h);
+                        const overlap = @min(cur_x + cur_w, b.x + b.w) -| @max(cur_x, b.x);
+                        if (dist < best_dist or (dist == best_dist and overlap > best_overlap)) {
+                            best = b.pane;
+                            best_dist = dist;
+                            best_overlap = overlap;
+                        }
+                    }
+                },
+                .down => {
+                    if (b.y >= cur_y + cur_h) {
+                        const dist = b.y -| (cur_y + cur_h);
+                        const overlap = @min(cur_x + cur_w, b.x + b.w) -| @max(cur_x, b.x);
+                        if (dist < best_dist or (dist == best_dist and overlap > best_overlap)) {
+                            best = b.pane;
+                            best_dist = dist;
+                            best_overlap = overlap;
+                        }
+                    }
+                },
+            }
+        }
+
+        return best;
     }
 
     fn findPaneAtNode(self: *Server, node: *const @import("../layout.zig").Node, x: u32, y: u32, lx: u32, ly: u32, lw: u32, lh: u32) ?*Pane {
@@ -770,7 +903,9 @@ pub const Server = struct {
                     }
                 },
                 .stdin_data => {
-                    try self.processInput(pkt.data);
+                    self.processInput(pkt.data) catch |err| {
+                        std.log.err("stdin processing error: {any}", .{err});
+                    };
                 },
                 .resize => {
                     if (pkt.data.len >= 8) {

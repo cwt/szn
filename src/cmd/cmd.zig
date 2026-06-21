@@ -594,6 +594,10 @@ fn cmdDetachClient(server: *Server, _: []const []const u8) CmdResult {
 fn cmdLastWindow(server: *Server, _: []const []const u8) CmdResult {
     const session = server.activeSession() orelse return .err;
     if (session.windows.items.len <= 1) return .ok;
+    if (session.last_window) |lw| {
+        session.setActiveWindow(lw);
+        return .ok;
+    }
     const current = session.active_window orelse return .err;
     for (session.windows.items) |w| {
         if (w != current) {

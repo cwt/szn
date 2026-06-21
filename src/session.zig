@@ -8,6 +8,7 @@ pub const Session = struct {
     name: []const u8,
     windows: std.ArrayListUnmanaged(*Window) = .empty,
     active_window: ?*Window = null,
+    last_window: ?*Window = null,
     width: u32,
     height: u32,
     options: @import("options.zig").Options,
@@ -61,6 +62,9 @@ pub const Session = struct {
         const new_win = try allocator.create(Window);
         new_win.* = try Window.init(allocator, @intCast(win_id), name, self.width, self.height, &self.window_options);
         try self.windows.append(allocator, new_win);
+        if (self.active_window) |prev| {
+            self.last_window = prev;
+        }
         self.active_window = new_win;
         return new_win;
     }
@@ -77,9 +81,17 @@ pub const Session = struct {
         if (self.active_window == win) {
             self.active_window = if (self.windows.items.len > 0) self.windows.items[0] else null;
         }
+        if (self.last_window == win) {
+            self.last_window = null;
+        }
     }
 
     pub fn setActiveWindow(self: *Session, win: *Window) void {
+        if (self.active_window) |prev| {
+            if (prev != win) {
+                self.last_window = prev;
+            }
+        }
         self.active_window = win;
     }
 
