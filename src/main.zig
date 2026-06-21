@@ -111,6 +111,7 @@ pub fn main(init: std.process.Init) Error!void {
         if (is_attach) {
             if (socket_mod.socketExists()) {
                 try runInteractiveClient();
+                std.process.exit(0);
             } else {
                 std.debug.print("No szn server running\n", .{});
                 std.process.exit(1);
