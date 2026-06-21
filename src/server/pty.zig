@@ -5,12 +5,20 @@ extern "c" fn openpty(amaster: *c_int, aslave: *c_int, name: ?[*:0]u8, termp: ?*
 extern "c" fn fork() c_int;
 extern "c" fn close(fd: c_int) c_int;
 extern "c" fn dup2(oldfd: c_int, newfd: c_int) c_int;
+extern "c" fn fcntl(fd: c_int, cmd: c_int, ...) c_int;
 extern "c" fn read(fd: c_int, buf: [*]u8, nbyte: usize) isize;
 extern "c" fn write(fd: c_int, buf: [*]const u8, nbyte: usize) isize;
 extern "c" fn execvp(path: [*:0]const u8, argv: [*:null]?[*:0]const u8) c_int;
 extern "c" fn ioctl(fd: c_int, request: c_ulong, ...) c_int;
 extern "c" fn waitpid(pid: c_int, stat_loc: ?*c_int, options: c_int) c_int;
 extern "c" fn login_tty(fd: c_int) c_int;
+
+pub const F_SETFD: c_int = 2;
+pub const FD_CLOEXEC: c_int = 1;
+
+pub fn setCloexec(fd: i32) void {
+    _ = fcntl(fd, F_SETFD, FD_CLOEXEC);
+}
 
 const TIOCSWINSZ: c_ulong = 0x80087467;
 const DEFAULT_SHELL: []const u8 = "/bin/zsh";
@@ -24,6 +32,8 @@ pub const Pty = struct {
         var master: c_int = 0;
         var slave: c_int = 0;
         if (openpty(&master, &slave, null, null, null) < 0) return error.PtyOpenFailed;
+        setCloexec(master);
+        setCloexec(slave);
         return Pty{ .master = master, .slave = slave, .pid = -1 };
     }
 
@@ -88,4 +98,23 @@ test "openpty creates master and slave" {
     defer pty.deinit();
     try testing.expect(pty.master >= 0);
     try testing.expect(pty.slave >= 0);
+}
+
+test "pty master has FD_CLOEXEC set" {
+    var pty = try Pty.open();
+    defer pty.deinit();
+
+    // F_GETFD = 1
+    const flags = fcntl(pty.master, @as(c_int, 1), @as(c_int, 0));
+    try testing.expect(flags >= 0);
+    try testing.expect((flags & FD_CLOEXEC) != 0);
+}
+
+test "pty slave has FD_CLOEXEC set" {
+    var pty = try Pty.open();
+    defer pty.deinit();
+
+    const flags = fcntl(pty.slave, @as(c_int, 1), @as(c_int, 0));
+    try testing.expect(flags >= 0);
+    try testing.expect((flags & FD_CLOEXEC) != 0);
 }
