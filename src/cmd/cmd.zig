@@ -433,6 +433,31 @@ fn cmdShowMessages(server: *Server, args: []const []const u8) CmdResult {
     return .ok;
 }
 
+fn cmdListKeys(server: *Server, args: []const []const u8) CmdResult {
+    _ = args;
+    const key_mod = @import("../key.zig");
+
+    // List prefix bindings
+    for (server.dispatcher.prefix_table.bindings.items) |b| {
+        var key_buf: [64]u8 = undefined;
+        const key_str = key_mod.format(b.key, &key_buf);
+        var line_buf: [256]u8 = undefined;
+        const line = std.fmt.bufPrint(&line_buf, "bind-key -T prefix {s} {s}\n", .{key_str, @tagName(b.action)}) catch return .err;
+        server.response_buf.appendSlice(server.allocator, line) catch return .err;
+    }
+
+    // List root bindings (if any)
+    for (server.dispatcher.root_table.bindings.items) |b| {
+        var key_buf: [64]u8 = undefined;
+        const key_str = key_mod.format(b.key, &key_buf);
+        var line_buf: [256]u8 = undefined;
+        const line = std.fmt.bufPrint(&line_buf, "bind-key -T root {s} {s}\n", .{key_str, @tagName(b.action)}) catch return .err;
+        server.response_buf.appendSlice(server.allocator, line) catch return .err;
+    }
+
+    return .ok;
+}
+
 fn cmdRotateWindow(server: *Server, _: []const []const u8) CmdResult {
     const session = server.activeSession() orelse return .err;
     const window = session.active_window orelse return .err;
@@ -1011,6 +1036,14 @@ pub const commands = struct {
         .args_usage = "",
         .exec = cmdShowMessages,
     };
+    pub const list_keys = CmdEntry{
+        .name = "list-keys",
+        .alias = "lsk",
+        .min_args = 0,
+        .max_args = 0,
+        .args_usage = "",
+        .exec = cmdListKeys,
+    };
 };
 
 fn cmdTable() []const *const CmdEntry {
@@ -1054,6 +1087,7 @@ fn cmdTable() []const *const CmdEntry {
             &commands.copy_mode,
             &commands.find_window,
             &commands.show_messages,
+            &commands.list_keys,
         };
         break :blk &entries;
     };
@@ -1469,13 +1503,14 @@ test "last-window switches to non-active" {
     try testing.expectEqual(session.windows.items[0], session.active_window.?);
 }
 
-test "cmd table has 38 entries" {
+test "cmd table has 39 entries" {
     const table = cmdTable();
-    try testing.expectEqual(@as(usize, 38), table.len);
+    try testing.expectEqual(@as(usize, 39), table.len);
 }
 
 test "lookup all new commands" {
     try testing.expect(lookup("copy-mode") != null);
+    try testing.expect(lookup("list-keys") != null);
     try testing.expect(lookup("show-messages") != null);
     try testing.expect(lookup("find-window") != null);
     try testing.expect(lookup("paste-buffer") != null);
@@ -1534,6 +1569,7 @@ test "lookup aliases" {
     try testing.expectEqualStrings("paste-buffer", lookup("pasteb").?.name);
     try testing.expectEqualStrings("find-window", lookup("findw").?.name);
     try testing.expectEqualStrings("show-messages", lookup("showmsgs").?.name);
+    try testing.expectEqualStrings("list-keys", lookup("lsk").?.name);
 }
 
 test "config commands exec" {
@@ -1811,4 +1847,16 @@ test "show-messages exec" {
     // Verify response buffer contains the log messages
     try testing.expect(std.mem.indexOf(u8, server.response_buf.items, "test log message 1") != null);
     try testing.expect(std.mem.indexOf(u8, server.response_buf.items, "test log message 2") != null);
+}
+
+test "list-keys exec" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    var c = try parse("list-keys", testing.allocator);
+    defer c.deinit(testing.allocator);
+    try testing.expectEqual(CmdResult.ok, c.exec(&server));
+
+    // Verify response buffer contains default key bindings
+    try testing.expect(std.mem.indexOf(u8, server.response_buf.items, "bind-key -T prefix") != null);
 }
