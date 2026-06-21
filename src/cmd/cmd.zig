@@ -139,8 +139,9 @@ fn cmdRenameWindow(server: *Server, args: []const []const u8) CmdResult {
     if (args.len < 2) return .err;
     const session = server.activeSession() orelse return .err;
     const window = session.active_window orelse return .err;
+    const new_name = server.allocator.dupe(u8, args[1]) catch return .err;
     server.allocator.free(window.name);
-    window.name = server.allocator.dupe(u8, args[1]) catch return .err;
+    window.name = new_name;
     return .ok;
 }
 

@@ -354,7 +354,7 @@ pub const InputParser = struct {
     fn dispatchCsi(self: *InputParser, final: u8) !void {
         defer self.toGround();
         const p = self.paramDefault(0, 1);
-        std.log.warn("CSI dispatch: final=0x{x}('{c}') p0={d} count={d}", .{ final, final, self.param(0), self.param_count });
+        std.log.debug("CSI dispatch: final=0x{x}('{c}') p0={d} count={d}", .{ final, final, self.param(0), self.param_count });
 
         switch (final) {
             '@' => {
