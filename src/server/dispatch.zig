@@ -73,10 +73,18 @@ pub fn dispatchCommand(allocator: std.mem.Allocator, server: *Server, cmd_line: 
 
 pub fn sendResponse(fd: i32, result: *const DispatchResult) !void {
     const pkt = Packet.make(result.response_type, result.data);
-    var buf: [4096]u8 = undefined;
-    const serialized = pkt.serialize(&buf);
-    const n = std.c.write(fd, serialized.ptr, serialized.len);
-    if (n < 0) return error.WriteFailed;
+    var hdr_buf: [5]u8 = undefined;
+    pkt.header.encode(&hdr_buf);
+    
+    // Write header
+    var n = std.c.write(fd, &hdr_buf, 5);
+    if (n < 5) return error.WriteFailed;
+    
+    // Write data body directly from slice
+    if (result.data.len > 0) {
+        n = std.c.write(fd, result.data.ptr, result.data.len);
+        if (n < @as(isize, @intCast(result.data.len))) return error.WriteFailed;
+    }
 }
 
 test "dispatch new-session" {

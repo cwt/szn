@@ -193,18 +193,34 @@ pub fn parse(seq: []const u8) ParseError!Key {
 pub fn format(key: Key, buf: []u8) []const u8 {
     return switch (key) {
         .char => |c| blk: {
-            if (c.code == ' ') break :blk @as([]const u8, "Space");
-            if (c.code == 0x7f) break :blk @as([]const u8, "BSpace");
-            if (c.code < 0x20) {
+            var pos: usize = 0;
+            const mod = c.mod;
+            if (mod.ctrl) { buf[pos] = 'C'; buf[pos + 1] = '-'; pos += 2; }
+            if (mod.alt)  { buf[pos] = 'M'; buf[pos + 1] = '-'; pos += 2; }
+            if (mod.shift) { buf[pos] = 'S'; buf[pos + 1] = '-'; pos += 2; }
+            if (mod.meta) { buf[pos] = 'M'; buf[pos + 1] = '-'; pos += 2; }
+
+            const name = if (c.code == ' ')
+                "Space"
+            else if (c.code == 0x7f)
+                "BSpace"
+            else if (c.code < 0x20) blk_sub: {
                 const names = [_][]const u8{
                     "NUL", "SOH", "STX", "ETX", "EOT", "ENQ", "ASC", "BEL",
                     "BS",  "HT",  "LF",  "VT",  "FF",  "CR",  "SO",  "SI",
                     "DLE", "DC1", "DC2", "DC3", "DC4", "NAK", "SYN", "ETB",
                     "CAN", "EM",  "SUB", "ESC", "FS",  "GS",  "RS",  "US",
                 };
-                if (c.code < names.len) break :blk names[c.code];
+                break :blk_sub if (c.code < names.len) names[c.code] else "[?]";
+            } else null;
+
+            if (name) |n| {
+                @memcpy(buf[pos..][0..n.len], n);
+                break :blk buf[0 .. pos + n.len];
+            } else {
+                const char_slice = std.fmt.bufPrint(buf[pos..], "{u}", .{@as(u21, c.code)}) catch "[?]";
+                break :blk buf[0 .. pos + char_slice.len];
             }
-            break :blk std.fmt.bufPrint(buf, "{u}", .{@as(u21, c.code)}) catch "[?]";
         },
         .function => |f| {
             const name = switch (f.key) {

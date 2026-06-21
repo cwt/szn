@@ -150,6 +150,7 @@ pub const Server = struct {
                     if (has_in) {
                         self.handleClient(cfd) catch |err| {
                             std.log.err("client {d} error: {any}", .{ cfd, err });
+                            self.removeClient(cfd);
                         };
                     } else if (has_hup or has_err) {
                         self.removeClient(cfd);
@@ -215,6 +216,14 @@ pub const Server = struct {
 
                         if (self.sessions.items.len == 0) {
                             self.loop.running = false;
+                        } else {
+                            if (self.activeSession()) |s| {
+                                if (s.active_window) |w| {
+                                    if (w.active_pane) |ap| {
+                                        ap.dirty = true;
+                                    }
+                                }
+                            }
                         }
                         return;
                     }
@@ -473,6 +482,13 @@ pub const Server = struct {
                         var handled = false;
                         switch (event) {
                             .key => |k| {
+                                // Diagnostic logging of parsed keys
+                                var key_name_buf: [64]u8 = undefined;
+                                const key_str = @import("../key.zig").format(k, &key_name_buf);
+                                var log_msg_buf: [128]u8 = undefined;
+                                const log_msg = std.fmt.bufPrint(&log_msg_buf, "key (esc): {s} [prefix: {s}]", .{ key_str, @tagName(self.dispatcher.prefix_state) }) catch "log err";
+                                self.addLogMessage(log_msg) catch {};
+
                                 if (self.dispatcher.prefix_state == .normal) {
                                     if (@import("../key_binding.zig").keysEqual(k, self.dispatcher.prefix)) {
                                         self.dispatcher.prefix_state = .prefix_seen;
@@ -512,6 +528,13 @@ pub const Server = struct {
                             self.dispatcher.prefix_state = .normal;
                             switch (event) {
                                 .key => |k| {
+                                    // Diagnostic logging of parsed keys
+                                    var key_name_buf: [64]u8 = undefined;
+                                    const key_str = @import("../key.zig").format(k, &key_name_buf);
+                                    var log_msg_buf: [128]u8 = undefined;
+                                    const log_msg = std.fmt.bufPrint(&log_msg_buf, "key (ground): {s} [prefix: prefix_seen]", .{key_str}) catch "log err";
+                                    self.addLogMessage(log_msg) catch {};
+
                                     if (self.dispatcher.prefix_table.lookup(k)) |action| {
                                         self.executeAction(action) catch {};
                                     }

@@ -16,11 +16,12 @@ fn fdRead(fd: i32, buf: []u8) !usize {
 }
 
 pub const Client = struct {
+    allocator: std.mem.Allocator,
     fd: i32,
 
-    pub fn init() !Client {
+    pub fn init(allocator: std.mem.Allocator) !Client {
         const fd = try connect.connectToServer();
-        return Client{ .fd = fd };
+        return Client{ .allocator = allocator, .fd = fd };
     }
 
     pub fn deinit(self: *Client) void {
@@ -51,18 +52,24 @@ pub const Client = struct {
         var hdr: [5]u8 = undefined;
         var off: usize = 0;
         while (off < 5) {
-            off += try fdRead(self.fd, hdr[off..]);
+            const n = try fdRead(self.fd, hdr[off..]);
+            if (n == 0) return error.ConnectionClosed;
+            off += n;
         }
 
         const len = std.mem.readInt(u32, hdr[0..4], .little);
         if (len < 5) return error.InvalidPacket;
         const body_len = len - 5;
-        if (body_len > 4096) return error.PacketTooLarge;
 
-        var body: [4096]u8 = undefined;
+        // Dynamically allocate body buffer to support arbitrary reply sizes
+        const body = try self.allocator.alloc(u8, body_len);
+        errdefer self.allocator.free(body);
+
         off = 0;
         while (off < body_len) {
-            off += try fdRead(self.fd, body[off..body_len]);
+            const n = try fdRead(self.fd, body[off..body_len]);
+            if (n == 0) return error.ConnectionClosed;
+            off += n;
         }
 
         return protocol.Packet{
@@ -70,7 +77,7 @@ pub const Client = struct {
                 .length = len,
                 .msg_type = hdr[4],
             },
-            .data = body[0..body_len],
+            .data = body,
         };
     }
 };

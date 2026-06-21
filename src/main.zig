@@ -40,7 +40,7 @@ pub fn main(init: std.process.Init) !void {
 
     if (args.items.len > 1) {
         // Run as client
-        var client = @import("client/client.zig").Client.init() catch |err| {
+        var client = @import("client/client.zig").Client.init(allocator) catch |err| {
             std.debug.print("Could not connect to zmux server: {any}\n", .{err});
             std.process.exit(1);
         };
@@ -66,6 +66,7 @@ pub fn main(init: std.process.Init) !void {
 
         try client.sendCommand(cmd);
         const reply = try client.recvPacket();
+        defer allocator.free(reply.data);
         const msg_type = @as(@import("server/protocol.zig").MessageType, @enumFromInt(reply.header.msg_type));
         switch (msg_type) {
             .ready => {
