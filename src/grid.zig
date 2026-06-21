@@ -3,6 +3,8 @@ const testing = std.testing;
 const colour = @import("colour.zig");
 const Colour = colour.Colour;
 
+pub const Error = error{OutOfMemory};
+
 pub const Attr = packed struct(u16) {
     bold: bool = false,
     dim: bool = false,
@@ -63,11 +65,11 @@ pub const Grid = struct {
     history: std.ArrayListUnmanaged(GridLine) = .empty,
     history_limit: u32 = 2000,
 
-    pub fn init(allocator: std.mem.Allocator, width: u32, height: u32) !Grid {
+    pub fn init(allocator: std.mem.Allocator, width: u32, height: u32) Error!Grid {
         return initWithLimit(allocator, width, height, 2000);
     }
 
-    pub fn initWithLimit(allocator: std.mem.Allocator, width: u32, height: u32, history_limit: u32) !Grid {
+    pub fn initWithLimit(allocator: std.mem.Allocator, width: u32, height: u32, history_limit: u32) Error!Grid {
         var grid = Grid{
             .allocator = allocator,
             .width = width,
@@ -86,7 +88,7 @@ pub const Grid = struct {
         self.history.deinit(self.allocator);
     }
 
-    pub fn resize(self: *Grid, new_height: u32) !void {
+    pub fn resize(self: *Grid, new_height: u32) Error!void {
         while (self.lines.items.len < new_height) {
             try self.lines.append(self.allocator, .{});
         }
@@ -97,7 +99,7 @@ pub const Grid = struct {
         self.height = new_height;
     }
 
-    pub fn setSize(self: *Grid, new_width: u32, new_height: u32) !void {
+    pub fn setSize(self: *Grid, new_width: u32, new_height: u32) Error!void {
         self.width = new_width;
         for (self.lines.items) |*line| {
             if (line.cells.items.len > new_width) {
@@ -136,7 +138,7 @@ pub const Grid = struct {
         self.setCell(x, y, Cell.withChar(char));
     }
 
-    pub fn scrollUp(self: *Grid) !void {
+    pub fn scrollUp(self: *Grid) Error!void {
         if (self.lines.items.len == 0) return;
         var line = self.lines.orderedRemove(0);
         line.dirty = false;
@@ -151,7 +153,7 @@ pub const Grid = struct {
         try self.lines.append(self.allocator, .{});
     }
 
-    pub fn scrollDown(self: *Grid) !void {
+    pub fn scrollDown(self: *Grid) Error!void {
         if (self.history.items.len == 0) return;
         var line = self.history.pop().?;
         errdefer line.deinit(self.allocator);
@@ -169,7 +171,7 @@ pub const Grid = struct {
         line.dirty = true;
     }
 
-    pub fn insertLine(self: *Grid, y: u32) !void {
+    pub fn insertLine(self: *Grid, y: u32) Error!void {
         if (y >= self.height) return;
         var line = self.lines.pop().?;
         line.cells.clearRetainingCapacity();
@@ -177,7 +179,7 @@ pub const Grid = struct {
         try self.lines.insert(self.allocator, @as(usize, y), line);
     }
 
-    pub fn deleteLine(self: *Grid, y: u32) !void {
+    pub fn deleteLine(self: *Grid, y: u32) Error!void {
         if (y >= self.height) return;
         var line = self.lines.orderedRemove(@as(usize, y));
         line.cells.clearRetainingCapacity();

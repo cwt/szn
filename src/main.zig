@@ -9,6 +9,10 @@ const cmd_mod = @import("cmd/cmd.zig");
 const protocol = @import("server/protocol.zig");
 const socket_mod = @import("server/socket.zig");
 const connect = @import("client/connect.zig");
+const client_mod = @import("client/client.zig");
+const socket_path = @import("socket_path.zig");
+
+pub const Error = server_mod.ServerError || client_mod.Error || connect.Error || socket_path.Error || error{OutOfMemory, SocketNotFound, WriteFailed, ReadFailed};
 
 // Cached log file handle — opened once, reused for all log calls
 var log_file: ?std.fs.File = null;
@@ -17,7 +21,7 @@ pub const std_options: std.Options = .{
     .logFn = logFn,
 };
 
-fn resolveLogPath(buf: *[256]u8) ![]const u8 {
+fn resolveLogPath(buf: *[256]u8) Error![]const u8 {
     if (std.posix.getenv("XDG_STATE_HOME")) |xdg_raw| {
         const xdg = std.mem.span(xdg_raw);
         const dir_path = try std.fmt.bufPrint(buf, "{s}/szn", .{xdg});
@@ -61,7 +65,7 @@ export fn sigwinch_handler(sig: c.SIG) callconv(.c) void {
     sigwinchFlag.store(true, .seq_cst);
 }
 
-pub fn main(init: std.process.Init) !void {
+pub fn main(init: std.process.Init) Error!void {
     const allocator = init.gpa;
 
     var args: std.ArrayListUnmanaged([]const u8) = .empty;
@@ -173,7 +177,7 @@ pub fn main(init: std.process.Init) !void {
     }
 }
 
-fn waitForSocket() !void {
+fn waitForSocket() Error!void {
     var attempts: u32 = 0;
     while (attempts < 100) : (attempts += 1) {
         if (socket_mod.socketExists()) return;
@@ -182,7 +186,7 @@ fn waitForSocket() !void {
     return error.SocketNotFound;
 }
 
-fn runServerDaemon(allocator: std.mem.Allocator) !void {
+fn runServerDaemon(allocator: std.mem.Allocator) Error!void {
     _ = c.setsid();
 
     const sx: u32 = 80;
@@ -222,7 +226,7 @@ fn runServerDaemon(allocator: std.mem.Allocator) !void {
     server.shutdownServer();
 }
 
-fn runInteractiveClient() !void {
+fn runInteractiveClient() Error!void {
     const stdin_fd = c.STDIN_FILENO;
     const stdout_fd = c.STDOUT_FILENO;
     const server_fd = try connect.connectToServer();

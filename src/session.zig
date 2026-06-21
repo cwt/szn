@@ -2,6 +2,9 @@ const std = @import("std");
 const testing = std.testing;
 const window = @import("window.zig");
 const Window = window.Window;
+const options_mod = @import("options.zig");
+
+pub const Error = window.Error || options_mod.Error;
 
 pub const Session = struct {
     id: u32,
@@ -11,11 +14,10 @@ pub const Session = struct {
     last_window: ?*Window = null,
     width: u32,
     height: u32,
-    options: @import("options.zig").Options,
-    window_options: @import("options.zig").Options,
+    options: options_mod.Options,
+    window_options: options_mod.Options,
 
-    pub fn init(allocator: std.mem.Allocator, id: u32, name: []const u8, width: u32, height: u32, global_options: ?*const @import("options.zig").Options, global_window_options: ?*const @import("options.zig").Options) !Session {
-        const options_mod = @import("options.zig");
+    pub fn init(allocator: std.mem.Allocator, id: u32, name: []const u8, width: u32, height: u32, global_options: ?*const options_mod.Options, global_window_options: ?*const options_mod.Options) Error!Session {
         var options = if (global_options) |go| try go.clone(allocator) else try options_mod.Options.init(allocator, options_mod.SESSION_OPTIONS);
         errdefer options.deinit();
 
@@ -49,7 +51,7 @@ pub const Session = struct {
         self.window_options.deinit();
     }
 
-    pub fn resize(self: *Session, new_width: u32, new_height: u32) !void {
+    pub fn resize(self: *Session, new_width: u32, new_height: u32) Error!void {
         self.width = new_width;
         self.height = new_height;
         for (self.windows.items) |win| {
@@ -57,7 +59,7 @@ pub const Session = struct {
         }
     }
 
-    pub fn newWindow(self: *Session, allocator: std.mem.Allocator, name: []const u8) !*Window {
+    pub fn newWindow(self: *Session, allocator: std.mem.Allocator, name: []const u8) Error!*Window {
         const win_id = self.windows.items.len;
         const new_win = try allocator.create(Window);
         new_win.* = try Window.init(allocator, @intCast(win_id), name, self.width, self.height, &self.window_options);

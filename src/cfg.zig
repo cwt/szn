@@ -7,6 +7,8 @@ const OptionValue = options_mod.OptionValue;
 const key = @import("key.zig");
 const Key = key.Key;
 
+pub const Error = options_mod.Error || colour.ParseError || error{InvalidCsi, UnknownKey, MissingValue, InvalidBind, MissingQuotes};
+
 pub const Directive = union(enum) {
     set: SetOpt,
     bind_key: BindKey,
@@ -91,7 +93,7 @@ pub const ParseResult = struct {
     }
 };
 
-pub fn parseConfig(allocator: std.mem.Allocator, input: []const u8) !ParseResult {
+pub fn parseConfig(allocator: std.mem.Allocator, input: []const u8) Error!ParseResult {
     var result = ParseResult{
         .directives = .empty,
         .errors = .empty,
@@ -159,7 +161,7 @@ fn stripInlineComment(line: []const u8) []const u8 {
     return line;
 }
 
-fn parseSet(allocator: std.mem.Allocator, args: []const u8, result: *ParseResult) !void {
+fn parseSet(allocator: std.mem.Allocator, args: []const u8, result: *ParseResult) Error!void {
     const trimmed = std.mem.trim(u8, args, " \t");
     var flags = SetOpt{ .flags = .{}, .option = undefined, .value = undefined };
     var remaining = trimmed;
@@ -188,7 +190,7 @@ fn parseSet(allocator: std.mem.Allocator, args: []const u8, result: *ParseResult
     try result.directives.append(allocator, Directive{ .set = flags });
 }
 
-pub fn parseValue(allocator: std.mem.Allocator, s: []const u8) !OptionValue {
+pub fn parseValue(allocator: std.mem.Allocator, s: []const u8) Error!OptionValue {
     // Boolean values
     if (std.mem.eql(u8, s, "true") or std.mem.eql(u8, s, "on")) return OptionValue{ .flag = true };
     if (std.mem.eql(u8, s, "false") or std.mem.eql(u8, s, "off")) return OptionValue{ .flag = false };
@@ -236,7 +238,7 @@ fn trimLeft(slice: []const u8, chars: []const u8) []const u8 {
     return slice[start..];
 }
 
-fn parseBindKey(allocator: std.mem.Allocator, args: []const u8, result: *ParseResult) !void {
+fn parseBindKey(allocator: std.mem.Allocator, args: []const u8, result: *ParseResult) Error!void {
     const trimmed = std.mem.trim(u8, args, " \t");
     var remaining = trimmed;
     var key_table: ?[]const u8 = null;
@@ -280,7 +282,7 @@ fn parseBindKey(allocator: std.mem.Allocator, args: []const u8, result: *ParseRe
     });
 }
 
-fn parseUnbindKey(allocator: std.mem.Allocator, args: []const u8, result: *ParseResult) !void {
+fn parseUnbindKey(allocator: std.mem.Allocator, args: []const u8, result: *ParseResult) Error!void {
     const trimmed = std.mem.trim(u8, args, " \t");
     var remaining = trimmed;
     var key_table: ?[]const u8 = null;
@@ -312,7 +314,7 @@ fn parseUnbindKey(allocator: std.mem.Allocator, args: []const u8, result: *Parse
     });
 }
 
-fn parseSetEnv(allocator: std.mem.Allocator, args: []const u8, result: *ParseResult) !void {
+fn parseSetEnv(allocator: std.mem.Allocator, args: []const u8, result: *ParseResult) Error!void {
     const trimmed = std.mem.trim(u8, args, " \t");
     var remaining = trimmed;
     var global = false;
@@ -338,7 +340,7 @@ fn parseSetEnv(allocator: std.mem.Allocator, args: []const u8, result: *ParseRes
     }
 }
 
-fn parseIfShell(allocator: std.mem.Allocator, args: []const u8, result: *ParseResult) !void {
+fn parseIfShell(allocator: std.mem.Allocator, args: []const u8, result: *ParseResult) Error!void {
     // Format: "condition" "command"
     // Find two quoted strings
     const first_q = std.mem.indexOfScalar(u8, args, '"') orelse return error.MissingQuotes;

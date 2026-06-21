@@ -5,7 +5,25 @@ const c = std.c;
 const socket_path = @import("../socket_path.zig");
 const pty_mod = @import("pty.zig");
 
-fn mapErr(rc: c_int) !i32 {
+pub const Error = error{
+    OutOfMemory,
+    NoSpaceLeft,
+    BufferTooSmall,
+    WouldBlock,
+    AddressInUse,
+    ConnectionReset,
+    Interrupted,
+    InvalidArgument,
+    SystemResources,
+    NotConnected,
+    BrokenPipe,
+    ConnectionTimedOut,
+    ListenerFailed,
+    AcceptFailed,
+    Unexpected,
+};
+
+fn mapErr(rc: c_int) Error!i32 {
     if (rc >= 0) return rc;
     return switch (std.posix.errno(rc)) {
         .AGAIN => error.WouldBlock,
@@ -22,7 +40,7 @@ fn mapErr(rc: c_int) !i32 {
     };
 }
 
-pub fn createListener() !i32 {
+pub fn createListener() Error!i32 {
     var path_buf: [socket_path.MAX_PATH]u8 = undefined;
     const path = try socket_path.resolve(&path_buf);
     _ = c.unlink(path.ptr);
@@ -41,7 +59,7 @@ pub fn createListener() !i32 {
     return fd;
 }
 
-pub fn acceptClient(listener_fd: i32) !i32 {
+pub fn acceptClient(listener_fd: i32) Error!i32 {
     var addr: c.sockaddr = undefined;
     var addr_len: c.socklen_t = @sizeOf(c.sockaddr);
     const fd = try mapErr(c.accept(listener_fd, &addr, &addr_len));

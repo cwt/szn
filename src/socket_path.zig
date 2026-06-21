@@ -1,6 +1,12 @@
 const std = @import("std");
 const c = std.c;
 
+pub const Error = error{
+    BufferTooSmall,
+    NoSpaceLeft,
+    OutOfMemory,
+};
+
 extern "c" fn getuid() c.uid_t;
 
 pub const MAX_PATH = blk: {
@@ -8,7 +14,7 @@ pub const MAX_PATH = blk: {
     break :blk @sizeOf(@TypeOf(addr.path));
 };
 
-pub fn resolve(buf: []u8) ![:0]const u8 {
+pub fn resolve(buf: []u8) Error![:0]const u8 {
     if (buf.len < MAX_PATH) return error.BufferTooSmall;
 
     if (std.c.getenv("XDG_RUNTIME_DIR")) |xdg| {

@@ -7,6 +7,11 @@ const pty_mod = @import("server/pty.zig");
 const Pty = pty_mod.Pty;
 const input_mod = @import("input.zig");
 const InputParser = input_mod.InputParser;
+const layout = @import("layout.zig");
+
+const options_mod = @import("options.zig");
+
+pub const Error = screen.Error || pty_mod.Error || layout.LayoutError || options_mod.Error;
 
 /// Pane represents a single terminal pane within a window.
 pub const Pane = struct {
@@ -20,7 +25,7 @@ pub const Pane = struct {
     title_cb: ?*const fn (ctx: ?*anyopaque, title: []const u8) void = null,
     title_ctx: ?*anyopaque = null,
 
-    pub fn init(allocator: std.mem.Allocator, id: u32, width: u32, height: u32) !Pane {
+    pub fn init(allocator: std.mem.Allocator, id: u32, width: u32, height: u32) Error!Pane {
         return Pane{
             .id = id,
             .screen = try Screen.init(allocator, width, height),
@@ -35,12 +40,12 @@ pub const Pane = struct {
         if (self.pty) |*p| p.deinit();
     }
 
-    pub fn writeStr(self: *Pane, s: []const u8) !void {
+    pub fn writeStr(self: *Pane, s: []const u8) Error!void {
         try self.screen.writeStr(s);
         self.dirty = true;
     }
 
-    pub fn spawn(self: *Pane, allocator: std.mem.Allocator, argv: ?[]const []const u8) !void {
+    pub fn spawn(self: *Pane, allocator: std.mem.Allocator, argv: ?[]const []const u8) Error!void {
         var pty = try Pty.open();
         errdefer pty.deinit();
         const ws = std.c.winsize{
@@ -68,7 +73,7 @@ pub const Pane = struct {
         return &(self.parser.?);
     }
 
-    pub fn resizeTerminal(self: *Pane, new_width: u32, new_height: u32) !void {
+    pub fn resizeTerminal(self: *Pane, new_width: u32, new_height: u32) Error!void {
         try self.screen.resize(new_width, new_height);
         if (self.pty) |*pty| {
             const ws = std.c.winsize{
@@ -83,7 +88,7 @@ pub const Pane = struct {
         }
     }
 
-    pub fn feedPty(self: *Pane) !void {
+    pub fn feedPty(self: *Pane) Error!void {
         const pty = &(self.pty orelse return);
         var buf: [4096]u8 = undefined;
         const n = pty.readOutput(&buf) catch |err| {
@@ -109,11 +114,10 @@ pub const Window = struct {
     width: u32,
     height: u32,
     next_pane_id: u32 = 1,
-    layout: @import("layout.zig").Layout,
-    options: @import("options.zig").Options,
+    layout: layout.Layout,
+    options: options_mod.Options,
 
-    pub fn init(allocator: std.mem.Allocator, id: u32, name: []const u8, width: u32, height: u32, global_window_options: ?*const @import("options.zig").Options) !Window {
-        const options_mod = @import("options.zig");
+    pub fn init(allocator: std.mem.Allocator, id: u32, name: []const u8, width: u32, height: u32, global_window_options: ?*const options_mod.Options) Error!Window {
         var options = if (global_window_options) |gwo| try gwo.clone(allocator) else try options_mod.Options.init(allocator, options_mod.WINDOW_OPTIONS);
         errdefer options.deinit();
 
@@ -132,7 +136,7 @@ pub const Window = struct {
         try window.panes.append(allocator, pane);
         window.registerPane(pane);
         window.active_pane = pane;
-        window.layout = try @import("layout.zig").Layout.init(allocator, pane, width, height);
+        window.layout = try layout.Layout.init(allocator, pane, width, height);
         return window;
     }
 
@@ -149,7 +153,7 @@ pub const Window = struct {
         self.options.deinit();
     }
 
-    pub fn resize(self: *Window, new_width: u32, new_height: u32) !void {
+    pub fn resize(self: *Window, new_width: u32, new_height: u32) Error!void {
         self.width = new_width;
         self.height = new_height;
         for (self.panes.items) |pane| {
@@ -157,7 +161,7 @@ pub const Window = struct {
         }
     }
 
-    pub fn addPane(self: *Window, allocator: std.mem.Allocator) !*Pane {
+    pub fn addPane(self: *Window, allocator: std.mem.Allocator) Error!*Pane {
         if (self.active_pane) |pane| {
             return self.splitPane(allocator, pane, false, 0.5);
         }
@@ -170,8 +174,8 @@ pub const Window = struct {
         return new_pane;
     }
 
-    pub fn splitPane(self: *Window, allocator: std.mem.Allocator, pane: *Pane, vertical: bool, proportion: f64) !*Pane {
-        const dir = if (vertical) @import("layout.zig").SplitDir.vertical else @import("layout.zig").SplitDir.horizontal;
+    pub fn splitPane(self: *Window, allocator: std.mem.Allocator, pane: *Pane, vertical: bool, proportion: f64) Error!*Pane {
+        const dir = if (vertical) layout.SplitDir.vertical else layout.SplitDir.horizontal;
         const new_pane = try self.layout.splitPane(allocator, pane, dir, proportion);
         new_pane.id = self.next_pane_id;
         self.next_pane_id += 1;

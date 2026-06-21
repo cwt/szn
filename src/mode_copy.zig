@@ -6,6 +6,10 @@ const Cell = grid_mod.Cell;
 const key_mod = @import("key.zig");
 const Key = key_mod.Key;
 
+pub const Error = error{
+    OutOfMemory,
+};
+
 pub const ModeKeys = enum(u8) {
     vi,
     emacs,
@@ -193,7 +197,7 @@ pub const CopyMode = struct {
         return grid.getCell(x, @as(u32, @intCast(combined_idx - hist_len)));
     }
 
-    pub fn yankSelection(self: *const CopyMode, allocator: std.mem.Allocator, grid: *const Grid) ![]const u8 {
+    pub fn yankSelection(self: *const CopyMode, allocator: std.mem.Allocator, grid: *const Grid) Error![]const u8 {
         if (!self.selection.active) return try allocator.dupe(u8, "");
 
         const sy = @min(self.selection.start_y, self.selection.end_y);

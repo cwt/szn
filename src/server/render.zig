@@ -6,6 +6,9 @@ const Cell = @import("../grid.zig").Cell;
 const Colour = @import("../colour.zig").Colour;
 const Attr = @import("../grid.zig").Attr;
 const Window = @import("../window.zig").Window;
+const tty = @import("../tty/tty.zig");
+
+pub const Error = tty.Error || error{OutOfMemory};
 
 pub const Display = struct {
     fd: i32,
@@ -14,7 +17,7 @@ pub const Display = struct {
     capture: ?*std.ArrayList(u8) = null,
     capture_allocator: ?std.mem.Allocator = null,
 
-    fn writeBytes(self: Display, bytes: []const u8) !void {
+    fn writeBytes(self: Display, bytes: []const u8) Error!void {
         if (self.capture) |cap| {
             try cap.appendSlice(self.capture_allocator.?, bytes);
         } else {
@@ -22,28 +25,28 @@ pub const Display = struct {
         }
     }
 
-    fn writeString(self: Display, str: []const u8) !void {
+    fn writeString(self: Display, str: []const u8) Error!void {
         try self.writeBytes(str);
     }
 
-    fn writeStr(self2: Display, str: [*:0]const u8) !void {
+    fn writeStr(self2: Display, str: [*:0]const u8) Error!void {
         const len = std.mem.len(str);
         try self2.writeBytes(str[0..len]);
     }
 
-    pub fn enterAltScreen(self: Display) !void {
+    pub fn enterAltScreen(self: Display) Error!void {
         try self.writeBytes("\x1b[?1049h");
         try self.writeBytes("\x1b[?1000h\x1b[?1006h");
         try self.writeBytes("\x1b[?25l");
     }
 
-    pub fn exitAltScreen(self: Display) !void {
+    pub fn exitAltScreen(self: Display) Error!void {
         try self.writeBytes("\x1b[?1000l\x1b[?1006l");
         try self.writeBytes("\x1b[?25h");
         try self.writeBytes("\x1b[?1049l");
     }
 
-    pub fn renderAll(self: Display, screen: *Screen, session_name: []const u8, windows: []const *Window, active_window: ?*Window) !void {
+    pub fn renderAll(self: Display, screen: *Screen, session_name: []const u8, windows: []const *Window, active_window: ?*Window) Error!void {
         try self.writeBytes("\x1b[?25l");
 
         try self.renderContent(screen);
@@ -59,7 +62,7 @@ pub const Display = struct {
         }
     }
 
-    fn renderContent(self: Display, screen: *Screen) !void {
+    fn renderContent(self: Display, screen: *Screen) Error!void {
         const h = @min(screen.grid.height, self.sy - 1);
         const w = @min(screen.grid.width, self.sx);
 
@@ -161,7 +164,7 @@ pub const Display = struct {
         try self.writeBytes("\x1b[m");
     }
 
-    fn renderStatusBar(self: Display, session_name: []const u8, windows: []const *Window, active_window: ?*Window) !void {
+    fn renderStatusBar(self: Display, session_name: []const u8, windows: []const *Window, active_window: ?*Window) Error!void {
         try self.moveTo(0, self.sy - 1);
         try self.writeBytes("\x1b[7m");
 
@@ -195,7 +198,7 @@ pub const Display = struct {
         try self.writeBytes("\x1b[m");
     }
 
-    fn moveTo(self: Display, x: u32, y: u32) !void {
+    fn moveTo(self: Display, x: u32, y: u32) Error!void {
         var buf: [32]u8 = undefined;
         const seq = std.fmt.bufPrint(&buf, "\x1b[{d};{d}H", .{ y + 1, x + 1 }) catch unreachable;
         try self.writeBytes(seq);

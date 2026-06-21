@@ -7,7 +7,10 @@ const Colour = colour.Colour;
 const Cell = grid.Cell;
 const Attr = grid.Attr;
 const CursorStyle = screen.CursorStyle;
+const fd_writer = @import("fd_writer.zig");
 const Writer = std.Io.Writer;
+
+pub const Error = fd_writer.Error;
 
 const attrFields = blk: {
     const all = std.meta.fields(Attr);
@@ -53,28 +56,28 @@ pub const Term = struct {
         self.scroll_region = null;
     }
 
-    pub fn write(self: *Term, bytes: []const u8) !void {
+    pub fn write(self: *Term, bytes: []const u8) Error!void {
         try self.writer.writeAll(bytes);
     }
 
-    pub fn writeByte(self: *Term, byte: u8) !void {
+    pub fn writeByte(self: *Term, byte: u8) Error!void {
         try self.writer.writeByte(byte);
     }
 
-    fn print(self: *Term, comptime fmt: []const u8, args: anytype) !void {
+    fn print(self: *Term, comptime fmt: []const u8, args: anytype) Error!void {
         try self.writer.print(fmt, args);
     }
 
     // ── Cursor ──
 
-    pub fn cursorMove(self: *Term, x: u32, y: u32) !void {
+    pub fn cursorMove(self: *Term, x: u32, y: u32) Error!void {
         if (self.cx == x and self.cy == y) return;
         self.cx = @intCast(x);
         self.cy = @intCast(y);
         try self.print("\x1b[{};{}H", .{ y + 1, x + 1 });
     }
 
-    pub fn cursorUp(self: *Term, n: u32) !void {
+    pub fn cursorUp(self: *Term, n: u32) Error!void {
         if (n == 0) return;
         if (self.cy >= 0) self.cy -= @min(@as(u64, @intCast(self.cy)), n);
         if (n == 1) {
@@ -84,7 +87,7 @@ pub const Term = struct {
         }
     }
 
-    pub fn cursorDown(self: *Term, n: u32) !void {
+    pub fn cursorDown(self: *Term, n: u32) Error!void {
         if (n == 0) return;
         if (self.cy >= 0) {
             const max_down = self.sy - 1 -| @as(u32, @intCast(self.cy));
@@ -97,7 +100,7 @@ pub const Term = struct {
         }
     }
 
-    pub fn cursorForward(self: *Term, n: u32) !void {
+    pub fn cursorForward(self: *Term, n: u32) Error!void {
         if (n == 0) return;
         if (self.cx >= 0) {
             const max_forward = self.sx - 1 -| @as(u32, @intCast(self.cx));
@@ -110,7 +113,7 @@ pub const Term = struct {
         }
     }
 
-    pub fn cursorBack(self: *Term, n: u32) !void {
+    pub fn cursorBack(self: *Term, n: u32) Error!void {
         if (n == 0) return;
         if (self.cx >= 0) self.cx -= @min(@as(u64, @intCast(self.cx)), n);
         if (n == 1) {
@@ -120,25 +123,25 @@ pub const Term = struct {
         }
     }
 
-    pub fn cursorHome(self: *Term) !void {
+    pub fn cursorHome(self: *Term) Error!void {
         try self.write("\x1b[H");
         self.cx = 0;
         self.cy = 0;
     }
 
-    pub fn cursorHPA(self: *Term, x: u32) !void {
+    pub fn cursorHPA(self: *Term, x: u32) Error!void {
         self.cx = @intCast(x);
         try self.print("\x1b[{}G", .{x + 1});
     }
 
-    pub fn cursorVPA(self: *Term, y: u32) !void {
+    pub fn cursorVPA(self: *Term, y: u32) Error!void {
         self.cy = @intCast(y);
         try self.print("\x1b[{}d", .{y + 1});
     }
 
     // ── Attributes ──
 
-    pub fn setAttributes(self: *Term, attrs: Attr) !void {
+    pub fn setAttributes(self: *Term, attrs: Attr) Error!void {
         const changed = @as(u16, @bitCast(attrs)) ^ @as(u16, @bitCast(self.attrs));
         if (changed == 0) return;
 
@@ -167,18 +170,18 @@ pub const Term = struct {
         try self.writeByte('m');
     }
 
-    pub fn resetAttributes(self: *Term) !void {
+    pub fn resetAttributes(self: *Term) Error!void {
         try self.write("\x1b[m");
         self.attrs = .{};
         self.fg = null;
         self.bg = null;
     }
 
-    pub fn sgr0(self: *Term) !void {
+    pub fn sgr0(self: *Term) Error!void {
         try self.resetAttributes();
     }
 
-    pub fn setForeground(self: *Term, fg: Colour) !void {
+    pub fn setForeground(self: *Term, fg: Colour) Error!void {
         if (self.fg != null and @as(u32, @bitCast(fg)) == @as(u32, @bitCast(self.fg.?))) return;
         self.fg = fg;
         switch (fg.tag) {
@@ -191,7 +194,7 @@ pub const Term = struct {
         }
     }
 
-    pub fn setBackground(self: *Term, bg: Colour) !void {
+    pub fn setBackground(self: *Term, bg: Colour) Error!void {
         if (self.bg != null and @as(u32, @bitCast(bg)) == @as(u32, @bitCast(self.bg.?))) return;
         self.bg = bg;
         switch (bg.tag) {
@@ -206,61 +209,61 @@ pub const Term = struct {
 
     // ── Clearing ──
 
-    pub fn clearToEOL(self: *Term) !void {
+    pub fn clearToEOL(self: *Term) Error!void {
         try self.write("\x1b[K");
     }
 
-    pub fn clearToSOL(self: *Term) !void {
+    pub fn clearToSOL(self: *Term) Error!void {
         try self.write("\x1b[1K");
     }
 
-    pub fn clearLine(self: *Term) !void {
+    pub fn clearLine(self: *Term) Error!void {
         try self.write("\x1b[2K");
     }
 
-    pub fn clearToEOS(self: *Term) !void {
+    pub fn clearToEOS(self: *Term) Error!void {
         try self.write("\x1b[J");
     }
 
-    pub fn clearToSOS(self: *Term) !void {
+    pub fn clearToSOS(self: *Term) Error!void {
         try self.write("\x1b[1J");
     }
 
-    pub fn clearScreen(self: *Term) !void {
+    pub fn clearScreen(self: *Term) Error!void {
         try self.write("\x1b[2J");
     }
 
-    pub fn eraseChars(self: *Term, n: u32) !void {
+    pub fn eraseChars(self: *Term, n: u32) Error!void {
         try self.print("\x1b[{}X", .{n});
     }
 
     // ── Scroll region ──
 
-    pub fn setScrollRegion(self: *Term, top: u32, bottom: u32) !void {
+    pub fn setScrollRegion(self: *Term, top: u32, bottom: u32) Error!void {
         self.scroll_region = .{ top, bottom };
         try self.print("\x1b[{};{}r", .{ top + 1, bottom + 1 });
     }
 
-    pub fn resetScrollRegion(self: *Term) !void {
+    pub fn resetScrollRegion(self: *Term) Error!void {
         self.scroll_region = null;
         try self.write("\x1b[r");
     }
 
     // ── Alt screen ──
 
-    pub fn enterAltScreen(self: *Term) !void {
+    pub fn enterAltScreen(self: *Term) Error!void {
         try self.write("\x1b[?1049h");
         self.invalidate();
     }
 
-    pub fn exitAltScreen(self: *Term) !void {
+    pub fn exitAltScreen(self: *Term) Error!void {
         try self.write("\x1b[?1049l");
         self.invalidate();
     }
 
     // ── Insert / Delete ──
 
-    pub fn insertChars(self: *Term, n: u32) !void {
+    pub fn insertChars(self: *Term, n: u32) Error!void {
         if (n == 1) {
             try self.write("\x1b[@");
         } else {
@@ -268,7 +271,7 @@ pub const Term = struct {
         }
     }
 
-    pub fn deleteChars(self: *Term, n: u32) !void {
+    pub fn deleteChars(self: *Term, n: u32) Error!void {
         if (n == 1) {
             try self.write("\x1b[P");
         } else {
@@ -276,7 +279,7 @@ pub const Term = struct {
         }
     }
 
-    pub fn insertLines(self: *Term, n: u32) !void {
+    pub fn insertLines(self: *Term, n: u32) Error!void {
         if (n == 1) {
             try self.write("\x1b[L");
         } else {
@@ -284,7 +287,7 @@ pub const Term = struct {
         }
     }
 
-    pub fn deleteLines(self: *Term, n: u32) !void {
+    pub fn deleteLines(self: *Term, n: u32) Error!void {
         if (n == 1) {
             try self.write("\x1b[M");
         } else {
@@ -292,12 +295,12 @@ pub const Term = struct {
         }
     }
 
-    pub fn reverseIndex(self: *Term) !void {
+    pub fn reverseIndex(self: *Term) Error!void {
         try self.write("\x1bM");
         if (self.cy > 0) self.cy -= 1;
     }
 
-    pub fn scrollUp(self: *Term, n: u32) !void {
+    pub fn scrollUp(self: *Term, n: u32) Error!void {
         if (n == 1) {
             try self.write("\x1b[S");
         } else {
@@ -305,7 +308,7 @@ pub const Term = struct {
         }
     }
 
-    pub fn scrollDown(self: *Term, n: u32) !void {
+    pub fn scrollDown(self: *Term, n: u32) Error!void {
         if (n == 1) {
             try self.write("\x1b[T");
         } else {
@@ -315,7 +318,7 @@ pub const Term = struct {
 
     // ── Cursor style ──
 
-    pub fn setCursorStyle(self: *Term, style: CursorStyle) !void {
+    pub fn setCursorStyle(self: *Term, style: CursorStyle) Error!void {
         if (style == self.cursor_style and self.cursor_visible) return;
         self.cursor_style = style;
         const n: u8 = switch (style) {
@@ -326,7 +329,7 @@ pub const Term = struct {
         try self.print("\x1b[{} q", .{n});
     }
 
-    pub fn showCursor(self: *Term, show: bool) !void {
+    pub fn showCursor(self: *Term, show: bool) Error!void {
         if (show == self.cursor_visible) return;
         self.cursor_visible = show;
         if (show) {
@@ -338,17 +341,17 @@ pub const Term = struct {
 
     // ── Sync ──
 
-    pub fn syncBegin(self: *Term) !void {
+    pub fn syncBegin(self: *Term) Error!void {
         try self.write("\x1b[?2026h");
     }
 
-    pub fn syncEnd(self: *Term) !void {
+    pub fn syncEnd(self: *Term) Error!void {
         try self.write("\x1b[?2026l");
     }
 
     // ── Mouse ──
 
-    pub fn setMouseSGR(self: *Term, enable: bool) !void {
+    pub fn setMouseSGR(self: *Term, enable: bool) Error!void {
         if (enable) {
             try self.write("\x1b[?1000h\x1b[?1002h\x1b[?1006h");
         } else {
@@ -360,7 +363,7 @@ pub const Term = struct {
 
     // ── Drawing ──
 
-    pub fn writeCell(self: *Term, cell: Cell) !void {
+    pub fn writeCell(self: *Term, cell: Cell) Error!void {
         try self.setForeground(cell.fg);
         try self.setBackground(cell.bg);
         try self.setAttributes(cell.attr);
@@ -375,14 +378,14 @@ pub const Term = struct {
         if (self.cx >= 0) self.cx += 1;
     }
 
-    pub fn drawCell(self: *Term, _x: u32, _y: u32, cell: Cell) !void {
+    pub fn drawCell(self: *Term, _x: u32, _y: u32, cell: Cell) Error!void {
         try self.cursorMove(_x, _y);
         try self.writeCell(cell);
     }
 
     // ── Line drawing ──
 
-    pub fn drawLine(self: *Term, s: *screen.Screen, ly: u32) !void {
+    pub fn drawLine(self: *Term, s: *screen.Screen, ly: u32) Error!void {
         const width = s.grid.width;
         var col: u32 = 0;
         var last_was_space: bool = true;
@@ -407,7 +410,7 @@ pub const Term = struct {
         }
     }
 
-    pub fn drawScreen(self: *Term, s: *screen.Screen) !void {
+    pub fn drawScreen(self: *Term, s: *screen.Screen) Error!void {
         var y: u32 = 0;
         while (y < s.grid.height) : (y += 1) {
             try self.drawLine(s, y);

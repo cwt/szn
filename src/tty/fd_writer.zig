@@ -1,10 +1,16 @@
 const std = @import("std");
 const c = std.c;
 
+pub const Error = error{
+    WriteFailed,
+    WriteZero,
+    NoSpaceLeft,
+};
+
 pub const FdWriter = struct {
     fd: i32,
 
-    pub fn writeAll(self: FdWriter, bytes: []const u8) !void {
+    pub fn writeAll(self: FdWriter, bytes: []const u8) Error!void {
         var remaining = bytes;
         while (remaining.len > 0) {
             const n = c.write(self.fd, remaining.ptr, @intCast(remaining.len));
@@ -14,14 +20,14 @@ pub const FdWriter = struct {
         }
     }
 
-    pub fn writeByte(self: FdWriter, byte: u8) !void {
+    pub fn writeByte(self: FdWriter, byte: u8) Error!void {
         var b = byte;
         const n = c.write(self.fd, &b, 1);
         if (n < 0) return error.WriteFailed;
         if (n == 0) return error.WriteZero;
     }
 
-    pub fn print(self: FdWriter, comptime fmt: []const u8, args: anytype) !void {
+    pub fn print(self: FdWriter, comptime fmt: []const u8, args: anytype) Error!void {
         var buf: [1024]u8 = undefined;
         const formatted = try std.fmt.bufPrint(&buf, fmt, args);
         try self.writeAll(formatted);

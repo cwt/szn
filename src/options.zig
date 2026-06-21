@@ -5,6 +5,14 @@ const Colour = colour.Colour;
 const key = @import("key.zig");
 const Key = key.Key;
 
+pub const Error = error{
+    OutOfMemory,
+    UnknownOption,
+    TypeMismatch,
+    OutOfRange,
+    InvalidChoice,
+};
+
 pub const OptionType = enum {
     number,
     string,
@@ -37,7 +45,7 @@ pub const Options = struct {
     map: std.StringHashMap(OptionValue),
     table: []const OptionDef,
 
-    pub fn init(allocator: std.mem.Allocator, table: []const OptionDef) !Options {
+    pub fn init(allocator: std.mem.Allocator, table: []const OptionDef) Error!Options {
         var map = std.StringHashMap(OptionValue).init(allocator);
         for (table) |def| {
             const name = try allocator.dupe(u8, def.name);
@@ -46,7 +54,7 @@ pub const Options = struct {
         return Options{ .allocator = allocator, .map = map, .table = table };
     }
 
-    pub fn clone(self: *const Options, allocator: std.mem.Allocator) !Options {
+    pub fn clone(self: *const Options, allocator: std.mem.Allocator) Error!Options {
         var new_map = std.StringHashMap(OptionValue).init(allocator);
         var it = self.map.iterator();
         while (it.next()) |entry| {
@@ -67,7 +75,7 @@ pub const Options = struct {
         self.map.deinit();
     }
 
-    pub fn set(self: *Options, name: []const u8, value: OptionValue) !void {
+    pub fn set(self: *Options, name: []const u8, value: OptionValue) Error!void {
         const idx = self.findDef(name) orelse return error.UnknownOption;
         const def = self.table[idx];
         try validateType(def, value);
@@ -93,7 +101,7 @@ pub const Options = struct {
         return entry.value_ptr.*;
     }
 
-    pub fn unset(self: *Options, name: []const u8) !void {
+    pub fn unset(self: *Options, name: []const u8) Error!void {
         // Copy old key/value, remove, then free
         if (self.map.getEntry(name)) |entry| {
             const old_key = entry.key_ptr.*;
@@ -141,7 +149,7 @@ pub const Options = struct {
     }
 };
 
-fn validateType(def: OptionDef, value: OptionValue) !void {
+fn validateType(def: OptionDef, value: OptionValue) Error!void {
     const tag = switch (value) {
         .number => OptionType.number,
         .string => OptionType.string,
@@ -167,7 +175,7 @@ fn validateType(def: OptionDef, value: OptionValue) !void {
     }
 }
 
-fn cloneValue(allocator: std.mem.Allocator, value: OptionValue) !OptionValue {
+fn cloneValue(allocator: std.mem.Allocator, value: OptionValue) Error!OptionValue {
     return switch (value) {
         .string => |s| OptionValue{ .string = try allocator.dupe(u8, s) },
         inline else => value,

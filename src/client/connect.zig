@@ -3,7 +3,19 @@ const testing = std.testing;
 const c = std.c;
 const socket_path = @import("../socket_path.zig");
 
-pub fn connectToServer() !i32 {
+pub const Error = error{
+    OutOfMemory,
+    NoSpaceLeft,
+    BufferTooSmall,
+    SocketNotFound,
+    ConnectionRefused,
+    Interrupted,
+    WouldBlock,
+    ConnectionTimedOut,
+    Unexpected,
+};
+
+pub fn connectToServer() Error!i32 {
     var path_buf: [socket_path.MAX_PATH]u8 = undefined;
     const path = try socket_path.resolve(&path_buf);
 
@@ -19,7 +31,7 @@ pub fn connectToServer() !i32 {
     return fd;
 }
 
-fn mapErr(rc: c_int) !i32 {
+fn mapErr(rc: c_int) Error!i32 {
     if (rc >= 0) return rc;
     return switch (std.posix.errno(rc)) {
         .CONNREFUSED => error.ConnectionRefused,

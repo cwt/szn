@@ -193,9 +193,9 @@ Handles basic `CSI codepoint ; modifier u` but was missing: keypad disambiguatio
 **File:** `src/main.zig:29`
 Should use `$XDG_STATE_HOME/szn/` or similar for proper filesystem hierarchy compliance.
 
-### 36. Error set is a single catch-all
-**File:** `src/err.zig`
-AGENTS.md requirement: "Define specific error sets per subsystem." A single `SznError` is used instead.
+### 36. Error set is a single catch-all ✅ Fixed
+**File:** Removed `src/err.zig` — `SznError` was dead code.
+Every subsystem now has its own `pub const Error` set: grid, screen, tty, fd_writer, layout, options, cfg, key_binding, input, pty, render, loop, protocol, socket, dispatch, client, connect, raw, window, session, server, main, cmd (ParseError), status, mode_copy, socket_path.
 
 ### 37. Arena allocation not used
 AGENTS.md requirement: "Always use arena allocators per session/pane lifecycle." Code uses GeneralPurposeAllocator with individual alloc/free everywhere.
@@ -250,5 +250,5 @@ If data exceeds remaining buffer space, excess bytes are silently dropped. Calle
 | Critical | 8 | 5 | 3 | 0 |
 | High | 14 | 13 | 1 | 0 |
 | Medium | 12 | 12 | 0 | 0 |
-| Low | 13 | 10 | 1 | 2 |
-| **Total** | **47** | **40** | **5** | **2** |
+| Low | 13 | 11 | 1 | 1 |
+| **Total** | **47** | **41** | **5** | **1** |

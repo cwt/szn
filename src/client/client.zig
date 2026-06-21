@@ -3,13 +3,15 @@ const c = std.c;
 const protocol = @import("../server/protocol.zig");
 const connect = @import("connect.zig");
 
-fn fdWrite(fd: i32, buf: []const u8) !usize {
+pub const Error = protocol.Error || connect.Error || error{ConnectionClosed, ReadFailed, WriteFailed, InvalidPacket, TermTooLong};
+
+fn fdWrite(fd: i32, buf: []const u8) Error!usize {
     const n = std.c.write(fd, buf.ptr, buf.len);
     if (n < 0) return error.WriteFailed;
     return @as(usize, @intCast(n));
 }
 
-fn fdRead(fd: i32, buf: []u8) !usize {
+fn fdRead(fd: i32, buf: []u8) Error!usize {
     const n = std.c.read(fd, buf.ptr, buf.len);
     if (n < 0) return error.ReadFailed;
     return @as(usize, @intCast(n));
@@ -19,7 +21,7 @@ pub const Client = struct {
     allocator: std.mem.Allocator,
     fd: i32,
 
-    pub fn init(allocator: std.mem.Allocator) !Client {
+    pub fn init(allocator: std.mem.Allocator) Error!Client {
         const fd = try connect.connectToServer();
         return Client{ .allocator = allocator, .fd = fd };
     }
@@ -28,7 +30,7 @@ pub const Client = struct {
         _ = c.close(self.fd);
     }
 
-    pub fn sendIdentify(self: *Client, term: []const u8) !void {
+    pub fn sendIdentify(self: *Client, term: []const u8) Error!void {
         var it: protocol.IdentifyTerm = .{ .term_len = @intCast(term.len) };
         if (term.len > it.term.len) return error.TermTooLong;
         @memcpy(it.term[0..term.len], term);
@@ -37,11 +39,11 @@ pub const Client = struct {
         try self.sendPacket(.identify_term, data);
     }
 
-    pub fn sendCommand(self: *Client, cmd: []const u8) !void {
+    pub fn sendCommand(self: *Client, cmd: []const u8) Error!void {
         try self.sendPacket(.command, cmd);
     }
 
-    fn sendPacket(self: *Client, msg_type: protocol.MessageType, data: []const u8) !void {
+    fn sendPacket(self: *Client, msg_type: protocol.MessageType, data: []const u8) Error!void {
         const pkt = protocol.Packet.make(msg_type, data);
         var buf: [4096]u8 = undefined;
         const serialized = pkt.serialize(&buf);
@@ -49,7 +51,7 @@ pub const Client = struct {
         if (n != serialized.len) return error.WriteFailed;
     }
 
-    pub fn recvPacket(self: *Client) !protocol.Packet {
+    pub fn recvPacket(self: *Client) Error!protocol.Packet {
         var hdr: [5]u8 = undefined;
         var off: usize = 0;
         while (off < 5) {

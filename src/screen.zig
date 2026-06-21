@@ -7,6 +7,8 @@ const Grid = grid.Grid;
 const GridLine = grid.GridLine;
 const Colour = colour.Colour;
 
+pub const Error = grid.Error || error{OutOfMemory};
+
 pub const Cursor = struct {
     x: u32 = 0,
     y: u32 = 0,
@@ -50,7 +52,7 @@ pub const Screen = struct {
     copy_mode: ?@import("mode_copy.zig").CopyMode = null,
     tab_stop: u32 = 8,
 
-    pub fn init(allocator: std.mem.Allocator, width: u32, height: u32) !Screen {
+    pub fn init(allocator: std.mem.Allocator, width: u32, height: u32) Error!Screen {
         return Screen{
             .allocator = allocator,
             .grid = try Grid.init(allocator, width, height),
@@ -63,7 +65,7 @@ pub const Screen = struct {
         if (self.alt_grid) |*g| g.deinit();
     }
 
-    pub fn resize(self: *Screen, width: u32, height: u32) !void {
+    pub fn resize(self: *Screen, width: u32, height: u32) Error!void {
         try self.grid.setSize(width, height);
         if (self.alt_grid) |*g| {
             try g.setSize(width, height);
@@ -72,7 +74,7 @@ pub const Screen = struct {
         self.cursor.y = @min(self.cursor.y, height -| 1);
     }
 
-    fn scrollUpInRegion(self: *Screen) !void {
+    fn scrollUpInRegion(self: *Screen) Error!void {
         const top = if (self.scroll_region) |r| r[0] else 0;
         const bottom = if (self.scroll_region) |r| r[1] else self.grid.height - 1;
         if (self.cursor.y != bottom) return;
@@ -85,7 +87,7 @@ pub const Screen = struct {
         self.grid.clearLine(bottom);
     }
 
-    fn scrollDownInRegion(self: *Screen) !void {
+    fn scrollDownInRegion(self: *Screen) Error!void {
         const top = if (self.scroll_region) |r| r[0] else 0;
         const bottom = if (self.scroll_region) |r| r[1] else self.grid.height - 1;
         if (self.cursor.y != top) return;
@@ -98,7 +100,7 @@ pub const Screen = struct {
         self.grid.clearLine(top);
     }
 
-    pub fn writeChar(self: *Screen, char: u21) !void {
+    pub fn writeChar(self: *Screen, char: u21) Error!void {
         if (char == '\n') {
             self.cursor.x = 0;
             if (self.cursor.y + 1 >= self.grid.height) {
@@ -163,7 +165,7 @@ pub const Screen = struct {
         }
     }
 
-    pub fn writeStr(self: *Screen, s: []const u8) !void {
+    pub fn writeStr(self: *Screen, s: []const u8) Error!void {
         for (s) |c| {
             try self.writeChar(c);
         }
@@ -282,7 +284,7 @@ pub const Screen = struct {
         self.dirty = true;
     }
 
-    pub fn insertLines(self: *Screen, n: u32) !void {
+    pub fn insertLines(self: *Screen, n: u32) Error!void {
         const top = if (self.scroll_region) |r| r[0] else 0;
         const bottom = if (self.scroll_region) |r| r[1] else self.grid.height - 1;
         const y = @max(self.cursor.y, top);
@@ -294,7 +296,7 @@ pub const Screen = struct {
         }
     }
 
-    pub fn deleteLines(self: *Screen, n: u32) !void {
+    pub fn deleteLines(self: *Screen, n: u32) Error!void {
         const top = if (self.scroll_region) |r| r[0] else 0;
         const bottom = if (self.scroll_region) |r| r[1] else self.grid.height - 1;
         const y = @max(self.cursor.y, top);
@@ -316,7 +318,7 @@ pub const Screen = struct {
         self.dirty = true;
     }
 
-    pub fn index(self: *Screen) !void {
+    pub fn index(self: *Screen) Error!void {
         if (self.scroll_region) |r| {
             if (self.cursor.y == r[1]) {
                 try self.scrollUpInRegion();
@@ -329,7 +331,7 @@ pub const Screen = struct {
         self.cursor.y += 1;
     }
 
-    pub fn reverseIndex(self: *Screen) !void {
+    pub fn reverseIndex(self: *Screen) Error!void {
         if (self.scroll_region) |r| {
             if (self.cursor.y == r[0]) {
                 try self.scrollDownInRegion();
@@ -342,7 +344,7 @@ pub const Screen = struct {
         self.cursor.y -|= 1;
     }
 
-    pub fn scrollUp(self: *Screen, n: u32) !void {
+    pub fn scrollUp(self: *Screen, n: u32) Error!void {
         const count = @min(n, self.grid.height);
         var i: u32 = 0;
         while (i < count) : (i += 1) {
@@ -350,7 +352,7 @@ pub const Screen = struct {
         }
     }
 
-    pub fn scrollDown(self: *Screen, n: u32) !void {
+    pub fn scrollDown(self: *Screen, n: u32) Error!void {
         const count = @min(n, self.grid.height);
         var i: u32 = 0;
         while (i < count) : (i += 1) {
@@ -461,7 +463,7 @@ pub const Screen = struct {
         }
     }
 
-    pub fn resetHard(self: *Screen) !void {
+    pub fn resetHard(self: *Screen) Error!void {
         self.cursor = .{};
         self.saved_cursor = null;
         self.mode = .{};
@@ -481,7 +483,7 @@ pub const Screen = struct {
         self.dirty = true;
     }
 
-    pub fn useAltScreen(self: *Screen, enable: bool) !void {
+    pub fn useAltScreen(self: *Screen, enable: bool) Error!void {
         if (enable and self.alt_grid == null) {
             var new_alt = try Grid.init(self.allocator, self.grid.width, self.grid.height);
             std.mem.swap(Grid, &self.grid, &new_alt);

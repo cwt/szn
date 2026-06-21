@@ -22,6 +22,9 @@ const protocol = @import("protocol.zig");
 const render = @import("render.zig");
 const Display = render.Display;
 const key_binding_mod = @import("../key_binding.zig");
+const pty_mod = @import("pty.zig");
+const cfg = @import("../cfg.zig");
+const options = @import("../options.zig");
 
 extern "c" fn fopen(filename: [*c]const u8, modes: [*c]const u8) ?*anyopaque;
 extern "c" fn fclose(stream: ?*anyopaque) c_int;
@@ -69,7 +72,7 @@ pub const Server = struct {
     display_sx: u32 = 80,
     display_sy: u32 = 24,
 
-    pub fn init(allocator: std.mem.Allocator) !Server {
+    pub fn init(allocator: std.mem.Allocator) ServerError!Server {
         const key_binding = @import("../key_binding.zig");
         const key_mod = @import("../key.zig");
         const options_mod = @import("../options.zig");
@@ -139,12 +142,12 @@ pub const Server = struct {
         socket_mod.shutdown();
     }
 
-    pub fn addLogMessage(self: *Server, msg: []const u8) !void {
+    pub fn addLogMessage(self: *Server, msg: []const u8) ServerError!void {
         const duped = try self.allocator.dupe(u8, msg);
         try self.log_messages.append(self.allocator, duped);
     }
 
-    pub fn listen(self: *Server) !void {
+    pub fn listen(self: *Server) ServerError!void {
         const fd = try socket_mod.createListener();
         self.listener_fd = fd;
         try self.loop.addFd(self.allocator, fd, @as(i16, @intCast(std.posix.POLL.IN)), @ptrCast(self));
@@ -157,7 +160,7 @@ pub const Server = struct {
         }
     }
 
-    pub fn run(self: *Server) !void {
+    pub fn run(self: *Server) ServerError!void {
         reapZombies();
         const events = try self.loop.pollOnce(self.allocator, 100);
         for (events) |ev| {
@@ -283,7 +286,7 @@ pub const Server = struct {
         }
     }
 
-    pub fn resolveShell(self: *Server, allocator: std.mem.Allocator, session: *Session) ![]const u8 {
+    pub fn resolveShell(self: *Server, allocator: std.mem.Allocator, session: *Session) ServerError![]const u8 {
         _ = self;
         // 1. Check default-shell session option
         if (session.options.asString("default-shell")) |opt_shell| {
@@ -312,14 +315,14 @@ pub const Server = struct {
         return try allocator.dupe(u8, "/bin/sh");
     }
 
-    pub fn setupPane(self: *Server, session: *Session, pane: *Pane) !void {
+    pub fn setupPane(self: *Server, session: *Session, pane: *Pane) ServerError!void {
         const shell = try self.resolveShell(self.allocator, session);
         defer self.allocator.free(shell);
         try pane.spawn(self.allocator, &[_][]const u8{shell});
         try self.watchPanePty(pane);
     }
 
-    pub fn executeAction(self: *Server, action: @import("../key_binding.zig").Action) !void {
+    pub fn executeAction(self: *Server, action: @import("../key_binding.zig").Action) ServerError!void {
         const session = self.activeSession() orelse return;
         const window = session.active_window orelse return;
         const pane = window.active_pane orelse return;
@@ -509,7 +512,7 @@ pub const Server = struct {
         }
     }
 
-    fn handleStdin(self: *Server) !void {
+    fn handleStdin(self: *Server) ServerError!void {
         var buf: [4096]u8 = undefined;
         const n = c.read(std.c.STDIN_FILENO, &buf, buf.len);
         if (n <= 0) {
@@ -519,7 +522,7 @@ pub const Server = struct {
         try self.processInput(buf[0..@as(usize, @intCast(n))]);
     }
 
-    pub fn processInput(self: *Server, buf: []const u8) !void {
+    pub fn processInput(self: *Server, buf: []const u8) ServerError!void {
         const session = self.activeSession() orelse return;
         const window = session.active_window orelse return;
         const pane = window.active_pane orelse return;
@@ -669,7 +672,7 @@ pub const Server = struct {
         }
     }
 
-    pub fn handleMouseFocus(self: *Server, x: u32, y: u32) !void {
+    pub fn handleMouseFocus(self: *Server, x: u32, y: u32) ServerError!void {
         const session = self.activeSession() orelse return;
 
         if (y == session.height) {
@@ -723,7 +726,7 @@ pub const Server = struct {
         h: u32,
     };
 
-    fn collectPaneBounds(self: *Server, node: *const @import("../layout.zig").Node, lx: u32, ly: u32, lw: u32, lh: u32, result: *std.ArrayList(PaneBounds)) !void {
+    fn collectPaneBounds(self: *Server, node: *const @import("../layout.zig").Node, lx: u32, ly: u32, lw: u32, lh: u32, result: *std.ArrayList(PaneBounds)) ServerError!void {
         switch (node.*) {
             .leaf => |pane| {
                 try result.append(self.allocator, .{ .pane = pane, .x = lx, .y = ly, .w = lw, .h = lh });
@@ -742,7 +745,7 @@ pub const Server = struct {
         }
     }
 
-    fn findDirectionalNeighbor(self: *Server, window: *Window, current: *Pane, direction: enum { left, right, up, down }) !?*Pane {
+    fn findDirectionalNeighbor(self: *Server, window: *Window, current: *Pane, direction: enum { left, right, up, down }) ServerError!?*Pane {
         var bounds: std.ArrayList(PaneBounds) = .empty;
         defer bounds.deinit(self.allocator);
 
@@ -848,19 +851,19 @@ pub const Server = struct {
         }
     }
 
-    pub fn watchPanePty(self: *Server, pane: *Pane) !void {
+    pub fn watchPanePty(self: *Server, pane: *Pane) ServerError!void {
         const pty = pane.pty orelse return;
         try self.loop.addFd(self.allocator, pty.master, @as(i16, @intCast(std.posix.POLL.IN)), @ptrCast(pane));
     }
 
-    fn handleAccept(self: *Server) !void {
+    fn handleAccept(self: *Server) ServerError!void {
         const fd = try socket_mod.acceptClient(self.listener_fd.?);
         try self.client_fds.append(self.allocator, fd);
         try self.client_readers.put(fd, .{});
         try self.loop.addFd(self.allocator, fd, @as(i16, @intCast(std.posix.POLL.IN)), @ptrCast(self));
     }
 
-    fn handleClient(self: *Server, fd: i32) !void {
+    fn handleClient(self: *Server, fd: i32) ServerError!void {
         var buf: [4096]u8 = undefined;
         const n = std.posix.read(fd, &buf) catch |err| {
             self.removeClient(fd);
@@ -972,7 +975,7 @@ pub const Server = struct {
         }
     }
 
-    pub fn newSession(self: *Server, name: []const u8, width: u32, height: u32) !*Session {
+    pub fn newSession(self: *Server, name: []const u8, width: u32, height: u32) ServerError!*Session {
         const session = try self.allocator.create(Session);
         session.* = try Session.init(self.allocator, self.next_session_id, name, width, height, &self.global_options, &self.global_window_options);
         self.next_session_id += 1;
@@ -980,7 +983,7 @@ pub const Server = struct {
         return session;
     }
 
-    pub fn killSession(self: *Server, name: []const u8) !void {
+    pub fn killSession(self: *Server, name: []const u8) ServerError!void {
         const idx = for (self.sessions.items, 0..) |s, i| {
             if (std.mem.eql(u8, s.name, name)) break i;
         } else return error.SessionNotFound;
@@ -1008,7 +1011,7 @@ pub const Server = struct {
         return null;
     }
 
-    pub fn applyDirectives(self: *Server, parsed: *const @import("../cfg.zig").ParseResult) anyerror!void {
+    pub fn applyDirectives(self: *Server, parsed: *const @import("../cfg.zig").ParseResult) ServerError!void {
         const key_binding = @import("../key_binding.zig");
         for (parsed.directives.items) |d| {
             switch (d) {
@@ -1062,7 +1065,7 @@ pub const Server = struct {
         }
     }
 
-    pub fn loadConfigFile(self: *Server, path: []const u8) anyerror!void {
+    pub fn loadConfigFile(self: *Server, path: []const u8) ServerError!void {
         var resolved_path: []const u8 = path;
         var free_path = false;
         if (std.mem.startsWith(u8, path, "~/")) {
@@ -1098,7 +1101,7 @@ pub const Server = struct {
         try self.applyDirectives(&parsed);
     }
 
-    pub fn loadDefaultConfig(self: *Server) !void {
+    pub fn loadDefaultConfig(self: *Server) ServerError!void {
         if (std.c.getenv("HOME")) |home_ptr| {
             const home = std.mem.span(home_ptr);
 
@@ -1125,9 +1128,7 @@ pub const Server = struct {
     }
 };
 
-pub const ServerError = error{
-    SessionNotFound,
-};
+pub const ServerError = session_mod.Error || window_mod.Error || render.Error || loop_mod.Error || pty_mod.Error || protocol.Error || socket_mod.Error || cfg.Error || options.Error || key_binding_mod.Error || error{SessionNotFound, OutOfMemory};
 
 test "create empty server" {
     var server = try Server.init(testing.allocator);

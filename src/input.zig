@@ -4,6 +4,8 @@ const screen_mod = @import("screen.zig");
 const Screen = screen_mod.Screen;
 const key = @import("key.zig");
 
+pub const Error = screen_mod.Error;
+
 pub const InputParser = struct {
     screen: *Screen,
     state: State = .ground,
@@ -93,7 +95,7 @@ pub const InputParser = struct {
         return if (p == 0) default else p;
     }
 
-    pub fn advance(self: *InputParser, byte: u8) !void {
+    pub fn advance(self: *InputParser, byte: u8) Error!void {
         if (self.state == .ground) {
             if (self.utf8_expected > 0) {
                 self.utf8_buf[self.utf8_len] = byte;
@@ -139,7 +141,7 @@ pub const InputParser = struct {
         self.osc_len = 0;
     }
 
-    fn advanceGround(self: *InputParser, byte: u8) !void {
+    fn advanceGround(self: *InputParser, byte: u8) Error!void {
         switch (byte) {
             0x00...0x06, 0x0B, 0x0C, 0x0E...0x1A, 0x1C...0x1F => {},
             0x07 => {},
@@ -174,7 +176,7 @@ pub const InputParser = struct {
         }
     }
 
-    fn advanceEsc(self: *InputParser, byte: u8) !void {
+    fn advanceEsc(self: *InputParser, byte: u8) Error!void {
         self.state = .ground;
         switch (byte) {
             '[' => {
@@ -222,7 +224,7 @@ pub const InputParser = struct {
         }
     }
 
-    fn advanceCsiParam(self: *InputParser, byte: u8) !void {
+    fn advanceCsiParam(self: *InputParser, byte: u8) Error!void {
         switch (byte) {
             '0'...'9' => {
                 self.collecting_param = true;
@@ -255,7 +257,7 @@ pub const InputParser = struct {
         }
     }
 
-    fn advanceCsiIntermediate(self: *InputParser, byte: u8) !void {
+    fn advanceCsiIntermediate(self: *InputParser, byte: u8) Error!void {
         switch (byte) {
             0x20...0x2F => {
                 self.intermediate = byte;
@@ -271,7 +273,7 @@ pub const InputParser = struct {
         self.toGround();
     }
 
-    fn advanceOsc(self: *InputParser, byte: u8) !void {
+    fn advanceOsc(self: *InputParser, byte: u8) Error!void {
         switch (byte) {
             0x07 => {
                 try self.dispatchOsc();
@@ -351,7 +353,7 @@ pub const InputParser = struct {
         }
     }
 
-    fn dispatchCsi(self: *InputParser, final: u8) !void {
+    fn dispatchCsi(self: *InputParser, final: u8) Error!void {
         defer self.toGround();
         const p = self.paramDefault(0, 1);
         std.log.debug("CSI dispatch: final=0x{x}('{c}') p0={d} count={d}", .{ final, final, self.param(0), self.param_count });
@@ -476,7 +478,7 @@ pub const InputParser = struct {
         }
     }
 
-    fn dispatchDecset(self: *InputParser, enable: bool) !void {
+    fn dispatchDecset(self: *InputParser, enable: bool) Error!void {
         var i: u32 = 0;
         while (i < self.param_count) : (i += 1) {
             switch (self.params[i]) {
@@ -497,7 +499,7 @@ pub const InputParser = struct {
         }
     }
 
-    fn dispatchAnsiMode(self: *InputParser, enable: bool) !void {
+    fn dispatchAnsiMode(self: *InputParser, enable: bool) Error!void {
         var i: u32 = 0;
         while (i < self.param_count) : (i += 1) {
             switch (self.params[i]) {
@@ -507,7 +509,7 @@ pub const InputParser = struct {
         }
     }
 
-    fn dispatchOsc(self: *InputParser) !void {
+    fn dispatchOsc(self: *InputParser) Error!void {
         // Find first semicolon to separate command
         var cmd_end: u32 = 0;
         while (cmd_end < self.osc_len and self.osc_buf[cmd_end] != ';') : (cmd_end += 1) {}
@@ -534,7 +536,7 @@ pub const InputParser = struct {
         }
     }
 
-    pub fn feed(self: *InputParser, bytes: []const u8) !void {
+    pub fn feed(self: *InputParser, bytes: []const u8) Error!void {
         for (bytes) |b| {
             try self.advance(b);
         }

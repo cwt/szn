@@ -8,6 +8,8 @@ const Packet = protocol.Packet;
 const MessageType = protocol.MessageType;
 const message_reader = @import("message_reader.zig");
 
+pub const Error = protocol.Error || error{WriteFailed, ConnectionClosed};
+
 pub const DispatchResult = struct {
     response_type: MessageType,
     data: []const u8,
@@ -86,7 +88,7 @@ pub fn dispatchCommand(allocator: std.mem.Allocator, server: *Server, cmd_line: 
     };
 }
 
-pub fn sendResponse(fd: i32, result: *const DispatchResult) !void {
+pub fn sendResponse(fd: i32, result: *const DispatchResult) Error!void {
     const pkt = Packet.make(result.response_type, result.data);
     var hdr_buf: [5]u8 = undefined;
     pkt.header.encode(&hdr_buf);

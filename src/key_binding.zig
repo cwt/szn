@@ -4,6 +4,8 @@ const key_mod = @import("key.zig");
 const Key = key_mod.Key;
 const Modifier = key_mod.Modifier;
 
+pub const Error = error{OutOfMemory};
+
 pub const Action = enum(u8) {
     new_window,
     split_horizontal,
@@ -58,7 +60,7 @@ pub const KeyTable = struct {
         self.bindings.deinit(self.allocator);
     }
 
-    pub fn bind(self: *KeyTable, k: Key, action: Action) !void {
+    pub fn bind(self: *KeyTable, k: Key, action: Action) Error!void {
         for (self.bindings.items, 0..) |*b, i| {
             if (keysEqual(b.key, k)) {
                 self.bindings.items[i].action = action;
@@ -172,7 +174,7 @@ pub fn keysEqual(a: Key, b: Key) bool {
     };
 }
 
-pub fn loadDefaults(table: *KeyTable) !void {
+pub fn loadDefaults(table: *KeyTable) Error!void {
     const defaults = [_]Binding{
         .{ .key = Key{ .char = .{ .code = 'c', .mod = .{} } }, .action = .new_window },
         .{ .key = Key{ .char = .{ .code = '%', .mod = .{} } }, .action = .split_vertical },

@@ -3,6 +3,11 @@ const testing = std.testing;
 const window = @import("window.zig");
 const Pane = window.Pane;
 
+pub const LayoutError = error{
+    OutOfMemory,
+    PaneNotFound,
+};
+
 pub const SplitDir = enum(u8) {
     horizontal,
     vertical,
@@ -26,7 +31,7 @@ pub const Layout = struct {
     width: u32,
     height: u32,
 
-    pub fn init(allocator: std.mem.Allocator, pane: *Pane, width: u32, height: u32) !Layout {
+    pub fn init(allocator: std.mem.Allocator, pane: *Pane, width: u32, height: u32) LayoutError!Layout {
         const node = try allocator.create(Node);
         node.* = Node{ .leaf = pane };
         return Layout{
@@ -58,7 +63,7 @@ pub const Layout = struct {
         }
     }
 
-    pub fn splitPane(self: *Layout, allocator: std.mem.Allocator, pane: *Pane, direction: SplitDir, proportion: f64) !*Pane {
+    pub fn splitPane(self: *Layout, allocator: std.mem.Allocator, pane: *Pane, direction: SplitDir, proportion: f64) window.Error!*Pane {
         const leaf_node = self.findLeafParent(self.root, pane) orelse return error.PaneNotFound;
 
         const child_w, const child_h = self.calculateChildSize(direction, proportion);
@@ -186,13 +191,9 @@ pub const Layout = struct {
     }
 };
 
-pub const LayoutError = error{
-    PaneNotFound,
-};
-
 // ── Tests ──
 
-fn createTestPane(allocator: std.mem.Allocator, id: u32) !*Pane {
+fn createTestPane(allocator: std.mem.Allocator, id: u32) window.Error!*Pane {
     const pane = try allocator.create(Pane);
     pane.* = try Pane.init(allocator, id, 80, 24);
     return pane;

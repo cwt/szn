@@ -696,7 +696,7 @@ fn cmdSetOption(server: *Server, args: []const []const u8) CmdResult {
     return .ok;
 }
 
-fn printOptionValue(server: *Server, val: @import("../options.zig").OptionValue) !void {
+fn printOptionValue(server: *Server, val: @import("../options.zig").OptionValue) ParseError!void {
     switch (val) {
         .number => |n| {
             var buf: [64]u8 = undefined;
@@ -1238,7 +1238,7 @@ pub fn lookup(name: []const u8) ?*const CmdEntry {
     return null;
 }
 
-pub fn formatHelp(allocator: std.mem.Allocator, command_name: ?[]const u8) ![]const u8 {
+pub fn formatHelp(allocator: std.mem.Allocator, command_name: ?[]const u8) ParseError![]const u8 {
     var buf: std.ArrayList(u8) = .empty;
 
     if (command_name) |name| {
@@ -1321,6 +1321,8 @@ pub const ParseError = error{
     UnknownCommand,
     MissingArgs,
     TooManyArgs,
+    OutOfMemory,
+    NoSpaceLeft,
 };
 
 test "lookup by name" {

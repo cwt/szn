@@ -1,6 +1,13 @@
 const std = @import("std");
 const testing = std.testing;
 
+pub const Error = error{
+    OutOfMemory,
+    NetworkDown,
+    SystemResources,
+    Unexpected,
+};
+
 pub const FdEntry = struct {
     fd: i32,
     events: i16,
@@ -27,7 +34,7 @@ pub const Loop = struct {
         self.event_buf.deinit(allocator);
     }
 
-    pub fn addFd(self: *Loop, allocator: std.mem.Allocator, fd: i32, events: i16, udata: ?*anyopaque) !void {
+    pub fn addFd(self: *Loop, allocator: std.mem.Allocator, fd: i32, events: i16, udata: ?*anyopaque) Error!void {
         for (self.fds.items) |f| {
             if (f.fd == fd) return;
         }
@@ -47,7 +54,7 @@ pub const Loop = struct {
         }
     }
 
-    pub fn pollOnce(self: *Loop, allocator: std.mem.Allocator, timeout: i32) ![]PollEvent {
+    pub fn pollOnce(self: *Loop, allocator: std.mem.Allocator, timeout: i32) Error![]PollEvent {
         if (self.fds.items.len == 0) return &[0]PollEvent{};
 
         const pollfd_count = self.fds.items.len;

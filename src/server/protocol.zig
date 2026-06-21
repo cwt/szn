@@ -1,6 +1,12 @@
 const std = @import("std");
 const testing = std.testing;
 
+pub const Error = error{
+    InvalidPacket,
+    SizeMismatch,
+    InvalidData,
+};
+
 pub const MessageType = enum(u8) {
     identify_term = 0x01,
     identify_cwd = 0x02,
@@ -46,7 +52,7 @@ pub const Packet = struct {
         return buf[0 .. 5 + self.data.len];
     }
 
-    pub fn deserialize(buf: []const u8) !Packet {
+    pub fn deserialize(buf: []const u8) Error!Packet {
         if (buf.len < 5) return error.InvalidPacket;
         const len = std.mem.readInt(u32, buf[0..4], .little);
         if (len != buf.len) return error.SizeMismatch;
@@ -80,7 +86,7 @@ pub const IdentifyTerm = struct {
         return buf[0 .. 1 + self.term_len];
     }
 
-    pub fn decode(data: []const u8) !IdentifyTerm {
+    pub fn decode(data: []const u8) Error!IdentifyTerm {
         if (data.len < 1) return error.InvalidData;
         const len = data[0];
         if (data.len < 1 + len) return error.InvalidData;

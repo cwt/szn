@@ -1,6 +1,16 @@
 const std = @import("std");
 const testing = std.testing;
 
+pub const Error = error{
+    OutOfMemory,
+    PtyOpenFailed,
+    ForkFailed,
+    ReadFailed,
+    ProcessExited,
+    WriteFailed,
+    IoctlFailed,
+};
+
 extern "c" fn openpty(amaster: *c_int, aslave: *c_int, name: ?[*:0]u8, termp: ?*anyopaque, winp: ?*anyopaque) c_int;
 extern "c" fn fork() c_int;
 extern "c" fn close(fd: c_int) c_int;
@@ -28,7 +38,7 @@ pub const Pty = struct {
     slave: i32,
     pid: i32,
 
-    pub fn open() !Pty {
+    pub fn open() Error!Pty {
         var master: c_int = 0;
         var slave: c_int = 0;
         if (openpty(&master, &slave, null, null, null) < 0) return error.PtyOpenFailed;
@@ -37,7 +47,7 @@ pub const Pty = struct {
         return Pty{ .master = master, .slave = slave, .pid = -1 };
     }
 
-    pub fn spawn(self: *Pty, allocator: std.mem.Allocator, argv: ?[]const []const u8) !void {
+    pub fn spawn(self: *Pty, allocator: std.mem.Allocator, argv: ?[]const []const u8) Error!void {
         const args = argv orelse &.{DEFAULT_SHELL};
 
         var argv_z = try allocator.alloc(?[*:0]const u8, args.len + 1);
@@ -80,19 +90,19 @@ pub const Pty = struct {
         self.reap();
     }
 
-    pub fn readOutput(self: *Pty, buf: []u8) !usize {
+    pub fn readOutput(self: *Pty, buf: []u8) Error!usize {
         const n = read(self.master, buf.ptr, buf.len);
         if (n < 0) return error.ReadFailed;
         if (n == 0) return error.ProcessExited;
         return @as(usize, @intCast(n));
     }
 
-    pub fn writeInput(self: *Pty, data: []const u8) !void {
+    pub fn writeInput(self: *Pty, data: []const u8) Error!void {
         const n = write(self.master, data.ptr, data.len);
         if (n < 0) return error.WriteFailed;
     }
 
-    pub fn setWinSize(self: *Pty, ws: *const std.c.winsize) !void {
+    pub fn setWinSize(self: *Pty, ws: *const std.c.winsize) Error!void {
         if (ioctl(self.master, TIOCSWINSZ, ws) < 0) return error.IoctlFailed;
     }
 };

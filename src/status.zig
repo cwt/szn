@@ -6,6 +6,12 @@ const expand = format_mod.expand;
 const colour = @import("colour.zig");
 const Colour = colour.Colour;
 
+pub const Error = error{
+    OutOfMemory,
+    InvalidFormat,
+    UnterminatedBrace,
+};
+
 pub const Alignment = enum(u8) {
     left,
     centre,
@@ -29,7 +35,7 @@ pub const StatusBar = struct {
         allocator: std.mem.Allocator,
         ctx: *const Context,
         width: u32,
-    ) !RenderedStatus {
+    ) Error!RenderedStatus {
         const left = try expand(allocator, self.left, ctx);
         errdefer allocator.free(left);
 
