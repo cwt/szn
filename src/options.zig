@@ -181,7 +181,7 @@ fn freeValue(allocator: std.mem.Allocator, value: OptionValue) void {
 // ── Option Tables ──
 
 pub const SESSION_OPTIONS = &[_]OptionDef{
-    .{ .name = "default-shell", .type = .string, .default = OptionValue{ .string = "/bin/sh" } },
+    .{ .name = "default-shell", .type = .string, .default = OptionValue{ .string = "" } },
     .{ .name = "default-terminal", .type = .string, .default = OptionValue{ .string = "xterm-256color" } },
     .{ .name = "status", .type = .choice, .default = OptionValue{ .choice = "on" }, .choices = &[_][]const u8{ "off", "on", "2", "3", "4", "5" } },
     .{ .name = "status-interval", .type = .number, .default = OptionValue{ .number = 15 }, .min = 0, .max = 86400 },
