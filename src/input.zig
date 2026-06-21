@@ -16,6 +16,9 @@ pub const InputParser = struct {
     osc_buf: [256]u8 = undefined,
     osc_len: u32 = 0,
     pty: ?*@import("server/pty.zig").Pty = null,
+    utf8_buf: [4]u8 = undefined,
+    utf8_len: u8 = 0,
+    utf8_expected: u8 = 0,
 
     const State = enum {
         ground,
@@ -32,7 +35,11 @@ pub const InputParser = struct {
     };
 
     pub fn init(screen: *Screen) InputParser {
-        return InputParser{ .screen = screen };
+        return InputParser{
+            .screen = screen,
+            .utf8_len = 0,
+            .utf8_expected = 0,
+        };
     }
 
     pub fn reset(self: *InputParser) void {
@@ -43,6 +50,8 @@ pub const InputParser = struct {
         self.params_started = false;
         self.intermediate = 0;
         self.osc_len = 0;
+        self.utf8_len = 0;
+        self.utf8_expected = 0;
     }
 
     fn clearParams(self: *InputParser) void {
@@ -78,6 +87,28 @@ pub const InputParser = struct {
     }
 
     pub fn advance(self: *InputParser, byte: u8) !void {
+        if (self.state == .ground) {
+            if (self.utf8_expected > 0) {
+                self.utf8_buf[self.utf8_len] = byte;
+                self.utf8_len += 1;
+                if (self.utf8_len == self.utf8_expected) {
+                    const cp = std.unicode.utf8Decode(self.utf8_buf[0..self.utf8_expected]) catch '?';
+                    try self.screen.writeChar(cp);
+                    self.utf8_expected = 0;
+                    self.utf8_len = 0;
+                }
+                return;
+            } else if (byte >= 0xC2 and byte <= 0xF4) {
+                const expected = std.unicode.utf8ByteSequenceLength(byte) catch 0;
+                if (expected >= 2 and expected <= 4) {
+                    self.utf8_expected = @intCast(expected);
+                    self.utf8_buf[0] = byte;
+                    self.utf8_len = 1;
+                    return;
+                }
+            }
+        }
+
         switch (self.state) {
             .ground => try self.advanceGround(byte),
             .esc => try self.advanceEsc(byte),
@@ -1079,6 +1110,20 @@ test "c1 control 8-bit CSI" {
     var parser = InputParser.init(&screen);
     try parser.feed(&[_]u8{ 0x9B, 0x33, 0x42 }); // 8-bit CSI 3 B
     try testing.expectEqual(@as(u32, 3), screen.cursor.y);
+}
+
+test "UTF-8 multi-byte character parsing" {
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+    var parser = InputParser.init(&screen);
+    // ❯ is E2 9D AF
+    try parser.feed("❯abc");
+    try testing.expectEqual(@as(u21, 0x276f), screen.grid.getCell(0, 0).char); // U+276F is ❯
+    try testing.expectEqual(@as(u21, 'a'), screen.grid.getCell(1, 0).char);
+    try testing.expectEqual(@as(u21, 'b'), screen.grid.getCell(2, 0).char);
+    try testing.expectEqual(@as(u21, 'c'), screen.grid.getCell(3, 0).char);
+    try testing.expectEqual(@as(u32, 4), screen.cursor.x);
+    try testing.expectEqual(@as(u8, @intFromEnum(InputParser.State.ground)), @intFromEnum(parser.state));
 }
 
 test "DCS string ignored" {

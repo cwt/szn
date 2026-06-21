@@ -555,6 +555,12 @@ pub const Server = struct {
                                     self.handleMouseFocus(m.x, m.y) catch {};
                                     handled = true;
                                 }
+                                const wants_mouse = pane.screen.mode.mouse_standard or
+                                                    pane.screen.mode.mouse_button or
+                                                    pane.screen.mode.mouse_sgr;
+                                if (!wants_mouse) {
+                                    handled = true;
+                                }
                             },
                             else => {},
                         }
