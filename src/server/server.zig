@@ -290,6 +290,64 @@ pub const Server = struct {
                     try pane.writeStr(pb);
                 }
             },
+            .swap_pane_up => {
+                if (window.panes.items.len > 1) {
+                    const active_idx = for (window.panes.items, 0..) |p, idx| {
+                        if (p == pane) break idx;
+                    } else return;
+                    const dest_idx = if (active_idx == 0) window.panes.items.len - 1 else active_idx - 1;
+                    const dest_pane = window.panes.items[dest_idx];
+
+                    const node1 = window.layout.findLeafParent(window.layout.root, pane) orelse return;
+                    const node2 = window.layout.findLeafParent(window.layout.root, dest_pane) orelse return;
+                    node1.leaf = dest_pane;
+                    node2.leaf = pane;
+
+                    window.panes.items[active_idx] = dest_pane;
+                    window.panes.items[dest_idx] = pane;
+                }
+            },
+            .swap_pane_down => {
+                if (window.panes.items.len > 1) {
+                    const active_idx = for (window.panes.items, 0..) |p, idx| {
+                        if (p == pane) break idx;
+                    } else return;
+                    const dest_idx = (active_idx + 1) % window.panes.items.len;
+                    const dest_pane = window.panes.items[dest_idx];
+
+                    const node1 = window.layout.findLeafParent(window.layout.root, pane) orelse return;
+                    const node2 = window.layout.findLeafParent(window.layout.root, dest_pane) orelse return;
+                    node1.leaf = dest_pane;
+                    node2.leaf = pane;
+
+                    window.panes.items[active_idx] = dest_pane;
+                    window.panes.items[dest_idx] = pane;
+                }
+            },
+            .resize_left => {
+                const current_w = pane.screen.grid.width;
+                const current_h = pane.screen.grid.height;
+                const target_w = @as(u32, @intCast(@max(1, @as(i32, @intCast(current_w)) - 1)));
+                pane.resizeTerminal(target_w, current_h) catch {};
+            },
+            .resize_right => {
+                const current_w = pane.screen.grid.width;
+                const current_h = pane.screen.grid.height;
+                const target_w = current_w + 1;
+                pane.resizeTerminal(target_w, current_h) catch {};
+            },
+            .resize_up => {
+                const current_w = pane.screen.grid.width;
+                const current_h = pane.screen.grid.height;
+                const target_h = @as(u32, @intCast(@max(1, @as(i32, @intCast(current_h)) - 1)));
+                pane.resizeTerminal(current_w, target_h) catch {};
+            },
+            .resize_down => {
+                const current_w = pane.screen.grid.width;
+                const current_h = pane.screen.grid.height;
+                const target_h = current_h + 1;
+                pane.resizeTerminal(current_w, target_h) catch {};
+            },
             else => {},
         }
 
@@ -825,4 +883,22 @@ test "prefix interception and key dispatching" {
         line_idx += 1;
     }
     try testing.expectEqualStrings("pasted-content", line_buf[0..line_idx]);
+
+    // Manually split the pane to test swap and resize without spawning a real shell
+    const new_pane = try active_win.splitPane(server.allocator, active_pane, false, 0.5);
+    new_pane.pty = try @import("pty.zig").Pty.open();
+    try testing.expectEqual(@as(usize, 2), active_win.panes.items.len);
+
+    const original_first_pane = active_win.panes.items[0];
+    const original_second_pane = active_win.panes.items[1];
+
+    // Test swap_pane_down
+    try server.executeAction(.swap_pane_down);
+    try testing.expect(active_win.panes.items[0] == original_second_pane);
+    try testing.expect(active_win.panes.items[1] == original_first_pane);
+
+    // Test resize_right
+    const old_width = original_second_pane.screen.grid.width;
+    try server.executeAction(.resize_right);
+    try testing.expectEqual(old_width + 1, original_second_pane.screen.grid.width);
 }
