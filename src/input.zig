@@ -29,6 +29,7 @@ pub const InputParser = struct {
         csi_intermediate,
         csi_final,
         osc_string,
+        osc_esc,
         dcs_entry,
         dcs_param,
         dcs_intermediate,
@@ -122,6 +123,7 @@ pub const InputParser = struct {
             .csi_intermediate => try self.advanceCsiIntermediate(byte),
             .csi_final => self.advanceCsiFinal(byte),
             .osc_string => try self.advanceOsc(byte),
+            .osc_esc => self.advanceOscEsc(byte),
             .dcs_entry => self.advanceDcsEntry(byte),
             .dcs_param => self.advanceDcsParam(byte),
             .dcs_intermediate => self.advanceDcsIntermediate(byte),
@@ -149,7 +151,6 @@ pub const InputParser = struct {
             0x0D => try self.screen.writeChar('\r'),
             0x1B => {
                 self.state = .esc;
-                self.clearParams();
             },
             0x7F => {},
             0x20...0x7E => try self.screen.writeChar(byte),
@@ -277,7 +278,7 @@ pub const InputParser = struct {
                 self.toGround();
             },
             0x1B => {
-                self.state = .esc;
+                self.state = .osc_esc;
             },
             0x00...0x06, 0x08...0x1A, 0x1C...0x1F => {},
             0x20...0x7E, 0x7F, 0x80...0xFF => {
@@ -287,6 +288,13 @@ pub const InputParser = struct {
                 }
             },
         }
+    }
+
+    fn advanceOscEsc(self: *InputParser, byte: u8) void {
+        if (byte == '\\') {
+            self.dispatchOsc() catch {};
+        }
+        self.toGround();
     }
 
     fn advanceDcsEntry(self: *InputParser, byte: u8) void {
@@ -1112,7 +1120,31 @@ test "OSC with ST terminator" {
     try testing.expectEqual(@as(u8, @intFromEnum(InputParser.State.ground)), @intFromEnum(parser.state));
 }
 
-test "c1 control 8-bit CSI" {
+test "OSC with ST terminator invokes title callback" {
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+    var parser = InputParser.init(&screen);
+    var mock = TitleMock{};
+    parser.title_cb = TitleMock.callback;
+    parser.title_ctx = &mock;
+    try parser.feed("\x1b]0;my title\x1b\\");
+    try testing.expect(mock.called);
+    try testing.expectEqualStrings("my title", mock.title[0..mock.len]);
+}
+
+test "OSC with BEL terminator still works" {
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+    var parser = InputParser.init(&screen);
+    var mock = TitleMock{};
+    parser.title_cb = TitleMock.callback;
+    parser.title_ctx = &mock;
+    try parser.feed("\x1b]0;title2\x07");
+    try testing.expect(mock.called);
+    try testing.expectEqualStrings("title2", mock.title[0..mock.len]);
+}
+
+test "C1 control 8-bit CSI" {
     var screen = try Screen.init(testing.allocator, 80, 24);
     defer screen.deinit();
     var parser = InputParser.init(&screen);
