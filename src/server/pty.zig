@@ -58,6 +58,9 @@ pub const Pty = struct {
     }
 
     pub fn deinit(self: *Pty) void {
+        if (self.pid > 0) {
+            _ = std.c.kill(self.pid, std.c.SIG.KILL);
+        }
         _ = close(self.master);
         if (self.slave >= 0) _ = close(self.slave);
         self.reap();
