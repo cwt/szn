@@ -3,7 +3,7 @@
 Track progress toward a fully functional tmux clone.
 Based on code audit as of 2026-06-21.
 
-## Current State: 503 tests passing, all MVP commands fully implemented, copy-mode fully integrated, and all unit tests verified.
+## Current State: 504 tests passing, all MVP commands fully implemented, copy-mode fully integrated, and all unit tests verified.
 
 ---
 
@@ -24,7 +24,7 @@ Based on code audit as of 2026-06-21.
 | 10 | Commands | ✅ Done | ~73 | All 33+ MVP commands functional (including copy-mode, paste-buffer, find-window, show-messages, and list-keys) |
 | 11 | Full Integration | ✅ Done | ~30 | integration.zig integration test suite complete |
 
-**Total: 503 / 503 tests passing. All Phases 0–11 fully complete.**
+**Total: 504 / 504 tests passing. All Phases 0–11 fully complete.**
 
 ---
 
