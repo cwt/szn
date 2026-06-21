@@ -178,6 +178,21 @@ pub const CopyMode = struct {
         return true;
     }
 
+    fn getCellAt(self: *const CopyMode, grid: *const Grid, x: u32, screen_y: u32) Cell {
+        const hist_len = grid.history.items.len;
+        const scroll = @as(usize, @intCast(self.scroll_offset));
+        if (scroll > hist_len) return Cell.empty();
+
+        const combined_idx = (hist_len - scroll) + @as(usize, @intCast(screen_y));
+
+        if (combined_idx < hist_len) {
+            const line = &grid.history.items[combined_idx];
+            return if (x < line.cells.items.len) line.cells.items[x] else Cell.empty();
+        }
+
+        return grid.getCell(x, @as(u32, @intCast(combined_idx - hist_len)));
+    }
+
     pub fn yankSelection(self: *const CopyMode, allocator: std.mem.Allocator, grid: *const Grid) ![]const u8 {
         if (!self.selection.active) return try allocator.dupe(u8, "");
 
@@ -189,14 +204,14 @@ pub const CopyMode = struct {
         var result: std.ArrayListUnmanaged(u8) = .empty;
         errdefer result.deinit(allocator);
 
-        var y = sy;
-        while (y <= ey and y < grid.height) : (y += 1) {
-            const line_start = if (y == sy) sx else 0;
-            const line_end = if (y == ey) @min(ex, grid.width -| 1) else grid.width -| 1;
+        var screen_y = sy;
+        while (screen_y <= ey) : (screen_y += 1) {
+            const line_start = if (screen_y == sy) sx else 0;
+            const line_end = if (screen_y == ey) @min(ex, grid.width -| 1) else grid.width -| 1;
 
             var x = line_start;
             while (x <= line_end) : (x += 1) {
-                const cell = grid.getCell(x, y);
+                const cell = self.getCellAt(grid, x, screen_y);
                 if (cell.char != 0 and cell.char != ' ') {
                     var buf: [4]u8 = undefined;
                     const len = std.unicode.utf8Encode(cell.char, &buf) catch {
@@ -209,7 +224,7 @@ pub const CopyMode = struct {
                 }
             }
 
-            if (y < ey) {
+            if (screen_y < ey) {
                 try result.append(allocator, '\n');
             }
         }
@@ -974,6 +989,46 @@ test "yank multi-line selection" {
     defer testing.allocator.free(result);
     try testing.expect(std.mem.indexOf(u8, result, "A") != null);
     try testing.expect(std.mem.indexOf(u8, result, "B") != null);
+}
+
+test "yank selection from scrolled-back history" {
+    var cm = CopyMode.init(.vi);
+    var g = try Grid.init(testing.allocator, 10, 3);
+    defer g.deinit();
+
+    // Write content at top row that will scroll into history
+    g.writeChar(0, 0, 'X');
+    g.writeChar(1, 0, 'Y');
+    g.writeChar(2, 0, 'Z');
+
+    // Push that row into history, filling visible with empty lines
+    _ = try g.scrollUp();
+
+    // Write more content that also scrolls away
+    g.writeChar(0, 0, '1');
+    g.writeChar(1, 0, '2');
+    _ = try g.scrollUp();
+    g.writeChar(0, 0, '3');
+    g.writeChar(1, 0, '4');
+    _ = try g.scrollUp();
+
+    // history now has 3 lines: [XYZ], [12], [34]
+    // visible grid is empty
+    try testing.expectEqual(@as(usize, 3), g.history.items.len);
+
+    // Scroll back to see the first history line at screen_y=0
+    cm.scroll_offset = 3; // show history[0] at screen_y=0
+    cm.selection = .{
+        .start_x = 0,
+        .start_y = 0,
+        .end_x = 2,
+        .end_y = 0,
+        .active = true,
+    };
+
+    const result = try cm.yankSelection(testing.allocator, &g);
+    defer testing.allocator.free(result);
+    try testing.expectEqualStrings("XYZ", result);
 }
 
 test "search forward empty needle" {
