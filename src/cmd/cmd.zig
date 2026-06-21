@@ -151,6 +151,64 @@ fn cmdSelectWindow(server: *Server, args: []const []const u8) CmdResult {
     return .ok;
 }
 
+fn cmdMoveWindow(server: *Server, args: []const []const u8) CmdResult {
+    if (args.len < 2) return .err;
+    const session = server.activeSession() orelse return .err;
+    if (session.windows.items.len == 0) return .err;
+
+    var src_idx: usize = 0;
+    var dst_idx: usize = 0;
+
+    if (args.len == 2) {
+        const active = session.active_window orelse session.windows.items[0];
+        src_idx = for (session.windows.items, 0..) |w, idx| {
+            if (w == active) break idx;
+        } else return .err;
+        dst_idx = std.fmt.parseInt(usize, args[1], 10) catch return .err;
+    } else {
+        src_idx = std.fmt.parseInt(usize, args[1], 10) catch return .err;
+        dst_idx = std.fmt.parseInt(usize, args[2], 10) catch return .err;
+    }
+
+    if (src_idx >= session.windows.items.len or dst_idx >= session.windows.items.len) return .err;
+
+    const w = session.windows.orderedRemove(src_idx);
+    session.windows.insert(server.allocator, dst_idx, w) catch return .err;
+    return .ok;
+}
+
+fn cmdSwapWindow(server: *Server, args: []const []const u8) CmdResult {
+    const session = server.activeSession() orelse return .err;
+    if (session.windows.items.len == 0) return .err;
+
+    var src_idx: usize = 0;
+    var dst_idx: usize = 0;
+
+    if (args.len == 1) {
+        const active = session.active_window orelse session.windows.items[0];
+        src_idx = for (session.windows.items, 0..) |w, idx| {
+            if (w == active) break idx;
+        } else return .err;
+        dst_idx = if (src_idx + 1 < session.windows.items.len) src_idx + 1 else if (src_idx > 0) src_idx - 1 else src_idx;
+    } else if (args.len == 2) {
+        const active = session.active_window orelse session.windows.items[0];
+        src_idx = for (session.windows.items, 0..) |w, idx| {
+            if (w == active) break idx;
+        } else return .err;
+        dst_idx = std.fmt.parseInt(usize, args[1], 10) catch return .err;
+    } else {
+        src_idx = std.fmt.parseInt(usize, args[1], 10) catch return .err;
+        dst_idx = std.fmt.parseInt(usize, args[2], 10) catch return .err;
+    }
+
+    if (src_idx >= session.windows.items.len or dst_idx >= session.windows.items.len) return .err;
+
+    const tmp = session.windows.items[src_idx];
+    session.windows.items[src_idx] = session.windows.items[dst_idx];
+    session.windows.items[dst_idx] = tmp;
+    return .ok;
+}
+
 fn cmdSelectPane(server: *Server, args: []const []const u8) CmdResult {
     if (args.len < 2) return .err;
     const session = server.activeSession() orelse return .err;
@@ -557,6 +615,22 @@ pub const commands = struct {
         .args_usage = "index",
         .exec = cmdSelectWindow,
     };
+    pub const move_window = CmdEntry{
+        .name = "move-window",
+        .alias = "movew",
+        .min_args = 1,
+        .max_args = 2,
+        .args_usage = "[src-index] dst-index",
+        .exec = cmdMoveWindow,
+    };
+    pub const swap_window = CmdEntry{
+        .name = "swap-window",
+        .alias = "swapw",
+        .min_args = 0,
+        .max_args = 2,
+        .args_usage = "[src-index] [dst-index]",
+        .exec = cmdSwapWindow,
+    };
     pub const next_window = CmdEntry{
         .name = "next-window",
         .alias = "next",
@@ -689,6 +763,8 @@ fn cmdTable() []const *const CmdEntry {
             &commands.kill_window,
             &commands.rename_window,
             &commands.select_window,
+            &commands.move_window,
+            &commands.swap_window,
             &commands.next_window,
             &commands.prev_window,
             &commands.last_window,
@@ -1125,9 +1201,9 @@ test "last-window switches to non-active" {
     try testing.expectEqual(session.windows.items[0], session.active_window.?);
 }
 
-test "cmd table has 29 entries" {
+test "cmd table has 31 entries" {
     const table = cmdTable();
-    try testing.expectEqual(@as(usize, 29), table.len);
+    try testing.expectEqual(@as(usize, 31), table.len);
 }
 
 test "lookup all new commands" {
@@ -1152,6 +1228,8 @@ test "lookup all new commands" {
     try testing.expect(lookup("resize-pane") != null);
     try testing.expect(lookup("attach-session") != null);
     try testing.expect(lookup("switch-client") != null);
+    try testing.expect(lookup("move-window") != null);
+    try testing.expect(lookup("swap-window") != null);
 }
 
 test "lookup aliases" {
@@ -1173,6 +1251,8 @@ test "lookup aliases" {
     try testing.expectEqualStrings("source-file", lookup("source").?.name);
     try testing.expectEqualStrings("attach-session", lookup("attach").?.name);
     try testing.expectEqualStrings("switch-client", lookup("switchc").?.name);
+    try testing.expectEqualStrings("move-window", lookup("movew").?.name);
+    try testing.expectEqualStrings("swap-window", lookup("swapw").?.name);
 }
 
 test "config commands exec" {
@@ -1283,5 +1363,39 @@ test "attach-session and switch-client exec" {
         defer c.deinit(testing.allocator);
         try testing.expectEqual(CmdResult.ok, c.exec(&server));
         try testing.expectEqualStrings("sess1", server.activeSession().?.name);
+    }
+}
+
+test "move-window and swap-window exec" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    const session = try server.newSession("test", 80, 24);
+    _ = try session.newWindow(server.allocator, "win1");
+    _ = try session.newWindow(server.allocator, "win2");
+
+    // Initially: win0 (test), win1, win2
+    try testing.expectEqualStrings("test", session.windows.items[0].name);
+    try testing.expectEqualStrings("win1", session.windows.items[1].name);
+    try testing.expectEqualStrings("win2", session.windows.items[2].name);
+
+    // move-window 0 2 -> moves win0 to index 2
+    {
+        var c = try parse("move-window 0 2", testing.allocator);
+        defer c.deinit(testing.allocator);
+        try testing.expectEqual(CmdResult.ok, c.exec(&server));
+        try testing.expectEqualStrings("win1", session.windows.items[0].name);
+        try testing.expectEqualStrings("win2", session.windows.items[1].name);
+        try testing.expectEqualStrings("test", session.windows.items[2].name);
+    }
+
+    // swap-window 0 1 -> swaps win1 and win2
+    {
+        var c = try parse("swap-window 0 1", testing.allocator);
+        defer c.deinit(testing.allocator);
+        try testing.expectEqual(CmdResult.ok, c.exec(&server));
+        try testing.expectEqualStrings("win2", session.windows.items[0].name);
+        try testing.expectEqualStrings("win1", session.windows.items[1].name);
+        try testing.expectEqualStrings("test", session.windows.items[2].name);
     }
 }
