@@ -140,7 +140,9 @@ pub fn keysEqual(a: Key, b: Key) bool {
     return switch (a) {
         .char => |ac| blk: {
             const bc = b.char;
-            break :blk ac.code == bc.code and
+            const ac_code = if (ac.mod.ctrl and ac.code <= 127) std.ascii.toLower(@as(u8, @intCast(ac.code))) else ac.code;
+            const bc_code = if (bc.mod.ctrl and bc.code <= 127) std.ascii.toLower(@as(u8, @intCast(bc.code))) else bc.code;
+            break :blk ac_code == bc_code and
                 ac.mod.ctrl == bc.mod.ctrl and
                 ac.mod.alt == bc.mod.alt and
                 ac.mod.shift == bc.mod.shift;

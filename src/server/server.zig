@@ -281,6 +281,15 @@ pub const Server = struct {
                     session.setActiveWindow(session.windows.items[idx]);
                 }
             },
+            .copy_mode => {
+                pane.screen.copy_mode = @import("../mode_copy.zig").CopyMode.init(.vi);
+                pane.screen.copy_mode.?.enter(&pane.screen.grid);
+            },
+            .paste_buffer => {
+                if (self.paste_buffer) |pb| {
+                    try pane.writeStr(pb);
+                }
+            },
             else => {},
         }
 
@@ -298,17 +307,20 @@ pub const Server = struct {
             self.loop.running = false;
             return;
         }
+        try self.processInput(buf[0..@as(usize, @intCast(n))]);
+    }
 
+    pub fn processInput(self: *Server, buf: []const u8) !void {
         const session = self.activeSession() orelse return;
         const window = session.active_window orelse return;
         const pane = window.active_pane orelse return;
         const pty = &(pane.pty orelse return);
 
         var i: usize = 0;
-        var esc_buf = std.ArrayList(u8).init(self.allocator);
-        defer esc_buf.deinit();
+        var esc_buf: std.ArrayList(u8) = .empty;
+        defer esc_buf.deinit(self.allocator);
 
-        while (i < n) : (i += 1) {
+        while (i < buf.len) : (i += 1) {
             const byte = buf[i];
 
             if (pane.screen.copy_mode) |*cm| {
@@ -364,8 +376,8 @@ pub const Server = struct {
                     }
                 }
             } else {
-                if (self.input_reader.state != .ground or byte == 0x1b) {
-                    try esc_buf.append(byte);
+                if (self.input_reader.state != .ground or byte == 0x1b or byte < 0x20) {
+                    try esc_buf.append(self.allocator, byte);
                     if (self.input_reader.feed(byte)) |event| {
                         var handled = false;
                         switch (event) {
@@ -762,4 +774,55 @@ test "server listen creates socket" {
     defer server.deinit();
     try server.listen();
     try testing.expect(server.listener_fd != null);
+}
+
+test "prefix interception and key dispatching" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    const s = try server.newSession("test", 80, 24);
+    const window = s.active_window.?;
+    const pane = window.active_pane.?;
+    
+    // Set up a mock pty so we don't try to spawn process/terminal in test.
+    pane.pty = try @import("pty.zig").Pty.open();
+
+    // Verify initial dispatcher state is normal.
+    try testing.expectEqual(@import("../key_binding.zig").PrefixState.normal, server.dispatcher.prefix_state);
+
+    // Feed Ctrl-B (0x02) - should change state to prefix_seen.
+    try server.processInput(&[_]u8{0x02});
+    try testing.expectEqual(@import("../key_binding.zig").PrefixState.prefix_seen, server.dispatcher.prefix_state);
+
+    // Feed 'c' - should execute new-window action, returning state to normal, and creating a second window.
+    try server.processInput("c");
+    try testing.expectEqual(@import("../key_binding.zig").PrefixState.normal, server.dispatcher.prefix_state);
+    try testing.expectEqual(@as(usize, 2), s.windows.items.len);
+
+    const active_win = s.active_window.?;
+    const active_pane = active_win.active_pane.?;
+    active_pane.pty = try @import("pty.zig").Pty.open();
+
+    // Test copy-mode activation
+    try testing.expect(active_pane.screen.copy_mode == null);
+    try server.processInput(&[_]u8{ 0x02, '[' }); // Ctrl-b + [
+    try testing.expect(active_pane.screen.copy_mode != null);
+
+    // Exit copy mode by sending 'q'
+    try server.processInput("q");
+    try testing.expect(active_pane.screen.copy_mode == null);
+
+    // Test paste-buffer
+    server.paste_buffer = try server.allocator.dupe(u8, "pasted-content");
+    try server.processInput(&[_]u8{ 0x02, ']' }); // Ctrl-b + ]
+    
+    // Check that grid has the pasted content
+    var line_buf: [14]u8 = undefined;
+    var line_idx: usize = 0;
+    const line = active_pane.screen.grid.lines.items[0];
+    for (line.cells.items[0..14]) |cell| {
+        line_buf[line_idx] = @as(u8, @intCast(cell.char));
+        line_idx += 1;
+    }
+    try testing.expectEqualStrings("pasted-content", line_buf[0..line_idx]);
 }
