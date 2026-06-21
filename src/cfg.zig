@@ -215,10 +215,7 @@ pub fn parseValue(allocator: std.mem.Allocator, s: []const u8) !OptionValue {
     }
 
     // Key
-    if (s.len > 0) {
-        // Try parsing key name
-        _ = key;
-    }
+    if (key.parseKeyName(s)) |k| return OptionValue{ .key = k } else |_| {}
 
     // Default to string
     return OptionValue{ .string = try allocator.dupe(u8, s) };
@@ -517,4 +514,23 @@ test "unbind-key directive" {
     try testing.expectEqualStrings("root", d.unbind_key.flags.key_table.?);
     try testing.expectEqual(@as(u21, 'b'), d.unbind_key.key.char.code);
     try testing.expect(d.unbind_key.key.char.mod.ctrl);
+}
+
+test "parseValue key" {
+    const v1 = try parseValue(testing.allocator, "C-b");
+    defer if (v1 == .string) testing.allocator.free(v1.string);
+    try testing.expect(v1 == .key);
+    try testing.expectEqual(@as(u21, 'b'), v1.key.char.code);
+    try testing.expect(v1.key.char.mod.ctrl);
+
+    const v2 = try parseValue(testing.allocator, "M-v");
+    defer if (v2 == .string) testing.allocator.free(v2.string);
+    try testing.expect(v2 == .key);
+    try testing.expectEqual(@as(u21, 'v'), v2.key.char.code);
+    try testing.expect(v2.key.char.mod.alt);
+
+    const v3 = try parseValue(testing.allocator, "hello");
+    defer if (v3 == .string) testing.allocator.free(v3.string);
+    try testing.expect(v3 == .string);
+    try testing.expectEqualStrings("hello", v3.string);
 }
