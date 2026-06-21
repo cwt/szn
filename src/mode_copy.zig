@@ -154,6 +154,30 @@ pub const CopyMode = struct {
         self.selection.active = false;
     }
 
+    pub fn isSelected(self: CopyMode, x: u32, y: u32) bool {
+        if (!self.selection.active) return false;
+        const sy = @min(self.selection.start_y, self.selection.end_y);
+        const ey = @max(self.selection.start_y, self.selection.end_y);
+        if (y < sy or y > ey) return false;
+
+        const start_is_top = (sy == self.selection.start_y);
+        const sx = if (start_is_top) self.selection.start_x else self.selection.end_x;
+        const ex = if (start_is_top) self.selection.end_x else self.selection.start_x;
+
+        if (sy == ey) {
+            const min_x = @min(sx, ex);
+            const max_x = @max(sx, ex);
+            return x >= min_x and x <= max_x;
+        }
+        if (y == sy) {
+            return x >= sx;
+        }
+        if (y == ey) {
+            return x <= ex;
+        }
+        return true;
+    }
+
     pub fn yankSelection(self: *const CopyMode, allocator: std.mem.Allocator, grid: *const Grid) ![]const u8 {
         if (!self.selection.active) return try allocator.dupe(u8, "");
 

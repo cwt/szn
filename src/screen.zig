@@ -47,11 +47,13 @@ pub const Screen = struct {
     scroll_region: ?[2]u32 = null,
     cur_cell: Cell = Cell.empty(),
     dirty: bool = true,
+    copy_mode: ?@import("mode_copy.zig").CopyMode = null,
 
     pub fn init(allocator: std.mem.Allocator, width: u32, height: u32) !Screen {
         return Screen{
             .allocator = allocator,
             .grid = try Grid.init(allocator, width, height),
+            .copy_mode = null,
         };
     }
 

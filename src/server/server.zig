@@ -294,59 +294,118 @@ pub const Server = struct {
         while (i < n) : (i += 1) {
             const byte = buf[i];
 
-            if (self.input_reader.state != .ground or byte == 0x1b) {
-                try esc_buf.append(byte);
+            if (pane.screen.copy_mode) |*cm| {
                 if (self.input_reader.feed(byte)) |event| {
-                    var handled = false;
                     switch (event) {
                         .key => |k| {
                             if (self.dispatcher.prefix_state == .normal) {
                                 if (@import("../key_binding.zig").keysEqual(k, self.dispatcher.prefix)) {
                                     self.dispatcher.prefix_state = .prefix_seen;
-                                    handled = true;
+                                } else {
+                                    var is_yank = false;
+                                    if (k == .char and k.char.code == 'y' and !k.char.mod.ctrl and !k.char.mod.alt) {
+                                        is_yank = true;
+                                    } else if (k == .special and k.special.key == .enter) {
+                                        is_yank = true;
+                                    }
+
+                                    if (is_yank and cm.selection.active) {
+                                        if (self.paste_buffer) |pb| {
+                                            self.allocator.free(pb);
+                                        }
+                                        self.paste_buffer = cm.yankSelection(self.allocator, &pane.screen.grid) catch null;
+                                        pane.screen.copy_mode = null;
+                                        pane.dirty = true;
+                                    } else {
+                                        const res = cm.handleKey(k, &pane.screen.grid);
+                                        switch (res) {
+                                            .consumed => {
+                                                pane.dirty = true;
+                                            },
+                                            .exit_mode => {
+                                                pane.screen.copy_mode = null;
+                                                pane.dirty = true;
+                                            },
+                                            .ignored => {},
+                                        }
+                                    }
                                 }
                             } else {
                                 self.dispatcher.prefix_state = .normal;
                                 if (self.dispatcher.prefix_table.lookup(k)) |action| {
                                     self.executeAction(action) catch {};
                                 }
-                                handled = true;
                             }
                         },
                         .mouse => |m| {
                             const mouse_opt = session.options.asFlag("mouse") orelse false;
                             if (mouse_opt and m.button == .left) {
                                 self.handleMouseFocus(m.x, m.y) catch {};
-                                handled = true;
                             }
                         },
                         else => {},
                     }
-
-                    if (!handled) {
-                        pty.writeInput(esc_buf.items) catch {};
-                    }
-                    esc_buf.clearRetainingCapacity();
-                } else if (self.input_reader.state == .ground) {
-                    pty.writeInput(esc_buf.items) catch {};
-                    esc_buf.clearRetainingCapacity();
                 }
             } else {
-                if (self.dispatcher.prefix_state == .normal) {
-                    pty.writeInput(&[_]u8{byte}) catch {};
-                } else {
+                if (self.input_reader.state != .ground or byte == 0x1b) {
+                    try esc_buf.append(byte);
                     if (self.input_reader.feed(byte)) |event| {
-                        self.dispatcher.prefix_state = .normal;
+                        var handled = false;
                         switch (event) {
                             .key => |k| {
-                                if (self.dispatcher.prefix_table.lookup(k)) |action| {
-                                    self.executeAction(action) catch {};
+                                if (self.dispatcher.prefix_state == .normal) {
+                                    if (@import("../key_binding.zig").keysEqual(k, self.dispatcher.prefix)) {
+                                        self.dispatcher.prefix_state = .prefix_seen;
+                                        handled = true;
+                                    }
+                                } else {
+                                    self.dispatcher.prefix_state = .normal;
+                                    if (self.dispatcher.prefix_table.lookup(k)) |action| {
+                                        self.executeAction(action) catch {};
+                                    }
+                                    handled = true;
+                                }
+                            },
+                            .mouse => |m| {
+                                const mouse_opt = session.options.asFlag("mouse") orelse false;
+                                if (mouse_opt and m.button == .left) {
+                                    self.handleMouseFocus(m.x, m.y) catch {};
+                                    handled = true;
                                 }
                             },
                             else => {},
                         }
+
+                        if (!handled) {
+                            pty.writeInput(esc_buf.items) catch {};
+                        }
+                        esc_buf.clearRetainingCapacity();
+                    } else if (self.input_reader.state == .ground) {
+                        pty.writeInput(esc_buf.items) catch {};
+                        esc_buf.clearRetainingCapacity();
                     }
-                    self.input_reader.reset();
+                } else {
+                    if (self.dispatcher.prefix_state == .normal) {
+                        pty.writeInput(&[_]u8{byte}) catch {};
+                    } else {
+                        if (self.input_reader.feed(byte)) |event| {
+                            self.dispatcher.prefix_state = .normal;
+                            switch (event) {
+                                .key => |k| {
+                                    if (self.dispatcher.prefix_table.lookup(k)) |action| {
+                                        self.executeAction(action) catch {};
+                                    }
+                                },
+                                .mouse => |m| {
+                                    const mouse_opt = session.options.asFlag("mouse") orelse false;
+                                    if (mouse_opt and m.button == .left) {
+                                        self.handleMouseFocus(m.x, m.y) catch {};
+                                    }
+                                },
+                                else => {},
+                            }
+                        }
+                    }
                 }
             }
         }

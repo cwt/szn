@@ -381,6 +381,17 @@ fn cmdPasteBuffer(server: *Server, args: []const []const u8) CmdResult {
     return .ok;
 }
 
+fn cmdCopyMode(server: *Server, args: []const []const u8) CmdResult {
+    _ = args;
+    const session = server.activeSession() orelse return .err;
+    const window = session.active_window orelse return .err;
+    const pane = window.active_pane orelse return .err;
+    pane.screen.copy_mode = @import("../mode_copy.zig").CopyMode.init(.vi);
+    pane.screen.copy_mode.?.enter(&pane.screen.grid);
+    pane.dirty = true;
+    return .ok;
+}
+
 fn cmdRotateWindow(server: *Server, _: []const []const u8) CmdResult {
     const session = server.activeSession() orelse return .err;
     const window = session.active_window orelse return .err;
@@ -935,6 +946,14 @@ pub const commands = struct {
         .args_usage = "",
         .exec = cmdPasteBuffer,
     };
+    pub const copy_mode = CmdEntry{
+        .name = "copy-mode",
+        .alias = null,
+        .min_args = 0,
+        .max_args = 0,
+        .args_usage = "",
+        .exec = cmdCopyMode,
+    };
 };
 
 fn cmdTable() []const *const CmdEntry {
@@ -975,6 +994,7 @@ fn cmdTable() []const *const CmdEntry {
             &commands.join_pane,
             &commands.break_pane,
             &commands.paste_buffer,
+            &commands.copy_mode,
         };
         break :blk &entries;
     };
@@ -1390,12 +1410,13 @@ test "last-window switches to non-active" {
     try testing.expectEqual(session.windows.items[0], session.active_window.?);
 }
 
-test "cmd table has 35 entries" {
+test "cmd table has 36 entries" {
     const table = cmdTable();
-    try testing.expectEqual(@as(usize, 35), table.len);
+    try testing.expectEqual(@as(usize, 36), table.len);
 }
 
 test "lookup all new commands" {
+    try testing.expect(lookup("copy-mode") != null);
     try testing.expect(lookup("paste-buffer") != null);
     try testing.expect(lookup("rename-session") != null);
     try testing.expect(lookup("rename-window") != null);
@@ -1661,4 +1682,22 @@ test "paste-buffer exec" {
     try testing.expectEqual(@as(u21, 'h'), pane.screen.grid.getCell(0, 0).char);
     try testing.expectEqual(@as(u21, 'e'), pane.screen.grid.getCell(1, 0).char);
     try testing.expectEqual(@as(u21, 'l'), pane.screen.grid.getCell(2, 0).char);
+}
+
+test "copy-mode exec" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    const session = try server.newSession("test", 80, 24);
+    const win = session.active_window.?;
+    const pane = win.active_pane.?;
+
+    try testing.expect(pane.screen.copy_mode == null);
+
+    var c = try parse("copy-mode", testing.allocator);
+    defer c.deinit(testing.allocator);
+    try testing.expectEqual(CmdResult.ok, c.exec(&server));
+
+    try testing.expect(pane.screen.copy_mode != null);
+    try testing.expect(pane.screen.copy_mode.?.active);
 }

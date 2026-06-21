@@ -32,7 +32,11 @@ pub const Display = struct {
 
         // Restore physical cursor to the pane's virtual cursor position
         if (screen.cursor.visible) {
-            try self.moveTo(screen.cursor.x, screen.cursor.y);
+            if (screen.copy_mode) |cm| {
+                try self.moveTo(cm.cursor_x, cm.cursor_y);
+            } else {
+                try self.moveTo(screen.cursor.x, screen.cursor.y);
+            }
             _ = c.write(self.fd, "\x1b[?25h", 6);
         }
     }
@@ -40,7 +44,6 @@ pub const Display = struct {
     fn renderContent(self: Display, screen: *Screen) !void {
         const h = @min(screen.grid.height, self.sy - 1);
         const w = @min(screen.grid.width, self.sx);
-        const lines = screen.grid.lines;
 
         var active_fg = Colour.default_();
         var active_bg = Colour.default_();
@@ -50,10 +53,27 @@ pub const Display = struct {
         if (c.write(self.fd, "\x1b[m", 3) < 0) return error.WriteFailed;
 
         for (0..h) |y| {
-            const cells = lines.items[y].cells;
+            const combined_idx = (@as(isize, @intCast(screen.grid.history.items.len)) - @as(isize, @intCast(if (screen.copy_mode) |cm| cm.scroll_offset else 0))) + @as(isize, @intCast(y));
+            const cells = if (combined_idx < 0)
+                @as(?*const std.ArrayListUnmanaged(Cell), null)
+            else if (combined_idx < screen.grid.history.items.len)
+                &screen.grid.history.items[@intCast(combined_idx)].cells
+            else blk: {
+                const visible_y = combined_idx - @as(isize, @intCast(screen.grid.history.items.len));
+                break :blk if (visible_y < screen.grid.lines.items.len)
+                    &screen.grid.lines.items[@intCast(visible_y)].cells
+                else
+                    @as(?*const std.ArrayListUnmanaged(Cell), null);
+            };
+
             try self.moveTo(0, @intCast(y));
             for (0..w) |x| {
-                const cell = if (x < cells.items.len) cells.items[x] else Cell.empty();
+                var cell = if (cells) |cls| (if (x < cls.items.len) cls.items[x] else Cell.empty()) else Cell.empty();
+                if (screen.copy_mode) |cm| {
+                    if (cm.isSelected(@intCast(x), @intCast(y))) {
+                        cell.attr.reverse = !cell.attr.reverse;
+                    }
+                }
 
                 if (@as(u32, @bitCast(cell.fg)) != @as(u32, @bitCast(active_fg)) or
                     @as(u32, @bitCast(cell.bg)) != @as(u32, @bitCast(active_bg)) or
