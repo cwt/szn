@@ -779,7 +779,13 @@ pub const Server = struct {
                 .set => |s| {
                     self.global_options.set(s.option, s.value) catch |err| {
                         if (err == error.UnknownOption) {
-                            try self.global_window_options.set(s.option, s.value);
+                            self.global_window_options.set(s.option, s.value) catch |err2| {
+                                if (err2 == error.UnknownOption) {
+                                    std.log.warn("unknown option: {s}", .{s.option});
+                                } else {
+                                    return err2;
+                                }
+                            };
                         } else {
                             return err;
                         }
@@ -859,25 +865,25 @@ pub const Server = struct {
     pub fn loadDefaultConfig(self: *Server) !void {
         if (std.c.getenv("HOME")) |home_ptr| {
             const home = std.mem.span(home_ptr);
-            const zmux_path = try std.fs.path.join(self.allocator, &[_][]const u8{ home, ".zmux.conf" });
-            defer self.allocator.free(zmux_path);
 
-            const zmux_path_z = try self.allocator.dupeZ(u8, zmux_path);
-            defer self.allocator.free(zmux_path_z);
+            const config_paths = &[_][]const u8{
+                ".config/zmux/zmux.conf",
+                ".zmux.conf",
+                ".config/tmux/tmux.conf",
+                ".tmux.conf",
+            };
 
-            if (access(zmux_path_z.ptr, 0) == 0) {
-                try self.loadConfigFile(zmux_path);
-                return;
-            }
+            for (config_paths) |sub_path| {
+                const path = try std.fs.path.join(self.allocator, &[_][]const u8{ home, sub_path });
+                defer self.allocator.free(path);
 
-            const tmux_path = try std.fs.path.join(self.allocator, &[_][]const u8{ home, ".tmux.conf" });
-            defer self.allocator.free(tmux_path);
+                const path_z = try self.allocator.dupeZ(u8, path);
+                defer self.allocator.free(path_z);
 
-            const tmux_path_z = try self.allocator.dupeZ(u8, tmux_path);
-            defer self.allocator.free(tmux_path_z);
-
-            if (access(tmux_path_z.ptr, 0) == 0) {
-                try self.loadConfigFile(tmux_path);
+                if (access(path_z.ptr, 0) == 0) {
+                    try self.loadConfigFile(path);
+                    return;
+                }
             }
         }
     }
