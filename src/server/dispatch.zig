@@ -12,9 +12,12 @@ pub const DispatchResult = struct {
     response_type: MessageType,
     data: []const u8,
     allocator: std.mem.Allocator,
+    is_owned: bool,
 
     pub fn deinit(self: *DispatchResult) void {
-        self.allocator.free(self.data);
+        if (self.is_owned) {
+            self.allocator.free(self.data);
+        }
     }
 };
 
@@ -34,39 +37,51 @@ pub fn dispatchCommand(allocator: std.mem.Allocator, server: *Server, cmd_line: 
         };
         return .{
             .response_type = .err,
-            .data = allocator.dupe(u8, msg) catch "error",
+            .data = msg,
             .allocator = allocator,
+            .is_owned = false,
         };
     };
     defer parsed.deinit(allocator);
 
     const result = parsed.exec(server);
     return switch (result) {
-        .ok => .{
-            .response_type = .ready,
-            .data = if (server.response_buf.items.len > 0)
-                allocator.dupe(u8, server.response_buf.items) catch allocator.dupe(u8, "ok") catch "ok"
+        .ok => blk: {
+            const has_buf = server.response_buf.items.len > 0;
+            const duped: ?[]const u8 = if (has_buf)
+                allocator.dupe(u8, server.response_buf.items) catch null
             else
-                allocator.dupe(u8, "ok") catch "ok",
-            .allocator = allocator,
+                null;
+            break :blk .{
+                .response_type = .ready,
+                .data = duped orelse "ok",
+                .allocator = allocator,
+                .is_owned = duped != null,
+            };
         },
-        .err => .{
-            .response_type = .err,
-            .data = if (server.response_buf.items.len > 0)
-                allocator.dupe(u8, server.response_buf.items) catch allocator.dupe(u8, "command failed") catch "error"
+        .err => blk: {
+            const duped: ?[]const u8 = if (server.response_buf.items.len > 0)
+                allocator.dupe(u8, server.response_buf.items) catch null
             else
-                allocator.dupe(u8, "command failed") catch "error",
-            .allocator = allocator,
+                null;
+            break :blk .{
+                .response_type = .err,
+                .data = duped orelse "command failed",
+                .allocator = allocator,
+                .is_owned = duped != null,
+            };
         },
         .wait => .{
             .response_type = .ready,
-            .data = allocator.dupe(u8, "waiting") catch "waiting",
+            .data = "waiting",
             .allocator = allocator,
+            .is_owned = false,
         },
         .stop => .{
             .response_type = .exit,
-            .data = allocator.dupe(u8, &[_]u8{0}) catch &[0]u8{},
+            .data = &[1]u8{0},
             .allocator = allocator,
+            .is_owned = false,
         },
     };
 }
@@ -211,6 +226,16 @@ test "dispatch multiple commands in sequence" {
     }
 
     try testing.expectEqual(@as(usize, 1), server.sessions.items.len);
+}
+
+test "dispatch result deinit handles non-owned data" {
+    var result = DispatchResult{
+        .response_type = .err,
+        .data = "static string literal",
+        .allocator = testing.allocator,
+        .is_owned = false,
+    };
+    result.deinit();
 }
 
 test "dispatch kill-window" {
