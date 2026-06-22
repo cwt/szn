@@ -372,6 +372,8 @@ When `POLL.IN` + `POLL.HUP` arrive simultaneously, `feedPty` catches `ProcessExi
 ### 53. Mouse escape sequence bytes leak to child PTY when pane doesn't want mouse events
 **File:** `src/server/server.zig:623–646`
 **Severity:** HIGH
+**Status:** ✅ FIXED — mouse event handler in server.zig updated to discard all mouse events (handled = true) if session mouse option is disabled, preventing leaks.
+
 
 ```zig
 .mouse => |m| {
@@ -592,7 +594,7 @@ When a wheel event has the release bit set (button + 0x20), `wheel_up` detection
 | Severity | Count | Fixed | False Positive | Unresolved |
 |----------|-------|-------|----------------|------------|
 | Critical | 10 | 7 | 3 | 0 |
-| High | 18 | 16 | 1 | 1 |
+| High | 18 | 17 | 1 | 0 |
 | Medium | 16 | 12 | 1 | 3 |
 | Low | 19 | 12 | 1 | 6 |
-| **Total** | **63** | **47** | **6** | **10** |
+| **Total** | **63** | **48** | **6** | **9** |

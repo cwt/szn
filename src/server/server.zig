@@ -616,14 +616,18 @@ pub const Server = struct {
                             },
                             .mouse => |m| {
                                 const mouse_opt = session.options.asFlag("mouse") orelse false;
-                                if (mouse_opt and m.button == .left) {
-                                    self.handleMouseFocus(m.x, m.y) catch {};
-                                    handled = true;
-                                }
-                                const wants_mouse = pane.screen.mode.mouse_standard or
-                                    pane.screen.mode.mouse_button or
-                                    pane.screen.mode.mouse_sgr;
-                                if (!wants_mouse) {
+                                if (mouse_opt) {
+                                    if (m.button == .left) {
+                                        self.handleMouseFocus(m.x, m.y) catch {};
+                                        handled = true;
+                                    }
+                                    const wants_mouse = pane.screen.mode.mouse_standard or
+                                        pane.screen.mode.mouse_button or
+                                        pane.screen.mode.mouse_sgr;
+                                    if (!wants_mouse) {
+                                        handled = true;
+                                    }
+                                } else {
                                     handled = true;
                                 }
                             },
@@ -1308,3 +1312,57 @@ test "resolve shell option and env and database" {
     try testing.expect(shell.len > 0);
     try testing.expect(shell[0] == '/');
 }
+
+test "mouse event filtering based on mouse_opt" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    const s = try server.newSession("test", 80, 24);
+    const window = s.active_window.?;
+    const pane = window.active_pane.?;
+    pane.pty = try @import("pty.zig").Pty.open();
+
+    const fd = pane.pty.?.slave;
+    // Set non-blocking mode on slave PTY so we can read immediately without newline.
+    const c_fcntl = struct {
+        extern "c" fn fcntl(fd: c_int, cmd: c_int, ...) c_int;
+    }.fcntl;
+    const F_GETFL = 3;
+    const F_SETFL = 4;
+    const O_NONBLOCK = 0x0004;
+
+    const flags = c_fcntl(fd, F_GETFL, @as(c_int, 0));
+    _ = c_fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+
+    // 1. By default, mouse_opt is false. Feed mouse SGR sequence.
+    try server.processInput("\x1b[<64;10;5M");
+    // Feed a newline to flush the canonical mode buffer.
+    try server.processInput("\n");
+
+    // Verify it was NOT forwarded to the PTY (should only contain the newline).
+    var buf: [128]u8 = undefined;
+    var n = std.posix.read(fd, &buf) catch |err| blk: {
+        if (err == error.WouldBlock) break :blk @as(usize, 0) else return err;
+    };
+    try testing.expect(n > 0);
+    try testing.expectEqualStrings("\n", buf[0..n]);
+
+    // 2. Enable mouse option at session level.
+    try s.options.set("mouse", .{ .flag = true });
+
+    // Enable mouse reporting inside pane mode so it wants mouse
+    pane.screen.mode.mouse_sgr = true;
+
+    // Feed scroll wheel mouse SGR sequence again.
+    try server.processInput("\x1b[<64;10;5M");
+    // Feed a newline to flush the canonical mode buffer.
+    try server.processInput("\n");
+
+    // Verify it WAS forwarded (contains both the mouse sequence and the newline).
+    n = std.posix.read(fd, &buf) catch |err| blk: {
+        if (err == error.WouldBlock) break :blk @as(usize, 0) else return err;
+    };
+    try testing.expect(n > 0);
+    try testing.expectEqualStrings("\x1b[<64;10;5M\n", buf[0..n]);
+}
+
