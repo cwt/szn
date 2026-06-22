@@ -120,7 +120,7 @@ pub const Display = struct {
         }
 
         if (active_bounds) |ab| {
-            const cursor_visible = active_pane.screen.cursor.visible;
+            const cursor_visible = active_pane.screen.mode.cursor;
             merged_screen.cursor.visible = cursor_visible;
             if (cursor_visible) {
                 const pane_cx = if (active_pane.screen.copy_mode) |cm| cm.cursor_x else active_pane.screen.cursor.x;
@@ -445,5 +445,45 @@ test "renderStatusBar with long window name" {
     // Verify it renders the long window name successfully
     try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "very_long_window_name_that_previously_would_have_failed") != null);
 }
+
+test "renderAll cursor visibility hide" {
+    const allocator = std.testing.allocator;
+    var capture_buf: std.ArrayList(u8) = .empty;
+    defer capture_buf.deinit(allocator);
+
+    const display = Display{
+        .fd = -1,
+        .sx = 80,
+        .sy = 24,
+        .capture = &capture_buf,
+        .capture_allocator = allocator,
+    };
+
+    var win = try Window.init(allocator, 1, "test-win", 80, 23, null);
+    defer win.deinit(allocator);
+
+    const pane = win.active_pane.?;
+    pane.screen.mode.cursor = false; // Hide cursor
+
+    const bounds = [_]PaneBounds{.{
+        .pane = pane,
+        .x = 0,
+        .y = 0,
+        .w = 80,
+        .h = 23,
+    }};
+
+    const windows = [_]*Window{&win};
+    
+    const Node = @import("../layout.zig").Node;
+    const node = Node{ .leaf = pane };
+
+    try display.renderAll(allocator, &bounds, pane, "my-session", &windows, &win, &node);
+
+    // Verify the cursor was NOT shown at the end
+    const has_show_cursor = std.mem.indexOf(u8, capture_buf.items, "\x1b[?25h") != null;
+    try std.testing.expect(!has_show_cursor);
+}
+
 
 
