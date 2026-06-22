@@ -235,19 +235,13 @@ pub const Server = struct {
             pane.feedPty() catch |err| {
                 if (err == error.ProcessExited) {
                     std.log.info("pty process exited", .{});
-                    self.loop.removeFd(ev.fd);
-                    exited = true;
                 } else {
                     std.log.warn("pty feed error: {any}", .{err});
-                    self.loop.removeFd(ev.fd);
-                    exited = true;
                 }
+                self.loop.removeFd(ev.fd);
+                exited = true;
             };
         } else if (has_hup or has_err) {
-            if (pane.pty) |*pty| {
-                pty.deinit();
-            }
-            pane.pty = null;
             self.loop.removeFd(ev.fd);
             exited = true;
         }

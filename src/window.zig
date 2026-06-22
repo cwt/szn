@@ -91,11 +91,7 @@ pub const Pane = struct {
     pub fn feedPty(self: *Pane) Error!void {
         const pty = &(self.pty orelse return);
         var buf: [4096]u8 = undefined;
-        const n = pty.readOutput(&buf) catch |err| {
-            pty.deinit();
-            self.pty = null;
-            return err;
-        };
+        const n = try pty.readOutput(&buf);
         const parser = self.getParser();
         for (buf[0..n]) |byte| {
             try parser.advance(byte);
@@ -376,3 +372,12 @@ test "pane initial size matches window" {
     try testing.expectEqual(@as(u32, 100), window.panes.items[0].screen.grid.width);
     try testing.expectEqual(@as(u32, 40), window.panes.items[0].screen.grid.height);
 }
+
+test "pane pty deinit ownership" {
+    var pane = try Pane.init(testing.allocator, 1, 80, 24);
+    const argv = [_][]const u8{"true"};
+    try pane.spawn(testing.allocator, &argv);
+    try testing.expect(pane.pty != null);
+    pane.deinit();
+}
+

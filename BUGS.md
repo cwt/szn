@@ -337,6 +337,8 @@ if (mod.meta) { buf[pos] = 'M'; buf[pos + 1] = '-'; pos += 2; }
 ### 52. `feedPty` + `handlePtyEvent` race: PTY deinited in two different code paths
 **File:** `src/window.zig:91–104`, `src/server/server.zig:234–258`
 **Severity:** HIGH
+**Status:** ✅ FIXED — early PTY deinit removed from feedPty and handlePtyEvent; Pty is now solely deinited via Pane.deinit() during pane destruction.
+
 
 In `feedPty()`:
 ```zig
@@ -590,7 +592,7 @@ When a wheel event has the release bit set (button + 0x20), `wheel_up` detection
 | Severity | Count | Fixed | False Positive | Unresolved |
 |----------|-------|-------|----------------|------------|
 | Critical | 10 | 7 | 3 | 0 |
-| High | 18 | 15 | 1 | 2 |
+| High | 18 | 16 | 1 | 1 |
 | Medium | 16 | 12 | 1 | 3 |
 | Low | 19 | 12 | 1 | 6 |
-| **Total** | **63** | **46** | **6** | **11** |
+| **Total** | **63** | **47** | **6** | **10** |
