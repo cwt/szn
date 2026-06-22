@@ -10,6 +10,7 @@ pub const InputParser = struct {
     screen: *Screen,
     state: State = .ground,
     params: [16]u32 = undefined,
+    sub_params: [16]bool = undefined,
     param_count: u32 = 0,
     param_val: u32 = 0,
     collecting_param: bool = false,
@@ -65,6 +66,7 @@ pub const InputParser = struct {
 
     fn clearParams(self: *InputParser) void {
         for (&self.params) |*p| p.* = 0;
+        for (&self.sub_params) |*s| s.* = false;
         self.param_count = 0;
         self.param_val = 0;
         self.collecting_param = false;
@@ -233,6 +235,9 @@ pub const InputParser = struct {
             },
             ':' => {
                 self.pushParam();
+                if (self.param_count < self.sub_params.len) {
+                    self.sub_params[self.param_count] = true;
+                }
                 self.collecting_param = true;
                 self.params_started = true;
                 self.param_val = 0;
@@ -447,7 +452,7 @@ pub const InputParser = struct {
                 var i: u32 = 0;
                 while (i < self.param_count) : (i += 1) {
                     if (i > 0) {
-                        buf[len] = ';';
+                        buf[len] = if (self.sub_params[i]) ':' else ';';
                         len += 1;
                     }
                     const p_str = std.fmt.bufPrint(buf[len..], "{}", .{self.params[i]}) catch {
@@ -1023,6 +1028,29 @@ test "SGR double underline" {
     try parser.feed("\x1b[21mA");
     try testing.expect(screen.grid.getCell(0, 0).attr.double_underline);
 }
+
+test "SGR subparameter double/curly underline" {
+    var screen = try Screen.init(testing.allocator, 10, 3);
+    defer screen.deinit();
+    var parser = InputParser.init(&screen);
+
+    // Test double underline 4:2
+    try parser.feed("\x1b[4:2mA");
+    try testing.expect(screen.grid.getCell(0, 0).attr.double_underline);
+    try testing.expect(!screen.grid.getCell(0, 0).attr.underline);
+
+    // Test curly underline 4:3
+    try parser.feed("\x1b[4:3mB");
+    try testing.expect(screen.grid.getCell(1, 0).attr.curly_underline);
+    try testing.expect(!screen.grid.getCell(1, 0).attr.underline);
+
+    // Test turn off underlines 24
+    try parser.feed("\x1b[24mC");
+    try testing.expect(!screen.grid.getCell(2, 0).attr.underline);
+    try testing.expect(!screen.grid.getCell(2, 0).attr.double_underline);
+    try testing.expect(!screen.grid.getCell(2, 0).attr.curly_underline);
+}
+
 
 test "SGR reset fg default" {
     var screen = try Screen.init(testing.allocator, 10, 3);

@@ -304,6 +304,8 @@ When a pane has `DECSTBM` set (e.g. `\e[2;4r`), text that autowraps at the regio
 ### 50. Double-underline and curly-underline both render as plain underline (SGR 4)
 **File:** `src/server/render.zig:272–276`
 **Severity:** HIGH
+**Status:** ✅ FIXED — render.zig updated to emit 4:2 and 4:3, input.zig SGR parsing updated to split on ':' to parse subparameters.
+
 
 ```zig
 const attrFields = comptime blk: {
@@ -586,7 +588,7 @@ When a wheel event has the release bit set (button + 0x20), `wheel_up` detection
 | Severity | Count | Fixed | False Positive | Unresolved |
 |----------|-------|-------|----------------|------------|
 | Critical | 10 | 7 | 3 | 0 |
-| High | 18 | 13 | 1 | 4 |
+| High | 18 | 14 | 1 | 3 |
 | Medium | 16 | 12 | 1 | 3 |
 | Low | 19 | 12 | 1 | 6 |
-| **Total** | **63** | **44** | **6** | **13** |
+| **Total** | **63** | **45** | **6** | **12** |

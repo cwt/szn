@@ -394,13 +394,31 @@ pub const Screen = struct {
         }
         var it = std.mem.splitScalar(u8, params, ';');
         while (it.next()) |p_str| {
-            const p = std.fmt.parseInt(u8, p_str, 10) catch continue;
+            var sub_it = std.mem.splitScalar(u8, p_str, ':');
+            const main_str = sub_it.next() orelse continue;
+            const p = std.fmt.parseInt(u8, main_str, 10) catch continue;
             switch (p) {
                 0 => self.cur_cell = Cell.empty(),
                 1 => self.cur_cell.attr.bold = true,
                 2 => self.cur_cell.attr.dim = true,
                 3 => self.cur_cell.attr.italic = true,
-                4 => self.cur_cell.attr.underline = true,
+                4 => {
+                    if (sub_it.next()) |sub_str| {
+                        const sub = std.fmt.parseInt(u8, sub_str, 10) catch 1;
+                        switch (sub) {
+                            0 => {
+                                self.cur_cell.attr.underline = false;
+                                self.cur_cell.attr.double_underline = false;
+                                self.cur_cell.attr.curly_underline = false;
+                            },
+                            2 => self.cur_cell.attr.double_underline = true,
+                            3 => self.cur_cell.attr.curly_underline = true,
+                            else => self.cur_cell.attr.underline = true,
+                        }
+                    } else {
+                        self.cur_cell.attr.underline = true;
+                    }
+                },
                 5 => self.cur_cell.attr.blink = true,
                 7 => self.cur_cell.attr.reverse = true,
                 8 => self.cur_cell.attr.concealed = true,
@@ -411,7 +429,11 @@ pub const Screen = struct {
                     self.cur_cell.attr.dim = false;
                 },
                 23 => self.cur_cell.attr.italic = false,
-                24 => self.cur_cell.attr.underline = false,
+                24 => {
+                    self.cur_cell.attr.underline = false;
+                    self.cur_cell.attr.double_underline = false;
+                    self.cur_cell.attr.curly_underline = false;
+                },
                 25 => self.cur_cell.attr.blink = false,
                 27 => self.cur_cell.attr.reverse = false,
                 28 => self.cur_cell.attr.concealed = false,

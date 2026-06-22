@@ -272,11 +272,23 @@ pub const Display = struct {
                         const all = std.meta.fields(Attr);
                         break :blk all[0 .. all.len - 1];
                     };
-                    const attrCodes = [_]u8{ 1, 2, 3, 4, 5, 7, 8, 9, 53, 4, 4 };
+                    const attrCodes = [_][]const u8{
+                        "1",   // bold
+                        "2",   // dim
+                        "3",   // italic
+                        "4",   // underline
+                        "5",   // blink
+                        "7",   // reverse
+                        "8",   // concealed
+                        "9",   // strikethrough
+                        "53",  // overline
+                        "4:2", // double_underline
+                        "4:3", // curly_underline
+                    };
 
                     inline for (attrFields, 0..) |field, idx| {
                         if (@field(active_attr, field.name)) {
-                            sgr_pos += (std.fmt.bufPrint(sgr_buf[sgr_pos..], "\x1b[{}m", .{attrCodes[idx]}) catch unreachable).len;
+                            sgr_pos += (std.fmt.bufPrint(sgr_buf[sgr_pos..], "\x1b[{s}m", .{attrCodes[idx]}) catch unreachable).len;
                         }
                     }
 
@@ -364,3 +376,38 @@ pub const Display = struct {
         try self.writeBytes(seq);
     }
 };
+
+test "renderContent double and curly underline" {
+    const allocator = std.testing.allocator;
+    var screen = try Screen.init(allocator, 10, 2);
+    defer screen.deinit();
+
+    // Set first cell to double underline, second to curly underline
+    screen.grid.setCell(0, 0, Cell.withChar('A'));
+    var cell_a = screen.grid.getCell(0, 0);
+    cell_a.attr.double_underline = true;
+    screen.grid.setCell(0, 0, cell_a);
+
+    screen.grid.setCell(1, 0, Cell.withChar('B'));
+    var cell_b = screen.grid.getCell(1, 0);
+    cell_b.attr.curly_underline = true;
+    screen.grid.setCell(1, 0, cell_b);
+
+    var capture_buf: std.ArrayList(u8) = .empty;
+    defer capture_buf.deinit(allocator);
+
+    const display = Display{
+        .fd = -1,
+        .sx = 10,
+        .sy = 2,
+        .capture = &capture_buf,
+        .capture_allocator = allocator,
+    };
+
+    try display.renderContent(&screen);
+
+    // Verify SGR escape sequences are in the output
+    try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1b[4:2m") != null);
+    try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1b[4:3m") != null);
+}
+
