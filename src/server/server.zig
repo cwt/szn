@@ -220,12 +220,27 @@ pub const Server = struct {
         }
     }
 
+    fn isPaneValid(self: *Server, pane: *Pane) bool {
+        for (self.sessions.items) |session| {
+            for (session.windows.items) |win| {
+                for (win.panes.items) |p| {
+                    if (p == pane) return true;
+                }
+            }
+        }
+        return false;
+    }
+
     fn handlePtyEvent(self: *Server, ev: loop_mod.PollEvent) bool {
         if (ev.fd == self.listener_fd or ev.fd == self.stdin_fd) return false;
         for (self.client_fds.items) |cfd| {
             if (ev.fd == cfd) return false;
         }
         const pane: *Pane = @ptrCast(@alignCast(ev.udata orelse return false));
+        if (!self.isPaneValid(pane)) {
+            std.log.warn("handlePtyEvent: received event for invalid/stale pane pointer", .{});
+            return true;
+        }
         const has_in = (ev.revents & @as(i16, @intCast(std.posix.POLL.IN))) != 0;
         const has_hup = (ev.revents & @as(i16, @intCast(std.posix.POLL.HUP))) != 0;
         const has_err = (ev.revents & @as(i16, @intCast(std.posix.POLL.ERR))) != 0;
@@ -1389,5 +1404,23 @@ test "destroyPane cleans up pane, window, and session correctly" {
     // This should have cascaded and killed the window, then the session
     try testing.expectEqual(@as(usize, 0), server.sessions.items.len);
 }
+
+test "handlePtyEvent ignores event with stale pane pointer" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    var dummy_pane = try Pane.init(testing.allocator, 999, 80, 24);
+    defer dummy_pane.deinit();
+
+    const ev = @import("loop.zig").PollEvent{
+        .fd = 999,
+        .revents = @as(i16, @intCast(std.posix.POLL.IN)),
+        .udata = @ptrCast(&dummy_pane),
+    };
+
+    const handled = server.handlePtyEvent(ev);
+    try testing.expect(handled);
+}
+
 
 

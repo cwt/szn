@@ -479,6 +479,8 @@ If anyone adds code after the `return` statement (e.g. a `break` to the outer lo
 ### 57. `handlePtyEvent` casts `udata` pointer without validation — potential stale pointer
 **File:** `src/server/server.zig:228`
 **Severity:** MEDIUM
+**Status:** ✅ FIXED — added `isPaneValid` helper to check if a pane is still alive before using its pointer cast from `udata`.
+
 
 ```zig
 fn handlePtyEvent(self: *Server, ev: loop_mod.PollEvent) bool {
@@ -599,6 +601,6 @@ When a wheel event has the release bit set (button + 0x20), `wheel_up` detection
 |----------|-------|-------|----------------|------------|
 | Critical | 10 | 7 | 3 | 0 |
 | High | 18 | 17 | 1 | 0 |
-| Medium | 16 | 14 | 1 | 1 |
+| Medium | 16 | 15 | 1 | 0 |
 | Low | 19 | 12 | 1 | 6 |
-| **Total** | **63** | **50** | **6** | **7** |
+| **Total** | **63** | **51** | **6** | **6** |
