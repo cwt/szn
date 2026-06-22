@@ -443,6 +443,8 @@ When `main` forks to create the server daemon, the child inherits the parent's `
 ### 56. `destroyPane` iterates `self.sessions` while `killSession` `swapRemove`s from it
 **File:** `src/server/server.zig:261–293`
 **Severity:** MEDIUM
+**Status:** ✅ FIXED — refactored destroyPane to a scan-then-destroy pattern, avoiding loop mutation bugs.
+
 
 ```zig
 pub fn destroyPane(self: *Server, pane: *Pane) void {
@@ -597,6 +599,6 @@ When a wheel event has the release bit set (button + 0x20), `wheel_up` detection
 |----------|-------|-------|----------------|------------|
 | Critical | 10 | 7 | 3 | 0 |
 | High | 18 | 17 | 1 | 0 |
-| Medium | 16 | 13 | 1 | 2 |
+| Medium | 16 | 14 | 1 | 1 |
 | Low | 19 | 12 | 1 | 6 |
-| **Total** | **63** | **49** | **6** | **8** |
+| **Total** | **63** | **50** | **6** | **7** |

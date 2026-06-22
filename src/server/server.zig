@@ -253,33 +253,42 @@ pub const Server = struct {
     }
 
     pub fn destroyPane(self: *Server, pane: *Pane) void {
-        for (self.sessions.items) |session| {
+        var found_session: ?*Session = null;
+        var found_window: ?*Window = null;
+
+        outer: for (self.sessions.items) |session| {
             for (session.windows.items) |win| {
                 for (win.panes.items) |p| {
                     if (p == pane) {
-                        win.removePane(self.allocator, pane);
+                        found_session = session;
+                        found_window = win;
+                        break :outer;
+                    }
+                }
+            }
+        }
 
-                        if (win.panes.items.len == 0) {
-                            session.killWindow(self.allocator, win);
-                        }
+        if (found_session) |session| {
+            const win = found_window.?;
+            win.removePane(self.allocator, pane);
 
-                        if (session.windows.items.len == 0) {
-                            self.killSession(session.name) catch {};
-                        }
+            if (win.panes.items.len == 0) {
+                session.killWindow(self.allocator, win);
+            }
 
-                        if (self.sessions.items.len == 0) {
-                            std.log.info("no sessions left, stopping server loop", .{});
-                            self.loop.running = false;
-                        } else {
-                            if (self.activeSession()) |s| {
-                                if (s.active_window) |w| {
-                                    if (w.active_pane) |ap| {
-                                        ap.dirty = true;
-                                    }
-                                }
-                            }
+            if (session.windows.items.len == 0) {
+                self.killSession(session.name) catch {};
+            }
+
+            if (self.sessions.items.len == 0) {
+                std.log.info("no sessions left, stopping server loop", .{});
+                self.loop.running = false;
+            } else {
+                if (self.activeSession()) |s| {
+                    if (s.active_window) |w| {
+                        if (w.active_pane) |ap| {
+                            ap.dirty = true;
                         }
-                        return;
                     }
                 }
             }
@@ -1365,4 +1374,20 @@ test "mouse event filtering based on mouse_opt" {
     try testing.expect(n > 0);
     try testing.expectEqualStrings("\x1b[<64;10;5M\n", buf[0..n]);
 }
+
+test "destroyPane cleans up pane, window, and session correctly" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    const s = try server.newSession("test", 80, 24);
+    const window = s.active_window.?;
+    const pane = window.active_pane.?;
+
+    // Destroy the only pane in the only window of the only session
+    server.destroyPane(pane);
+
+    // This should have cascaded and killed the window, then the session
+    try testing.expectEqual(@as(usize, 0), server.sessions.items.len);
+}
+
 
