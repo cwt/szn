@@ -496,6 +496,7 @@ fn handlePtyEvent(self: *Server, ev: loop_mod.PollEvent) bool {
 ### 58. `processInput` — unbounded `esc_buf` growth on malformed or never-completing CSI
 **File:** `src/server/server.zig:538–539,595–598`
 **Severity:** LOW
+**Status:** ✅ FIXED — Added 1024-byte capacity check and reset mechanism on esc_buf.
 
 ```zig
 var esc_buf: std.ArrayList(u8) = .empty;

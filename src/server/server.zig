@@ -613,7 +613,13 @@ pub const Server = struct {
                 }
             } else {
                 if (self.input_reader.state != .ground or byte == 0x1b or byte < 0x20) {
-                    try esc_buf.append(self.allocator, byte);
+                    if (esc_buf.items.len >= 1024) {
+                        std.log.warn("processInput: esc_buf exceeded limit, resetting input reader", .{});
+                        esc_buf.clearRetainingCapacity();
+                        self.input_reader.state = .ground;
+                    } else {
+                        try esc_buf.append(self.allocator, byte);
+                    }
                     if (self.input_reader.feed(byte)) |event| {
                         var handled = false;
                         switch (event) {
@@ -1421,6 +1427,27 @@ test "handlePtyEvent ignores event with stale pane pointer" {
     const handled = server.handlePtyEvent(ev);
     try testing.expect(handled);
 }
+
+test "processInput esc_buf capacity limit" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    const s = try server.newSession("test", 80, 24);
+    const window = s.active_window.?;
+    const pane = window.active_pane.?;
+    pane.pty = try @import("pty.zig").Pty.open();
+
+    // Send a long escape sequence prefix (0x1b followed by more than 1024 bytes)
+    var big_esc: [1026]u8 = undefined;
+    big_esc[0] = 0x1b;
+    @memset(big_esc[1..], '1');
+
+    try server.processInput(&big_esc);
+
+    // It should reset input reader state to .ground due to limit trigger.
+    try testing.expectEqual(.ground, server.input_reader.state);
+}
+
 
 
 
