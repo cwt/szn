@@ -421,6 +421,8 @@ For `"split-window -h"`: `idx = 12`, `after = 15`, `trimmed.len = 15`. `after >=
 ### 55. Log file fd shared between parent and child after fork — garbled logs
 **File:** `src/main.zig:18,48–69,204–217`
 **Severity:** MEDIUM
+**Status:** ✅ FIXED — logFn updated to format/write messages atomically in a single write call, and log_fd is closed/nullified in the child process immediately post-fork.
+
 
 ```zig
 var log_fd: ?std.posix.fd_t = null;  // module-level static
@@ -595,6 +597,6 @@ When a wheel event has the release bit set (button + 0x20), `wheel_up` detection
 |----------|-------|-------|----------------|------------|
 | Critical | 10 | 7 | 3 | 0 |
 | High | 18 | 17 | 1 | 0 |
-| Medium | 16 | 12 | 1 | 3 |
+| Medium | 16 | 13 | 1 | 2 |
 | Low | 19 | 12 | 1 | 6 |
-| **Total** | **63** | **48** | **6** | **9** |
+| **Total** | **63** | **49** | **6** | **8** |

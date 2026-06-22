@@ -61,11 +61,14 @@ pub fn logFn(
     }
     const fd = log_fd.?;
     var buf: [4096]u8 = undefined;
-    const prefix = std.fmt.bufPrint(&buf, "[{s}] ", .{@tagName(level)}) catch return;
-    writeAllRaw(fd, prefix);
-    const msg = std.fmt.bufPrint(&buf, format, args) catch "log message too long\n";
-    writeAllRaw(fd, msg);
-    writeAllRaw(fd, "\n");
+    var fbs = std.io.fixedBufferStream(&buf);
+    const writer = fbs.writer();
+    std.fmt.format(writer, "[{s}] ", .{@tagName(level)}) catch return;
+    std.fmt.format(writer, format, args) catch {
+        _ = writer.write("log message too long") catch {};
+    };
+    _ = writer.write("\n") catch {};
+    writeAllRaw(fd, fbs.getWritten());
 }
 
 fn writeAllRaw(fd: std.posix.fd_t, bytes: []const u8) void {
@@ -207,6 +210,10 @@ fn mainInner(init: std.process.Init) Error!void {
             std.process.exit(1);
         }
         if (pid == 0) {
+            if (log_fd) |fd| {
+                _ = c.close(fd);
+                log_fd = null;
+            }
             try runServerDaemon(allocator);
         } else {
             waitForSocket() catch {
@@ -418,3 +425,27 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
         }
     }
 }
+
+test "logFn writes single line atomically" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const file = try tmp.dir.createFile("test_log.log", .{ .read = true });
+    defer file.close();
+
+    // Temporarily redirect log_fd to our temp file
+    const old_log_fd = log_fd;
+    defer log_fd = old_log_fd;
+    log_fd = file.handle;
+
+    logFn(.info, .default, "Test formatted log: {d} + {d} = {d}", .{ 1, 2, 3 });
+
+    // Seek back to start and read
+    try file.seekTo(0);
+    const contents = try file.readToEndAlloc(allocator, 1024);
+    defer allocator.free(contents);
+
+    try std.testing.expectEqualStrings("[info] Test formatted log: 1 + 2 = 3\n", contents);
+}
+
