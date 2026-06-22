@@ -582,6 +582,7 @@ If the intermediate directory (`$XDG_STATE_HOME`) doesn't exist or isn't writabl
 ### 63. SGR mouse wheel release events misreported — wheel info lost on release
 **File:** `src/tty/tty_key.zig:241–256`
 **Severity:** LOW
+**Status:** ✅ FIXED — Moved wheel_up/wheel_down checks before release check in parseSgrMouse.
 
 ```zig
 const wheel_up = (btn & 0xC3) == 0x40;
@@ -607,5 +608,6 @@ When a wheel event has the release bit set (button + 0x20), `wheel_up` detection
 | Critical | 10 | 7 | 3 | 0 |
 | High | 18 | 17 | 1 | 0 |
 | Medium | 16 | 15 | 1 | 0 |
-| Low | 19 | 12 | 1 | 6 |
-| **Total** | **63** | **51** | **6** | **6** |
+| Low | 19 | 18 | 1 | 0 |
+| **Total** | **63** | **57** | **6** | **0** |
+

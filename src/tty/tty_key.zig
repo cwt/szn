@@ -241,12 +241,12 @@ pub fn parseSgrMouse(params: []const u8, release: bool) ?Event {
     const wheel_up = (btn & 0xC3) == 0x40;
     const wheel_down = (btn & 0xC3) == 0x41;
 
-    const button: MouseButton = if (release)
-        .release
-    else if (wheel_up)
+    const button: MouseButton = if (wheel_up)
         .scroll_up
     else if (wheel_down)
         .scroll_down
+    else if (release)
+        .release
     else switch (btn_type) {
         0 => .left,
         1 => .middle,
@@ -523,4 +523,24 @@ test "multiple events in buffer" {
     const ev2 = rd.feed('b').?;
     try testing.expectEqual(@as(u21, 'b'), ev2.key.char.code);
 }
+
+test "sgr mouse wheel release" {
+    var rd = InputReader{};
+    // Send wheel up with release flag 'm' instead of 'M'
+    try testing.expect(rd.feed(0x1b) == null);
+    try testing.expect(rd.feed('[') == null);
+    try testing.expect(rd.feed('<') == null);
+    try testing.expect(rd.feed('6') == null);
+    try testing.expect(rd.feed('4') == null);
+    try testing.expect(rd.feed(';') == null);
+    try testing.expect(rd.feed('5') == null);
+    try testing.expect(rd.feed('0') == null);
+    try testing.expect(rd.feed(';') == null);
+    try testing.expect(rd.feed('2') == null);
+    try testing.expect(rd.feed('0') == null);
+    const ev = rd.feed('m').?;
+    try testing.expect(ev == .mouse);
+    try testing.expectEqual(.scroll_up, ev.mouse.button);
+}
+
 
