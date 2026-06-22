@@ -27,7 +27,13 @@ fn resolveLogPath(buf: []u8) Error![:0]const u8 {
         const xdg = std.mem.span(xdg_raw);
         var dir_buf: [256]u8 = undefined;
         const dir_z = try std.fmt.bufPrintZ(&dir_buf, "{s}/szn", .{xdg});
-        _ = c.mkdir(dir_z.ptr, 0o777);
+        const rc = c.mkdir(dir_z.ptr, 0o777);
+        if (rc < 0) {
+            const err = std.posix.errno(rc);
+            if (err != .EXIST) {
+                return try std.fmt.bufPrintZ(buf, "/tmp/szn.log", .{});
+            }
+        }
         return try std.fmt.bufPrintZ(buf, "{s}/szn/szn.log", .{xdg});
     }
     return try std.fmt.bufPrintZ(buf, "/tmp/szn.log", .{});
@@ -448,4 +454,24 @@ test "logFn writes single line atomically" {
 
     try std.testing.expectEqualStrings("[info] Test formatted log: 1 + 2 = 3\n", contents);
 }
+
+test "resolveLogPath fallback on invalid XDG_STATE_HOME" {
+    const old_xdg = std.c.getenv("XDG_STATE_HOME");
+    
+    _ = std.c.setenv("XDG_STATE_HOME", "/nonexistent/invalid/dir/szn_test", 1);
+    
+    var path_buf: [256]u8 = undefined;
+    const path = try resolveLogPath(&path_buf);
+    
+    try std.testing.expectEqualStrings("/tmp/szn.log", path);
+
+    if (old_xdg) |old| {
+        _ = std.c.setenv("XDG_STATE_HOME", old, 1);
+    } else {
+        // Since std.c may not expose unsetenv uniformly on all systems,
+        // we can set it to an empty value.
+        _ = std.c.setenv("XDG_STATE_HOME", "", 1);
+    }
+}
+
 

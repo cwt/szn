@@ -570,6 +570,7 @@ Quoted strings with an escaped quote inside (e.g. `set -g something "value \"wit
 ### 62. `resolveLogPath` calls `mkdir` with `0o777` and silently ignores failure
 **File:** `src/main.zig:30`
 **Severity:** LOW
+**Status:** ✅ FIXED — Added check for mkdir return code and fallback to /tmp/szn.log on failure (unless EEXIST).
 
 ```zig
 _ = c.mkdir(dir_z.ptr, 0o777);
