@@ -549,6 +549,7 @@ With many windows or long window names, `bufPrint` catches the overflow and fall
 ### 61. `cfg.zig` — `stripInlineComment` doesn't handle escaped quotes in value strings
 **File:** `src/cfg.zig:149–162`
 **Severity:** LOW
+**Status:** ✅ FIXED — Rewrote stripInlineComment using an escape-aware character-by-character scanner to correctly parse comment hash characters.
 
 ```zig
 fn stripInlineComment(line: []const u8) []const u8 {

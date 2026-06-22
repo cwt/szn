@@ -147,16 +147,24 @@ pub fn parseConfig(allocator: std.mem.Allocator, input: []const u8) Error!ParseR
 }
 
 fn stripInlineComment(line: []const u8) []const u8 {
-    if (std.mem.indexOfScalar(u8, line, '#')) |pos| {
-        // Check if # is inside quotes
-        if (pos == 0) return line[0..0];
-        const before = line[0..pos];
-        // Count quotes before #
-        var in_quote = false;
-        for (before) |c| {
-            if (c == '"') in_quote = !in_quote;
+    var in_quote = false;
+    var escaped = false;
+    for (line, 0..) |c, i| {
+        if (escaped) {
+            escaped = false;
+            continue;
         }
-        if (!in_quote) return std.mem.trim(u8, before, " \t");
+        if (c == '\\') {
+            escaped = true;
+            continue;
+        }
+        if (c == '"') {
+            in_quote = !in_quote;
+            continue;
+        }
+        if (c == '#' and !in_quote) {
+            return std.mem.trim(u8, line[0..i], " \t");
+        }
     }
     return line;
 }
@@ -434,6 +442,12 @@ test "inline comment stripped" {
     const d = result.directives.items[0];
     try testing.expect(d.set.value == .flag);
     try testing.expect(d.set.value.flag);
+}
+
+test "stripInlineComment complex" {
+    try testing.expectEqualStrings("set -g option \"val # here\"", stripInlineComment("set -g option \"val # here\" # comment"));
+    try testing.expectEqualStrings("set -g option \"val \\\"with\\\" hash # here\"", stripInlineComment("set -g option \"val \\\"with\\\" hash # here\" # comment"));
+    try testing.expectEqualStrings("", stripInlineComment("# empty comment"));
 }
 
 test "multiple directives" {
