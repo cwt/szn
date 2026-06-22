@@ -67,14 +67,16 @@ pub fn logFn(
     }
     const fd = log_fd.?;
     var buf: [4096]u8 = undefined;
-    var fbs = std.io.fixedBufferStream(&buf);
-    const writer = fbs.writer();
-    std.fmt.format(writer, "[{s}] ", .{@tagName(level)}) catch return;
-    std.fmt.format(writer, format, args) catch {
-        _ = writer.write("log message too long") catch {};
-    };
-    _ = writer.write("\n") catch {};
-    writeAllRaw(fd, fbs.getWritten());
+    const prefix = std.fmt.bufPrint(&buf, "[{s}] ", .{@tagName(level)}) catch return;
+    const msg = std.fmt.bufPrint(buf[prefix.len..], format, args) catch "log message too long";
+    const total_len = prefix.len + msg.len;
+    if (total_len < buf.len) {
+        buf[total_len] = '\n';
+        writeAllRaw(fd, buf[0 .. total_len + 1]);
+    } else {
+        writeAllRaw(fd, buf[0..total_len]);
+        writeAllRaw(fd, "\n");
+    }
 }
 
 fn writeAllRaw(fd: std.posix.fd_t, bytes: []const u8) void {
