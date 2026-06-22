@@ -71,6 +71,7 @@ pub const Server = struct {
     log_messages: std.ArrayListUnmanaged([]const u8) = .empty,
     display_sx: u32 = 80,
     display_sy: u32 = 24,
+    dirty: bool = true,
 
     pub fn init(allocator: std.mem.Allocator) ServerError!Server {
         const key_binding = @import("../key_binding.zig");
@@ -102,6 +103,7 @@ pub const Server = struct {
             .render_buf = render_buf,
             .paste_buffer = null,
             .log_messages = .empty,
+            .dirty = true,
         };
     }
 
@@ -307,6 +309,7 @@ pub const Server = struct {
                     }
                 }
             }
+            self.dirty = true;
         }
     }
 
@@ -350,6 +353,8 @@ pub const Server = struct {
         const session = self.activeSession() orelse return;
         const window = session.active_window orelse return;
         const pane = window.active_pane orelse return;
+
+        self.dirty = true;
 
         switch (action) {
             .new_window => {
@@ -911,6 +916,7 @@ pub const Server = struct {
                 .command => {
                     const dispatch = @import("dispatch.zig");
                     var result = dispatch.dispatchCommand(self.allocator, self, pkt.data);
+                    self.dirty = true;
                     defer result.deinit();
                     try dispatch.sendResponse(fd, &result);
                 },
@@ -978,6 +984,22 @@ pub const Server = struct {
         const window = session.active_window orelse return;
         const pane = window.active_pane orelse return;
 
+        var any_dirty = self.dirty;
+        if (!any_dirty) {
+            for (window.panes.items) |p| {
+                if (p.dirty) {
+                    any_dirty = true;
+                    break;
+                }
+            }
+        }
+        if (!any_dirty) return;
+
+        self.dirty = false;
+        for (window.panes.items) |p| {
+            p.dirty = false;
+        }
+
         self.render_buf.clearRetainingCapacity();
 
         var display = Display{
@@ -1007,7 +1029,6 @@ pub const Server = struct {
             std.log.warn("render error: {any}", .{err});
             return;
         };
-        pane.dirty = false;
 
         if (self.render_buf.items.len > 0) {
             const pkt = protocol.Packet.make(.output, self.render_buf.items);
@@ -1024,6 +1045,7 @@ pub const Server = struct {
         try session.init(self.allocator, self.next_session_id, name, width, height, &self.global_options, &self.global_window_options);
         self.next_session_id += 1;
         try self.sessions.append(self.allocator, session);
+        self.dirty = true;
         return session;
     }
 
@@ -1034,6 +1056,7 @@ pub const Server = struct {
         var session = self.sessions.swapRemove(idx);
         session.deinit(self.allocator);
         self.allocator.destroy(session);
+        self.dirty = true;
     }
 
     pub fn killAllSessions(self: *Server) void {

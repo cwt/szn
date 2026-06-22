@@ -75,6 +75,7 @@ pub const Pane = struct {
 
     pub fn resizeTerminal(self: *Pane, new_width: u32, new_height: u32) Error!void {
         try self.screen.resize(new_width, new_height);
+        self.dirty = true;
         if (self.pty) |*pty| {
             const ws = std.c.winsize{
                 .row = @intCast(new_height),
