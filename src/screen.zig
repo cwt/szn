@@ -45,6 +45,8 @@ pub const Screen = struct {
     alt_grid: ?Grid = null,
     cursor: Cursor = .{},
     saved_cursor: ?Cursor = null,
+    alt_cursor: Cursor = .{},
+    alt_saved_cursor: ?Cursor = null,
     mode: Mode = .{},
     scroll_region: ?[2]u32 = null,
     cur_cell: Cell = Cell.empty(),
@@ -512,15 +514,26 @@ pub const Screen = struct {
             var new_alt = try Grid.init(self.allocator, self.grid.width, self.grid.height);
             std.mem.swap(Grid, &self.grid, &new_alt);
             self.alt_grid = new_alt;
+
+            std.mem.swap(Cursor, &self.cursor, &self.alt_cursor);
+            var opt_saved = self.alt_saved_cursor;
+            std.mem.swap(?Cursor, &self.saved_cursor, &opt_saved);
+            self.alt_saved_cursor = opt_saved;
         } else if (!enable and self.alt_grid != null) {
             var saved = self.alt_grid.?;
             std.mem.swap(Grid, &self.grid, &saved);
             saved.deinit();
             self.alt_grid = null;
+
+            std.mem.swap(Cursor, &self.cursor, &self.alt_cursor);
+            var opt_saved = self.alt_saved_cursor;
+            std.mem.swap(?Cursor, &self.saved_cursor, &opt_saved);
+            self.alt_saved_cursor = opt_saved;
+
+            self.alt_cursor = .{};
+            self.alt_saved_cursor = null;
         }
         self.mode.alt_screen = enable;
-        self.cursor = .{};
-        self.saved_cursor = null;
         self.dirty = true;
     }
 };
@@ -898,5 +911,38 @@ test "line wrapping outside scroll region" {
     // It should wrap, and either scroll the full grid or clamp, but NOT go out of bounds (y should not be 4).
     try testing.expect(screen.cursor.y < 4);
 }
+
+test "useAltScreen saves and restores cursor" {
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+
+    // Position cursor on main screen
+    screen.cursor.x = 10;
+    screen.cursor.y = 5;
+    screen.saveCursor();
+
+    // Enter alt screen
+    try screen.useAltScreen(true);
+    
+    // Alt screen cursor should be reset to default (0, 0)
+    try testing.expectEqual(@as(u32, 0), screen.cursor.x);
+    try testing.expectEqual(@as(u32, 0), screen.cursor.y);
+    try testing.expect(screen.saved_cursor == null);
+
+    // Position cursor on alt screen
+    screen.cursor.x = 20;
+    screen.cursor.y = 12;
+
+    // Leave alt screen
+    try screen.useAltScreen(false);
+
+    // Main screen cursor should be restored
+    try testing.expectEqual(@as(u32, 10), screen.cursor.x);
+    try testing.expectEqual(@as(u32, 5), screen.cursor.y);
+    try testing.expect(screen.saved_cursor != null);
+    try testing.expectEqual(@as(u32, 10), screen.saved_cursor.?.x);
+    try testing.expectEqual(@as(u32, 5), screen.saved_cursor.?.y);
+}
+
 
 

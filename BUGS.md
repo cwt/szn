@@ -599,6 +599,11 @@ else switch (btn_type) {
 
 When a wheel event has the release bit set (button + 0x20), `wheel_up` detection fails: `(0x40 | 0x20) & 0xC3` = `0x60 & 0xC3` = `0x40`. Wait — actually `0x60 & 0xC3` = `0x40`: the release bit 0x20 is masked out by `& 0xC3`. So wheel + release still correctly reports as `scroll_up`/`scroll_down`. But `release` is checked FIRST, so wheel-release events would report `.release` instead. In the SGR protocol, wheel events always have `M` final byte (press) and `m` final byte (release) — meaning release tracking for wheel is already handled by the `release` parameter. The current code maps wheel+m to `.scroll_up`/`.scroll_down` correctly (since release is false for `m`? No — looking at line 137: `parseSgrMouse(seq, byte == 'm')` where `'m'` means release=true). So wheel with `'m'` final byte has `release=true`, hits the first `if`, returns `.release`. The wheel direction information is lost. Minor because most terminals only send press events for wheels.
 
+### 64. Cursor position lost/reset on alternate screen exit (e.g. exiting Vim)
+**File:** `src/screen.zig:512`
+**Severity:** MEDIUM
+**Status:** ✅ FIXED — Stored main cursor and main saved_cursor in `alt_cursor` / `alt_saved_cursor` fields when entering alternate screen, and restored them upon exit.
+
 ---
 
 ## Summary
@@ -607,7 +612,8 @@ When a wheel event has the release bit set (button + 0x20), `wheel_up` detection
 |----------|-------|-------|----------------|------------|
 | Critical | 10 | 7 | 3 | 0 |
 | High | 18 | 17 | 1 | 0 |
-| Medium | 16 | 15 | 1 | 0 |
+| Medium | 17 | 16 | 1 | 0 |
 | Low | 19 | 18 | 1 | 0 |
-| **Total** | **63** | **57** | **6** | **0** |
+| **Total** | **64** | **58** | **6** | **0** |
+
 
