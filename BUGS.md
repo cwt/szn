@@ -535,6 +535,7 @@ Multiple `@memcpy` and `bufPrint` calls write into the buffer without checking r
 ### 60. `renderStatusBar` — overflows rendering buffer when many windows with long names
 **File:** `src/server/render.zig:327–359`
 **Severity:** LOW
+**Status:** ✅ FIXED — Rewrote renderStatusBar to write pieces directly to the output stream without using a fixed-size buffer.
 
 ```zig
 var buf: [256]u8 = undefined;

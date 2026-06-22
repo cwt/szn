@@ -342,24 +342,35 @@ pub const Display = struct {
 
         var col: u32 = 0;
 
-        var buf: [256]u8 = undefined;
-        const prefix = std.fmt.bufPrint(&buf, " [{s}]", .{session_name}) catch " [default]";
-        try self.writeBytes(prefix);
-        col += @intCast(prefix.len);
+        try self.writeBytes(" [");
+        try self.writeBytes(session_name);
+        try self.writeBytes("]");
+        col += 3 + @as(u32, @intCast(session_name.len));
 
         for (windows, 0..) |win, idx| {
             const is_active = (win == active_window);
             const suffix = if (is_active) "*" else "";
-            const win_str = std.fmt.bufPrint(&buf, " {d}:{s}{s}", .{ idx, win.name, suffix }) catch " win";
 
             if (is_active) {
                 try self.writeBytes("\x1b[4m");
             }
-            try self.writeBytes(win_str);
+
+            var win_idx_buf: [32]u8 = undefined;
+            const win_idx_str = std.fmt.bufPrint(&win_idx_buf, " {d}:", .{idx}) catch " win:";
+            try self.writeBytes(win_idx_str);
+            col += @intCast(win_idx_str.len);
+
+            try self.writeBytes(win.name);
+            col += @intCast(win.name.len);
+
+            if (suffix.len > 0) {
+                try self.writeBytes(suffix);
+                col += @intCast(suffix.len);
+            }
+
             if (is_active) {
                 try self.writeBytes("\x1b[24m");
             }
-            col += @intCast(win_str.len);
         }
 
         const max_len = self.sx -| 1;
@@ -410,4 +421,29 @@ test "renderContent double and curly underline" {
     try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1b[4:2m") != null);
     try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1b[4:3m") != null);
 }
+
+test "renderStatusBar with long window name" {
+    const allocator = std.testing.allocator;
+    var capture_buf: std.ArrayList(u8) = .empty;
+    defer capture_buf.deinit(allocator);
+
+    const display = Display{
+        .fd = -1,
+        .sx = 200,
+        .sy = 24,
+        .capture = &capture_buf,
+        .capture_allocator = allocator,
+    };
+
+    var win1 = try Window.init(allocator, 1, "very_long_window_name_that_previously_would_have_failed_bufprint_because_it_exceeds_the_stack_buffer_limit_and_caused_overflow_or_fallback_to_win", 80, 24, null);
+    defer win1.deinit(allocator);
+
+    const windows = [_]*Window{&win1};
+
+    try display.renderStatusBar("my-session", &windows, &win1);
+
+    // Verify it renders the long window name successfully
+    try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "very_long_window_name_that_previously_would_have_failed") != null);
+}
+
 
