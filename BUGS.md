@@ -60,22 +60,31 @@ Should be `"\x1bM"` (ESC M = Reverse Index, 2 bytes). Currently `reverseIndex()`
 
 ### 9. Memory leak in Grid.scrollDown()
 **File:** `src/grid.zig:148–153`
+**Status:** ✅ FIXED — added errdefer to pop/deinit on error.
+
 `history.pop()` removes a line, then `lines.insert(0, line)`. If `insert` fails, the popped line is leaked — no `errdefer` to deinit it on error propagation.
 
 ### 10. Colour.fmt() reads uninitialized memory
 **File:** `src/colour.zig:44–58`
+**Status:** ✅ FIXED — bufPrint result used directly.
+
 ```zig
 _ = std.fmt.bufPrint(&buf, ...);         // return value discarded
 return std.mem.sliceTo(buf, 0);           // scans for null byte
 ```
+
 `bufPrint` does **not** null-terminate. `sliceTo` scans past the end of formatted data into uninitialized stack bytes, returning garbage. The return value of `bufPrint` should be used directly.
 
 ### 11. Memory leak in Options.set()
 **File:** `src/options.zig:84–85`
+**Status:** ✅ FIXED — added errdefer to free key_name.
+
 `key_name = try allocator.dupe(name)` succeeds, then `cloneValue()` fails. No `errdefer` to free `key_name` — it leaks.
 
 ### 12. Dangling pointer in Context.set()
 **File:** `src/format.zig:26–35`
+**Status:** ✅ FIXED — dupe new value before freeing old value.
+
 Frees the old value FIRST (`allocator.free(entry.value_ptr.*)`), then duplicates the new one. If `dupe` fails, the map entry holds a dangling pointer to freed memory.
 
 ### 13. Copy mode broken for scrolled content  ✅ Fixed
@@ -386,6 +395,8 @@ if (!handled) {
 ### 54. `split-window -h` (exactly, no trailing args) maps to vertical split
 **File:** `src/key_binding.zig:432–440`
 **Severity:** MEDIUM
+**Status:** ❌ FALSE POSITIVE — condition correctly returns split_horizontal when flag is at end.
+
 
 ```zig
 if (std.mem.startsWith(u8, trimmed, "split-window") or std.mem.startsWith(u8, trimmed, "splitw")) {
@@ -574,8 +585,8 @@ When a wheel event has the release bit set (button + 0x20), `wheel_up` detection
 
 | Severity | Count | Fixed | False Positive | Unresolved |
 |----------|-------|-------|----------------|------------|
-| Critical | 10 | 5 | 3 | 2 |
+| Critical | 10 | 7 | 3 | 0 |
 | High | 18 | 13 | 1 | 4 |
-| Medium | 17 | 12 | 0 | 5 |
+| Medium | 16 | 12 | 1 | 3 |
 | Low | 19 | 12 | 1 | 6 |
-| **Total** | **64** | **42** | **5** | **17** |
+| **Total** | **63** | **44** | **6** | **13** |
