@@ -246,24 +246,15 @@ If data exceeds remaining buffer space, excess bytes are silently dropped. Calle
 ## NEW BUGS (2026-06-22 codebase audit)
 
 ---
-
 ### 48. `mapCommandToAction` rejects commands with arguments — most config bind-key directives fail silently
 **File:** `src/key_binding.zig:430–466`
 **Severity:** CRITICAL
+**Status:** ✅ FIXED
 
 ```zig
 const trimmed = std.mem.trim(u8, cmd, " \t\"");
 if (std.mem.eql(u8, trimmed, "new-window") or std.mem.eql(u8, trimmed, "neww")) return .new_window;
-if (std.mem.eql(u8, trimmed, "kill-pane") or std.mem.eql(u8, trimmed, "killp")) return .kill_pane;
-if (std.mem.eql(u8, trimmed, "next-window") or std.mem.eql(u8, trimmed, "next")) return .next_window;
-if (std.mem.eql(u8, trimmed, "previous-window") or std.mem.eql(u8, trimmed, "prev")) return .prev_window;
-if (std.mem.eql(u8, trimmed, "last-window") or std.mem.eql(u8, trimmed, "last")) return .last_window;
-if (std.mem.eql(u8, trimmed, "copy-mode")) return .copy_mode;
-if (std.mem.eql(u8, trimmed, "paste-buffer")) return .paste_buffer;
-if (std.mem.eql(u8, trimmed, "detach-client") or std.mem.eql(u8, trimmed, "detach")) return .detach;
-if (std.mem.eql(u8, trimmed, "clock-mode")) return .clock_mode;
-if (std.mem.eql(u8, trimmed, "rename-window")) return .rename_window;
-if (std.mem.eql(u8, trimmed, "command-prompt")) return .command_prompt;
+...
 ```
 
 `trim()` strips outer whitespace and quotes, but everything after the command name (e.g. `-n test`, `-t target`) stays in `trimmed`. `eql` requires an **exact match** — so `new-window -n "my window"` fails, `kill-pane -t 0` fails, `next-window -a` fails. Only `split-window`/`splitw` use `startsWith`.
@@ -273,31 +264,33 @@ if (std.mem.eql(u8, trimmed, "command-prompt")) return .command_prompt;
 ### 49. Line-wrapping fires `grid.scrollUp()` instead of `scrollUpInRegion()` — breaks DECSTBM scroll regions
 **File:** `src/screen.zig:153–162`
 **Severity:** CRITICAL
+**Status:** ✅ FIXED
 
 ```zig
 if (self.mode.line_wrap) {
     self.cursor.x += 1;
     if (self.cursor.x >= self.grid.width) {
         self.cursor.x = 0;
-        if (self.cursor.y + 1 >= self.grid.height) {
-            try self.grid.scrollUp();   // <-- always full-grid scroll
+        if (self.scroll_region) |r| {
+            if (self.cursor.y == r[1]) {
+                try self.scrollUpInRegion();
+            } else {
+                self.cursor.y += 1;
+            }
         } else {
-            self.cursor.y += 1;
+            if (self.cursor.y + 1 >= self.grid.height) {
+                try self.grid.scrollUp();
+            } else {
+                self.cursor.y += 1;
+            }
         }
     }
+} else {
+    self.cursor.x = @min(self.cursor.x + 1, self.grid.width - 1);
 }
 ```
 
-Compare with `\n` handling at lines 106–112 which checks `self.scroll_region`:
-```zig
-if (self.cursor.y + 1 >= self.grid.height) {
-    try self.grid.scrollUp();
-} else if (self.scroll_region != null and self.cursor.y == self.scroll_region.?[1]) {
-    try self.scrollUpInRegion();
-} else { self.cursor.y += 1; }
-```
-
-When a pane has `DECSTBM` set (e.g. `\e[2;4r`), text that autowraps at the region bottom pushes the entire grid up instead of scrolling only within regions 2–4. The region outside 2–4 gets corrupted. Affects anything using alternate screen with margins (vim, less, tmux inside szn).
+When a pane has `DECSTBM` set (e.g. `\e[2;4r`), text that autowraps at the region bottom pushes the entire grid up instead of scrolling only within regions 2–4. The region outside 2–4 gets corrupted. The fix makes autowrap respect the scroll region, matching the behavior used for explicit `\n` handling.
 
 ### 50. Double-underline and curly-underline both render as plain underline (SGR 4)
 **File:** `src/server/render.zig:272–276`

@@ -156,6 +156,8 @@ pub const Screen = struct {
                 self.cursor.x = 0;
                 if (self.cursor.y + 1 >= self.grid.height) {
                     try self.grid.scrollUp();
+                } else if (self.scroll_region != null and self.cursor.y == self.scroll_region.?[1]) {
+                    try self.scrollUpInRegion();
                 } else {
                     self.cursor.y += 1;
                 }
@@ -838,3 +840,41 @@ test "BS at column 0 does nothing" {
     try screen.writeChar(0x08);
     try testing.expectEqual(@as(u32, 0), screen.cursor.x);
 }
+
+test "line wrapping with scroll region" {
+    var screen = try Screen.init(testing.allocator, 5, 4);
+    defer screen.deinit();
+
+    // Scroll region: lines 1 to 2 inclusive (0-indexed: 0, 1, 2, 3)
+    screen.setScrollRegion(1, 2);
+
+    // Position cursor at r[1] (line 2), col 4 (last column)
+    screen.cursor.x = 4;
+    screen.cursor.y = 2;
+
+    // Write a char to trigger line wrapping.
+    try screen.writeChar('A');
+    // It should wrap, so cursor x goes to 0.
+    try testing.expectEqual(@as(u32, 0), screen.cursor.x);
+    // Since cursor.y was at r[1] (2), it should trigger scrollUpInRegion() and remain at y = 2.
+    try testing.expectEqual(@as(u32, 2), screen.cursor.y);
+}
+
+test "line wrapping outside scroll region" {
+    var screen = try Screen.init(testing.allocator, 5, 4);
+    defer screen.deinit();
+
+    // Scroll region: lines 1 to 2 inclusive (0-indexed: 0, 1, 2, 3)
+    screen.setScrollRegion(1, 2);
+
+    // Position cursor at line 3 (below scroll region), col 4 (last column)
+    screen.cursor.x = 4;
+    screen.cursor.y = 3;
+
+    // Write a char to trigger line wrapping.
+    try screen.writeChar('A');
+    // It should wrap, and either scroll the full grid or clamp, but NOT go out of bounds (y should not be 4).
+    try testing.expect(screen.cursor.y < 4);
+}
+
+

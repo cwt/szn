@@ -428,10 +428,17 @@ test "dispatcher two prefixes in sequence" {
 }
 
 pub fn mapCommandToAction(cmd: []const u8) ?Action {
+    // Trim surrounding whitespace/quotes, then split on first space to get command name.
     const trimmed = std.mem.trim(u8, cmd, " \t\"");
-    if (std.mem.eql(u8, trimmed, "new-window") or std.mem.eql(u8, trimmed, "neww")) return .new_window;
+    const space_idx = std.mem.indexOfScalar(u8, trimmed, ' ') orelse trimmed.len;
+    const name = trimmed[0..space_idx];
 
-    if (std.mem.startsWith(u8, trimmed, "split-window") or std.mem.startsWith(u8, trimmed, "splitw")) {
+    // Exact command names (no arguments) are compared using the isolated name.
+    if (std.mem.eql(u8, name, "new-window") or std.mem.eql(u8, name, "neww")) return .new_window;
+
+    // split-window may include flags; handle -h for horizontal split.
+    if (std.mem.startsWith(u8, name, "split-window") or std.mem.startsWith(u8, name, "splitw")) {
+        // Look for "-h" flag anywhere after the command name.
         if (std.mem.indexOf(u8, trimmed, " -h")) |idx| {
             const after = idx + 3;
             if (after >= trimmed.len or trimmed[after] == ' ') return .split_horizontal;
@@ -444,17 +451,18 @@ pub fn mapCommandToAction(cmd: []const u8) ?Action {
     if (std.mem.eql(u8, trimmed, "select-pane -U")) return .select_pane_up;
     if (std.mem.eql(u8, trimmed, "select-pane -D")) return .select_pane_down;
 
-    if (std.mem.eql(u8, trimmed, "kill-pane") or std.mem.eql(u8, trimmed, "killp")) return .kill_pane;
-    if (std.mem.eql(u8, trimmed, "next-window") or std.mem.eql(u8, trimmed, "next")) return .next_window;
-    if (std.mem.eql(u8, trimmed, "previous-window") or std.mem.eql(u8, trimmed, "prev")) return .prev_window;
-    if (std.mem.eql(u8, trimmed, "last-window") or std.mem.eql(u8, trimmed, "last")) return .last_window;
-    if (std.mem.eql(u8, trimmed, "copy-mode")) return .copy_mode;
-    if (std.mem.eql(u8, trimmed, "paste-buffer")) return .paste_buffer;
-    if (std.mem.eql(u8, trimmed, "detach-client") or std.mem.eql(u8, trimmed, "detach")) return .detach;
-    if (std.mem.eql(u8, trimmed, "clock-mode")) return .clock_mode;
-    if (std.mem.eql(u8, trimmed, "rename-window")) return .rename_window;
-    if (std.mem.eql(u8, trimmed, "command-prompt")) return .command_prompt;
+    if (std.mem.eql(u8, name, "kill-pane") or std.mem.eql(u8, name, "killp")) return .kill_pane;
+    if (std.mem.eql(u8, name, "next-window") or std.mem.eql(u8, name, "next")) return .next_window;
+    if (std.mem.eql(u8, name, "previous-window") or std.mem.eql(u8, name, "prev")) return .prev_window;
+    if (std.mem.eql(u8, name, "last-window") or std.mem.eql(u8, name, "last")) return .last_window;
+    if (std.mem.eql(u8, name, "copy-mode")) return .copy_mode;
+    if (std.mem.eql(u8, name, "paste-buffer")) return .paste_buffer;
+    if (std.mem.eql(u8, name, "detach-client") or std.mem.eql(u8, name, "detach")) return .detach;
+    if (std.mem.eql(u8, name, "clock-mode")) return .clock_mode;
+    if (std.mem.eql(u8, name, "rename-window")) return .rename_window;
+    if (std.mem.eql(u8, name, "command-prompt")) return .command_prompt;
 
+    // select-window can have a target index after "-t"; keep the original logic.
     if (std.mem.startsWith(u8, trimmed, "select-window -t ") or std.mem.startsWith(u8, trimmed, "selectw -t ")) {
         const idx_str = trimmed[std.mem.lastIndexOfScalar(u8, trimmed, ' ').? + 1 ..];
         if (std.fmt.parseInt(u8, idx_str, 10)) |val| {
@@ -465,3 +473,28 @@ pub fn mapCommandToAction(cmd: []const u8) ?Action {
     }
     return null;
 }
+
+test "mapCommandToAction with arguments" {
+    // Basic commands without arguments
+    try testing.expectEqual(Action.new_window, mapCommandToAction("new-window"));
+    try testing.expectEqual(Action.new_window, mapCommandToAction("neww"));
+    try testing.expectEqual(Action.kill_pane, mapCommandToAction("kill-pane"));
+
+    // Commands with arguments
+    try testing.expectEqual(Action.new_window, mapCommandToAction("new-window -n test"));
+    try testing.expectEqual(Action.kill_pane, mapCommandToAction("killp -t 1"));
+    try testing.expectEqual(Action.detach, mapCommandToAction("detach -a"));
+
+    // Split window horizontal vs vertical
+    try testing.expectEqual(Action.split_horizontal, mapCommandToAction("split-window -h"));
+    try testing.expectEqual(Action.split_horizontal, mapCommandToAction("splitw -h -p 50"));
+    try testing.expectEqual(Action.split_vertical, mapCommandToAction("splitw -v"));
+    try testing.expectEqual(Action.split_vertical, mapCommandToAction("split-window"));
+
+    // select-pane direction
+    try testing.expectEqual(Action.select_pane_up, mapCommandToAction("select-pane -U"));
+
+    // Invalid commands
+    try testing.expectEqual(@as(?Action, null), mapCommandToAction("invalid-command"));
+}
+
