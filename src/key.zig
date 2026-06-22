@@ -217,10 +217,20 @@ pub fn format(key: Key, buf: []u8) []const u8 {
         .char => |c| blk: {
             var pos: usize = 0;
             const mod = c.mod;
-            if (mod.ctrl) { buf[pos] = 'C'; buf[pos + 1] = '-'; pos += 2; }
-            if (mod.alt)  { buf[pos] = 'M'; buf[pos + 1] = '-'; pos += 2; }
-            if (mod.shift) { buf[pos] = 'S'; buf[pos + 1] = '-'; pos += 2; }
+            if (mod.ctrl) {
+                if (pos + 2 > buf.len) break :blk "[?]";
+                buf[pos] = 'C'; buf[pos + 1] = '-'; pos += 2;
+            }
+            if (mod.alt)  {
+                if (pos + 2 > buf.len) break :blk "[?]";
+                buf[pos] = 'M'; buf[pos + 1] = '-'; pos += 2;
+            }
+            if (mod.shift) {
+                if (pos + 2 > buf.len) break :blk "[?]";
+                buf[pos] = 'S'; buf[pos + 1] = '-'; pos += 2;
+            }
             if (mod.meta) {
+                if (pos + 5 > buf.len) break :blk "[?]";
                 @memcpy(buf[pos..][0..5], "Meta-");
                 pos += 5;
             }
@@ -240,10 +250,12 @@ pub fn format(key: Key, buf: []u8) []const u8 {
             } else null;
 
             if (name) |n| {
+                if (pos + n.len > buf.len) break :blk "[?]";
                 @memcpy(buf[pos..][0..n.len], n);
                 break :blk buf[0 .. pos + n.len];
             } else {
                 const char_slice = std.fmt.bufPrint(buf[pos..], "{u}", .{@as(u21, c.code)}) catch "[?]";
+                if (std.mem.eql(u8, char_slice, "[?]")) break :blk "[?]";
                 break :blk buf[0 .. pos + char_slice.len];
             }
         },
@@ -305,14 +317,25 @@ pub fn format(key: Key, buf: []u8) []const u8 {
 
 fn prependModifiers(mod: Modifier, name: []const u8, buf: []u8) []const u8 {
     var pos: usize = 0;
-    if (mod.ctrl) { buf[pos] = 'C'; buf[pos + 1] = '-'; pos += 2; }
-    if (mod.alt)  { buf[pos] = 'M'; buf[pos + 1] = '-'; pos += 2; }
-    if (mod.shift) { buf[pos] = 'S'; buf[pos + 1] = '-'; pos += 2; }
+    if (mod.ctrl) {
+        if (pos + 2 > buf.len) return "[?]";
+        buf[pos] = 'C'; buf[pos + 1] = '-'; pos += 2;
+    }
+    if (mod.alt)  {
+        if (pos + 2 > buf.len) return "[?]";
+        buf[pos] = 'M'; buf[pos + 1] = '-'; pos += 2;
+    }
+    if (mod.shift) {
+        if (pos + 2 > buf.len) return "[?]";
+        buf[pos] = 'S'; buf[pos + 1] = '-'; pos += 2;
+    }
     if (mod.meta) {
+        if (pos + 5 > buf.len) return "[?]";
         @memcpy(buf[pos..][0..5], "Meta-");
         pos += 5;
     }
 
+    if (pos + name.len > buf.len) return "[?]";
     @memcpy(buf[pos..][0..name.len], name);
     return buf[0 .. pos + name.len];
 }
@@ -585,4 +608,20 @@ test "format and parse meta key modifier" {
     try testing.expect(parsed.char.mod.meta);
     try testing.expectEqual(@as(u21, 'a'), parsed.char.code);
 }
+
+test "format output buffer overflow" {
+    var buf: [3]u8 = undefined;
+    
+    // Key requires more than 3 bytes (C-M-a)
+    const key = Key{ .char = .{ .code = 'a', .mod = .{ .ctrl = true, .alt = true } } };
+    const s = format(key, &buf);
+    try testing.expectEqualStrings("[?]", s);
+
+    // Special key requires more than 2 bytes (S-Escape)
+    var buf2: [2]u8 = undefined;
+    const key2 = Key{ .special = .{ .key = .escape, .mod = .{ .shift = true } } };
+    const s2 = format(key2, &buf2);
+    try testing.expectEqualStrings("[?]", s2);
+}
+
 

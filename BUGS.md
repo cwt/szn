@@ -514,6 +514,7 @@ If an attacker sends a stream of never-terminated escape sequences (e.g. `\e[1;2
 ### 59. `key.format` — no bounds check on output buffer before writing
 **File:** `src/key.zig:215–301`
 **Severity:** LOW
+**Status:** ✅ FIXED — Added bounds and remaining capacity checks in format and prependModifiers to prevent buffer overflow.
 
 ```zig
 pub fn format(key: Key, buf: []u8) []const u8 {
