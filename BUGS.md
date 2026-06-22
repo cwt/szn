@@ -323,6 +323,8 @@ const attrCodes = [_]u8{ 1, 2, 3, 4, 5, 7, 8, 9, 53, 4, 4 };
 ### 51. `key.format` — `alt` and `meta` modifiers collide on `M-` prefix
 **File:** `src/key.zig:220–224`
 **Severity:** HIGH
+**Status:** ✅ FIXED — key format/prependModifiers updated to format meta as "Meta-", parseKeyName updated to parse "Meta-".
+
 
 ```zig
 if (mod.alt)  { buf[pos] = 'M'; buf[pos + 1] = '-'; pos += 2; }
@@ -588,7 +590,7 @@ When a wheel event has the release bit set (button + 0x20), `wheel_up` detection
 | Severity | Count | Fixed | False Positive | Unresolved |
 |----------|-------|-------|----------------|------------|
 | Critical | 10 | 7 | 3 | 0 |
-| High | 18 | 14 | 1 | 3 |
+| High | 18 | 15 | 1 | 2 |
 | Medium | 16 | 12 | 1 | 3 |
 | Low | 19 | 12 | 1 | 6 |
-| **Total** | **63** | **45** | **6** | **12** |
+| **Total** | **63** | **46** | **6** | **11** |

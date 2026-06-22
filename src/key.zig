@@ -220,7 +220,10 @@ pub fn format(key: Key, buf: []u8) []const u8 {
             if (mod.ctrl) { buf[pos] = 'C'; buf[pos + 1] = '-'; pos += 2; }
             if (mod.alt)  { buf[pos] = 'M'; buf[pos + 1] = '-'; pos += 2; }
             if (mod.shift) { buf[pos] = 'S'; buf[pos + 1] = '-'; pos += 2; }
-            if (mod.meta) { buf[pos] = 'M'; buf[pos + 1] = '-'; pos += 2; }
+            if (mod.meta) {
+                @memcpy(buf[pos..][0..5], "Meta-");
+                pos += 5;
+            }
 
             const name = if (c.code == ' ')
                 "Space"
@@ -305,7 +308,10 @@ fn prependModifiers(mod: Modifier, name: []const u8, buf: []u8) []const u8 {
     if (mod.ctrl) { buf[pos] = 'C'; buf[pos + 1] = '-'; pos += 2; }
     if (mod.alt)  { buf[pos] = 'M'; buf[pos + 1] = '-'; pos += 2; }
     if (mod.shift) { buf[pos] = 'S'; buf[pos + 1] = '-'; pos += 2; }
-    if (mod.meta) { buf[pos] = 'M'; buf[pos + 1] = '-'; pos += 2; }
+    if (mod.meta) {
+        @memcpy(buf[pos..][0..5], "Meta-");
+        pos += 5;
+    }
 
     @memcpy(buf[pos..][0..name.len], name);
     return buf[0 .. pos + name.len];
@@ -318,14 +324,21 @@ pub fn parseKeyName(name: []const u8) !Key {
     var mod = Modifier{};
     
     // Parse modifiers
-    while (remaining.len > 2 and remaining[1] == '-') {
-        switch (remaining[0]) {
-            'C', 'c' => mod.ctrl = true,
-            'M', 'm' => mod.alt = true,
-            'S', 's' => mod.shift = true,
-            else => return error.UnknownKey,
+    while (remaining.len > 2) {
+        if (remaining.len > 5 and std.mem.eql(u8, remaining[0..5], "Meta-")) {
+            mod.meta = true;
+            remaining = remaining[5..];
+        } else if (remaining[1] == '-') {
+            switch (remaining[0]) {
+                'C', 'c' => mod.ctrl = true,
+                'M', 'm' => mod.alt = true,
+                'S', 's' => mod.shift = true,
+                else => return error.UnknownKey,
+            }
+            remaining = remaining[2..];
+        } else {
+            break;
         }
-        remaining = remaining[2..];
     }
     
     if (remaining.len == 0) return error.UnknownKey;
@@ -560,3 +573,16 @@ test "format ctrl alt delete" {
     const s = format(Key{ .special = .{ .key = .delete_, .mod = .{ .ctrl = true, .alt = true } } }, &buf);
     try testing.expectEqualStrings("C-M-Delete", s);
 }
+
+test "format and parse meta key modifier" {
+    var buf: [32]u8 = undefined;
+    const key = Key{ .char = .{ .code = 'a', .mod = .{ .meta = true, .alt = true } } };
+    const s = format(key, &buf);
+    try testing.expectEqualStrings("M-Meta-a", s);
+
+    const parsed = try parseKeyName("M-Meta-a");
+    try testing.expect(parsed.char.mod.alt);
+    try testing.expect(parsed.char.mod.meta);
+    try testing.expectEqual(@as(u21, 'a'), parsed.char.code);
+}
+
