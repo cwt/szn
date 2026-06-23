@@ -984,6 +984,26 @@ pub const Server = struct {
         const window = session.active_window orelse return;
         const pane = window.active_pane orelse return;
 
+        // Perform automatic window renaming
+        for (session.windows.items) |win| {
+            if (win.automatic_rename) {
+                if (win.active_pane) |ap| {
+                    if (ap.pty) |pty| {
+                        var proc_buf: [128]u8 = undefined;
+                        if (pty.getForegroundProcessName(&proc_buf)) |proc_name_val| {
+                            if (proc_name_val.len > 0 and !std.mem.eql(u8, win.name, proc_name_val)) {
+                                if (win.allocator.dupe(u8, proc_name_val)) |new_name| {
+                                    win.name = new_name;
+                                    ap.dirty = true;
+                                    self.dirty = true;
+                                } else |_| {}
+                            }
+                        } else |_| {}
+                    }
+                }
+            }
+        }
+
         var any_dirty = self.dirty;
         if (!any_dirty) {
             for (window.panes.items) |p| {

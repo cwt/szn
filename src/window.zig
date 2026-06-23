@@ -125,6 +125,7 @@ pub const Window = struct {
     next_pane_id: u32 = 1,
     layout: layout.Layout,
     options: options_mod.Options,
+    automatic_rename: bool = true,
 
     pub fn init(allocator: std.mem.Allocator, id: u32, name: []const u8, width: u32, height: u32, global_window_options: ?*const options_mod.Options) Error!Window {
         var options = if (global_window_options) |gwo| try gwo.clone(allocator) else try options_mod.Options.init(allocator, options_mod.WINDOW_OPTIONS);
@@ -138,6 +139,7 @@ pub const Window = struct {
             .height = height,
             .layout = undefined,
             .options = options,
+            .automatic_rename = true,
         };
         var pane = try allocator.create(Pane);
         pane.* = try Pane.init(allocator, 0, width, height);

@@ -23,6 +23,9 @@ extern "c" fn ioctl(fd: c_int, request: c_ulong, ...) c_int;
 extern "c" fn waitpid(pid: c_int, stat_loc: ?*c_int, options: c_int) c_int;
 extern "c" fn login_tty(fd: c_int) c_int;
 
+extern "c" fn tcgetpgrp(fd: c_int) c_int;
+extern "c" fn proc_name(pid: c_int, buffer: [*]u8, size: c_int) void;
+
 pub const F_SETFD: c_int = 2;
 pub const FD_CLOEXEC: c_int = 1;
 
@@ -117,6 +120,29 @@ pub const Pty = struct {
 
     pub fn setWinSize(self: *Pty, ws: *const std.c.winsize) Error!void {
         if (ioctl(self.master, TIOCSWINSZ, ws) < 0) return error.IoctlFailed;
+    }
+
+    pub fn getForegroundProcessName(self: *const Pty, buf: []u8) Error![]const u8 {
+        const pgid = tcgetpgrp(self.master);
+        if (pgid < 0) return error.ProcessExited;
+
+        const builtin = @import("builtin");
+        if (builtin.os.tag == .macos) {
+            proc_name(pgid, buf.ptr, @intCast(buf.len));
+            const len = std.mem.indexOfScalar(u8, buf, 0) orelse buf.len;
+            return buf[0..len];
+        } else if (builtin.os.tag == .linux) {
+            var path_buf: [64]u8 = undefined;
+            const path = std.fmt.bufPrint(&path_buf, "/proc/{d}/comm", .{pgid}) catch return error.ReadFailed;
+            const file = std.fs.openFileAbsolute(path, .{}) catch return error.ReadFailed;
+            defer file.close();
+            const bytes_read = file.readAll(buf) catch return error.ReadFailed;
+            var name = buf[0..bytes_read];
+            name = std.mem.trimRight(u8, name, "\r\n\x00 ");
+            return name;
+        } else {
+            return error.ReadFailed;
+        }
     }
 };
 
