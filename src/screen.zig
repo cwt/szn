@@ -363,18 +363,52 @@ pub const Screen = struct {
     }
 
     pub fn scrollUp(self: *Screen, n: u32) Error!void {
-        const count = @min(n, self.grid.height);
-        var i: u32 = 0;
-        while (i < count) : (i += 1) {
-            try self.grid.scrollUp();
+        if (self.scroll_region) |r| {
+            const top = r[0];
+            const bottom = r[1];
+            const count = @min(n, bottom + 1 - top);
+            var i: u32 = 0;
+            while (i < count) : (i += 1) {
+                const temp = self.grid.getLine(top).*;
+                var row = top;
+                while (row < bottom) : (row += 1) {
+                    self.grid.getLineMut(row).* = self.grid.getLine(row + 1).*;
+                }
+                self.grid.getLineMut(bottom).* = temp;
+                self.grid.clearLine(bottom);
+            }
+            self.dirty = true;
+        } else {
+            const count = @min(n, self.grid.height);
+            var i: u32 = 0;
+            while (i < count) : (i += 1) {
+                try self.grid.scrollUp();
+            }
         }
     }
 
     pub fn scrollDown(self: *Screen, n: u32) Error!void {
-        const count = @min(n, self.grid.height);
-        var i: u32 = 0;
-        while (i < count) : (i += 1) {
-            try self.grid.scrollDown();
+        if (self.scroll_region) |r| {
+            const top = r[0];
+            const bottom = r[1];
+            const count = @min(n, bottom + 1 - top);
+            var i: u32 = 0;
+            while (i < count) : (i += 1) {
+                var row = bottom;
+                const temp = self.grid.getLine(bottom).*;
+                while (row > top) : (row -= 1) {
+                    self.grid.getLineMut(row).* = self.grid.getLine(row - 1).*;
+                }
+                self.grid.getLineMut(top).* = temp;
+                self.grid.clearLine(top);
+            }
+            self.dirty = true;
+        } else {
+            const count = @min(n, self.grid.height);
+            var i: u32 = 0;
+            while (i < count) : (i += 1) {
+                try self.grid.scrollDown();
+            }
         }
     }
 
@@ -972,6 +1006,47 @@ test "useAltScreen saves and restores cursor" {
     try testing.expect(screen.saved_cursor != null);
     try testing.expectEqual(@as(u32, 10), screen.saved_cursor.?.x);
     try testing.expectEqual(@as(u32, 5), screen.saved_cursor.?.y);
+}
+
+test "scrollUp and scrollDown respect scroll region" {
+    var screen = try Screen.init(testing.allocator, 15, 5);
+    defer screen.deinit();
+
+    // Populate lines
+    try screen.writeStr("0000000000\n1111111111\n2222222222\n3333333333\n4444444444");
+
+    // Set scroll region to lines 1..3 inclusive (0-indexed: 1, 2, 3)
+    screen.setScrollRegion(1, 3);
+
+    // Scroll up by 1 line inside region
+    try screen.scrollUp(1);
+
+    // Line 0 and 4 should be untouched
+    try testing.expectEqual(@as(u21, '0'), screen.grid.getCell(0, 0).char);
+    try testing.expectEqual(@as(u21, '4'), screen.grid.getCell(0, 4).char);
+
+    // Region lines (1..3) should be scrolled:
+    // old line 2 ("222...") moved to line 1
+    // old line 3 ("333...") moved to line 2
+    // line 3 cleared (all spaces)
+    try testing.expectEqual(@as(u21, '2'), screen.grid.getCell(0, 1).char);
+    try testing.expectEqual(@as(u21, '3'), screen.grid.getCell(0, 2).char);
+    try testing.expectEqual(@as(u21, ' '), screen.grid.getCell(0, 3).char);
+
+    // Scroll down by 1 line inside region
+    try screen.scrollDown(1);
+
+    // Line 0 and 4 should be untouched
+    try testing.expectEqual(@as(u21, '0'), screen.grid.getCell(0, 0).char);
+    try testing.expectEqual(@as(u21, '4'), screen.grid.getCell(0, 4).char);
+
+    // Region lines (1..3) should be scrolled down:
+    // line 1 cleared
+    // line 2 gets old line 1 ("222...")
+    // line 3 gets old line 2 ("333...")
+    try testing.expectEqual(@as(u21, ' '), screen.grid.getCell(0, 1).char);
+    try testing.expectEqual(@as(u21, '2'), screen.grid.getCell(0, 2).char);
+    try testing.expectEqual(@as(u21, '3'), screen.grid.getCell(0, 3).char);
 }
 
 
