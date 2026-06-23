@@ -69,7 +69,7 @@ pub const Pty = struct {
             _ = close(self.master);
             _ = login_tty(self.slave);
 
-            _ = setenv("TERM", "szn-256color", 1);
+            _ = setenv("TERM", "xterm-256color", 1);
             _ = setenv("TERM_PROGRAM", "szn", 1);
             _ = setenv("SZN", szn_env_z, 1);
             _ = setenv("SZN_PANE", szn_pane_z, 1);
