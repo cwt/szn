@@ -78,8 +78,16 @@ pub fn makeErrorPacket(msg: []const u8) Packet {
     return Packet.make(.err, msg);
 }
 
+const exit_codes = init: {
+    var arr: [256]u8 = undefined;
+    for (&arr, 0..) |*item, i| {
+        item.* = @intCast(i);
+    }
+    break :init arr;
+};
+
 pub fn makeExitPacket(code: u8) Packet {
-    return Packet.make(.exit, &[_]u8{code});
+    return Packet.make(.exit, exit_codes[code..][0..1]);
 }
 
 pub fn packetType(pkt: Packet) MessageType {
