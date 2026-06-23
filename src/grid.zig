@@ -64,6 +64,7 @@ pub const Grid = struct {
     lines: std.ArrayListUnmanaged(GridLine) = .empty,
     history: std.ArrayListUnmanaged(GridLine) = .empty,
     history_limit: u32 = 2000,
+    start_index: u32 = 0,
 
     pub fn init(allocator: std.mem.Allocator, width: u32, height: u32) Error!Grid {
         return initWithLimit(allocator, width, height, 2000);
@@ -75,10 +76,33 @@ pub const Grid = struct {
             .width = width,
             .height = height,
             .history_limit = history_limit,
+            .start_index = 0,
         };
         try grid.lines.ensureTotalCapacity(allocator, height);
         try grid.resize(height);
         return grid;
+    }
+
+    pub fn getLine(self: *const Grid, y: u32) *const GridLine {
+        const idx = (self.start_index + y) % self.height;
+        return &self.lines.items[idx];
+    }
+
+    pub fn getLineMut(self: *Grid, y: u32) *GridLine {
+        const idx = (self.start_index + y) % self.height;
+        return &self.lines.items[idx];
+    }
+
+    pub fn normalize(self: *Grid) !void {
+        if (self.start_index == 0) return;
+        var temp_lines = try self.allocator.alloc(GridLine, self.height);
+        defer self.allocator.free(temp_lines);
+        var i: u32 = 0;
+        while (i < self.height) : (i += 1) {
+            temp_lines[i] = self.getLine(i).*;
+        }
+        @memcpy(self.lines.items[0..self.height], temp_lines);
+        self.start_index = 0;
     }
 
     pub fn deinit(self: *Grid) void {
@@ -89,6 +113,7 @@ pub const Grid = struct {
     }
 
     pub fn resize(self: *Grid, new_height: u32) Error!void {
+        try self.normalize();
         while (self.lines.items.len < new_height) {
             var line = GridLine{};
             try line.cells.resize(self.allocator, self.width);
@@ -103,6 +128,7 @@ pub const Grid = struct {
     }
 
     pub fn setSize(self: *Grid, new_width: u32, new_height: u32) Error!void {
+        try self.normalize();
         self.width = new_width;
         for (self.lines.items) |*line| {
             const old_len = line.cells.items.len;
@@ -118,14 +144,14 @@ pub const Grid = struct {
 
     pub fn setCell(self: *Grid, x: u32, y: u32, cell: Cell) void {
         if (x >= self.width or y >= self.height) return;
-        const line = &self.lines.items[y];
+        const line = self.getLineMut(y);
         line.cells.items[x] = cell;
         line.dirty = true;
     }
 
     pub fn getCell(self: *const Grid, x: u32, y: u32) Cell {
         if (x >= self.width or y >= self.height) return Cell.empty();
-        return self.lines.items[y].cells.items[x];
+        return self.getLine(y).cells.items[x];
     }
 
     pub fn writeChar(self: *Grid, x: u32, y: u32, char: u21) void {
@@ -133,8 +159,8 @@ pub const Grid = struct {
     }
 
     pub fn scrollUp(self: *Grid) Error!void {
-        if (self.lines.items.len == 0) return;
-        var line = self.lines.orderedRemove(0);
+        if (self.height == 0) return;
+        var line = self.getLine(0).*;
         line.dirty = false;
         errdefer line.deinit(self.allocator);
 
@@ -147,48 +173,57 @@ pub const Grid = struct {
         var new_line = GridLine{};
         try new_line.cells.resize(self.allocator, self.width);
         @memset(new_line.cells.items, Cell.empty());
-        try self.lines.append(self.allocator, new_line);
+        self.getLineMut(0).* = new_line;
+
+        self.start_index = (self.start_index + 1) % self.height;
     }
 
     pub fn scrollDown(self: *Grid) Error!void {
         if (self.history.items.len == 0) return;
         var line = self.history.pop().?;
         errdefer line.deinit(self.allocator);
-        try self.lines.insert(self.allocator, 0, line);
-        if (self.lines.pop()) |discarded| {
-            var d = discarded;
-            d.deinit(self.allocator);
-        }
+
+        self.getLineMut(self.height - 1).deinit(self.allocator);
+        self.start_index = (self.start_index + self.height - 1) % self.height;
+        self.getLineMut(0).* = line;
     }
 
     pub fn clearLine(self: *Grid, y: u32) void {
         if (y >= self.height) return;
-        var line = &self.lines.items[y];
+        var line = self.getLineMut(y);
         @memset(line.cells.items, Cell.empty());
         line.dirty = true;
     }
 
     pub fn insertLine(self: *Grid, y: u32) Error!void {
         if (y >= self.height) return;
-        var line = self.lines.pop().?;
-        @memset(line.cells.items, Cell.empty());
-        line.dirty = true;
-        try self.lines.insert(self.allocator, @as(usize, y), line);
+        const temp = self.getLine(self.height - 1).*;
+        var i = self.height - 1;
+        while (i > y) : (i -= 1) {
+            self.getLineMut(i).* = self.getLine(i - 1).*;
+        }
+        self.getLineMut(y).* = temp;
+        @memset(self.getLineMut(y).cells.items, Cell.empty());
+        self.getLineMut(y).dirty = true;
     }
 
     pub fn deleteLine(self: *Grid, y: u32) Error!void {
         if (y >= self.height) return;
-        var line = self.lines.orderedRemove(@as(usize, y));
-        @memset(line.cells.items, Cell.empty());
-        line.dirty = true;
-        try self.lines.append(self.allocator, line);
+        const temp = self.getLine(y).*;
+        var i = y;
+        while (i < self.height - 1) : (i += 1) {
+            self.getLineMut(i).* = self.getLine(i + 1).*;
+        }
+        self.getLineMut(self.height - 1).* = temp;
+        @memset(self.getLineMut(self.height - 1).cells.items, Cell.empty());
+        self.getLineMut(self.height - 1).dirty = true;
     }
 
     pub fn insertChars(self: *Grid, x: u32, y: u32, n: u32) void {
         if (y >= self.height) return;
         const num = @min(n, self.width -| x);
         if (num == 0) return;
-        const line = &self.lines.items[y];
+        const line = self.getLineMut(y);
         var i = self.width - 1;
         while (i >= x + num) : (i -= 1) {
             line.cells.items[i] = line.cells.items[i - num];
@@ -204,7 +239,7 @@ pub const Grid = struct {
         if (y >= self.height) return;
         const num = @min(n, self.width -| x);
         if (num == 0) return;
-        const line = &self.lines.items[y];
+        const line = self.getLineMut(y);
         var i = x;
         while (i + num < self.width) : (i += 1) {
             line.cells.items[i] = line.cells.items[i + num];
@@ -217,21 +252,23 @@ pub const Grid = struct {
 
     pub fn eraseChars(self: *Grid, x: u32, y: u32, n: u32) void {
         if (y >= self.height) return;
-        const line = &self.lines.items[y];
+        const line = self.getLineMut(y);
         const end = @min(x + n, self.width);
-        for (x..end) |col| {
-            line.cells.items[col] = Cell.empty();
+        if (x < end) {
+            @memset(line.cells.items[x..end], Cell.empty());
+            line.dirty = true;
         }
-        line.dirty = true;
     }
 
     pub fn clearArea(self: *Grid, sx: u32, sy: u32, ex: u32, ey: u32) void {
         var y = sy;
         while (y <= ey and y < self.height) : (y += 1) {
-            var x = if (y == sy) sx else 0;
+            const line = self.getLineMut(y);
+            const x = if (y == sy) sx else 0;
             const max_x = if (y == ey) @min(ex, self.width - 1) else self.width - 1;
-            while (x <= max_x) : (x += 1) {
-                self.setCell(x, y, Cell.empty());
+            if (x <= max_x) {
+                @memset(line.cells.items[x .. max_x + 1], Cell.empty());
+                line.dirty = true;
             }
         }
     }
