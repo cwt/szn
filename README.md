@@ -34,6 +34,12 @@ over from 1978.
 - **Modern terminals only** — xterm-256color as the baseline, with SGR mouse
   (1006), true-colour RGB, kitty extended keys, UTF-8, OSC 8 hyperlinks, and
   sixel image support out of the box.
+- **Pragmatic mouse forwarding** — szn speaks SGR mouse (1006) natively, but
+  also forwards legacy `\x1b[M` 3-byte format when a program only enables basic
+  mouse mode (1000/1002). This keeps SGR as the default while tolerating
+  programs whose terminfo lacks the `XM` capability. Users on systems with
+  older terminfo databases can `export TERM=tmux-256color` to force basic mouse
+  mode if needed.
 - **Clean architecture** — Zig's comptime, error unions, tagged unions, arena
   allocators, and slices replace C macros, `goto`-based cleanup, and manual
   memory management.
@@ -50,7 +56,7 @@ All core development phases (Phases 0 to 11) are fully implemented and complete.
 - Standard VT100 wrap-pending and Background Color Erase (BCE) support for accurate rendering.
 - Full multi-pane layouts, interactive copy mode, status bars, and config parsing (`.szn.conf`).
 
-The codebase has 549 unit and integration tests passing. Check out [PROGRESS.md](PROGRESS.md) for the full migration and feature breakdown.
+The codebase has 561 unit and integration tests passing. Check out [PROGRESS.md](PROGRESS.md) for the full migration and feature breakdown.
 
 ## Building & Installation
 

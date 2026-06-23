@@ -673,6 +673,12 @@ pub const Server = struct {
                                     const wants_mouse = active_pane.screen.mode.mouse_standard or
                                         active_pane.screen.mode.mouse_button or
                                         active_pane.screen.mode.mouse_sgr;
+                                    std.log.debug("MOUSE EVENT: button={any}, x={d}, y={d}, wants_mouse={}, standard={}, button_mode={}, sgr={}", .{
+                                        m.button, m.x, m.y, wants_mouse,
+                                        active_pane.screen.mode.mouse_standard,
+                                        active_pane.screen.mode.mouse_button,
+                                        active_pane.screen.mode.mouse_sgr,
+                                    });
                                     if (wants_mouse) {
                                         handled = true;
                                         if (self.findPaneBounds(window.layout.root, active_pane, 0, 0, window.layout.width, window.layout.height)) |pb| {
@@ -690,18 +696,26 @@ pub const Server = struct {
                                                 if (m.mod.shift) btn |= 4;
                                                 if (m.mod.alt) btn |= 8;
                                                 if (m.mod.ctrl) btn |= 16;
-                                                const final_char: u8 = if (m.button == .release) 'm' else 'M';
 
-                                                var sgr_buf: [64]u8 = undefined;
-                                                const sgr_seq = std.fmt.bufPrint(&sgr_buf, "\x1b[<{d};{d};{d}{c}", .{
-                                                    btn,
-                                                    local_x + 1,
-                                                    local_y + 1,
-                                                    final_char,
-                                                }) catch "";
-                                                if (sgr_seq.len > 0) {
-                                                    if (active_pane.pty) |*ap_pty| {
-                                                        ap_pty.writeInput(sgr_seq) catch {};
+                                                if (active_pane.pty) |*ap_pty| {
+                                                    if (active_pane.screen.mode.mouse_sgr) {
+                                                        const final_char: u8 = if (m.button == .release) 'm' else 'M';
+                                                        var sgr_buf: [64]u8 = undefined;
+                                                        const sgr_seq = std.fmt.bufPrint(&sgr_buf, "\x1b[<{d};{d};{d}{c}", .{
+                                                            btn,
+                                                            local_x + 1,
+                                                            local_y + 1,
+                                                            final_char,
+                                                        }) catch null;
+                                                        if (sgr_seq) |s| {
+                                                            ap_pty.writeInput(s) catch {};
+                                                        }
+                                                    } else {
+                                                        var legacy_buf: [6]u8 = .{ 0x1b, '[', 'M', 0, 0, 0 };
+                                                        legacy_buf[3] = btn + 32;
+                                                        legacy_buf[4] = @intCast(@min(local_x + 33, 255));
+                                                        legacy_buf[5] = @intCast(@min(local_y + 33, 255));
+                                                        ap_pty.writeInput(&legacy_buf) catch {};
                                                     }
                                                 }
                                             }
@@ -1522,6 +1536,62 @@ test "mouse event filtering based on mouse_opt" {
     };
     try testing.expect(n > 0);
     try testing.expectEqualStrings("\x1b[<64;10;5M\n", buf[0..n]);
+
+    // 3. Test legacy (non-SGR) mouse forwarding. Disable SGR, enable only basic mouse.
+    pane.screen.mode.mouse_sgr = false;
+    pane.screen.mode.mouse_standard = true;
+
+    // Feed left-click SGR sequence from terminal (szn always receives SGR from outer terminal).
+    try server.processInput("\x1b[<0;10;5M");
+    try server.processInput("\n");
+
+    // Verify legacy format forwarded: \x1b[M + btn+32 + local_x+33 + local_y+33.
+    // SGR x=10 → m.x=9, y=5 → m.y=4. Single pane bounds: x=0,y=0. local_x=9, local_y=4.
+    // btn=0 (left)+32=32(space), 9+33=42('*'), 4+33=37('%').
+    n = std.posix.read(fd, &buf) catch |err| blk: {
+        if (err == error.WouldBlock) break :blk @as(usize, 0) else return err;
+    };
+    try testing.expect(n > 0);
+    try testing.expectEqualStrings("\x1b[M *%\n", buf[0..n]);
+}
+
+test "mouse SGR left-click forwarded when program enables 1006+1000" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    const s = try server.newSession("test", 80, 24);
+    const window = s.active_window.?;
+    const pane = window.active_pane.?;
+    pane.pty = try @import("pty.zig").Pty.open();
+
+    const fd = pane.pty.?.slave;
+    const c_fcntl = struct {
+        extern "c" fn fcntl(fd: c_int, cmd: c_int, ...) c_int;
+    }.fcntl;
+    _ = c_fcntl(fd, 3, @as(c_int, 0));
+    _ = c_fcntl(fd, 4, c_fcntl(fd, 3, @as(c_int, 0)) | 0x0004);
+
+    try s.options.set("mouse", .{ .flag = true });
+
+    // Simulate what htop/ncurses sends with TERM=xterm-256color on ncurses 6:
+    // \x1b[?1006;1000h  — enables SGR mouse (1006) + basic mouse (1000)
+    const parser = pane.getParser();
+    try parser.feed("\x1b[?1006;1000h");
+    try testing.expect(pane.screen.mode.mouse_sgr);
+    try testing.expect(pane.screen.mode.mouse_standard);
+
+    // Simulate left-click at screen (9, 4) — SGR from outer terminal.
+    try server.processInput("\x1b[<0;10;5M");
+    try server.processInput("\n");
+
+    var buf: [128]u8 = undefined;
+    const n = std.posix.read(fd, &buf) catch |err| blk: {
+        if (err == error.WouldBlock) break :blk @as(usize, 0) else return err;
+    };
+    // Should forward SGR format since mouse_sgr is true.
+    // local_x=9, local_y=4 → SGR coords (10, 5).
+    try testing.expect(n > 0);
+    try testing.expectEqualStrings("\x1b[<0;10;5M\n", buf[0..n]);
 }
 
 test "destroyPane cleans up pane, window, and session correctly" {
