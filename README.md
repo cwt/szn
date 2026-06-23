@@ -43,8 +43,14 @@ over from 1978.
 
 ## Status
 
-Still in the planning phase. Check out [MIGRATION.md](MIGRATION.md) for the
-full breakdown of what's coming and when.
+All core development phases (Phases 0 to 11) are fully implemented and complete. We have a robust, functional Zig terminal multiplexer featuring:
+- High-performance grid engine with arena-allocated session/pane lifecycles.
+- Client-server IPC over Unix sockets.
+- 33+ MVP commands matching standard tmux behavior (including pane resizing, layout splits, and copying/pasting).
+- Standard VT100 wrap-pending and Background Color Erase (BCE) support for accurate rendering.
+- Full multi-pane layouts, interactive copy mode, status bars, and config parsing (`.szn.conf`).
+
+The codebase has 549 unit and integration tests passing. Check out [PROGRESS.md](PROGRESS.md) for the full migration and feature breakdown.
 
 ## Building & Installation
 
