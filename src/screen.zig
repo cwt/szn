@@ -292,24 +292,38 @@ pub const Screen = struct {
         const top = if (self.scroll_region) |r| r[0] else 0;
         const bottom = if (self.scroll_region) |r| r[1] else self.grid.height - 1;
         const y = @max(self.cursor.y, top);
+        if (y > bottom) return;
         const count = @min(n, bottom + 1 - y);
         var i: u32 = 0;
         while (i < count) : (i += 1) {
-            try self.grid.insertLine(y);
-            self.grid.clearLine(bottom);
+            var row = bottom;
+            const temp = self.grid.getLine(bottom).*;
+            while (row > y) : (row -= 1) {
+                self.grid.getLineMut(row).* = self.grid.getLine(row - 1).*;
+            }
+            self.grid.getLineMut(y).* = temp;
+            self.grid.clearLine(y);
         }
+        self.dirty = true;
     }
 
     pub fn deleteLines(self: *Screen, n: u32) Error!void {
         const top = if (self.scroll_region) |r| r[0] else 0;
         const bottom = if (self.scroll_region) |r| r[1] else self.grid.height - 1;
         const y = @max(self.cursor.y, top);
+        if (y > bottom) return;
         const count = @min(n, bottom + 1 - y);
         var i: u32 = 0;
         while (i < count) : (i += 1) {
-            try self.grid.deleteLine(y);
+            const temp = self.grid.getLine(y).*;
+            var row = y;
+            while (row < bottom) : (row += 1) {
+                self.grid.getLineMut(row).* = self.grid.getLine(row + 1).*;
+            }
+            self.grid.getLineMut(bottom).* = temp;
             self.grid.clearLine(bottom);
         }
+        self.dirty = true;
     }
 
     pub fn insertChars(self: *Screen, n: u32) void {

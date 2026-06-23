@@ -90,8 +90,8 @@ pub const Display = struct {
                     &pane_grid.history.items[@intCast(combined_idx)].cells
                 else blk: {
                     const visible_y = combined_idx - @as(isize, @intCast(pane_grid.history.items.len));
-                    break :blk if (visible_y < pane_grid.lines.items.len)
-                        &pane_grid.lines.items[@intCast(visible_y)].cells
+                    break :blk if (visible_y < pane_grid.height)
+                        &pane_grid.getLine(@intCast(visible_y)).cells
                     else
                         @as(?*const std.ArrayListUnmanaged(Cell), null);
                 };
@@ -104,7 +104,7 @@ pub const Display = struct {
                             cell.attr.reverse = !cell.attr.reverse;
                         }
                     }
-                    merged_screen.grid.lines.items[pb.y + y].cells.items[pb.x + x] = cell;
+                    merged_screen.grid.getLineMut(@intCast(pb.y + y)).cells.items[pb.x + x] = cell;
                 }
             }
         }
@@ -164,7 +164,7 @@ pub const Display = struct {
                         var y: u32 = ly;
                         while (y < ly + lh) : (y += 1) {
                             if (y >= merged_screen.grid.height) break;
-                            var cell = &merged_screen.grid.lines.items[y].cells.items[border_x];
+                            var cell = &merged_screen.grid.getLineMut(y).cells.items[border_x];
                             if (cell.char == 0x2500) {
                                 cell.char = 0x253C; // '┼'
                             } else {
@@ -185,7 +185,7 @@ pub const Display = struct {
                         var x: u32 = lx;
                         while (x < lx + lw) : (x += 1) {
                             if (x >= merged_screen.grid.width) break;
-                            var cell = &merged_screen.grid.lines.items[border_y].cells.items[x];
+                            var cell = &merged_screen.grid.getLineMut(border_y).cells.items[x];
                             if (cell.char == 0x2502) {
                                 cell.char = 0x253C; // '┼'
                             } else {
@@ -240,8 +240,8 @@ pub const Display = struct {
                 &screen.grid.history.items[@intCast(combined_idx)].cells
             else blk: {
                 const visible_y = combined_idx - @as(isize, @intCast(screen.grid.history.items.len));
-                break :blk if (visible_y < screen.grid.lines.items.len)
-                    &screen.grid.lines.items[@intCast(visible_y)].cells
+                break :blk if (visible_y < screen.grid.height)
+                    &screen.grid.getLine(@intCast(visible_y)).cells
                 else
                     @as(?*const std.ArrayListUnmanaged(Cell), null);
             };
