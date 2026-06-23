@@ -757,6 +757,7 @@ pub const Server = struct {
                     if (win.active_pane) |pane| {
                         pane.dirty = true;
                     }
+                    self.dirty = true;
                     return;
                 }
                 col += entry_len;
@@ -776,7 +777,13 @@ pub const Server = struct {
             }
         }
         if (!pane_valid) return;
+        const prev_active = window.active_pane;
         window.setActivePane(found_pane);
+        if (prev_active != found_pane) {
+            if (prev_active) |prev| prev.dirty = true;
+            found_pane.dirty = true;
+            self.dirty = true;
+        }
     }
 
     fn collectPaneBounds(self: *Server, node: *const @import("../layout.zig").Node, lx: u32, ly: u32, lw: u32, lh: u32, result: *std.ArrayList(render.PaneBounds)) ServerError!void {
