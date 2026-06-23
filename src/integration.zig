@@ -314,7 +314,8 @@ test "double new-session creates two sessions" {
         _ = c.exec(&server);
     }
     try testing.expectEqual(@as(usize, 2), server.sessions.items.len);
-    try testing.expectEqualStrings("b", server.sessions.items[1].name);
+    try testing.expectEqualStrings("b", server.sessions.items[0].name);
+    try testing.expectEqualStrings("a", server.sessions.items[1].name);
 }
 
 test "kill non-last pane in multi-window" {

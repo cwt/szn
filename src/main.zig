@@ -157,13 +157,38 @@ fn mainInner(init: std.process.Init) Error!void {
             std.process.exit(0);
         }
 
-        var client = @import("client/client.zig").Client.init(allocator) catch |err| {
-            if (err == error.SocketNotFound or err == error.ConnectionRefused) {
-                std.debug.print("No szn server running\n", .{});
-            } else {
-                std.debug.print("Could not connect to szn server: {any}\n", .{err});
+        const is_new_cmd = std.mem.eql(u8, args.items[1], "new-session") or
+            std.mem.eql(u8, args.items[1], "new");
+
+        var client = blk: {
+            if (is_new_cmd and !socket_mod.socketExists()) {
+                const pid = c.fork();
+                if (pid < 0) {
+                    std.debug.print("Failed to fork\n", .{});
+                    std.process.exit(1);
+                }
+                if (pid == 0) {
+                    if (log_fd) |fd| {
+                        _ = c.close(fd);
+                        log_fd = null;
+                    }
+                    try runServerDaemon(allocator);
+                    std.process.exit(0);
+                } else {
+                    waitForSocket() catch {
+                        std.debug.print("Server failed to start\n", .{});
+                        std.process.exit(1);
+                    };
+                }
             }
-            std.process.exit(1);
+            break :blk @import("client/client.zig").Client.init(allocator) catch |err| {
+                if (err == error.SocketNotFound or err == error.ConnectionRefused) {
+                    std.debug.print("No szn server running\n", .{});
+                } else {
+                    std.debug.print("Could not connect to szn server: {any}\n", .{err});
+                }
+                std.process.exit(1);
+            };
         };
         defer client.deinit();
 
@@ -191,6 +216,10 @@ fn mainInner(init: std.process.Init) Error!void {
         const msg_type = @as(protocol.MessageType, @enumFromInt(reply.header.msg_type));
         switch (msg_type) {
             .ready => {
+                if (is_new_cmd) {
+                    try runInteractiveClient(allocator);
+                    std.process.exit(0);
+                }
                 std.debug.print("{s}\n", .{reply.data});
                 std.process.exit(0);
             },

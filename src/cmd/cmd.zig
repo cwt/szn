@@ -24,6 +24,13 @@ pub const CmdEntry = struct {
 fn cmdNewSession(server: *Server, args: []const []const u8) CmdResult {
     const name = if (args.len > 1) args[1] else "default";
     _ = server.newSession(name, 80, 24) catch return .err;
+    if (server.sessions.items.len > 1) {
+        const idx = server.sessions.items.len - 1;
+        const target = server.sessions.items[idx];
+        server.sessions.items[idx] = server.sessions.items[0];
+        server.sessions.items[0] = target;
+        server.dirty = true;
+    }
     return .ok;
 }
 
