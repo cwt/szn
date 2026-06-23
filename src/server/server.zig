@@ -668,18 +668,51 @@ pub const Server = struct {
                                 if (mouse_opt) {
                                     if (m.button == .left) {
                                         self.handleMouseFocus(m.x, m.y) catch {};
-                                        handled = true;
                                     }
-                                    const wants_mouse = pane.screen.mode.mouse_standard or
-                                        pane.screen.mode.mouse_button or
-                                        pane.screen.mode.mouse_sgr;
-                                    if (!wants_mouse) {
+                                    const active_pane = window.active_pane orelse return;
+                                    const wants_mouse = active_pane.screen.mode.mouse_standard or
+                                        active_pane.screen.mode.mouse_button or
+                                        active_pane.screen.mode.mouse_sgr;
+                                    if (wants_mouse) {
+                                        handled = true;
+                                        if (self.findPaneBounds(window.layout.root, active_pane, 0, 0, window.layout.width, window.layout.height)) |pb| {
+                                            if (m.x >= pb.x and m.x < pb.x + pb.w and m.y >= pb.y and m.y < pb.y + pb.h) {
+                                                const local_x = m.x - pb.x;
+                                                const local_y = m.y - pb.y;
+                                                var btn: u8 = switch (m.button) {
+                                                    .left => @as(u8, 0),
+                                                    .middle => 1,
+                                                    .right => 2,
+                                                    .release => 3,
+                                                    .scroll_up => 64,
+                                                    .scroll_down => 65,
+                                                };
+                                                if (m.mod.shift) btn |= 4;
+                                                if (m.mod.alt) btn |= 8;
+                                                if (m.mod.ctrl) btn |= 16;
+                                                const final_char: u8 = if (m.button == .release) 'm' else 'M';
+
+                                                var sgr_buf: [64]u8 = undefined;
+                                                const sgr_seq = std.fmt.bufPrint(&sgr_buf, "\x1b[<{d};{d};{d}{c}", .{
+                                                    btn,
+                                                    local_x + 1,
+                                                    local_y + 1,
+                                                    final_char,
+                                                }) catch "";
+                                                if (sgr_seq.len > 0) {
+                                                    if (active_pane.pty) |*ap_pty| {
+                                                        ap_pty.writeInput(sgr_seq) catch {};
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    } else {
                                         handled = true;
                                         if (m.button == .scroll_up) {
-                                            pane.screen.copy_mode = @import("../mode_copy.zig").CopyMode.init(.vi);
-                                            pane.screen.copy_mode.?.enter(&pane.screen.grid);
-                                            pane.screen.copy_mode.?.scroll_offset = @min(3, @as(u32, @intCast(pane.screen.grid.history.items.len)));
-                                            pane.dirty = true;
+                                            active_pane.screen.copy_mode = @import("../mode_copy.zig").CopyMode.init(.vi);
+                                            active_pane.screen.copy_mode.?.enter(&active_pane.screen.grid);
+                                            active_pane.screen.copy_mode.?.scroll_offset = @min(3, @as(u32, @intCast(active_pane.screen.grid.history.items.len)));
+                                            active_pane.dirty = true;
                                         }
                                     }
                                 } else {
@@ -907,6 +940,29 @@ pub const Server = struct {
                         return self.findPaneAtNode(s.b, x, y, lx, ly + split_h, lw, lh - split_h);
                     }
                 }
+            },
+        }
+    }
+
+    fn findPaneBounds(self: *Server, node: *const @import("../layout.zig").Node, target: *Pane, lx: u32, ly: u32, lw: u32, lh: u32) ?render.PaneBounds {
+        switch (node.*) {
+            .leaf => |pane| {
+                if (pane == target) {
+                    return render.PaneBounds{ .pane = pane, .x = lx, .y = ly, .w = lw, .h = lh };
+                }
+                return null;
+            },
+            .split => |s| {
+                if (s.direction == .horizontal) {
+                    const split_w = @max(1, @as(u32, @intFromFloat(@as(f64, @floatFromInt(lw)) * s.proportion)));
+                    if (self.findPaneBounds(s.a, target, lx, ly, split_w -| 1, lh)) |b| return b;
+                    if (self.findPaneBounds(s.b, target, lx + split_w, ly, lw -| split_w, lh)) |b| return b;
+                } else {
+                    const split_h = @max(1, @as(u32, @intFromFloat(@as(f64, @floatFromInt(lh)) * s.proportion)));
+                    if (self.findPaneBounds(s.a, target, lx, ly, lw, split_h -| 1)) |b| return b;
+                    if (self.findPaneBounds(s.b, target, lx, ly + split_h, lw, lh -| split_h)) |b| return b;
+                }
+                return null;
             },
         }
     }
