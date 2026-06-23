@@ -525,8 +525,22 @@ pub const InputParser = struct {
                 self.screen.deleteChars(n);
             },
             'S' => {
-                const n = self.paramDefault(0, 1);
-                try self.screen.scrollUp(n);
+                if (self.intermediate == '?') {
+                    // XTSMGRAPHICS — graphics attribute query.
+                    // CSI ? Ps1 ; Ps2 S
+                    //   Ps1=1 = number of colour registers
+                    //   Ps1=2 = sixel geometry
+                    // We report sixel as supported with no size limit (0;0).
+                    const ps1 = self.param(0);
+                    if (self.pty) |pty| {
+                        var buf: [32]u8 = undefined;
+                        const rep = std.fmt.bufPrint(&buf, "\x1b[?{d};0;0S", .{ps1}) catch "";
+                        if (rep.len > 0) pty.writeInput(rep) catch {};
+                    }
+                } else {
+                    const n = self.paramDefault(0, 1);
+                    try self.screen.scrollUp(n);
+                }
             },
             'T' => {
                 const n = self.paramDefault(0, 1);
@@ -580,6 +594,25 @@ pub const InputParser = struct {
                             std.log.warn("DSR writeInput error: {any}", .{err});
                         };
                     }
+                }
+            },
+            'c' => {
+                // Device Attributes.
+                // CSI c    (intermediate == 0) → Primary DA (DA1)
+                //   Respond: VT300-class + sixel (4) + colour text (22)
+                //   ESC [ ? 63 ; 4 ; 22 c
+                //   This is the same response tmux hard-codes.
+                // CSI > c  (intermediate == '>') → Secondary DA (DA2)
+                //   Respond: type=0 (VT100), firmware=10, ROM cartridge=0
+                //   ESC [ > 0 ; 10 ; 0 c
+                if (self.pty) |pty| {
+                    const rep: []const u8 = if (self.intermediate == '>')
+                        "\x1b[>0;10;0c"
+                    else
+                        "\x1b[?63;4;22c";
+                    pty.writeInput(rep) catch |err| {
+                        std.log.warn("DA response writeInput error: {any}", .{err});
+                    };
                 }
             },
             's' => {
@@ -1635,4 +1668,107 @@ test "non-sixel DCS sequence is silently discarded" {
     try testing.expectEqual(InputParser.State.ground, parser.state);
     // No images stored.
     try testing.expectEqual(@as(usize, 0), screen.sixel_images.items.len);
+}
+
+// ─── Device Attributes tests ─────────────────────────────────────────────────
+//
+// We need to capture bytes that InputParser writes back to the child via
+// Pty.writeInput(). writeInput() only calls write(self.master, ...), so we
+// create a fake Pty with master = pipe write-end and read from the read-end.
+// This avoids PTY line-discipline transformations (e.g. echo, ^[ expansion).
+
+const Pty = @import("server/pty.zig").Pty;
+const c_sys = @cImport({
+    @cInclude("unistd.h");
+    @cInclude("fcntl.h");
+});
+
+/// Create a fake Pty whose writeInput writes into a pipe.
+/// Returns {pty, read_fd}. Caller must close read_fd and call pty.deinit().
+fn makePipePty() !struct { pty: Pty, read_fd: i32 } {
+    var fds: [2]i32 = undefined;
+    if (c_sys.pipe(&fds) < 0) return error.PipeFailed;
+    return .{
+        .pty = Pty{ .master = fds[1], .slave = -1, .pid = -1 },
+        .read_fd = fds[0],
+    };
+}
+
+/// Read all available bytes from a pipe fd into buf (non-blocking).
+fn drainFd(fd: i32, buf: []u8) []u8 {
+    _ = c_sys.fcntl(fd, c_sys.F_SETFL, c_sys.O_NONBLOCK);
+    const n = c_sys.read(fd, buf.ptr, buf.len);
+    if (n <= 0) return buf[0..0];
+    return buf[0..@intCast(n)];
+}
+test "DA1 (CSI c) responds with sixel capability" {
+    var p = try makePipePty();
+    defer _ = c_sys.close(p.read_fd);
+    defer p.pty.deinit();
+
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+    var parser = InputParser.init(&screen);
+    defer parser.deinit(testing.allocator);
+    parser.pty = &p.pty;
+
+    try parser.feed("\x1b[c"); // DA1
+
+    var buf: [64]u8 = undefined;
+    const got = drainFd(p.read_fd, &buf);
+    try testing.expectEqualStrings("\x1b[?63;4;22c", got);
+}
+
+test "DA2 (CSI > c) responds with secondary attributes" {
+    var p = try makePipePty();
+    defer _ = c_sys.close(p.read_fd);
+    defer p.pty.deinit();
+
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+    var parser = InputParser.init(&screen);
+    defer parser.deinit(testing.allocator);
+    parser.pty = &p.pty;
+
+    try parser.feed("\x1b[>c"); // DA2
+
+    var buf: [64]u8 = undefined;
+    const got = drainFd(p.read_fd, &buf);
+    try testing.expectEqualStrings("\x1b[>0;10;0c", got);
+}
+
+test "XTSMGRAPHICS (CSI ? 2 ; 1 S) reports sixel supported" {
+    var p = try makePipePty();
+    defer _ = c_sys.close(p.read_fd);
+    defer p.pty.deinit();
+
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+    var parser = InputParser.init(&screen);
+    defer parser.deinit(testing.allocator);
+    parser.pty = &p.pty;
+
+    try parser.feed("\x1b[?2;1S"); // XTSMGRAPHICS sixel query
+
+    var buf: [64]u8 = undefined;
+    const got = drainFd(p.read_fd, &buf);
+    // Ps1=2 echoed back, status=0 (supported), width=0 height=0 (unlimited)
+    try testing.expectEqualStrings("\x1b[?2;0;0S", got);
+}
+
+test "XTSMGRAPHICS does not interfere with scroll-up (CSI S without ?)" {
+    var screen = try Screen.init(testing.allocator, 80, 5);
+    defer screen.deinit();
+
+    // Fill rows so we can detect a scroll.
+    for (0..5) |i| screen.grid.writeChar(0, @intCast(i), @intCast('A' + i));
+
+    var parser = InputParser.init(&screen);
+    defer parser.deinit(testing.allocator);
+    // No PTY — scroll-up must still work normally.
+
+    try parser.feed("\x1b[1S"); // CSI 1 S = scroll up 1 line (no intermediate)
+
+    // 'A' moved to history; visible row 0 is now what was row 1 ('B').
+    try testing.expectEqual(@as(u21, 'B'), screen.grid.getCell(0, 0).char);
 }
