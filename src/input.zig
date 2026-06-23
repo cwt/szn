@@ -28,6 +28,7 @@ pub const InputParser = struct {
     const State = enum {
         ground,
         esc,
+        esc_intermediate,
         csi_param,
         csi_intermediate,
         csi_final,
@@ -123,6 +124,7 @@ pub const InputParser = struct {
         switch (self.state) {
             .ground => try self.advanceGround(byte),
             .esc => try self.advanceEsc(byte),
+            .esc_intermediate => try self.advanceEscIntermediate(byte),
             .csi_param => try self.advanceCsiParam(byte),
             .csi_intermediate => try self.advanceCsiIntermediate(byte),
             .csi_final => self.advanceCsiFinal(byte),
@@ -202,27 +204,24 @@ pub const InputParser = struct {
             'c' => try self.screen.resetHard(),
             '=', '>' => {},
             '<' => {},
-            ' ' => {
-                self.intermediate = ' ';
-                self.state = .csi_intermediate;
-            },
-            '#' => {
-                self.intermediate = '#';
-                self.state = .csi_intermediate;
-            },
-            '%' => {
-                self.intermediate = '%';
-                self.state = .csi_intermediate;
-            },
-            '(' => {
-                self.intermediate = '(';
-                self.state = .csi_intermediate;
-            },
-            ')' => {
-                self.intermediate = ')';
-                self.state = .csi_intermediate;
+            0x20...0x2F => {
+                self.intermediate = byte;
+                self.state = .esc_intermediate;
             },
             else => {},
+        }
+    }
+
+    fn advanceEscIntermediate(self: *InputParser, byte: u8) Error!void {
+        switch (byte) {
+            0x20...0x2F => {
+                self.intermediate = byte;
+            },
+            0x30...0x7E => {
+                // Ignore G0/G1 charset selections and other 3-byte ESC sequences
+                self.toGround();
+            },
+            else => self.toGround(),
         }
     }
 
@@ -1395,4 +1394,27 @@ test "DSR cursor position report with cursor moved" {
     const expected = "\x1b[4;6R";
     try testing.expectEqual(@as(usize, expected.len), @as(usize, @intCast(n)));
     try testing.expectEqualStrings(expected, resp[0..@as(usize, @intCast(n))]);
+}
+
+test "3-byte ESC sequences are consumed and ignored without cursor side effects" {
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+    var parser = InputParser.init(&screen);
+
+    // Initial cursor: (0, 0)
+    try testing.expectEqual(@as(u32, 0), screen.cursor.x);
+    try testing.expectEqual(@as(u32, 0), screen.cursor.y);
+
+    // Feed G0 charset selection to ASCII: ESC ( B
+    // If parsed incorrectly as CSI B, it would execute CUD (Cursor Down) and move cursor.y to 1.
+    try parser.feed("\x1b(B");
+
+    try testing.expectEqual(@as(u32, 0), screen.cursor.y);
+    try testing.expectEqual(@as(u8, @intFromEnum(InputParser.State.ground)), @intFromEnum(parser.state));
+
+    // Feed G0 charset selection to Line Drawing: ESC ( 0
+    try parser.feed("\x1b(0");
+
+    try testing.expectEqual(@as(u32, 0), screen.cursor.y);
+    try testing.expectEqual(@as(u8, @intFromEnum(InputParser.State.ground)), @intFromEnum(parser.state));
 }
