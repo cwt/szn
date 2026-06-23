@@ -46,6 +46,49 @@ over from 1978.
 Still in the planning phase. Check out [MIGRATION.md](MIGRATION.md) for the
 full breakdown of what's coming and when.
 
+## Building & Installation
+
+To build and run tests:
+
+```bash
+zig build
+zig build test
+```
+
+To install the output binary to a specific path (for example, `~/.local/bin`):
+
+```bash
+zig build -Doptimize=ReleaseFast --prefix ~/.local
+```
+
+## Usage
+
+To start a new session (this automatically spawns the background server daemon if not already running and attaches to it):
+
+```bash
+szn
+```
+
+To attach to an existing running session:
+
+```bash
+szn attach
+```
+
+To list all available subcommands and get help:
+
+```bash
+szn help
+szn help <command>
+```
+
+For example, to split the active window vertically or horizontally:
+
+```bash
+szn split-window -v
+szn split-window -h
+```
+
 ## License
 
 [MIT](LICENSE)
