@@ -45,6 +45,8 @@ pub const Pane = struct {
         self.dirty = true;
     }
 
+extern "c" fn getpid() c_int;
+
     pub fn spawn(self: *Pane, allocator: std.mem.Allocator, argv: ?[]const []const u8) Error!void {
         var pty = try Pty.open();
         errdefer pty.deinit();
@@ -55,7 +57,17 @@ pub const Pane = struct {
             .ypixel = 0,
         };
         try pty.setWinSize(&ws);
-        try pty.spawn(allocator, argv);
+
+        var socket_buf: [@import("socket_path.zig").MAX_PATH]u8 = undefined;
+        const sock_path = @import("socket_path.zig").resolve(&socket_buf) catch "/tmp/szn.sock";
+
+        var szn_env_buf: [1024]u8 = undefined;
+        const szn_env = std.fmt.bufPrint(&szn_env_buf, "{s},{d}", .{ sock_path, getpid() }) catch "/tmp/szn.sock,0";
+
+        var szn_pane_buf: [32]u8 = undefined;
+        const szn_pane = std.fmt.bufPrint(&szn_pane_buf, "%{d}", .{self.id}) catch "%0";
+
+        try pty.spawn(allocator, argv, szn_env, szn_pane);
         self.pty = pty;
     }
 

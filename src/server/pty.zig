@@ -33,6 +33,8 @@ pub fn setCloexec(fd: i32) void {
 const TIOCSWINSZ: c_ulong = 0x80087467;
 const DEFAULT_SHELL: []const u8 = "/bin/zsh";
 
+extern "c" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
+
 pub const Pty = struct {
     master: i32,
     slave: i32,
@@ -47,7 +49,7 @@ pub const Pty = struct {
         return Pty{ .master = master, .slave = slave, .pid = -1 };
     }
 
-    pub fn spawn(self: *Pty, allocator: std.mem.Allocator, argv: ?[]const []const u8) Error!void {
+    pub fn spawn(self: *Pty, allocator: std.mem.Allocator, argv: ?[]const []const u8, szn_env: []const u8, szn_pane: []const u8) Error!void {
         const args = argv orelse &.{DEFAULT_SHELL};
 
         var argv_z = try allocator.alloc(?[*:0]const u8, args.len + 1);
@@ -56,11 +58,22 @@ pub const Pty = struct {
         }
         argv_z[args.len] = null;
 
+        const szn_env_z = try allocator.dupeZ(u8, szn_env);
+        defer allocator.free(szn_env_z);
+        const szn_pane_z = try allocator.dupeZ(u8, szn_pane);
+        defer allocator.free(szn_pane_z);
+
         const pid = fork();
         if (pid < 0) return error.ForkFailed;
         if (pid == 0) {
             _ = close(self.master);
             _ = login_tty(self.slave);
+
+            _ = setenv("TERM", "szn-256color", 1);
+            _ = setenv("TERM_PROGRAM", "szn", 1);
+            _ = setenv("SZN", szn_env_z, 1);
+            _ = setenv("SZN_PANE", szn_pane_z, 1);
+
             _ = execvp(argv_z[0].?, @ptrCast(argv_z.ptr));
             std.process.exit(1);
         }
