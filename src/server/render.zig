@@ -133,6 +133,7 @@ pub const Display = struct {
         }
 
         try self.renderContent(&merged_screen);
+        try self.renderSixelImages(bounds);
         try self.renderStatusBar(session_name, windows, active_window);
 
         if (merged_screen.cursor.visible) {
@@ -386,6 +387,27 @@ pub const Display = struct {
         const seq = std.fmt.bufPrint(&buf, "\x1b[{d};{d}H", .{ y + 1, x + 1 }) catch unreachable;
         try self.writeBytes(seq);
     }
+
+    /// Re-emit sixel images from all panes at their absolute screen positions.
+    /// Each pane contributes zero or more SixelImage entries stored in its
+    /// Screen. We move the cursor to the image anchor, emit the raw DCS bytes,
+    /// then reset SGR so subsequent character rendering is unaffected.
+    fn renderSixelImages(self: Display, bounds: []const PaneBounds) Error!void {
+        for (bounds) |pb| {
+            for (pb.pane.screen.sixel_images.items) |img| {
+                // Translate pane-local row/col to display-absolute row/col.
+                const abs_col = pb.x + img.col;
+                const abs_row = pb.y + img.row;
+                // Skip images that would be outside the display area.
+                if (abs_row >= self.sy -| 1 or abs_col >= self.sx) continue;
+                try self.moveTo(abs_col, abs_row);
+                // Emit the raw DCS bytes verbatim. The outer terminal renders pixels.
+                try self.writeBytes(img.data);
+                // Reset SGR after the DCS sequence so subsequent text is clean.
+                try self.writeBytes("\x1b[m");
+            }
+        }
+    }
 };
 
 test "renderContent double and curly underline" {
@@ -485,5 +507,48 @@ test "renderAll cursor visibility hide" {
     try std.testing.expect(!has_show_cursor);
 }
 
+test "renderSixelImages emits DCS at correct absolute position" {
+    const allocator = std.testing.allocator;
+    var capture_buf: std.ArrayList(u8) = .empty;
+    defer capture_buf.deinit(allocator);
 
+    const display = Display{
+        .fd = -1,
+        .sx = 80,
+        .sy = 24,
+        .capture = &capture_buf,
+        .capture_allocator = allocator,
+    };
 
+    var win = try Window.init(allocator, 1, "test-sixel", 80, 23, null);
+    defer win.deinit(allocator);
+    const pane = win.active_pane.?;
+
+    // Inject a synthetic sixel image at pane cell (5, 3) with known DCS bytes.
+    const raw_dcs = try allocator.dupe(u8, "\x1bPqA\x1b\\");
+    const img = @import("../screen.zig").SixelImage{
+        .data  = raw_dcs,
+        .col   = 5,
+        .row   = 3,
+        .px_width  = 0,
+        .px_height = 6,
+    };
+    try pane.screen.sixel_images.append(allocator, img);
+
+    const bounds = [_]PaneBounds{.{
+        .pane = pane,
+        .x = 0,
+        .y = 0,
+        .w = 80,
+        .h = 23,
+    }};
+
+    try display.renderSixelImages(&bounds);
+
+    // The output must contain the cursor-move to row=4,col=6 (1-indexed) …
+    try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1b[4;6H") != null);
+    // … followed by the raw DCS bytes …
+    try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1bPqA\x1b\\") != null);
+    // … and a SGR reset after it.
+    try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1b[m") != null);
+}

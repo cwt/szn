@@ -24,6 +24,11 @@ pub const InputParser = struct {
     utf8_expected: u8 = 0,
     title_cb: ?*const fn (ctx: ?*anyopaque, title: []const u8) void = null,
     title_ctx: ?*anyopaque = null,
+    /// Growable buffer for accumulating raw DCS / sixel bytes.
+    /// Re-used across calls; reset to len=0 on each new DCS.
+    dcs_buf: std.ArrayListUnmanaged(u8) = .empty,
+    /// True when the current DCS sequence is a sixel stream (final byte 'q').
+    dcs_is_sixel: bool = false,
 
     const State = enum {
         ground,
@@ -38,6 +43,8 @@ pub const InputParser = struct {
         dcs_param,
         dcs_intermediate,
         dcs_final,
+        dcs_sixel,      // accumulating sixel payload bytes
+        dcs_sixel_esc,  // saw ESC inside sixel — waiting for \\ (ST)
         sos_pm_apc_string,
     };
 
@@ -63,6 +70,12 @@ pub const InputParser = struct {
         self.utf8_expected = 0;
         self.title_cb = null;
         self.title_ctx = null;
+        self.dcs_buf.clearRetainingCapacity();
+        self.dcs_is_sixel = false;
+    }
+
+    pub fn deinit(self: *InputParser, allocator: std.mem.Allocator) void {
+        self.dcs_buf.deinit(allocator);
     }
 
     fn clearParams(self: *InputParser) void {
@@ -130,10 +143,12 @@ pub const InputParser = struct {
             .csi_final => self.advanceCsiFinal(byte),
             .osc_string => try self.advanceOsc(byte),
             .osc_esc => self.advanceOscEsc(byte),
-            .dcs_entry => self.advanceDcsEntry(byte),
-            .dcs_param => self.advanceDcsParam(byte),
+            .dcs_entry => try self.advanceDcsEntry(byte),
+            .dcs_param => try self.advanceDcsParam(byte),
             .dcs_intermediate => self.advanceDcsIntermediate(byte),
             .dcs_final => self.advanceDcsFinal(byte),
+            .dcs_sixel => try self.advanceDcsSixel(byte),
+            .dcs_sixel_esc => try self.advanceDcsSixelEsc(byte),
             .sos_pm_apc_string => self.advanceSosPmApc(byte),
         }
     }
@@ -303,7 +318,11 @@ pub const InputParser = struct {
         self.toGround();
     }
 
-    fn advanceDcsEntry(self: *InputParser, byte: u8) void {
+    fn advanceDcsEntry(self: *InputParser, byte: u8) !void {
+        // Prepend "ESC P" to the accumulation buffer so we can re-emit the
+        // complete sequence later. We do this lazily on the first byte of the
+        // DCS body rather than when ESC P is first seen, to avoid allocating
+        // for non-sixel DCS sequences that will be discarded.
         switch (byte) {
             '0'...'9', ';', ':', '<', '=', '>', '?' => {
                 self.state = .dcs_param;
@@ -311,20 +330,45 @@ pub const InputParser = struct {
             0x20...0x2F => {
                 self.state = .dcs_intermediate;
             },
-            0x40...0x7E => {
+            'q' => {
+                // Sixel final byte — start accumulating
+                self.dcs_is_sixel = true;
+                self.dcs_buf.clearRetainingCapacity();
+                // ESC P <params so far are already gone — we have no params yet
+                // because we came straight from dcs_entry. Prepend the DCS intro.
+                try self.dcs_buf.appendSlice(self.screen.allocator, "\x1bP");
+                try self.dcs_buf.append(self.screen.allocator, byte);
+                self.state = .dcs_sixel;
+            },
+            0x40...'p', 'r'...0x7E => {
+                // Non-sixel DCS final — discard
                 self.toGround();
             },
             else => self.toGround(),
         }
     }
 
-    fn advanceDcsParam(self: *InputParser, byte: u8) void {
+    fn advanceDcsParam(self: *InputParser, byte: u8) !void {
         switch (byte) {
             '0'...'9', ';', ':', '<', '=', '>', '?' => {},
             0x20...0x2F => {
                 self.state = .dcs_intermediate;
             },
-            0x40...0x7E => {
+            'q' => {
+                // Sixel — collect the params that preceded this 'q'
+                self.dcs_is_sixel = true;
+                self.dcs_buf.clearRetainingCapacity();
+                // Re-emit "ESC P q" — the params are not needed for passthrough
+                // since the receiving terminal will parse them from the raw bytes.
+                // We start fresh: just need ESC P then the params we already
+                // consumed are gone. For passthrough we only need the payload, so
+                // the outer terminal will use its own default parameters.
+                // Prepend ESC P q as the intro.
+                try self.dcs_buf.appendSlice(self.screen.allocator, "\x1bPq");
+                self.state = .dcs_sixel;
+            },
+            0x40...'p', 'r'...0x7E => {
+                // Non-sixel DCS final — discard
                 self.toGround();
             },
             else => self.toGround(),
@@ -334,7 +378,15 @@ pub const InputParser = struct {
     fn advanceDcsIntermediate(self: *InputParser, byte: u8) void {
         switch (byte) {
             0x20...0x2F => {},
-            0x40...0x7E => {
+            'q' => {
+                // Sixel final after intermediate byte(s) — still valid
+                self.dcs_is_sixel = true;
+                self.dcs_buf.clearRetainingCapacity();
+                self.dcs_buf.appendSlice(self.screen.allocator, "\x1bPq") catch {};
+                self.state = .dcs_sixel;
+            },
+            0x40...'p', 'r'...0x7E => {
+                // Non-sixel DCS final after intermediate — discard
                 self.toGround();
             },
             else => self.toGround(),
@@ -343,6 +395,68 @@ pub const InputParser = struct {
 
     fn advanceDcsFinal(self: *InputParser, _: u8) void {
         self.toGround();
+    }
+
+    /// Accumulate raw sixel payload bytes.
+    /// The buffer grows without a fixed limit but is bounded in practice by the
+    /// 1024-byte `esc_buf` upstream cap in server.zig that feeds us data, so a
+    /// single call contributes at most ~4 KiB per read cycle.
+    fn advanceDcsSixel(self: *InputParser, byte: u8) !void {
+        if (byte == 0x1B) {
+            // Possible ST (ESC \) — buffer the ESC, wait for \
+            self.state = .dcs_sixel_esc;
+            return;
+        }
+        if (byte == 0x9C) {
+            // 8-bit ST — dispatch
+            try self.dispatchDcsSixel();
+            return;
+        }
+        // Cap raw sixel data at 16 MiB to prevent runaway memory use.
+        if (self.dcs_buf.items.len < 16 * 1024 * 1024) {
+            try self.dcs_buf.append(self.screen.allocator, byte);
+        }
+    }
+
+    fn advanceDcsSixelEsc(self: *InputParser, byte: u8) !void {
+        if (byte == '\\') {
+            // ESC \ = ST — dispatch the sixel image
+            try self.dispatchDcsSixel();
+        } else {
+            // Not a ST; the ESC was part of data. Append ESC and this byte.
+            if (self.dcs_buf.items.len < 16 * 1024 * 1024) {
+                try self.dcs_buf.append(self.screen.allocator, 0x1B);
+                try self.dcs_buf.append(self.screen.allocator, byte);
+            }
+            self.state = .dcs_sixel;
+        }
+    }
+
+    /// Parse sixel pixel dimensions and hand off to Screen.
+    fn dispatchDcsSixel(self: *InputParser) !void {
+        defer self.toGround();
+        if (!self.dcs_is_sixel) return;
+        self.dcs_is_sixel = false;
+
+        // Append the ST terminator so the outer terminal can parse it.
+        try self.dcs_buf.appendSlice(self.screen.allocator, "\x1b\\");
+
+        // Rough pixel-height estimate: count sixel newline commands ('-').
+        // Each '-' advances by one band = 6 pixels.
+        var bands: u32 = 1;
+        for (self.dcs_buf.items) |b| {
+            if (b == '-') bands += 1;
+        }
+        const px_height: u32 = bands * 6;
+
+        // We don't know pixel width without fully decoding; pass 0.
+        // The render engine only uses px_height for cursor advancement.
+        const px_width: u32 = 0;
+
+        // Transfer buffer ownership to Screen.
+        const owned = try self.screen.allocator.dupe(u8, self.dcs_buf.items);
+        self.dcs_buf.clearRetainingCapacity();
+        try self.screen.addSixelImage(owned, px_width, px_height);
     }
 
     fn advanceSosPmApc(self: *InputParser, byte: u8) void {
@@ -1417,4 +1531,108 @@ test "3-byte ESC sequences are consumed and ignored without cursor side effects"
 
     try testing.expectEqual(@as(u32, 0), screen.cursor.y);
     try testing.expectEqual(@as(u8, @intFromEnum(InputParser.State.ground)), @intFromEnum(parser.state));
+}
+
+// ─── Sixel tests ────────────────────────────────────────────────────────────
+
+test "sixel DCS ESC-backslash terminator stores image" {
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+    var parser = InputParser.init(&screen);
+    defer parser.deinit(testing.allocator);
+
+    // Minimal sixel: ESC P q <payload> ESC \
+    // The payload is just one band of 'A' (0x41 in sixel = colour 1, 6 pixels tall).
+    const sixel = "\x1bPq!1A\x1b\\";
+    try parser.feed(sixel);
+
+    // After dispatch the parser must be back in ground state.
+    try testing.expectEqual(InputParser.State.ground, parser.state);
+
+    // Exactly one image should have been stored.
+    try testing.expectEqual(@as(usize, 1), screen.sixel_images.items.len);
+
+    // The stored data must contain the raw DCS bytes including the ST.
+    const img = screen.sixel_images.items[0];
+    try testing.expect(std.mem.indexOf(u8, img.data, "\x1bP") != null);
+    try testing.expect(std.mem.endsWith(u8, img.data, "\x1b\\"));
+
+    // Image was anchored at cursor origin (0,0).
+    try testing.expectEqual(@as(u32, 0), img.col);
+    try testing.expectEqual(@as(u32, 0), img.row);
+}
+
+test "sixel DCS 8-bit ST (0x9C) terminator stores image" {
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+    var parser = InputParser.init(&screen);
+    defer parser.deinit(testing.allocator);
+
+    // Same as above but using the 8-bit C1 ST (0x9C) instead of ESC \.
+    const sixel = "\x1bPqAA\x9c";
+    try parser.feed(sixel);
+
+    try testing.expectEqual(InputParser.State.ground, parser.state);
+    try testing.expectEqual(@as(usize, 1), screen.sixel_images.items.len);
+    // Data should still contain the trailing ESC \ (we normalise to 7-bit).
+    try testing.expect(std.mem.endsWith(u8, screen.sixel_images.items[0].data, "\x1b\\"));
+}
+
+test "sixel pixel height estimated from band count" {
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+    var parser = InputParser.init(&screen);
+    defer parser.deinit(testing.allocator);
+
+    // 3 '-' characters = 4 bands (initial 1 + 3 newlines) = 24 px height.
+    const sixel = "\x1bPqA-A-A-A\x1b\\";
+    try parser.feed(sixel);
+
+    try testing.expectEqual(@as(usize, 1), screen.sixel_images.items.len);
+    // bands = 1 + count('-') = 1 + 3 = 4,  px_height = 4 * 6 = 24
+    try testing.expectEqual(@as(u32, 24), screen.sixel_images.items[0].px_height);
+}
+
+test "sixel cursor advances after image" {
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+    var parser = InputParser.init(&screen);
+    defer parser.deinit(testing.allocator);
+
+    // Single-band image (6 px tall, 1 cell row = 1 row advance).
+    const sixel = "\x1bPqA\x1b\\";
+    try parser.feed(sixel);
+
+    // Cursor should have moved down by 1 row and reset to column 0.
+    try testing.expectEqual(@as(u32, 0), screen.cursor.x);
+    try testing.expectEqual(@as(u32, 1), screen.cursor.y);
+}
+
+test "sixel from dcs_param path (ESC P 0 ; 0 q ...)" {
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+    var parser = InputParser.init(&screen);
+    defer parser.deinit(testing.allocator);
+
+    // With parameters before 'q': ESC P 0 ; 0 q <payload> ESC \
+    const sixel = "\x1bP0;0qA\x1b\\";
+    try parser.feed(sixel);
+
+    try testing.expectEqual(InputParser.State.ground, parser.state);
+    try testing.expectEqual(@as(usize, 1), screen.sixel_images.items.len);
+}
+
+test "non-sixel DCS sequence is silently discarded" {
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+    var parser = InputParser.init(&screen);
+    defer parser.deinit(testing.allocator);
+
+    // tmux passthrough DCS (final byte '!') — not sixel, must be dropped.
+    const tmux_dcs = "\x1bPtmux;\x1b\x1b[31mHello\x1b\x1b[m\x1b\\";
+    try parser.feed(tmux_dcs);
+
+    try testing.expectEqual(InputParser.State.ground, parser.state);
+    // No images stored.
+    try testing.expectEqual(@as(usize, 0), screen.sixel_images.items.len);
 }

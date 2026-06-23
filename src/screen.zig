@@ -2,6 +2,29 @@ const std = @import("std");
 const testing = std.testing;
 const colour = @import("colour.zig");
 const grid = @import("grid.zig");
+
+/// A sixel image stored as the raw DCS bytes (ESC P ... ESC \) received from
+/// the child process. We keep the original bytes so we can re-emit them
+/// verbatim to the outer terminal, which handles actual pixel rendering.
+/// The image is anchored to the cell position of the cursor at the moment the
+/// DCS sequence started. `cell_w` / `cell_h` are the number of character
+/// cells the image occupies (derived from pixel dimensions / cell size).
+pub const SixelImage = struct {
+    /// Raw DCS sequence bytes including the leading ESC P and trailing ESC \
+    data: []u8,
+    /// Cell column where the image starts (cursor x when DCS began)
+    col: u32,
+    /// Cell row where the image starts (cursor y when DCS began)
+    row: u32,
+    /// Width in pixels (parsed from sixel P2 parameter or 0 if unknown)
+    px_width: u32,
+    /// Height in pixels (counted from sixel band count * 6, or 0 if unknown)
+    px_height: u32,
+
+    pub fn deinit(self: *SixelImage, allocator: std.mem.Allocator) void {
+        allocator.free(self.data);
+    }
+};
 const Cell = grid.Cell;
 const Grid = grid.Grid;
 const GridLine = grid.GridLine;
@@ -53,6 +76,8 @@ pub const Screen = struct {
     dirty: bool = true,
     copy_mode: ?@import("mode_copy.zig").CopyMode = null,
     tab_stop: u32 = 8,
+    /// Sixel images received from child processes, kept for re-emission.
+    sixel_images: std.ArrayListUnmanaged(SixelImage) = .empty,
 
     pub fn init(allocator: std.mem.Allocator, width: u32, height: u32) Error!Screen {
         return Screen{
@@ -65,6 +90,56 @@ pub const Screen = struct {
     pub fn deinit(self: *Screen) void {
         self.grid.deinit();
         if (self.alt_grid) |*g| g.deinit();
+        for (self.sixel_images.items) |*img| img.deinit(self.allocator);
+        self.sixel_images.deinit(self.allocator);
+    }
+
+    /// Store a sixel image at the current cursor position.
+    /// `dcs_bytes` must be the complete raw DCS sequence (ESC P ... ESC \).
+    /// Ownership is transferred — `dcs_bytes` must have been allocated with
+    /// `self.allocator`.
+    pub fn addSixelImage(
+        self: *Screen,
+        dcs_bytes: []u8,
+        px_width: u32,
+        px_height: u32,
+    ) Error!void {
+        const img = SixelImage{
+            .data = dcs_bytes,
+            .col = self.cursor.x,
+            .row = self.cursor.y,
+            .px_width = px_width,
+            .px_height = px_height,
+        };
+        try self.sixel_images.append(self.allocator, img);
+        // Advance cursor down by the number of character rows the image spans.
+        // Most terminals use 20px per cell row as a fallback when the pixel
+        // height of a cell is unknown; szn uses the same conservative value.
+        const cell_rows = if (px_height > 0) (px_height + 19) / 20 else 1;
+        var r: u32 = 0;
+        while (r < cell_rows) : (r += 1) {
+            if (self.cursor.y + 1 < self.grid.height) {
+                self.cursor.y += 1;
+            } else {
+                try self.grid.scrollUp();
+            }
+        }
+        self.cursor.x = 0;
+        self.dirty = true;
+    }
+
+    /// Remove all sixel images whose anchor row is above the visible area
+    /// (scrolled out of view) to keep memory bounded.
+    pub fn pruneSixelImages(self: *Screen) void {
+        var i: usize = 0;
+        while (i < self.sixel_images.items.len) {
+            if (self.sixel_images.items[i].row >= self.grid.height) {
+                var img = self.sixel_images.swapRemove(i);
+                img.deinit(self.allocator);
+            } else {
+                i += 1;
+            }
+        }
     }
 
     pub fn eraseCell(self: *const Screen) Cell {
