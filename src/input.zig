@@ -469,6 +469,12 @@ pub const InputParser = struct {
                     }
                 }
             },
+            's' => {
+                self.screen.saveCursor();
+            },
+            'u' => {
+                self.screen.restoreCursor();
+            },
             else => {},
         }
     }
@@ -751,6 +757,24 @@ test "DECSC DECRC save restore cursor" {
     try testing.expectEqual(@as(u32, 2), screen.cursor.y);
 
     try parser.feed("\x1b8");
+    try testing.expectEqual(@as(u32, 9), screen.cursor.x);
+    try testing.expectEqual(@as(u32, 4), screen.cursor.y);
+}
+
+test "CSI s and CSI u save restore cursor" {
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+    var parser = InputParser.init(&screen);
+    try parser.feed("\x1b[5;10H");
+    try testing.expectEqual(@as(u32, 9), screen.cursor.x);
+    try testing.expectEqual(@as(u32, 4), screen.cursor.y);
+
+    try parser.feed("\x1b[s");
+    try parser.feed("\x1b[3;5H");
+    try testing.expectEqual(@as(u32, 4), screen.cursor.x);
+    try testing.expectEqual(@as(u32, 2), screen.cursor.y);
+
+    try parser.feed("\x1b[u");
     try testing.expectEqual(@as(u32, 9), screen.cursor.x);
     try testing.expectEqual(@as(u32, 4), screen.cursor.y);
 }
