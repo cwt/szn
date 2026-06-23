@@ -67,6 +67,15 @@ pub const Screen = struct {
         if (self.alt_grid) |*g| g.deinit();
     }
 
+    pub fn eraseCell(self: *const Screen) Cell {
+        return .{
+            .char = ' ',
+            .attr = .{},
+            .fg = Colour.default_(),
+            .bg = self.cur_cell.bg,
+        };
+    }
+
     pub fn resize(self: *Screen, width: u32, height: u32) Error!void {
         try self.grid.setSize(width, height);
         if (self.alt_grid) |*g| {
@@ -86,7 +95,9 @@ pub const Screen = struct {
             const next = self.grid.getLineMut(y + 1);
             std.mem.swap(GridLine, line, next);
         }
-        self.grid.clearLine(bottom);
+        const last = self.grid.getLineMut(bottom);
+        @memset(last.cells.items, self.eraseCell());
+        last.dirty = true;
     }
 
     fn scrollDownInRegion(self: *Screen) Error!void {
@@ -99,7 +110,9 @@ pub const Screen = struct {
             const prev = self.grid.getLineMut(y - 1);
             std.mem.swap(GridLine, line, prev);
         }
-        self.grid.clearLine(top);
+        const first = self.grid.getLineMut(top);
+        @memset(first.cells.items, self.eraseCell());
+        first.dirty = true;
     }
 
     pub fn writeChar(self: *Screen, char: u21) Error!void {
@@ -107,6 +120,9 @@ pub const Screen = struct {
             self.cursor.x = 0;
             if (self.cursor.y + 1 >= self.grid.height) {
                 try self.grid.scrollUp();
+                const bottom_line = self.grid.getLineMut(self.grid.height - 1);
+                @memset(bottom_line.cells.items, self.eraseCell());
+                bottom_line.dirty = true;
             } else if (self.scroll_region != null and self.cursor.y == self.scroll_region.?[1]) {
                 try self.scrollUpInRegion();
             } else {
@@ -139,6 +155,22 @@ pub const Screen = struct {
         }
         if (char < 0x20 and char != '\x1b') return;
 
+        if (self.mode.line_wrap) {
+            if (self.cursor.x >= self.grid.width) {
+                self.cursor.x = 0;
+                if (self.cursor.y + 1 >= self.grid.height) {
+                    try self.grid.scrollUp();
+                    const bottom_line = self.grid.getLineMut(self.grid.height - 1);
+                    @memset(bottom_line.cells.items, self.eraseCell());
+                    bottom_line.dirty = true;
+                } else if (self.scroll_region != null and self.cursor.y == self.scroll_region.?[1]) {
+                    try self.scrollUpInRegion();
+                } else {
+                    self.cursor.y += 1;
+                }
+            }
+        }
+
         if (self.mode.insert) {
             var x = self.grid.width - 1;
             while (x > self.cursor.x) : (x -= 1) {
@@ -154,16 +186,6 @@ pub const Screen = struct {
 
         if (self.mode.line_wrap) {
             self.cursor.x += 1;
-            if (self.cursor.x >= self.grid.width) {
-                self.cursor.x = 0;
-                if (self.cursor.y + 1 >= self.grid.height) {
-                    try self.grid.scrollUp();
-                } else if (self.scroll_region != null and self.cursor.y == self.scroll_region.?[1]) {
-                    try self.scrollUpInRegion();
-                } else {
-                    self.cursor.y += 1;
-                }
-            }
         } else {
             self.cursor.x = @min(self.cursor.x + 1, self.grid.width - 1);
         }
@@ -236,26 +258,32 @@ pub const Screen = struct {
     }
 
     pub fn eraseLine(self: *Screen, mode: u8) void {
+        const fill = self.eraseCell();
         switch (mode) {
             0 => {
                 var x = self.cursor.x;
                 while (x < self.grid.width) : (x += 1) {
-                    self.grid.setCell(x, self.cursor.y, Cell.empty());
+                    self.grid.setCell(x, self.cursor.y, fill);
                 }
             },
             1 => {
                 var x: u32 = 0;
                 while (x <= self.cursor.x) : (x += 1) {
-                    self.grid.setCell(x, self.cursor.y, Cell.empty());
+                    self.grid.setCell(x, self.cursor.y, fill);
                 }
             },
-            2 => self.grid.clearLine(self.cursor.y),
+            2 => {
+                const line = self.grid.getLineMut(self.cursor.y);
+                @memset(line.cells.items, fill);
+                line.dirty = true;
+            },
             else => {},
         }
         self.dirty = true;
     }
 
     pub fn eraseDisplay(self: *Screen, mode: u8) void {
+        const fill = self.eraseCell();
         switch (mode) {
             0 => {
                 var y = self.cursor.y;
@@ -263,7 +291,9 @@ pub const Screen = struct {
                     if (y == self.cursor.y) {
                         self.eraseLine(0);
                     } else {
-                        self.grid.clearLine(y);
+                        const line = self.grid.getLineMut(y);
+                        @memset(line.cells.items, fill);
+                        line.dirty = true;
                     }
                 }
             },
@@ -273,18 +303,32 @@ pub const Screen = struct {
                     if (y == self.cursor.y) {
                         self.eraseLine(1);
                     } else {
-                        self.grid.clearLine(y);
+                        const line = self.grid.getLineMut(y);
+                        @memset(line.cells.items, fill);
+                        line.dirty = true;
                     }
                 }
             },
-            2 => self.grid.clear(),
+            2 => {
+                for (0..self.grid.height) |y| {
+                    const line = self.grid.getLineMut(@intCast(y));
+                    @memset(line.cells.items, fill);
+                    line.dirty = true;
+                }
+            },
             else => {},
         }
         self.dirty = true;
     }
 
     pub fn eraseChars(self: *Screen, n: u32) void {
-        self.grid.eraseChars(self.cursor.x, self.cursor.y, n);
+        const fill = self.eraseCell();
+        const end = @min(self.cursor.x + n, self.grid.width);
+        if (self.cursor.x < end) {
+            const line = self.grid.getLineMut(self.cursor.y);
+            @memset(line.cells.items[self.cursor.x..end], fill);
+            line.dirty = true;
+        }
         self.dirty = true;
     }
 
@@ -294,6 +338,7 @@ pub const Screen = struct {
         const y = @max(self.cursor.y, top);
         if (y > bottom) return;
         const count = @min(n, bottom + 1 - y);
+        const fill = self.eraseCell();
         var i: u32 = 0;
         while (i < count) : (i += 1) {
             var row = bottom;
@@ -302,7 +347,9 @@ pub const Screen = struct {
                 self.grid.getLineMut(row).* = self.grid.getLine(row - 1).*;
             }
             self.grid.getLineMut(y).* = temp;
-            self.grid.clearLine(y);
+            const line = self.grid.getLineMut(y);
+            @memset(line.cells.items, fill);
+            line.dirty = true;
         }
         self.dirty = true;
     }
@@ -313,6 +360,7 @@ pub const Screen = struct {
         const y = @max(self.cursor.y, top);
         if (y > bottom) return;
         const count = @min(n, bottom + 1 - y);
+        const fill = self.eraseCell();
         var i: u32 = 0;
         while (i < count) : (i += 1) {
             const temp = self.grid.getLine(y).*;
@@ -321,7 +369,9 @@ pub const Screen = struct {
                 self.grid.getLineMut(row).* = self.grid.getLine(row + 1).*;
             }
             self.grid.getLineMut(bottom).* = temp;
-            self.grid.clearLine(bottom);
+            const line = self.grid.getLineMut(bottom);
+            @memset(line.cells.items, fill);
+            line.dirty = true;
         }
         self.dirty = true;
     }
@@ -344,6 +394,9 @@ pub const Screen = struct {
             }
         } else if (self.cursor.y + 1 >= self.grid.height) {
             try self.grid.scrollUp();
+            const bottom_line = self.grid.getLineMut(self.grid.height - 1);
+            @memset(bottom_line.cells.items, self.eraseCell());
+            bottom_line.dirty = true;
             return;
         }
         self.cursor.y += 1;
@@ -356,7 +409,12 @@ pub const Screen = struct {
                 return;
             }
         } else if (self.cursor.y == 0) {
-            try self.grid.scrollDown();
+            if (self.grid.history.items.len > 0) {
+                try self.grid.scrollDown();
+                const top_line = self.grid.getLineMut(0);
+                @memset(top_line.cells.items, self.eraseCell());
+                top_line.dirty = true;
+            }
             return;
         }
         self.cursor.y -|= 1;
@@ -367,6 +425,7 @@ pub const Screen = struct {
             const top = r[0];
             const bottom = r[1];
             const count = @min(n, bottom + 1 - top);
+            const fill = self.eraseCell();
             var i: u32 = 0;
             while (i < count) : (i += 1) {
                 const temp = self.grid.getLine(top).*;
@@ -375,14 +434,20 @@ pub const Screen = struct {
                     self.grid.getLineMut(row).* = self.grid.getLine(row + 1).*;
                 }
                 self.grid.getLineMut(bottom).* = temp;
-                self.grid.clearLine(bottom);
+                const last = self.grid.getLineMut(bottom);
+                @memset(last.cells.items, fill);
+                last.dirty = true;
             }
             self.dirty = true;
         } else {
             const count = @min(n, self.grid.height);
+            const fill = self.eraseCell();
             var i: u32 = 0;
             while (i < count) : (i += 1) {
                 try self.grid.scrollUp();
+                const bottom_line = self.grid.getLineMut(self.grid.height - 1);
+                @memset(bottom_line.cells.items, fill);
+                bottom_line.dirty = true;
             }
         }
     }
@@ -392,6 +457,7 @@ pub const Screen = struct {
             const top = r[0];
             const bottom = r[1];
             const count = @min(n, bottom + 1 - top);
+            const fill = self.eraseCell();
             var i: u32 = 0;
             while (i < count) : (i += 1) {
                 var row = bottom;
@@ -400,14 +466,22 @@ pub const Screen = struct {
                     self.grid.getLineMut(row).* = self.grid.getLine(row - 1).*;
                 }
                 self.grid.getLineMut(top).* = temp;
-                self.grid.clearLine(top);
+                const first = self.grid.getLineMut(top);
+                @memset(first.cells.items, fill);
+                first.dirty = true;
             }
             self.dirty = true;
         } else {
             const count = @min(n, self.grid.height);
+            const fill = self.eraseCell();
             var i: u32 = 0;
             while (i < count) : (i += 1) {
-                try self.grid.scrollDown();
+                if (self.grid.history.items.len > 0) {
+                    try self.grid.scrollDown();
+                    const top_line = self.grid.getLineMut(0);
+                    @memset(top_line.cells.items, fill);
+                    top_line.dirty = true;
+                }
             }
         }
     }
@@ -656,10 +730,16 @@ test "line wrapping" {
     defer screen.deinit();
 
     try screen.writeStr("123456789A");
-    try testing.expectEqual(@as(u32, 0), screen.cursor.x);
+    try testing.expectEqual(@as(u32, 10), screen.cursor.x);
+    try testing.expectEqual(@as(u32, 0), screen.cursor.y);
+
+    try screen.writeChar('B');
+    try testing.expectEqual(@as(u32, 1), screen.cursor.x);
     try testing.expectEqual(@as(u32, 1), screen.cursor.y);
+
     try testing.expectEqual(@as(u21, '1'), screen.grid.getCell(0, 0).char);
     try testing.expectEqual(@as(u21, 'A'), screen.grid.getCell(9, 0).char);
+    try testing.expectEqual(@as(u21, 'B'), screen.grid.getCell(0, 1).char);
 }
 
 test "scrolling when full" {
@@ -953,8 +1033,12 @@ test "line wrapping with scroll region" {
 
     // Write a char to trigger line wrapping.
     try screen.writeChar('A');
-    // It should wrap, so cursor x goes to 0.
-    try testing.expectEqual(@as(u32, 0), screen.cursor.x);
+    try testing.expectEqual(@as(u32, 5), screen.cursor.x);
+    try testing.expectEqual(@as(u32, 2), screen.cursor.y);
+
+    // Write next char to wrap and scroll
+    try screen.writeChar('B');
+    try testing.expectEqual(@as(u32, 1), screen.cursor.x);
     // Since cursor.y was at r[1] (2), it should trigger scrollUpInRegion() and remain at y = 2.
     try testing.expectEqual(@as(u32, 2), screen.cursor.y);
 }
@@ -970,8 +1054,12 @@ test "line wrapping outside scroll region" {
     screen.cursor.x = 4;
     screen.cursor.y = 3;
 
-    // Write a char to trigger line wrapping.
+    // Write a char
     try screen.writeChar('A');
+    try testing.expectEqual(@as(u32, 5), screen.cursor.x);
+
+    // Write next char to trigger line wrapping.
+    try screen.writeChar('B');
     // It should wrap, and either scroll the full grid or clamp, but NOT go out of bounds (y should not be 4).
     try testing.expect(screen.cursor.y < 4);
 }
