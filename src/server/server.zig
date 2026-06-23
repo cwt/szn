@@ -609,8 +609,20 @@ pub const Server = struct {
                         },
                         .mouse => |m| {
                             const mouse_opt = session.options.asFlag("mouse") orelse false;
-                            if (mouse_opt and m.button == .left) {
-                                self.handleMouseFocus(m.x, m.y) catch {};
+                            if (mouse_opt) {
+                                if (m.button == .left) {
+                                    self.handleMouseFocus(m.x, m.y) catch {};
+                                } else if (m.button == .scroll_up) {
+                                    cm.scroll_offset = @min(cm.scroll_offset + 3, @as(u32, @intCast(pane.screen.grid.history.items.len)));
+                                    pane.dirty = true;
+                                } else if (m.button == .scroll_down) {
+                                    if (cm.scroll_offset == 0) {
+                                        pane.screen.copy_mode = null;
+                                    } else {
+                                        cm.scroll_offset = cm.scroll_offset -| 3;
+                                    }
+                                    pane.dirty = true;
+                                }
                             }
                         },
                         else => {},
@@ -663,6 +675,12 @@ pub const Server = struct {
                                         pane.screen.mode.mouse_sgr;
                                     if (!wants_mouse) {
                                         handled = true;
+                                        if (m.button == .scroll_up) {
+                                            pane.screen.copy_mode = @import("../mode_copy.zig").CopyMode.init(.vi);
+                                            pane.screen.copy_mode.?.enter(&pane.screen.grid);
+                                            pane.screen.copy_mode.?.scroll_offset = @min(3, @as(u32, @intCast(pane.screen.grid.history.items.len)));
+                                            pane.dirty = true;
+                                        }
                                     }
                                 } else {
                                     handled = true;
@@ -1412,7 +1430,7 @@ test "mouse event filtering based on mouse_opt" {
     _ = c_fcntl(fd, F_SETFL, flags | O_NONBLOCK);
 
     // 1. By default, mouse_opt is false. Feed mouse SGR sequence.
-    try server.processInput("\x1b[<64;10;5M");
+    try server.processInput("\x1b[<65;10;5M");
     // Feed a newline to flush the canonical mode buffer.
     try server.processInput("\n");
 
