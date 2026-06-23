@@ -42,37 +42,32 @@ pub const OptionDef = struct {
 
 pub const Options = struct {
     allocator: std.mem.Allocator,
-    map: std.StringHashMap(OptionValue),
+    values: []OptionValue,
     table: []const OptionDef,
 
     pub fn init(allocator: std.mem.Allocator, table: []const OptionDef) Error!Options {
-        var map = std.StringHashMap(OptionValue).init(allocator);
-        for (table) |def| {
-            const name = try allocator.dupe(u8, def.name);
-            try map.put(name, try cloneValue(allocator, def.default));
+        const values = try allocator.alloc(OptionValue, table.len);
+        errdefer allocator.free(values);
+        for (table, 0..) |def, i| {
+            values[i] = try cloneValue(allocator, def.default);
         }
-        return Options{ .allocator = allocator, .map = map, .table = table };
+        return Options{ .allocator = allocator, .values = values, .table = table };
     }
 
     pub fn clone(self: *const Options, allocator: std.mem.Allocator) Error!Options {
-        var new_map = std.StringHashMap(OptionValue).init(allocator);
-        var it = self.map.iterator();
-        while (it.next()) |entry| {
-            const name = try allocator.dupe(u8, entry.key_ptr.*);
-            errdefer allocator.free(name);
-            const val = try cloneValue(allocator, entry.value_ptr.*);
-            try new_map.put(name, val);
+        const new_values = try allocator.alloc(OptionValue, self.table.len);
+        errdefer allocator.free(new_values);
+        for (self.values, 0..) |val, i| {
+            new_values[i] = try cloneValue(allocator, val);
         }
-        return Options{ .allocator = allocator, .map = new_map, .table = self.table };
+        return Options{ .allocator = allocator, .values = new_values, .table = self.table };
     }
 
     pub fn deinit(self: *Options) void {
-        var it = self.map.iterator();
-        while (it.next()) |entry| {
-            self.allocator.free(entry.key_ptr.*);
-            freeValue(self.allocator, entry.value_ptr.*);
+        for (self.values) |val| {
+            freeValue(self.allocator, val);
         }
-        self.map.deinit();
+        self.allocator.free(self.values);
     }
 
     pub fn set(self: *Options, name: []const u8, value: OptionValue) Error!void {
@@ -80,49 +75,31 @@ pub const Options = struct {
         const def = self.table[idx];
         try validateType(def, value);
 
-        // Copy old key/value, remove, then free
-        if (self.map.getEntry(name)) |entry| {
-            const old_key = entry.key_ptr.*;
-            const old_value = entry.value_ptr.*;
-            _ = self.map.remove(name);
-            self.allocator.free(old_key);
-            freeValue(self.allocator, old_value);
-        }
-
-        const key_name = try self.allocator.dupe(u8, name);
-        errdefer self.allocator.free(key_name);
+        const old_value = self.values[idx];
         const cloned = try cloneValue(self.allocator, value);
-        errdefer freeValue(self.allocator, cloned);
-        try self.map.put(key_name, cloned);
+        self.values[idx] = cloned;
+        freeValue(self.allocator, old_value);
     }
 
-    pub fn get(self: *Options, name: []const u8) ?OptionValue {
-        const entry = self.map.getEntry(name) orelse return null;
-        return entry.value_ptr.*;
+    pub fn get(self: *const Options, name: []const u8) ?OptionValue {
+        const idx = self.findDef(name) orelse return null;
+        return self.values[idx];
     }
 
     pub fn unset(self: *Options, name: []const u8) Error!void {
-        // Copy old key/value, remove, then free
-        if (self.map.getEntry(name)) |entry| {
-            const old_key = entry.key_ptr.*;
-            const old_value = entry.value_ptr.*;
-            _ = self.map.remove(name);
-            self.allocator.free(old_key);
-            freeValue(self.allocator, old_value);
-        }
-        // Restore default
-        if (self.findDef(name)) |idx| {
-            const key_name = try self.allocator.dupe(u8, name);
-            try self.map.put(key_name, try cloneValue(self.allocator, self.table[idx].default));
-        }
+        const idx = self.findDef(name) orelse return error.UnknownOption;
+        const old_value = self.values[idx];
+        const default_val = try cloneValue(self.allocator, self.table[idx].default);
+        self.values[idx] = default_val;
+        freeValue(self.allocator, old_value);
     }
 
-    pub fn asNumber(self: *Options, name: []const u8) ?i64 {
+    pub fn asNumber(self: *const Options, name: []const u8) ?i64 {
         const v = self.get(name) orelse return null;
         return if (v == .number) v.number else null;
     }
 
-    pub fn asString(self: *Options, name: []const u8) ?[]const u8 {
+    pub fn asString(self: *const Options, name: []const u8) ?[]const u8 {
         const v = self.get(name) orelse return null;
         return switch (v) {
             .string => |s| s,
@@ -131,17 +108,17 @@ pub const Options = struct {
         };
     }
 
-    pub fn asFlag(self: *Options, name: []const u8) ?bool {
+    pub fn asFlag(self: *const Options, name: []const u8) ?bool {
         const v = self.get(name) orelse return null;
         return if (v == .flag) v.flag else null;
     }
 
-    pub fn asColour(self: *Options, name: []const u8) ?Colour {
+    pub fn asColour(self: *const Options, name: []const u8) ?Colour {
         const v = self.get(name) orelse return null;
         return if (v == .colour) v.colour else null;
     }
 
-    fn findDef(self: *Options, name: []const u8) ?usize {
+    fn findDef(self: *const Options, name: []const u8) ?usize {
         for (self.table, 0..) |def, i| {
             if (std.mem.eql(u8, def.name, name)) return i;
         }

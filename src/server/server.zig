@@ -630,11 +630,13 @@ pub const Server = struct {
                         switch (event) {
                             .key => |k| {
                                 // Diagnostic logging of parsed keys
-                                var key_name_buf: [64]u8 = undefined;
-                                const key_str = @import("../key.zig").format(k, &key_name_buf);
-                                var log_msg_buf: [128]u8 = undefined;
-                                const log_msg = std.fmt.bufPrint(&log_msg_buf, "key (esc): {s} [prefix: {s}]", .{ key_str, @tagName(self.dispatcher.prefix_state) }) catch "log err";
-                                self.addLogMessage(log_msg) catch {};
+                                if (comptime @import("builtin").mode == .Debug) {
+                                    var key_name_buf: [64]u8 = undefined;
+                                    const key_str = @import("../key.zig").format(k, &key_name_buf);
+                                    var log_msg_buf: [128]u8 = undefined;
+                                    const log_msg = std.fmt.bufPrint(&log_msg_buf, "key (esc): {s} [prefix: {s}]", .{ key_str, @tagName(self.dispatcher.prefix_state) }) catch "log err";
+                                    self.addLogMessage(log_msg) catch {};
+                                }
 
                                 if (self.dispatcher.prefix_state == .normal) {
                                     if (@import("../key_binding.zig").keysEqual(k, self.dispatcher.prefix)) {
@@ -686,11 +688,13 @@ pub const Server = struct {
                             switch (event) {
                                 .key => |k| {
                                     // Diagnostic logging of parsed keys
-                                    var key_name_buf: [64]u8 = undefined;
-                                    const key_str = @import("../key.zig").format(k, &key_name_buf);
-                                    var log_msg_buf: [128]u8 = undefined;
-                                    const log_msg = std.fmt.bufPrint(&log_msg_buf, "key (ground): {s} [prefix: prefix_seen]", .{key_str}) catch "log err";
-                                    self.addLogMessage(log_msg) catch {};
+                                    if (comptime @import("builtin").mode == .Debug) {
+                                        var key_name_buf: [64]u8 = undefined;
+                                        const key_str = @import("../key.zig").format(k, &key_name_buf);
+                                        var log_msg_buf: [128]u8 = undefined;
+                                        const log_msg = std.fmt.bufPrint(&log_msg_buf, "key (ground): {s} [prefix: prefix_seen]", .{key_str}) catch "log err";
+                                        self.addLogMessage(log_msg) catch {};
+                                    }
 
                                     if (self.dispatcher.prefix_table.lookup(k)) |action| {
                                         self.executeAction(action) catch {};

@@ -726,20 +726,18 @@ fn cmdShowOptions(server: *Server, args: []const []const u8) CmdResult {
     _ = args;
     const session = server.activeSession() orelse return .err;
 
-    var it = session.options.map.iterator();
-    while (it.next()) |entry| {
-        server.response_buf.appendSlice(server.allocator, entry.key_ptr.*) catch return .err;
+    for (session.options.table, 0..) |def, idx| {
+        server.response_buf.appendSlice(server.allocator, def.name) catch return .err;
         server.response_buf.appendSlice(server.allocator, " ") catch return .err;
-        printOptionValue(server, entry.value_ptr.*) catch return .err;
+        printOptionValue(server, session.options.values[idx]) catch return .err;
         server.response_buf.appendSlice(server.allocator, "\n") catch return .err;
     }
 
     if (session.active_window) |window| {
-        var win_it = window.options.map.iterator();
-        while (win_it.next()) |entry| {
-            server.response_buf.appendSlice(server.allocator, entry.key_ptr.*) catch return .err;
+        for (window.options.table, 0..) |def, idx| {
+            server.response_buf.appendSlice(server.allocator, def.name) catch return .err;
             server.response_buf.appendSlice(server.allocator, " ") catch return .err;
-            printOptionValue(server, entry.value_ptr.*) catch return .err;
+            printOptionValue(server, window.options.values[idx]) catch return .err;
             server.response_buf.appendSlice(server.allocator, "\n") catch return .err;
         }
     }
