@@ -90,7 +90,10 @@ pub const Grid = struct {
 
     pub fn resize(self: *Grid, new_height: u32) Error!void {
         while (self.lines.items.len < new_height) {
-            try self.lines.append(self.allocator, .{});
+            var line = GridLine{};
+            try line.cells.resize(self.allocator, self.width);
+            @memset(line.cells.items, Cell.empty());
+            try self.lines.append(self.allocator, line);
         }
         while (self.lines.items.len > new_height) {
             var line = self.lines.pop().?;
@@ -102,8 +105,12 @@ pub const Grid = struct {
     pub fn setSize(self: *Grid, new_width: u32, new_height: u32) Error!void {
         self.width = new_width;
         for (self.lines.items) |*line| {
-            if (line.cells.items.len > new_width) {
+            const old_len = line.cells.items.len;
+            if (old_len > new_width) {
                 line.cells.shrinkRetainingCapacity(new_width);
+            } else if (old_len < new_width) {
+                try line.cells.resize(self.allocator, new_width);
+                @memset(line.cells.items[old_len..], Cell.empty());
             }
         }
         try self.resize(new_height);
@@ -112,26 +119,13 @@ pub const Grid = struct {
     pub fn setCell(self: *Grid, x: u32, y: u32, cell: Cell) void {
         if (x >= self.width or y >= self.height) return;
         const line = &self.lines.items[y];
-        const old_len = line.cells.items.len;
-        if (x >= old_len) {
-            line.cells.resize(self.allocator, @as(usize, x) + 1) catch {
-                std.log.warn("grid.setCell: resize failed at ({d},{d})", .{ x, y });
-                return;
-            };
-            // Fill newly added cells with empty Cell
-            for (line.cells.items[old_len..]) |*c| {
-                c.* = Cell.empty();
-            }
-        }
         line.cells.items[x] = cell;
         line.dirty = true;
     }
 
     pub fn getCell(self: *const Grid, x: u32, y: u32) Cell {
         if (x >= self.width or y >= self.height) return Cell.empty();
-        const line = &self.lines.items[y];
-        if (x >= line.cells.items.len) return Cell.empty();
-        return line.cells.items[x];
+        return self.lines.items[y].cells.items[x];
     }
 
     pub fn writeChar(self: *Grid, x: u32, y: u32, char: u21) void {
@@ -150,7 +144,10 @@ pub const Grid = struct {
             old.deinit(self.allocator);
         }
 
-        try self.lines.append(self.allocator, .{});
+        var new_line = GridLine{};
+        try new_line.cells.resize(self.allocator, self.width);
+        @memset(new_line.cells.items, Cell.empty());
+        try self.lines.append(self.allocator, new_line);
     }
 
     pub fn scrollDown(self: *Grid) Error!void {
@@ -167,14 +164,14 @@ pub const Grid = struct {
     pub fn clearLine(self: *Grid, y: u32) void {
         if (y >= self.height) return;
         var line = &self.lines.items[y];
-        line.cells.clearRetainingCapacity();
+        @memset(line.cells.items, Cell.empty());
         line.dirty = true;
     }
 
     pub fn insertLine(self: *Grid, y: u32) Error!void {
         if (y >= self.height) return;
         var line = self.lines.pop().?;
-        line.cells.clearRetainingCapacity();
+        @memset(line.cells.items, Cell.empty());
         line.dirty = true;
         try self.lines.insert(self.allocator, @as(usize, y), line);
     }
@@ -182,27 +179,15 @@ pub const Grid = struct {
     pub fn deleteLine(self: *Grid, y: u32) Error!void {
         if (y >= self.height) return;
         var line = self.lines.orderedRemove(@as(usize, y));
-        line.cells.clearRetainingCapacity();
+        @memset(line.cells.items, Cell.empty());
         line.dirty = true;
         try self.lines.append(self.allocator, line);
-    }
-
-    fn ensureFullWidth(self: *Grid, y: u32) bool {
-        const line = &self.lines.items[y];
-        const old_len = line.cells.items.len;
-        if (old_len >= self.width) return true;
-        line.cells.resize(self.allocator, self.width) catch return false;
-        for (line.cells.items[old_len..]) |*c| {
-            c.* = Cell.empty();
-        }
-        return true;
     }
 
     pub fn insertChars(self: *Grid, x: u32, y: u32, n: u32) void {
         if (y >= self.height) return;
         const num = @min(n, self.width -| x);
         if (num == 0) return;
-        if (!self.ensureFullWidth(y)) return;
         const line = &self.lines.items[y];
         var i = self.width - 1;
         while (i >= x + num) : (i -= 1) {
@@ -219,7 +204,6 @@ pub const Grid = struct {
         if (y >= self.height) return;
         const num = @min(n, self.width -| x);
         if (num == 0) return;
-        if (!self.ensureFullWidth(y)) return;
         const line = &self.lines.items[y];
         var i = x;
         while (i + num < self.width) : (i += 1) {
@@ -233,7 +217,6 @@ pub const Grid = struct {
 
     pub fn eraseChars(self: *Grid, x: u32, y: u32, n: u32) void {
         if (y >= self.height) return;
-        if (!self.ensureFullWidth(y)) return;
         const line = &self.lines.items[y];
         const end = @min(x + n, self.width);
         for (x..end) |col| {

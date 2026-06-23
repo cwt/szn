@@ -389,24 +389,24 @@ pub const Screen = struct {
         }
     }
 
-    pub fn setSgr(self: *Screen, params: []const u8) void {
+    pub fn setSgr(self: *Screen, params: []const u32, sub_params: []const bool) void {
         if (params.len == 0) {
             self.cur_cell = Cell.empty();
             return;
         }
-        var it = std.mem.splitScalar(u8, params, ';');
-        while (it.next()) |p_str| {
-            var sub_it = std.mem.splitScalar(u8, p_str, ':');
-            const main_str = sub_it.next() orelse continue;
-            const p = std.fmt.parseInt(u8, main_str, 10) catch continue;
+        var i: usize = 0;
+        while (i < params.len) {
+            const p = params[i];
+            i += 1;
             switch (p) {
                 0 => self.cur_cell = Cell.empty(),
                 1 => self.cur_cell.attr.bold = true,
                 2 => self.cur_cell.attr.dim = true,
                 3 => self.cur_cell.attr.italic = true,
                 4 => {
-                    if (sub_it.next()) |sub_str| {
-                        const sub = std.fmt.parseInt(u8, sub_str, 10) catch 1;
+                    if (i < params.len and sub_params[i]) {
+                        const sub = params[i];
+                        i += 1;
                         switch (sub) {
                             0 => {
                                 self.cur_cell.attr.underline = false;
@@ -442,47 +442,63 @@ pub const Screen = struct {
                 29 => self.cur_cell.attr.strikethrough = false,
                 30...37 => {
                     const idx = p - 30;
-                    self.cur_cell.fg = Colour{ .tag = .indexed, .value = idx };
+                    self.cur_cell.fg = Colour.fromIndexed(@intCast(idx));
                 },
                 38 => {
-                    const next = it.next() orelse continue;
-                    if (std.mem.eql(u8, next, "5")) {
-                        const idx_str = it.next() orelse continue;
-                        const idx = std.fmt.parseInt(u8, idx_str, 10) catch continue;
-                        self.cur_cell.fg = Colour{ .tag = .indexed, .value = idx };
-                    } else if (std.mem.eql(u8, next, "2")) {
-                        const r = std.fmt.parseInt(u8, it.next() orelse continue, 10) catch continue;
-                        const g = std.fmt.parseInt(u8, it.next() orelse continue, 10) catch continue;
-                        const b = std.fmt.parseInt(u8, it.next() orelse continue, 10) catch continue;
-                        self.cur_cell.fg = Colour{ .tag = .rgb, .value = @as(u24, r) << 16 | @as(u24, g) << 8 | b };
+                    if (i < params.len) {
+                        const next = params[i];
+                        i += 1;
+                        if (next == 5) {
+                            if (i < params.len) {
+                                const idx = params[i];
+                                i += 1;
+                                self.cur_cell.fg = Colour.fromIndexed(@intCast(idx));
+                            }
+                        } else if (next == 2) {
+                            if (i + 2 < params.len) {
+                                const r = params[i];
+                                const g = params[i + 1];
+                                const b = params[i + 2];
+                                i += 3;
+                                self.cur_cell.fg = Colour.fromRgb(@intCast(r), @intCast(g), @intCast(b));
+                            }
+                        }
                     }
                 },
                 39 => self.cur_cell.fg = Colour.default_(),
                 40...47 => {
                     const idx = p - 40;
-                    self.cur_cell.bg = Colour{ .tag = .indexed, .value = idx };
+                    self.cur_cell.bg = Colour.fromIndexed(@intCast(idx));
                 },
                 48 => {
-                    const next = it.next() orelse continue;
-                    if (std.mem.eql(u8, next, "5")) {
-                        const idx_str = it.next() orelse continue;
-                        const idx = std.fmt.parseInt(u8, idx_str, 10) catch continue;
-                        self.cur_cell.bg = Colour{ .tag = .indexed, .value = idx };
-                    } else if (std.mem.eql(u8, next, "2")) {
-                        const r = std.fmt.parseInt(u8, it.next() orelse continue, 10) catch continue;
-                        const g = std.fmt.parseInt(u8, it.next() orelse continue, 10) catch continue;
-                        const b = std.fmt.parseInt(u8, it.next() orelse continue, 10) catch continue;
-                        self.cur_cell.bg = Colour{ .tag = .rgb, .value = @as(u24, r) << 16 | @as(u24, g) << 8 | b };
+                    if (i < params.len) {
+                        const next = params[i];
+                        i += 1;
+                        if (next == 5) {
+                            if (i < params.len) {
+                                const idx = params[i];
+                                i += 1;
+                                self.cur_cell.bg = Colour.fromIndexed(@intCast(idx));
+                            }
+                        } else if (next == 2) {
+                            if (i + 2 < params.len) {
+                                const r = params[i];
+                                const g = params[i + 1];
+                                const b = params[i + 2];
+                                i += 3;
+                                self.cur_cell.bg = Colour.fromRgb(@intCast(r), @intCast(g), @intCast(b));
+                            }
+                        }
                     }
                 },
                 49 => self.cur_cell.bg = Colour.default_(),
                 90...97 => {
                     const idx = p - 90 + 8;
-                    self.cur_cell.fg = Colour{ .tag = .indexed, .value = idx };
+                    self.cur_cell.fg = Colour.fromIndexed(@intCast(idx));
                 },
                 100...107 => {
                     const idx = p - 100 + 8;
-                    self.cur_cell.bg = Colour{ .tag = .indexed, .value = idx };
+                    self.cur_cell.bg = Colour.fromIndexed(@intCast(idx));
                 },
                 else => {},
             }
@@ -772,7 +788,7 @@ test "cursor save and restore" {
 test "setSgr bold + italic" {
     var screen = try Screen.init(testing.allocator, 10, 3);
     defer screen.deinit();
-    screen.setSgr("1;3");
+    screen.setSgr(&[_]u32{ 1, 3 }, &[_]bool{ false, false });
     try screen.writeChar('X');
     try testing.expect(screen.grid.getCell(0, 0).attr.bold);
     try testing.expect(screen.grid.getCell(0, 0).attr.italic);
@@ -781,8 +797,8 @@ test "setSgr bold + italic" {
 test "setSgr empty resets" {
     var screen = try Screen.init(testing.allocator, 10, 3);
     defer screen.deinit();
-    screen.setSgr("1");
-    screen.setSgr("");
+    screen.setSgr(&[_]u32{1}, &[_]bool{false});
+    screen.setSgr(&.{}, &.{});
     try testing.expect(!screen.cur_cell.attr.bold);
 }
 
@@ -838,7 +854,7 @@ test "hard reset restores defaults" {
     defer screen.deinit();
     screen.mode.line_wrap = false;
     screen.mode.insert = true;
-    screen.setSgr("1;31");
+    screen.setSgr(&[_]u32{ 1, 31 }, &[_]bool{ false, false });
     try screen.resetHard();
     try testing.expect(screen.mode.line_wrap);
     try testing.expect(!screen.mode.insert);

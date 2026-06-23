@@ -446,21 +446,11 @@ pub const InputParser = struct {
                 }
             },
             'm' => {
-                // collect all params as a string for SGR parsing
-                var buf: [64]u8 = undefined;
-                var len: u32 = 0;
-                var i: u32 = 0;
-                while (i < self.param_count) : (i += 1) {
-                    if (i > 0) {
-                        buf[len] = if (self.sub_params[i]) ':' else ';';
-                        len += 1;
-                    }
-                    const p_str = std.fmt.bufPrint(buf[len..], "{}", .{self.params[i]}) catch {
-                        break;
-                    };
-                    len += @as(u32, @intCast(p_str.len));
+                if (self.param_count == 0) {
+                    self.screen.setSgr(&.{}, &.{});
+                } else {
+                    self.screen.setSgr(self.params[0..self.param_count], self.sub_params[0..self.param_count]);
                 }
-                self.screen.setSgr(buf[0..len]);
             },
             'r' => {
                 const top = (self.paramDefault(0, 1) -| 1);
