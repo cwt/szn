@@ -25,7 +25,7 @@ fn cmdNewSession(server: *Server, args: []const []const u8) CmdResult {
     const name = if (args.len > 1) args[1] else "default";
     const session = server.newSession(name, 80, 24) catch return .err;
     const pane = session.active_window.?.active_pane.?;
-    server.setupPane(session, pane) catch return .err;
+    server.setupPane(session, pane, null) catch return .err;
     if (server.sessions.items.len > 1) {
         const idx = server.sessions.items.len - 1;
         const target = server.sessions.items[idx];
@@ -81,8 +81,15 @@ fn cmdSwitchClient(server: *Server, args: []const []const u8) CmdResult {
 
 fn cmdNewWindow(server: *Server, args: []const []const u8) CmdResult {
     const session = server.activeSession() orelse return .err;
+    const window = session.active_window orelse return .err;
+    const pane = window.active_pane orelse return .err;
     const name = if (args.len > 1) args[1] else "window";
-    _ = session.newWindow(server.allocator, name) catch return .err;
+    const new_win = session.newWindow(server.allocator, name) catch return .err;
+    if (new_win.active_pane) |p| {
+        const current_cwd = server.paneCwd(pane);
+        defer if (current_cwd) |cwd_ptr| server.allocator.free(cwd_ptr);
+        server.setupPane(session, p, current_cwd) catch return .err;
+    }
     return .ok;
 }
 
@@ -136,7 +143,9 @@ fn cmdSplitWindow(server: *Server, args: []const []const u8) CmdResult {
 
     const new_pane = window.splitPane(server.allocator, pane, direction == .vertical, proportion) catch return .err;
     if (pane.pty != null) {
-        server.setupPane(session, new_pane) catch return .err;
+        const current_cwd = server.paneCwd(pane);
+        defer if (current_cwd) |cwd_ptr| server.allocator.free(cwd_ptr);
+        server.setupPane(session, new_pane, current_cwd) catch return .err;
     }
     return .ok;
 }

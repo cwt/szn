@@ -342,11 +342,16 @@ pub const Server = struct {
         return try allocator.dupe(u8, "/bin/sh");
     }
 
-    pub fn setupPane(self: *Server, session: *Session, pane: *Pane) ServerError!void {
+    pub fn setupPane(self: *Server, session: *Session, pane: *Pane, cwd: ?[]const u8) ServerError!void {
         const shell = try self.resolveShell(self.allocator, session);
         defer self.allocator.free(shell);
-        try pane.spawn(self.allocator, &[_][]const u8{shell});
+        try pane.spawn(self.allocator, &[_][]const u8{shell}, cwd);
         try self.watchPanePty(pane);
+    }
+
+    pub fn paneCwd(self: *Server, pane: *Pane) ?[]const u8 {
+        const pty = pane.pty orelse return null;
+        return pty.getCwd(self.allocator) catch return null;
     }
 
     pub fn executeAction(self: *Server, action: @import("../key_binding.zig").Action) ServerError!void {
@@ -358,18 +363,24 @@ pub const Server = struct {
 
         switch (action) {
             .new_window => {
+                const current_cwd = self.paneCwd(pane);
+                defer if (current_cwd) |cwd_ptr| self.allocator.free(cwd_ptr);
                 const win = try session.newWindow(self.allocator, "window");
                 if (win.active_pane) |p| {
-                    try self.setupPane(session, p);
+                    try self.setupPane(session, p, current_cwd);
                 }
             },
             .split_horizontal => {
+                const current_cwd = self.paneCwd(pane);
+                defer if (current_cwd) |cwd_ptr| self.allocator.free(cwd_ptr);
                 const new_pane = try window.splitPane(self.allocator, pane, false, 0.5);
-                try self.setupPane(session, new_pane);
+                try self.setupPane(session, new_pane, current_cwd);
             },
             .split_vertical => {
+                const current_cwd = self.paneCwd(pane);
+                defer if (current_cwd) |cwd_ptr| self.allocator.free(cwd_ptr);
                 const new_pane = try window.splitPane(self.allocator, pane, true, 0.5);
-                try self.setupPane(session, new_pane);
+                try self.setupPane(session, new_pane, current_cwd);
             },
             .kill_pane => {
                 if (window.panes.items.len > 1) {

@@ -114,6 +114,11 @@ pub fn parseConfig(allocator: std.mem.Allocator, input: []const u8) Error!ParseR
                 const msg = try std.fmt.allocPrint(allocator, "set error: {}", .{e});
                 try result.errors.append(allocator, msg);
             };
+        } else if (std.mem.startsWith(u8, cmd_line, "bind ")) {
+            parseBindKey(allocator, cmd_line[5..], &result) catch |e| {
+                const msg = try std.fmt.allocPrint(allocator, "bind error: {}", .{e});
+                try result.errors.append(allocator, msg);
+            };
         } else if (std.mem.startsWith(u8, cmd_line, "bind-key ")) {
             parseBindKey(allocator, cmd_line[9..], &result) catch |e| {
                 const msg = try std.fmt.allocPrint(allocator, "bind-key error: {}", .{e});

@@ -25,6 +25,53 @@ extern "c" fn login_tty(fd: c_int) c_int;
 
 extern "c" fn tcgetpgrp(fd: c_int) c_int;
 extern "c" fn proc_name(pid: c_int, buffer: [*]u8, size: c_int) void;
+extern "c" fn proc_pidinfo(pid: c_int, flavor: c_int, arg: u64, buffer: *anyopaque, buffersize: c_int) c_int;
+extern "c" fn chdir(path: [*:0]const u8) c_int;
+extern "c" fn readlink(path: [*:0]const u8, buf: [*]u8, bufsiz: usize) isize;
+
+const PROC_PIDVNODEPATHINFO: c_int = 11;
+const MAXPATHLEN: usize = 1024;
+
+const vinfo_stat = extern struct {
+    dev: u32 = 0,
+    mode: u32 = 0,
+    nlink: u64 = 0,
+    ino: u64 = 0,
+    uid: u32 = 0,
+    gid: u32 = 0,
+    atime: i64 = 0,
+    atimensec: i64 = 0,
+    mtime: i64 = 0,
+    mtimensec: i64 = 0,
+    ctime: i64 = 0,
+    ctimensec: i64 = 0,
+    size: i64 = 0,
+    blocks: i64 = 0,
+    blksize: u32 = 0,
+    flags: u32 = 0,
+    gen: u32 = 0,
+    lspare: u32 = 0,
+    qspare: [2]i64 = .{ 0, 0 },
+};
+
+const vnode_info = extern struct {
+    stat: vinfo_stat = .{},
+    attr_tv_sec: i64 = 0,
+    attr_tv_usec: i32 = 0,
+    usecount: u32 = 0,
+    kusecount: u32 = 0,
+};
+
+const vnode_info_path = extern struct {
+    info: vnode_info,
+    path: [MAXPATHLEN]u8 = undefined,
+};
+
+const proc_vnodepathinfo = extern struct {
+    vi: vinfo_stat,
+    cdir: vnode_info_path,
+    rdir: vnode_info_path,
+};
 
 pub const F_SETFD: c_int = 2;
 pub const FD_CLOEXEC: c_int = 1;
@@ -52,7 +99,7 @@ pub const Pty = struct {
         return Pty{ .master = master, .slave = slave, .pid = -1 };
     }
 
-    pub fn spawn(self: *Pty, allocator: std.mem.Allocator, argv: ?[]const []const u8, szn_env: []const u8, szn_pane: []const u8) Error!void {
+    pub fn spawn(self: *Pty, allocator: std.mem.Allocator, argv: ?[]const []const u8, szn_env: []const u8, szn_pane: []const u8, cwd: ?[]const u8) Error!void {
         const args = argv orelse &.{DEFAULT_SHELL};
 
         var argv_z = try allocator.alloc(?[*:0]const u8, args.len + 1);
@@ -66,11 +113,16 @@ pub const Pty = struct {
         const szn_pane_z = try allocator.dupeZ(u8, szn_pane);
         defer allocator.free(szn_pane_z);
 
+        const cwd_z = if (cwd) |c| try allocator.dupeZ(u8, c) else null;
+        defer if (cwd_z) |c| allocator.free(c);
+
         const pid = fork();
         if (pid < 0) return error.ForkFailed;
         if (pid == 0) {
             _ = close(self.master);
             _ = login_tty(self.slave);
+
+            if (cwd_z) |c| _ = chdir(c);
 
             _ = setenv("TERM", "xterm-256color", 1);
             _ = setenv("TERM_PROGRAM", "szn", 1);
@@ -87,6 +139,39 @@ pub const Pty = struct {
             if (z) |s| allocator.free(std.mem.span(s));
         }
         allocator.free(argv_z);
+    }
+
+    pub fn getCwd(self: *const Pty, allocator: std.mem.Allocator) Error![]const u8 {
+        const builtin = @import("builtin");
+        const pgrp = tcgetpgrp(self.master);
+        if (pgrp < 0) return error.ProcessExited;
+
+        if (builtin.os.tag == .macos) {
+            var buf: proc_vnodepathinfo = .{ .vi = .{}, .cdir = .{ .info = .{}, .path = undefined }, .rdir = .{ .info = .{}, .path = undefined } };
+            const ret = proc_pidinfo(pgrp, PROC_PIDVNODEPATHINFO, 0, &buf, @sizeOf(proc_vnodepathinfo));
+            if (ret < @sizeOf(proc_vnodepathinfo)) return error.ProcessExited;
+
+            const path_start = @offsetOf(proc_vnodepathinfo, "cdir") + @offsetOf(vnode_info_path, "path");
+            const path_bytes = @as(*const [MAXPATHLEN]u8, @ptrCast(&buf))[path_start..];
+            const path_end = std.mem.indexOfScalar(u8, path_bytes, 0) orelse return error.ProcessExited;
+            if (path_end == 0) return error.ProcessExited;
+
+            return try allocator.dupe(u8, path_bytes[0..path_end]);
+        } else if (builtin.os.tag == .linux) {
+            var proc_path_buf: [64]u8 = undefined;
+            const proc_path = std.fmt.bufPrint(&proc_path_buf, "/proc/{d}/cwd", .{pgrp}) catch return error.ProcessExited;
+            const proc_path_z = try allocator.dupeZ(u8, proc_path);
+            defer allocator.free(proc_path_z);
+
+            var path_buf: [MAXPATHLEN]u8 = undefined;
+            const n = readlink(proc_path_z, &path_buf, path_buf.len);
+            if (n > 0) {
+                return try allocator.dupe(u8, path_buf[0..@as(usize, @intCast(n))]);
+            }
+            return error.ProcessExited;
+        } else {
+            return error.ProcessExited;
+        }
     }
 
     pub fn reap(self: *Pty) void {

@@ -24,6 +24,7 @@ pub const Pane = struct {
     window: ?*Window = null,
     title_cb: ?*const fn (ctx: ?*anyopaque, title: []const u8) void = null,
     title_ctx: ?*anyopaque = null,
+    cwd: ?[]const u8 = null,
 
     pub fn init(allocator: std.mem.Allocator, id: u32, width: u32, height: u32) Error!Pane {
         return Pane{
@@ -47,7 +48,7 @@ pub const Pane = struct {
 
 extern "c" fn getpid() c_int;
 
-    pub fn spawn(self: *Pane, allocator: std.mem.Allocator, argv: ?[]const []const u8) Error!void {
+    pub fn spawn(self: *Pane, allocator: std.mem.Allocator, argv: ?[]const []const u8, cwd: ?[]const u8) Error!void {
         var pty = try Pty.open();
         errdefer pty.deinit();
         const ws = std.c.winsize{
@@ -67,8 +68,9 @@ extern "c" fn getpid() c_int;
         var szn_pane_buf: [32]u8 = undefined;
         const szn_pane = std.fmt.bufPrint(&szn_pane_buf, "%{d}", .{self.id}) catch "%0";
 
-        try pty.spawn(allocator, argv, szn_env, szn_pane);
+        try pty.spawn(allocator, argv, szn_env, szn_pane, cwd);
         self.pty = pty;
+        self.cwd = if (cwd) |cwd_val| try allocator.dupe(u8, cwd_val) else null;
     }
 
     pub fn getParser(self: *Pane) *InputParser {
@@ -391,7 +393,7 @@ test "pane initial size matches window" {
 test "pane pty deinit ownership" {
     var pane = try Pane.init(testing.allocator, 1, 80, 24);
     const argv = [_][]const u8{"true"};
-    try pane.spawn(testing.allocator, &argv);
+    try pane.spawn(testing.allocator, &argv, null);
     try testing.expect(pane.pty != null);
     pane.deinit();
 }
