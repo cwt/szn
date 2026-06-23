@@ -183,6 +183,31 @@ fn mainInner(init: std.process.Init) Error!void {
             }
             break :blk @import("client/client.zig").Client.init(allocator) catch |err| {
                 if (err == error.SocketNotFound or err == error.ConnectionRefused) {
+                    if (is_new_cmd and err == error.ConnectionRefused) {
+                        socket_mod.shutdown();
+                        const pid = c.fork();
+                        if (pid < 0) {
+                            std.debug.print("Failed to fork\n", .{});
+                            std.process.exit(1);
+                        }
+                        if (pid == 0) {
+                            if (log_fd) |fd| {
+                                _ = c.close(fd);
+                                log_fd = null;
+                            }
+                            try runServerDaemon(allocator);
+                            std.process.exit(0);
+                        } else {
+                            waitForSocket() catch {
+                                std.debug.print("Server failed to start\n", .{});
+                                std.process.exit(1);
+                            };
+                            break :blk @import("client/client.zig").Client.init(allocator) catch |e| {
+                                std.debug.print("Could not connect to szn server: {any}\n", .{e});
+                                std.process.exit(1);
+                            };
+                        }
+                    }
                     std.debug.print("No szn server running\n", .{});
                 } else {
                     std.debug.print("Could not connect to szn server: {any}\n", .{err});
@@ -238,27 +263,40 @@ fn mainInner(init: std.process.Init) Error!void {
         }
     }
 
+    var interactive_err: ?Error = null;
     if (socket_mod.socketExists()) {
-        try runInteractiveClient(allocator);
-    } else {
-        const pid = c.fork();
-        if (pid < 0) {
-            std.debug.print("Failed to fork\n", .{});
-            std.process.exit(1);
-        }
-        if (pid == 0) {
-            if (log_fd) |fd| {
-                _ = c.close(fd);
-                log_fd = null;
+        runInteractiveClient(allocator) catch |err| {
+            if (err == error.ConnectionRefused) {
+                socket_mod.shutdown();
+                try spawnDaemonAndAttach(allocator);
+            } else {
+                interactive_err = err;
             }
-            try runServerDaemon(allocator);
-        } else {
-            waitForSocket() catch {
-                std.debug.print("Server failed to start\n", .{});
-                std.process.exit(1);
-            };
-            try runInteractiveClient(allocator);
+        };
+    } else {
+        try spawnDaemonAndAttach(allocator);
+    }
+    if (interactive_err) |err| return err;
+}
+
+fn spawnDaemonAndAttach(allocator: std.mem.Allocator) Error!void {
+    const pid = c.fork();
+    if (pid < 0) {
+        std.debug.print("Failed to fork\n", .{});
+        std.process.exit(1);
+    }
+    if (pid == 0) {
+        if (log_fd) |fd| {
+            _ = c.close(fd);
+            log_fd = null;
         }
+        try runServerDaemon(allocator);
+    } else {
+        waitForSocket() catch {
+            std.debug.print("Server failed to start\n", .{});
+            std.process.exit(1);
+        };
+        try runInteractiveClient(allocator);
     }
 }
 
