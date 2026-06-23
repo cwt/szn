@@ -82,8 +82,8 @@ pub const Screen = struct {
         if (self.cursor.y != bottom) return;
         var y = top;
         while (y < bottom) : (y += 1) {
-            const line = &self.grid.lines.items[y];
-            const next = &self.grid.lines.items[y + 1];
+            const line = self.grid.getLineMut(y);
+            const next = self.grid.getLineMut(y + 1);
             std.mem.swap(GridLine, line, next);
         }
         self.grid.clearLine(bottom);
@@ -95,8 +95,8 @@ pub const Screen = struct {
         if (self.cursor.y != top) return;
         var y = bottom;
         while (y > top) : (y -= 1) {
-            const line = &self.grid.lines.items[y];
-            const prev = &self.grid.lines.items[y - 1];
+            const line = self.grid.getLineMut(y);
+            const prev = self.grid.getLineMut(y - 1);
             std.mem.swap(GridLine, line, prev);
         }
         self.grid.clearLine(top);
