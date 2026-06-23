@@ -34,8 +34,8 @@ const MAXPATHLEN: usize = 1024;
 
 const vinfo_stat = extern struct {
     dev: u32 = 0,
-    mode: u32 = 0,
-    nlink: u64 = 0,
+    mode: u16 = 0,
+    nlink: u16 = 0,
     ino: u64 = 0,
     uid: u32 = 0,
     gid: u32 = 0,
@@ -45,21 +45,22 @@ const vinfo_stat = extern struct {
     mtimensec: i64 = 0,
     ctime: i64 = 0,
     ctimensec: i64 = 0,
+    birthtime: i64 = 0,
+    birthtimensec: i64 = 0,
     size: i64 = 0,
     blocks: i64 = 0,
-    blksize: u32 = 0,
+    blksize: i32 = 0,
     flags: u32 = 0,
     gen: u32 = 0,
-    lspare: u32 = 0,
+    rdev: u32 = 0,
     qspare: [2]i64 = .{ 0, 0 },
 };
 
 const vnode_info = extern struct {
     stat: vinfo_stat = .{},
-    attr_tv_sec: i64 = 0,
-    attr_tv_usec: i32 = 0,
-    usecount: u32 = 0,
-    kusecount: u32 = 0,
+    vi_type: c_int = 0,
+    vi_pad: c_int = 0,
+    vi_fsid: [2]i32 = .{ 0, 0 },
 };
 
 const vnode_info_path = extern struct {
@@ -68,7 +69,6 @@ const vnode_info_path = extern struct {
 };
 
 const proc_vnodepathinfo = extern struct {
-    vi: vinfo_stat,
     cdir: vnode_info_path,
     rdir: vnode_info_path,
 };
@@ -147,12 +147,11 @@ pub const Pty = struct {
         if (pgrp < 0) return error.ProcessExited;
 
         if (builtin.os.tag == .macos) {
-            var buf: proc_vnodepathinfo = .{ .vi = .{}, .cdir = .{ .info = .{}, .path = undefined }, .rdir = .{ .info = .{}, .path = undefined } };
+            var buf: proc_vnodepathinfo = .{ .cdir = .{ .info = .{}, .path = undefined }, .rdir = .{ .info = .{}, .path = undefined } };
             const ret = proc_pidinfo(pgrp, PROC_PIDVNODEPATHINFO, 0, &buf, @sizeOf(proc_vnodepathinfo));
             if (ret < @sizeOf(proc_vnodepathinfo)) return error.ProcessExited;
 
-            const path_start = @offsetOf(proc_vnodepathinfo, "cdir") + @offsetOf(vnode_info_path, "path");
-            const path_bytes = @as(*const [MAXPATHLEN]u8, @ptrCast(&buf))[path_start..];
+            const path_bytes = &buf.cdir.path;
             const path_end = std.mem.indexOfScalar(u8, path_bytes, 0) orelse return error.ProcessExited;
             if (path_end == 0) return error.ProcessExited;
 
