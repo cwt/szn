@@ -834,7 +834,7 @@ Same pattern as #77. Each automatic window rename from `getForegroundProcessName
 ### 79. Modified function key parsing broken — `~` CSI sequences with modifiers dropped
 **File:** `src/key.zig:96–101`
 **Severity:** HIGH
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — split `num_str` on `;` to extract key number before modifier parameter. Unit test added.
 
 ```zig
 '~' => {
@@ -1153,9 +1153,9 @@ self.param_val = self.param_val * 10 + (byte - '0');
 | Severity | Count | Fixed | False Positive | Unresolved |
 |----------|-------|-------|----------------|------------|
 | Critical | 14 (10+4) | 11 | 3 | 0 |
-| High | 29 (18+11) | 27 | 1 | 1 |
+| High | 29 (18+11) | 28 | 1 | 0 |
 | Medium | 30 (17+13) | 16 | 1 | 13 |
 | Low | 26 (19+7) | 18 | 1 | 7 |
-| **Total** | **99 (64+35)** | **72** | **6** | **21** |
+| **Total** | **99 (64+35)** | **73** | **6** | **20** |
 
 

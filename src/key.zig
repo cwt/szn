@@ -94,10 +94,10 @@ pub fn parseCsi(seq: []const u8) ParseError!Key {
         'F' => return Key{ .special = .{ .key = .end, .mod = mod } },
         'Z' => return Key{ .special = .{ .key = .btab, .mod = mod } },
         '~' => {
-            // Find the parameter number before '~'
             const tilde = std.mem.lastIndexOfScalar(u8, seq, '~') orelse return error.InvalidCsi;
             const num_str = seq[0..tilde];
-            const num = std.fmt.parseInt(u8, num_str, 10) catch return error.InvalidCsi;
+            const key_num_str = if (std.mem.indexOfScalar(u8, num_str, ';')) |s| num_str[0..s] else num_str;
+            const num = std.fmt.parseInt(u8, key_num_str, 10) catch return error.InvalidCsi;
 
             return switch (num) {
                 1 => Key{ .special = .{ .key = .home, .mod = mod } },
@@ -473,6 +473,23 @@ test "parse function key F1-F12" {
         const key = try parse(seq);
         try testing.expectEqual(func, key.function.key);
     }
+}
+
+test "parse modified function keys via tilde CSI" {
+    const key = try parse("\x1b[11;5~");
+    try testing.expectEqual(.f1, key.function.key);
+    try testing.expect(key.function.mod.ctrl);
+    try testing.expect(!key.function.mod.shift);
+    try testing.expect(!key.function.mod.alt);
+
+    const key2 = try parse("\x1b[11;6~");
+    try testing.expectEqual(.f1, key2.function.key);
+    try testing.expect(key2.function.mod.ctrl);
+    try testing.expect(key2.function.mod.shift);
+
+    const key3 = try parse("\x1b[1;5~");
+    try testing.expectEqual(.home, key3.special.key);
+    try testing.expect(key3.special.mod.ctrl);
 }
 
 test "parse home and end" {
