@@ -1538,7 +1538,7 @@ DECSCUSR sequences: 1=blinking block, 2=steady block, 3=blinking underline, 4=st
 ### 130. `tty/tty.zig` — `writeCell` early return on combining char encode failure leaves `cx` stale
 **File:** `src/tty/tty.zig:386–395`
 **Severity:** MEDIUM
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — replaced `catch return` with fallback that writes `?` and continues normal flow so `self.cx` is always incremented. Test added.
 
 ```zig
 const clen = std.unicode.utf8Encode(cp, &buf) catch return;

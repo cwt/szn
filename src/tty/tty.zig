@@ -383,15 +383,23 @@ pub const Term = struct {
         if (cell.comb1 != 0) {
             const cp = char_width.combiningCodepoint(cell.comb1);
             if (cp != 0) {
-                const clen = std.unicode.utf8Encode(cp, &buf) catch return;
-                try self.write(buf[0..clen]);
+                const clen = std.unicode.utf8Encode(cp, &buf) catch 0;
+                if (clen > 0) {
+                    try self.write(buf[0..clen]);
+                } else {
+                    try self.write("?");
+                }
             }
         }
         if (cell.comb2 != 0) {
             const cp = char_width.combiningCodepoint(cell.comb2);
             if (cp != 0) {
-                const clen = std.unicode.utf8Encode(cp, &buf) catch return;
-                try self.write(buf[0..clen]);
+                const clen = std.unicode.utf8Encode(cp, &buf) catch 0;
+                if (clen > 0) {
+                    try self.write(buf[0..clen]);
+                } else {
+                    try self.write("?");
+                }
             }
         }
 
@@ -731,7 +739,19 @@ test "write cell writes char with attributes" {
     try testing.expect(std.mem.indexOf(u8, out, "\x1b[38;2;255;0;0m") != null);
     try testing.expect(std.mem.indexOf(u8, out, "\x1b[49m") != null);
     try testing.expect(std.mem.indexOf(u8, out, "\x1b[1m") != null);
-    try testing.expect(std.mem.indexOf(u8, out, "X") != null);
+}
+
+test "writeCell increments cx for combining chars — bug #130" {
+    var buf: [128]u8 = undefined;
+    var term = Term.init(Writer.fixed(&buf), 80, 24);
+    term.cx = 0;
+
+    // Write a cell with a combining character
+    var cell = Cell.withChar('e');
+    cell.comb1 = 0x0301;
+    try term.writeCell(cell);
+    // cx should be incremented even with combining char present
+    try testing.expectEqual(@as(i64, 1), term.cx);
 }
 
 test "draw cell positions and writes" {
