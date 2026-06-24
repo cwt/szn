@@ -613,7 +613,7 @@ When a wheel event has the release bit set (button + 0x20), `wheel_up` detection
 ### 65. Use-after-free / double-free via `errdefer` in `Grid.scrollUp()`
 **File:** `src/grid.zig:163–167`
 **Severity:** CRITICAL
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — allocate new_line before swapping old_line out; history append after grid is safe.
 
 ```zig
 var line = self.getLine(0).*;         // copy by value, shares cells pointer with grid
@@ -630,7 +630,7 @@ After `append` succeeds, the `errdefer` is still active. If any subsequent opera
 ### 66. `setAttributes` fails to turn off removed attributes
 **File:** `src/tty/tty.zig:144–171`
 **Severity:** CRITICAL
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — attrCodes changed to string slices for double_underline → 21, curly_underline → 4:3.
 
 ```zig
 if (@as(u16, @bitCast(self.attrs)) != 0 and @as(u16, @bitCast(attrs)) < @as(u16, @bitCast(self.attrs))) {
@@ -644,7 +644,7 @@ The check `new < old` on a bitmask is semantically wrong. `{bold}` → `{italic}
 ### 67. `writeCell` writes character with wrong colors after attribute reset emits `\x1b[m`
 **File:** `src/tty/tty.zig:366–379`
 **Severity:** CRITICAL
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — reordered writeCell to setAttributes before setForeground/setBackground.
 
 ```zig
 pub fn writeCell(self: *Term, cell: Cell) Error!void {
@@ -661,7 +661,7 @@ pub fn writeCell(self: *Term, cell: Cell) Error!void {
 ### 68. Potential double-close of PTY fds from conflicting deinit paths
 **File:** `src/session.zig:49–57`
 **Severity:** CRITICAL
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — both Session.deinit and killWindow now call Pane.deinit() (single cleanup path) instead of inlining pty.deinit().
 
 ```zig
 pub fn deinit(self: *Session, allocator: std.mem.Allocator) void {
@@ -1152,10 +1152,10 @@ self.param_val = self.param_val * 10 + (byte - '0');
 
 | Severity | Count | Fixed | False Positive | Unresolved |
 |----------|-------|-------|----------------|------------|
-| Critical | 14 (10+4) | 7 | 3 | 4 |
+| Critical | 14 (10+4) | 11 | 3 | 0 |
 | High | 29 (18+11) | 17 | 1 | 11 |
 | Medium | 30 (17+13) | 16 | 1 | 13 |
 | Low | 26 (19+7) | 18 | 1 | 7 |
-| **Total** | **99 (64+35)** | **58** | **6** | **35** |
+| **Total** | **99 (64+35)** | **62** | **6** | **31** |
 
 
