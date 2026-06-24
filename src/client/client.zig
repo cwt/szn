@@ -88,6 +88,7 @@ pub const Client = struct {
                 .msg_type = hdr[4],
             },
             .data = body,
+            .is_owned = true,
         };
     }
 };

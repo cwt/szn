@@ -163,7 +163,7 @@ fn mainInner(init: std.process.Init) Error!void {
 
         try client.sendCommand(cmd);
         const reply = try client.recvPacket();
-        defer allocator.free(reply.data);
+        defer reply.deinit(allocator);
         const msg_type = @as(protocol.MessageType, @enumFromInt(reply.header.msg_type));
         switch (msg_type) {
             .ready => {

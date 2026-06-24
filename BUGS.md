@@ -1233,7 +1233,7 @@ self.param_val = self.param_val * 10 + (byte - '0');
 ### 110. `client/client.zig` — Heap-allocated body in recvPacket has no guaranteed free
 **File:** `src/client/client.zig:75–91`
 **Severity:** HIGH
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — `Packet` now has `is_owned` field and `deinit()` method. `recvPacket` sets `is_owned = true`. Caller frees with `reply.deinit(allocator)`.
 
 ```zig
 const body = try self.allocator.alloc(u8, body_len);

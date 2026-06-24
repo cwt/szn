@@ -41,6 +41,14 @@ pub const Header = struct {
 pub const Packet = struct {
     header: Header,
     data: []const u8,
+    is_owned: bool = false,
+
+    pub fn deinit(self: *Packet, allocator: std.mem.Allocator) void {
+        if (self.is_owned) {
+            allocator.free(self.data);
+            self.is_owned = false;
+        }
+    }
 
     pub fn serialize(self: Packet, buf: []u8) []u8 {
         var hdr_buf: [5]u8 = undefined;
@@ -128,6 +136,16 @@ test "identify term round trip" {
     const decoded = try IdentifyTerm.decode(encoded);
     try testing.expectEqual(@as(u8, 5), decoded.term_len);
     try testing.expectEqualStrings("xterm", decoded.term[0..decoded.term_len]);
+}
+
+test "packet deinit frees owned data and is idempotent" {
+    var pkt = Packet{
+        .header = .{ .length = 6, .msg_type = @intFromEnum(MessageType.ready) },
+        .data = try testing.allocator.dupe(u8, "hello"),
+        .is_owned = true,
+    };
+    pkt.deinit(testing.allocator);
+    pkt.deinit(testing.allocator);
 }
 
 test "identify term decode rejects len > 64" {
