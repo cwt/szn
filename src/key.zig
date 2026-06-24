@@ -205,7 +205,7 @@ pub fn parse(seq: []const u8) ParseError!Key {
 
     // ESC followed by a single char (Alt+char)
     if (seq.len == 2) {
-        return Key{ .char = .{ .code = seq[1] } };
+        return Key{ .char = .{ .code = seq[1], .mod = .{ .alt = true } } };
     }
 
     return error.UnknownKey;
@@ -532,9 +532,17 @@ test "parse ss3 function keys" {
     try testing.expectEqual(.f4, f4.function.key);
 }
 
-test "parse alt char" {
+test "parse alt char sets alt modifier" {
     const key = try parse("\x1ba");
     try testing.expectEqual(@as(u21, 'a'), key.char.code);
+    try testing.expect(key.char.mod.alt);
+}
+
+test "format alt char includes M- prefix" {
+    var buf: [16]u8 = undefined;
+    const key = Key{ .char = .{ .code = 'a', .mod = .{ .alt = true } } };
+    const formatted = format(key, &buf);
+    try testing.expect(std.mem.eql(u8, "M-a", formatted));
 }
 
 test "parse kitty extended basic" {

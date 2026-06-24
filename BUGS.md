@@ -1196,17 +1196,9 @@ self.param_val = self.param_val * 10 + (byte - '0');
 ---
 
 ### 105. `key.zig` — Alt modifier lost when parsing ESC+char sequences
-**File:** `src/key.zig:207–209`
+**File:** `src/key.zig:207–208`
 **Severity:** HIGH
-**Status:** ❌ UNRESOLVED (related to bug #14 which was marked FALSE POSITIVE for `tty_key.zig`, but the issue exists in `key.zig`'s `parse` function)
-
-```zig
-if (seq.len == 2) {
-    return Key{ .char = .{ .code = seq[1] } };
-}
-```
-
-`\x1ba` (ESC a) is parsed as `Key{ .char = .{ .code = 'a', .mod = .{} } }` — the alt modifier is **not** set. But `format()` outputs `"M-a"` for alt+'a'. This means `parse` and `format` are not inverses, and key bindings that match on `mod.alt == true` will never fire for terminal-sent Alt+key sequences parsed through this path.
+**Status:** ✅ FIXED — `parse()` now sets `.mod.alt = true` when returning a char key from a `seq.len == 2` ESC+char sequence. Test updated and format round-trip verified.
 
 ---
 
