@@ -1078,7 +1078,7 @@ If a pane width reaches `maxInt(u32)`, adding 1 wraps to 0. Practically impossib
 ### 95. Daemon fork doesn't close stdin/stdout/stderr
 **File:** `src/main.zig:170–175`
 **Severity:** LOW
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — close(0), close(1), close(2) then reopen via open("/dev/null") + dup2 at start of `runServerDaemon`.
 
 ```zig
 if (pid == 0) {
