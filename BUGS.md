@@ -1674,26 +1674,14 @@ Bytes `<=>?` are accepted at any position in the parameter string, not just befo
 ### 139. `key_binding.zig` — Force unwrap in `mapCommandToAction` may panic
 **File:** `src/key_binding.zig:507`
 **Severity:** LOW
-**Status:** ❌ UNRESOLVED
-
-```zig
-const idx_str = trimmed[std.mem.lastIndexOfScalar(u8, trimmed, ' ').? + 1 ..];
-```
-
-The `.?` force-unwraps an optional. Although the prefix check on line 506 guarantees a space exists, this is fragile — any future change to the prefix strings could introduce a panic.
+**Status:** ✅ FIXED — replaced `. ?` with `orelse return null`.
 
 ---
 
 ### 140. `key_binding.zig` — `val >= 0` is always true for `u8`
 **File:** `src/key_binding.zig:509`
 **Severity:** LOW
-**Status:** ❌ UNRESOLVED
-
-```zig
-if (val >= 0 and val <= 9) {
-```
-
-`val` is `u8`, so `val >= 0` is always true. Dead comparison, misleading to readers.
+**Status:** ✅ FIXED — removed dead `val >= 0` comparison.
 
 ---
 

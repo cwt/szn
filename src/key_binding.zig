@@ -504,9 +504,10 @@ pub fn mapCommandToAction(cmd: []const u8) ?Action {
 
     // select-window can have a target index after "-t"; keep the original logic.
     if (std.mem.startsWith(u8, trimmed, "select-window -t ") or std.mem.startsWith(u8, trimmed, "selectw -t ")) {
-        const idx_str = trimmed[std.mem.lastIndexOfScalar(u8, trimmed, ' ').? + 1 ..];
+        const last_space = std.mem.lastIndexOfScalar(u8, trimmed, ' ') orelse return null;
+        const idx_str = trimmed[last_space + 1 ..];
         if (std.fmt.parseInt(u8, idx_str, 10)) |val| {
-            if (val >= 0 and val <= 9) {
+            if (val <= 9) {
                 return @enumFromInt(@intFromEnum(Action.select_window_0) + val);
             }
         } else |_| {}
@@ -536,5 +537,17 @@ test "mapCommandToAction with arguments" {
 
     // Invalid commands
     try testing.expectEqual(@as(?Action, null), mapCommandToAction("invalid-command"));
+}
+
+test "select-window -t bounds — bug #139, #140" {
+    try testing.expectEqual(Action.select_window_5, mapCommandToAction("select-window -t 5"));
+    try testing.expectEqual(@as(?Action, null), mapCommandToAction("select-window"));
+}
+
+test "val >= 0 always true for u8 — bug #140" {
+    // u8 val is always non-negative, so val >= 0 is dead code.
+    // The fix is just removing the check. Verify parsing still works.
+    try testing.expectEqual(Action.select_window_0, mapCommandToAction("select-window -t 0"));
+    try testing.expectEqual(Action.select_window_9, mapCommandToAction("select-window -t 9"));
 }
 
