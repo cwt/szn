@@ -89,6 +89,7 @@ pub const IdentifyTerm = struct {
     pub fn decode(data: []const u8) Error!IdentifyTerm {
         if (data.len < 1) return error.InvalidData;
         const len = data[0];
+        if (len > 64) return error.InvalidData;
         if (data.len < 1 + len) return error.InvalidData;
         var result: IdentifyTerm = .{ .term_len = len };
         @memcpy(result.term[0..len], data[1 .. 1 + len]);
@@ -127,6 +128,14 @@ test "identify term round trip" {
     const decoded = try IdentifyTerm.decode(encoded);
     try testing.expectEqual(@as(u8, 5), decoded.term_len);
     try testing.expectEqualStrings("xterm", decoded.term[0..decoded.term_len]);
+}
+
+test "identify term decode rejects len > 64" {
+    // len=65, followed by 65 bytes of junk
+    var buf: [66]u8 = undefined;
+    buf[0] = 65;
+    const decoded = IdentifyTerm.decode(buf[0..]);
+    try testing.expectError(error.InvalidData, decoded);
 }
 
 test "message type request detection" {

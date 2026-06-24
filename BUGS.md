@@ -1210,22 +1210,9 @@ self.param_val = self.param_val * 10 + (byte - '0');
 ---
 
 ### 107. `server/protocol.zig` — `IdentifyTerm.decode` missing `len <= 64` validation
-**File:** `src/server/protocol.zig:89–96`
+**File:** `src/server/protocol.zig:89–97`
 **Severity:** HIGH
-**Status:** ❌ UNRESOLVED
-
-```zig
-pub fn decode(data: []const u8) Error!IdentifyTerm {
-    if (data.len < 1) return error.InvalidData;
-    const len = data[0];
-    if (data.len < 1 + len) return error.InvalidData;
-    var result: IdentifyTerm = .{ .term_len = len };
-    @memcpy(result.term[0..len], data[1 .. 1 + len]);
-    return result;
-}
-```
-
-`len` is a `u8` (0–255) but `result.term` is `[64]u8`. If a malicious or corrupted packet has `len > 64`, the slice `result.term[0..len]` will trigger an out-of-bounds panic at runtime. Missing check: `if (len > 64) return error.InvalidData;`.
+**Status:** ✅ FIXED — added `if (len > 64) return error.InvalidData` before the memcpy. Test added for len=65 rejection.
 
 ---
 
