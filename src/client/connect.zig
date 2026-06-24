@@ -38,7 +38,9 @@ pub fn connectToServer() Error!i32 {
 
 fn mapErr(rc: c_int) Error!i32 {
     if (rc >= 0) return rc;
-    return switch (std.posix.errno(rc)) {
+    // std.c.errno reads _errno().* when rc == -1, giving the actual error.
+    // std.posix.errno(rc) derives errno from -rc which is always 1 for -1.
+    return switch (c.errno(rc)) {
         .CONNREFUSED => error.ConnectionRefused,
         .NOENT => error.SocketNotFound,
         .INTR => error.Interrupted,
@@ -46,6 +48,19 @@ fn mapErr(rc: c_int) Error!i32 {
         .TIMEDOUT => error.ConnectionTimedOut,
         else => error.Unexpected,
     };
+}
+
+test "mapErr reads actual errno, not derived from rc" {
+    // Bug #82: std.posix.errno(rc) derives errno from -rc, always 1 for rc == -1.
+    // c.errno(rc) reads _errno().* directly. Verify correct errors map.
+    std.c._errno().* = 2; // ENOENT
+    try testing.expectEqual(error.SocketNotFound, mapErr(-1));
+
+    std.c._errno().* = 61; // ECONNREFUSED
+    try testing.expectEqual(error.ConnectionRefused, mapErr(-1));
+
+    std.c._errno().* = 4; // EINTR
+    try testing.expectEqual(error.Interrupted, mapErr(-1));
 }
 
 test "connectToServer fails gracefully when no server running" {

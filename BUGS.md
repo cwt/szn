@@ -878,7 +878,7 @@ If `c.socket` returns -1, `mapErr` propagates the error — but `fd` was never a
 ### 82. `std.posix.errno(rc)` may lose error specificity for C wrappers
 **File:** `src/client/connect.zig:38–48`
 **Severity:** MEDIUM
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — replaced `std.posix.errno(rc)` with `std.c.errno(rc)` which properly reads `_errno().*` when `rc == -1`. Unit test added.
 
 ```zig
 fn mapErr(rc: c_int) Error!i32 {
@@ -1154,8 +1154,8 @@ self.param_val = self.param_val * 10 + (byte - '0');
 |----------|-------|-------|----------------|------------|
 | Critical | 14 (10+4) | 11 | 3 | 0 |
 | High | 29 (18+11) | 28 | 1 | 0 |
-| Medium | 30 (17+13) | 18 | 1 | 11 |
+| Medium | 30 (17+13) | 19 | 1 | 10 |
 | Low | 26 (19+7) | 18 | 1 | 7 |
-| **Total** | **99 (64+35)** | **75** | **6** | **18** |
+| **Total** | **99 (64+35)** | **76** | **6** | **17** |
 
 
