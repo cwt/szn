@@ -24,22 +24,24 @@ workaround in there for a PuTTY 0.63 scroll-wheel bug.
 None of that is a criticism — it's what made tmux run everywhere. But if you're
 only targeting modern terminals, you're carrying all that weight for nothing.
 
-szn makes a different bet: xterm-256color or newer, full stop. That lets us
-hardcode modern behaviour — UTF-8 box-drawing, SGR mouse, kitty keys — and skip
-the entire compatibility layer. Less code, fewer surprises, and nothing left
-over from 1978.
+szn makes a different bet: your display terminal speaks xterm-256color or
+newer, full stop. That lets us hardcode modern behaviour — UTF-8 box-drawing,
+SGR mouse, kitty keys — and skip the entire compatibility layer. Inside panes,
+programs see `TERM=tmux-256color` (just like tmux), with szn translating between
+the two. Less code, fewer surprises, and nothing left over from 1978.
 
 ## Goals
 
-- **Modern terminals only** — xterm-256color as the baseline, with SGR mouse
-  (1006), true-colour RGB, kitty extended keys, UTF-8, OSC 8 hyperlinks, and
-  sixel image support out of the box.
+- **Modern terminals only** — xterm-256color as the display baseline. Inside
+  panes, programs run under `TERM=tmux-256color`. SGR mouse (1006), true-colour
+  RGB, kitty extended keys, UTF-8, OSC 8 hyperlinks, and sixel image support
+  are available out of the box.
 - **Pragmatic mouse forwarding** — szn speaks SGR mouse (1006) natively, but
   also forwards legacy `\x1b[M` 3-byte format when a program only enables basic
   mouse mode (1000/1002). This keeps SGR as the default while tolerating
-  programs whose terminfo lacks the `XM` capability. Users on systems with
-  older terminfo databases can `export TERM=tmux-256color` to force basic mouse
-  mode if needed.
+  programs whose terminfo lacks the `XM` capability. Use
+  `set -g default-terminal xterm-256color` in your config if you need the old
+  behaviour.
 - **Clean architecture** — Zig's comptime, error unions, tagged unions, arena
   allocators, and slices replace C macros, `goto`-based cleanup, and manual
   memory management.
@@ -56,7 +58,7 @@ All core development phases (Phases 0 to 11) are fully implemented and complete.
 - Standard VT100 wrap-pending and Background Color Erase (BCE) support for accurate rendering.
 - Full multi-pane layouts, interactive copy mode, status bars, and config parsing (`.szn.conf`).
 
-The codebase has 561 unit and integration tests passing. Check out [PROGRESS.md](PROGRESS.md) for the full migration and feature breakdown.
+The codebase has 645 unit and integration tests passing. Check out [PROGRESS.md](PROGRESS.md) for the full migration and feature breakdown.
 
 ## Building & Installation
 
@@ -100,6 +102,21 @@ For example, to split the active window vertically or horizontally:
 szn split-window -v
 szn split-window -h
 ```
+
+## Debug Logging
+
+**Debug logging is disabled by default for user privacy.** szn does not write
+any log output unless explicitly configured.
+
+To enable it, add one of these lines to your `~/.szn.conf`:
+
+```
+set -g log-file default
+set -g log-file /path/to/custom/log
+```
+
+`default` writes to `$XDG_STATE_HOME/szn/szn.log` (usually
+`~/.local/state/szn/szn.log`).
 
 ## License
 

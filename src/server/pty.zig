@@ -131,7 +131,7 @@ pub const Pty = struct {
 
             if (cwd_z) |c| _ = chdir(c);
 
-            _ = setenv("TERM", "xterm-256color", 1);
+            _ = setenv("TERM", "tmux-256color", 1);
             _ = setenv("TERM_PROGRAM", "szn", 1);
             _ = setenv("SZN", szn_env_z, 1);
             _ = setenv("SZN_PANE", szn_pane_z, 1);

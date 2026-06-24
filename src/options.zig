@@ -189,7 +189,7 @@ fn freeValue(allocator: std.mem.Allocator, value: OptionValue) void {
 
 pub const SESSION_OPTIONS = &[_]OptionDef{
     .{ .name = "default-shell", .type = .string, .default = OptionValue{ .string = "" } },
-    .{ .name = "default-terminal", .type = .string, .default = OptionValue{ .string = "xterm-256color" } },
+    .{ .name = "default-terminal", .type = .string, .default = OptionValue{ .string = "tmux-256color" } },
     .{ .name = "status", .type = .choice, .default = OptionValue{ .choice = "on" }, .choices = &[_][]const u8{ "off", "on", "2", "3", "4", "5" } },
     .{ .name = "status-interval", .type = .number, .default = OptionValue{ .number = 15 }, .min = 0, .max = 86400 },
     .{ .name = "history-limit", .type = .number, .default = OptionValue{ .number = 2000 }, .min = 0, .max = 1000000 },
@@ -226,7 +226,7 @@ test "create options with defaults" {
     defer opts.deinit();
 
     try testing.expectEqual(@as(i64, 15), opts.asNumber("status-interval").?);
-    try testing.expectEqualStrings("xterm-256color", opts.asString("default-terminal").?);
+    try testing.expectEqualStrings("tmux-256color", opts.asString("default-terminal").?);
     try testing.expect(opts.asFlag("mouse").?);
 }
 
