@@ -11,96 +11,14 @@ const socket_mod = @import("server/socket.zig");
 const connect = @import("client/connect.zig");
 const client_mod = @import("client/client.zig");
 const socket_path = @import("socket_path.zig");
+const log_mod = @import("log.zig");
 
-pub const Error = server_mod.ServerError || client_mod.Error || connect.Error || socket_path.Error || error{ OutOfMemory, SocketNotFound, WriteFailed, ReadFailed };
-
-// Cached log file descriptor — opened once, reused for all log calls
-var log_fd: ?std.posix.fd_t = null;
-var log_fd_failed: bool = false;
+pub const Error = server_mod.ServerError || client_mod.Error || connect.Error || socket_path.Error || log_mod.Error || error{ OutOfMemory, SocketNotFound, WriteFailed, ReadFailed };
 
 pub const std_options: std.Options = .{
-    .logFn = logFn,
+    .logFn = log_mod.logFn,
     .log_level = .debug,
 };
-
-fn resolveLogPath(buf: []u8) Error![:0]const u8 {
-    if (std.c.getenv("XDG_STATE_HOME")) |xdg_raw| {
-        const xdg = std.mem.span(xdg_raw);
-        var dir_buf: [256]u8 = undefined;
-        const dir_z = try std.fmt.bufPrintZ(&dir_buf, "{s}/szn", .{xdg});
-        const rc = c.mkdir(dir_z.ptr, 0o755);
-        if (rc < 0) {
-            const err = std.posix.errno(rc);
-            if (err != .EXIST) {
-                return try std.fmt.bufPrintZ(buf, "/tmp/szn.log", .{});
-            }
-        }
-        return try std.fmt.bufPrintZ(buf, "{s}/szn/szn.log", .{xdg});
-    }
-    return try std.fmt.bufPrintZ(buf, "/tmp/szn.log", .{});
-}
-
-const builtin = @import("builtin");
-extern "c" fn open(path: [*:0]const u8, oflag: c_int, mode: c.mode_t) c_int;
-const O_WRONLY = 1;
-const O_CREAT = switch (builtin.os.tag) {
-    .macos, .ios, .watchos, .tvos => 0x0200,
-    else => 0x0040,
-};
-const O_APPEND = switch (builtin.os.tag) {
-    .macos, .ios, .watchos, .tvos => 0x0008,
-    else => 0x0400,
-};
-
-pub fn logFn(
-    comptime level: std.log.Level,
-    comptime scope: @EnumLiteral(),
-    comptime format: []const u8,
-    args: anytype,
-) void {
-    _ = scope;
-    if (log_fd == null) {
-        if (log_fd_failed) return;
-        var path_buf: [256]u8 = undefined;
-        const path = resolveLogPath(&path_buf) catch {
-            log_fd_failed = true;
-            return;
-        };
-        const fd = open(path, O_WRONLY | O_CREAT | O_APPEND, 0o666);
-        if (fd < 0) {
-            log_fd_failed = true;
-            return;
-        }
-        log_fd = fd;
-    }
-    const fd = log_fd.?;
-    var buf: [4096]u8 = undefined;
-    const prefix = std.fmt.bufPrint(&buf, "[{s}] ", .{@tagName(level)}) catch return;
-    const msg = std.fmt.bufPrint(buf[prefix.len..], format, args) catch {
-        // bufPrint failed — write prefix + fallback directly to avoid
-        // reading uninitialized stack bytes past the prefix.
-        writeAllRaw(fd, buf[0..prefix.len]);
-        writeAllRaw(fd, "log message too long\n");
-        return;
-    };
-    const total_len = prefix.len + msg.len;
-    if (total_len < buf.len) {
-        buf[total_len] = '\n';
-        writeAllRaw(fd, buf[0 .. total_len + 1]);
-    } else {
-        writeAllRaw(fd, buf[0..total_len]);
-        writeAllRaw(fd, "\n");
-    }
-}
-
-fn writeAllRaw(fd: std.posix.fd_t, bytes: []const u8) void {
-    var remaining = bytes;
-    while (remaining.len > 0) {
-        const n = c.write(fd, remaining.ptr, @intCast(remaining.len));
-        if (n <= 0) return;
-        remaining = remaining[@intCast(n)..];
-    }
-}
 
 extern "c" fn tcflush(fd: c_int, queue_selector: c_int) c_int;
 const TCIFLUSH = 1;
@@ -182,10 +100,7 @@ fn mainInner(init: std.process.Init) Error!void {
                     std.process.exit(1);
                 }
                 if (pid == 0) {
-                    if (log_fd) |fd| {
-                        _ = c.close(fd);
-                        log_fd = null;
-                    }
+                    log_mod.disable();
                     try runServerDaemon(allocator);
                     std.process.exit(0);
                 } else {
@@ -205,10 +120,7 @@ fn mainInner(init: std.process.Init) Error!void {
                             std.process.exit(1);
                         }
                         if (pid == 0) {
-                            if (log_fd) |fd| {
-                                _ = c.close(fd);
-                                log_fd = null;
-                            }
+                            log_mod.disable();
                             try runServerDaemon(allocator);
                             std.process.exit(0);
                         } else {
@@ -300,10 +212,7 @@ fn spawnDaemonAndAttach(allocator: std.mem.Allocator) Error!void {
         std.process.exit(1);
     }
     if (pid == 0) {
-        if (log_fd) |fd| {
-            _ = c.close(fd);
-            log_fd = null;
-        }
+        log_mod.disable();
         try runServerDaemon(allocator);
     } else {
         waitForSocket() catch {
@@ -531,107 +440,5 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
     }
 }
 
-test "logFn writes single line atomically — bug #89" {
-    // Use a temp file via posix syscalls to avoid Io.File API differences
-    const sub_path = "/tmp/szn_test_log_atomic.log";
-    const fd = std.c.open(sub_path, std.c.O{
-        .ACCMODE = .RDWR,
-        .CREAT = true,
-        .TRUNC = true,
-    }, @as(c_uint, 0o644));
-    if (fd < 0) return error.FileOpen;
-    defer _ = std.c.close(fd);
-    defer _ = std.c.unlink(sub_path);
-
-    const old_log_fd = log_fd;
-    defer log_fd = old_log_fd;
-    log_fd = fd;
-
-    logFn(.info, .default, "Test formatted log: {d} + {d} = {d}", .{ 1, 2, 3 });
-
-    // Read back using c.pread (available via libc)
-    var buf: [1024]u8 = undefined;
-    const n = std.c.pread(fd, &buf, buf.len, 0);
-    if (n < 0) return error.ReadFailed;
-
-    try std.testing.expectEqualStrings("[info] Test formatted log: 1 + 2 = 3\n", buf[0..@intCast(n)]);
-}
-
-test "logFn handles buffer overflow without writing garbage — bug #89" {
-    const sub_path = "/tmp/szn_test_log_overflow.log";
-    const fd = std.c.open(sub_path, std.c.O{
-        .ACCMODE = .RDWR,
-        .CREAT = true,
-        .TRUNC = true,
-    }, @as(c_uint, 0o644));
-    if (fd < 0) return error.FileOpen;
-    defer _ = std.c.close(fd);
-    defer _ = std.c.unlink(sub_path);
-
-    const old_log_fd = log_fd;
-    defer log_fd = old_log_fd;
-    log_fd = fd;
-
-    // bufPrint for the message part has ~4096 - prefix.len bytes.
-    // Send a format string that produces >4096 bytes of output to trigger
-    // the overflow fallback path.
-    var big_buf: [5000]u8 = undefined;
-    @memset(big_buf[0..5000], 'X');
-    const big_str = big_buf[0..4096];
-    logFn(.info, .default, "{s}", .{big_str});
-
-    // Read back using c.pread
-    var read_buf: [8192]u8 = undefined;
-    const n = std.c.pread(fd, &read_buf, read_buf.len, 0);
-    if (n < 0) return error.ReadFailed;
-
-    // Should contain the fallback message "log message too long"
-    // OR the actual formatted prefix + message + newline.
-    // Either way, no garbage bytes (uninitialized stack data) should be written.
-    try std.testing.expect(n > 0);
-    try std.testing.expect(read_buf[@intCast(n - 1)] == '\n');
-    // Verify no null bytes (garbage would include uninitialized data)
-    try std.testing.expect(std.mem.indexOfScalar(u8, read_buf[0..@intCast(n)], @as(u8, 0)) == null);
-}
-
-test "logFn does not retry open after failure — bug #98" {
-    const old_log_fd = log_fd;
-    const old_log_fd_failed = log_fd_failed;
-    defer {
-        log_fd = old_log_fd;
-        log_fd_failed = old_log_fd_failed;
-    }
-    log_fd = null;
-    log_fd_failed = true;
-
-    // This call should return immediately without trying to open.
-    // If it tried to open, it would need resolveLogPath + open which
-    // could fail with env-dependent errors. Instead, log_fd stays null.
-    logFn(.info, .default, "should not retry", .{});
-    try std.testing.expect(log_fd == null);
-    try std.testing.expect(log_fd_failed);
-}
-
-test "resolveLogPath fallback on invalid XDG_STATE_HOME" {
-    const old_xdg = std.c.getenv("XDG_STATE_HOME");
-
-    // setenv is not declared in std.c, declare it locally
-    const setenv = struct {
-        extern "c" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
-    }.setenv;
-
-    _ = setenv("XDG_STATE_HOME", "/nonexistent/invalid/dir/szn_test", 1);
-
-    var path_buf: [256]u8 = undefined;
-    const path = try resolveLogPath(&path_buf);
-
-    try std.testing.expectEqualStrings("/tmp/szn.log", path);
-
-    if (old_xdg) |old| {
-        _ = setenv("XDG_STATE_HOME", old, 1);
-    } else {
-        _ = setenv("XDG_STATE_HOME", "", 1);
-    }
-}
 
 

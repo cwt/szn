@@ -1265,9 +1265,16 @@ pub const Server = struct {
 
     pub fn applyDirectives(self: *Server, parsed: *const @import("../cfg.zig").ParseResult) ServerError!void {
         const key_binding = @import("../key_binding.zig");
+        const log_mod = @import("../log.zig");
         for (parsed.directives.items) |d| {
             switch (d) {
                 .set => |s| {
+                    if (std.mem.eql(u8, s.option, "log-file")) {
+                        if (s.value == .string) {
+                            log_mod.enable(s.value.string);
+                        }
+                        continue;
+                    }
                     self.global_options.set(s.option, s.value) catch |err| {
                         if (err == error.UnknownOption) {
                             self.global_window_options.set(s.option, s.value) catch |err2| {
