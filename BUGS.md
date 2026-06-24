@@ -1161,4 +1161,939 @@ self.param_val = self.param_val * 10 + (byte - '0');
 | Low | 26 (19+7) | 25 | 1 | 0 |
 | Total | 99 (64+35) | **81** | **6** | **0** |
 
+---
+
+## NEW BUGS (2026-06-24 deep audit of current codebase)
+
+---
+
+### 100. `client/raw.zig` — VMIN/VTIME indices are macOS values, completely wrong on Linux
+**File:** `src/client/raw.zig:9–10`
+**Severity:** CRITICAL
+**Status:** ❌ UNRESOLVED
+
+```zig
+const VMIN: usize = 16;
+const VTIME: usize = 17;
+```
+
+On Linux, `VMIN = 6` and `VTIME = 5`. Writing to indices 16 and 17 sets `VWERASE` and `VREPRINT` (or similar) instead of the intended read-behavior control fields. The terminal's minimum-read and timeout behavior will be completely wrong — `setRaw` will not configure the terminal for character-at-a-time input as intended. Core functionality is broken on the target platform.
+
+---
+
+### 101. `server/server.zig` — Use-after-free during batch PTY event processing
+**File:** `src/server/server.zig:305–321`
+**Severity:** CRITICAL
+**Status:** ❌ UNRESOLVED
+
+```zig
+for (events) |ev| {
+    if (self.handlePtyEvent(ev)) continue;
+    // ...
+}
+```
+
+`pollOnce` returns a batch of events. If event[0] is a PTY HUP that triggers `destroyPane` → `killSession`, the session/window/pane memory is freed. If event[1] references another pane in the same session (via `udata`), accessing it is a use-after-free. The `isPaneValid` check (bug #57 fix) mitigates this for the specific pane, but the cascading `killSession` frees the entire session including other panes.
+
+---
+
+### 102. `main.zig` — `errno` retrieval is always `.SUCCESS`, client disconnects on transient errors
+**File:** `src/main.zig:380, 400`
+**Severity:** CRITICAL
+**Status:** ❌ UNRESOLVED (may be regression of bug #20)
+
+```zig
+const err = std.posix.errno(-1);
+if (err != .AGAIN and err != .INTR) {
+    running = false;
+}
+```
+
+`std.posix.errno(-1)` always returns `.SUCCESS` because it just wraps the argument as an `E` enum. The actual errno from the failed `c.read` is never retrieved. This means the `if` condition is always true, so any `read` returning -1 (including transient `EAGAIN`/`EINTR`) immediately sets `running = false`. The client disconnects on any non-fatal read error. Bug #20 claims this was fixed but the current code still uses the broken pattern.
+
+---
+
+### 103. `log.zig` + `socket_path.zig` — Wrong errno retrieval for C library calls
+**File:** `src/log.zig:43, 62`, `src/socket_path.zig:36`
+**Severity:** CRITICAL
+**Status:** ❌ UNRESOLVED (related to bug #82 which only fixed `connect.zig`)
+
+```zig
+const err = std.posix.errno(rc);
+```
+
+`std.posix.errno` interprets the return value as `-errno` (raw syscall convention). C library `mkdir` returns `-1` and sets the global `errno`. This will always yield errno `1` (EPERM) instead of the actual error (e.g., EACCES, ENOENT). Should use `std.c._errno()` or equivalent. Bug #82 fixed this in `connect.zig` but the same pattern persists in `log.zig` and `socket_path.zig`.
+
+---
+
+### 104. `char_width.zig` — Hangul Jamo 0x1100–0x115F reported as width 0 instead of 2
+**File:** `src/char_width.zig:96–97, 223, 412`
+**Severity:** HIGH
+**Status:** ❌ UNRESOLVED
+
+```zig
+if (searchTable(cp, &zero_width_ranges)) return 0;
+if (searchTable(cp, &wide_ranges)) return 2;
+```
+
+The range `0x1100–0x115F` appears in **both** `zero_width_ranges` (line 223) and `wide_ranges` (line 412). Since `zero_width_ranges` is checked first, `charWidth` returns 0 instead of the correct value 2. These are Hangul Jamo leading consonants — they are wide characters. This causes incorrect terminal column positioning for Korean text.
+
+---
+
+### 105. `key.zig` — Alt modifier lost when parsing ESC+char sequences
+**File:** `src/key.zig:207–209`
+**Severity:** HIGH
+**Status:** ❌ UNRESOLVED (related to bug #14 which was marked FALSE POSITIVE for `tty_key.zig`, but the issue exists in `key.zig`'s `parse` function)
+
+```zig
+if (seq.len == 2) {
+    return Key{ .char = .{ .code = seq[1] } };
+}
+```
+
+`\x1ba` (ESC a) is parsed as `Key{ .char = .{ .code = 'a', .mod = .{} } }` — the alt modifier is **not** set. But `format()` outputs `"M-a"` for alt+'a'. This means `parse` and `format` are not inverses, and key bindings that match on `mod.alt == true` will never fire for terminal-sent Alt+key sequences parsed through this path.
+
+---
+
+### 106. `server/dispatch.zig` — Partial writes not retried on socket I/O
+**File:** `src/server/dispatch.zig:97–104`
+**Severity:** HIGH
+**Status:** ❌ UNRESOLVED
+
+```zig
+var n = std.c.write(fd, &hdr_buf, 5);
+if (n < 5) return error.WriteFailed;
+if (result.data.len > 0) {
+    n = std.c.write(fd, result.data.len);
+    if (n < @as(isize, @intCast(result.data.len))) return error.WriteFailed;
+}
+```
+
+`write()` on a socket may return fewer bytes than requested (partial write). The code treats any short write as a hard failure and returns immediately, losing the remaining data. For stream sockets, a write loop is required. Additionally, if the header is partially written (e.g. 3 of 5 bytes), the remaining 2 bytes are never sent, corrupting the protocol stream.
+
+---
+
+### 107. `server/protocol.zig` — `IdentifyTerm.decode` missing `len <= 64` validation
+**File:** `src/server/protocol.zig:89–96`
+**Severity:** HIGH
+**Status:** ❌ UNRESOLVED
+
+```zig
+pub fn decode(data: []const u8) Error!IdentifyTerm {
+    if (data.len < 1) return error.InvalidData;
+    const len = data[0];
+    if (data.len < 1 + len) return error.InvalidData;
+    var result: IdentifyTerm = .{ .term_len = len };
+    @memcpy(result.term[0..len], data[1 .. 1 + len]);
+    return result;
+}
+```
+
+`len` is a `u8` (0–255) but `result.term` is `[64]u8`. If a malicious or corrupted packet has `len > 64`, the slice `result.term[0..len]` will trigger an out-of-bounds panic at runtime. Missing check: `if (len > 64) return error.InvalidData;`.
+
+---
+
+### 108. `server/server.zig` — Unchecked writes to display client
+**File:** `src/server/server.zig:1222–1223`
+**Severity:** HIGH
+**Status:** ❌ UNRESOLVED
+
+```zig
+_ = c.write(display_fd, &hdr, 5);
+_ = c.write(display_fd, self.render_buf.items.ptr, self.render_buf.items.len);
+```
+
+Both writes discard the return value. Partial writes, EPIPE (client disconnected), and EAGAIN are all silently ignored. The client may receive a truncated or corrupted frame. If the client has disconnected, the server keeps rendering to a dead fd.
+
+---
+
+### 109. `tty/fd_writer.zig` — Missing EINTR handling in writeAll and writeByte
+**File:** `src/tty/fd_writer.zig:16–17, 25–27`
+**Severity:** HIGH
+**Status:** ❌ UNRESOLVED
+
+```zig
+const n = c.write(self.fd, remaining.ptr, @intCast(remaining.len));
+if (n < 0) return error.WriteFailed;
+```
+
+`c.write` can return -1 with `errno == EINTR` when interrupted by a signal. The code treats this as a permanent failure instead of retrying. Terminal I/O is particularly susceptible to signal interruption (SIGWINCH, SIGCHLD, etc.). Same issue in `writeByte` at lines 25–27.
+
+---
+
+### 110. `client/client.zig` — Heap-allocated body in recvPacket has no guaranteed free
+**File:** `src/client/client.zig:75–91`
+**Severity:** HIGH
+**Status:** ❌ UNRESOLVED
+
+```zig
+const body = try self.allocator.alloc(u8, body_len);
+// ...
+return protocol.Packet{
+    .msg_type = hdr[4],
+    .data = body,
+};
+```
+
+`recvPacket` allocates `body` and returns it inside a `Packet` value. There is no corresponding `freePacket` method, no documentation that the caller must free, and `Packet.data` is `[]const u8` — the caller has no way to know this slice was heap-allocated and must be freed. Every call to `recvPacket` that doesn't explicitly free `packet.data` leaks memory.
+
+---
+
+### 111. `mode_copy.zig` — `yankSelection` computes wrong bounds for reverse selections
+**File:** `src/mode_copy.zig:205–206`
+**Severity:** HIGH
+**Status:** ❌ UNRESOLVED
+
+```zig
+const sx = if (sy == self.selection.start_y) self.selection.start_x else 0;
+const ex = if (ey == self.selection.end_y) self.selection.end_x else grid.width -| 1;
+```
+
+When `start_y > end_y` (user selected bottom-to-top): `sy = end_y`, so `sy != start_y`, so `sx = 0` — should be `end_x`. `ey = start_y`, so `ey != end_y`, so `ex = grid.width - 1` — should be `start_x`. Result: yanked text includes extra characters on the first and last lines. Compare with `isSelected` (lines 167–169) which handles this correctly using `start_is_top`.
+
+---
+
+### 112. `main.zig` — `@enumFromInt` without validation for MessageType
+**File:** `src/main.zig:418`
+**Severity:** HIGH
+**Status:** ❌ UNRESOLVED
+
+```zig
+const msg_type = @as(protocol.MessageType, @enumFromInt(read_buf.items[read_pos + 4]));
+```
+
+If the byte doesn't correspond to a declared `MessageType` value, this creates an invalid enum value, which is undefined behavior in Zig and can cause crashes or unpredictable switch dispatch.
+
+---
+
+### 113. `window.zig` + `session.zig` — Pane double-deinit between Session.deinit and Window.deinit
+**File:** `src/session.zig:54–58`, `src/window.zig:162–167`
+**Severity:** HIGH
+**Status:** ❌ UNRESOLVED (related to bug #68 which fixed PTY double-close but not pane double-deinit)
+
+```zig
+// session.zig deinit:
+for (win.panes.items) |p| { p.deinit(); }
+
+// window.zig deinit (via layout.deinit):
+// layout.deinitNode calls pane.deinit() AND allocator.destroy(pane)
+```
+
+`Session.deinit` calls `pane.deinit()` on every pane. But `Window.deinit` calls `layout.deinit()`, which also calls `pane.deinit()` and `allocator.destroy(pane)` for each pane. If both are called (which happens in non-arena paths), panes are double-deinited and double-freed.
+
+---
+
+### 114. `input.zig` — UTF-8 state not cleared on parser reset or state transitions
+**File:** `src/input.zig:116–134, 61–75`
+**Severity:** MEDIUM
+**Status:** ❌ UNRESOLVED
+
+If a partial UTF-8 sequence is interrupted by a C1 byte (0x80–0x9F) that changes state, `utf8_expected` remains set. When the parser later returns to `.ground`, stale UTF-8 state causes the next printable byte to be incorrectly treated as a UTF-8 continuation byte. The `reset()` function does clear it, but mid-stream state transitions (like entering ESC from ground) do not.
+
+---
+
+### 115. `key.zig` — `@intCast` may panic on out-of-range kitty codepoint
+**File:** `src/key.zig:153`
+**Severity:** MEDIUM
+**Status:** ❌ UNRESOLVED
+
+```zig
+return Key{ .char = .{ .code = @intCast(codepoint), .mod = k_mod } };
+```
+
+`codepoint` is `u32` and `.code` is `u21`. If a malformed kitty sequence contains a codepoint > 0x1FFFFF, `@intCast` triggers a safety panic in debug mode and undefined behavior in release-safe.
+
+---
+
+### 116. `options.zig` — `choice` values are not cloned or freed
+**File:** `src/options.zig:158–163, 165–170`
+**Severity:** MEDIUM
+**Status:** ❌ UNRESOLVED
+
+```zig
+fn cloneValue(allocator: std.mem.Allocator, value: OptionValue) Error!OptionValue {
+    return switch (value) {
+        .string => |s| OptionValue{ .string = try allocator.dupe(u8, s) },
+        inline else => value,
+    };
+}
+fn freeValue(allocator: std.mem.Allocator, value: OptionValue) void {
+    switch (value) {
+        .string => |s| allocator.free(s),
+        .number, .colour, .key, .flag, .choice => {},
+    };
+}
+```
+
+`choice` is `[]const u8` but is neither cloned on `set` nor freed on `deinit`. Currently safe only because all choice values in the codebase are string literals. If a dynamically-allocated choice string is ever passed to `set`, it will be a use-after-free (not cloned) or memory leak (not freed).
+
+---
+
+### 117. `cfg.zig` — Quoted string parser doesn't verify closing quote
+**File:** `src/cfg.zig:212–214`
+**Severity:** MEDIUM
+**Status:** ❌ UNRESOLVED
+
+```zig
+if (s.len >= 2 and s[0] == '"') {
+    const inner = s[1 .. s.len - 1];
+    return OptionValue{ .string = try allocator.dupe(u8, inner) };
+}
+```
+
+Only checks `s[0] == '"'`, never verifies `s[s.len-1] == '"'`. Input `"hello` (no closing quote) produces `hell` — the last char is silently stripped. Input `"hello"world"` produces `hello"world`.
+
+---
+
+### 118. `cfg.zig` — `parseSetEnv` doesn't recognize `-g` followed by tab
+**File:** `src/cfg.zig:335`
+**Severity:** MEDIUM
+**Status:** ❌ UNRESOLVED
+
+```zig
+if (std.mem.startsWith(u8, remaining, "-g ")) {
+```
+
+Only checks for `-g ` (space). Input `set-environment -g\tFOO bar` fails to match, and `-g` becomes the environment variable name. Inconsistent with `parseSet` which trims both spaces and tabs.
+
+---
+
+### 119. `cfg.zig` — `parseIfShell` doesn't handle escaped quotes
+**File:** `src/cfg.zig:359–366`
+**Severity:** MEDIUM
+**Status:** ❌ UNRESOLVED
+
+```zig
+const second_q = std.mem.indexOfScalarPos(u8, args, first_q + 1, '"') orelse ...;
+```
+
+Unlike `stripInlineComment` which tracks `\\` escapes, this function treats any `"` as a string boundary. Input `if-shell "test \"foo\"" "cmd"` parses incorrectly.
+
+---
+
+### 120. `log.zig` — Data race on `log_fd` and `log_fd_failed` globals
+**File:** `src/log.zig:31–32, 94–107`
+**Severity:** MEDIUM
+**Status:** ❌ UNRESOLVED
+
+```zig
+var log_fd: ?std.posix.fd_t = null;
+var log_fd_failed: bool = false;
+```
+
+These globals are read/written without synchronization. `log_enabled` uses atomics, but `log_fd` and `log_fd_failed` don't. Multiple threads calling `logFn` concurrently can both see `log_fd == null`, both open the file, and one fd leaks. Worse, `enable()`/`disable()` can close an fd while another thread is writing to it.
+
+---
+
+### 121. `socket_path.zig` — Fixed 128-byte buffer for HOME path with no fallback
+**File:** `src/socket_path.zig:33`
+**Severity:** MEDIUM
+**Status:** ❌ UNRESOLVED
+
+```zig
+var dir_path: [128]u8 = undefined;
+const dir_z = try std.fmt.bufPrintZ(&dir_path, "{s}/.szn", .{home_str});
+```
+
+If `$HOME` exceeds ~120 characters, `bufPrintZ` returns `NoSpaceLeft`, which propagates as a hard error. Unlike `log.zig` which falls back to `/tmp`, this has no fallback — socket creation fails entirely.
+
+---
+
+### 122. `mode_copy.zig` — Selection coordinates are screen-space, not grid-space
+**File:** `src/mode_copy.zig:14`
+**Severity:** MEDIUM
+**Status:** ❌ UNRESOLVED
+
+Selection `start_y`/`end_y` are cursor positions in screen coordinates. If the user scrolls between `startSelection` and `yankSelection`, the start coordinates refer to different content than when they were set. tmux tracks absolute grid positions. This causes incorrect yank after scrolling.
+
+---
+
+### 123. `server/pty.zig` — Memory leak on partial `dupeZ` failure in `spawn`
+**File:** `src/server/pty.zig:105–108`
+**Severity:** MEDIUM
+**Status:** ❌ UNRESOLVED
+
+```zig
+var argv_z = try allocator.alloc(?[*:0]const u8, args.len + 1);
+for (args, 0..) |arg, i| {
+    argv_z[i] = try allocator.dupeZ(u8, arg);
+}
+argv_z[args.len] = null;
+```
+
+If `dupeZ` fails (OOM) at index `i`, the strings already allocated at indices `0..i` are leaked. There is no `errdefer` to clean them up. The caller has no way to free them since `argv_z` is a local variable and the error propagates out.
+
+---
+
+### 124. `server/pty.zig` — `writeInput` doesn't verify all bytes were written
+**File:** `src/server/pty.zig:202–205`
+**Severity:** MEDIUM
+**Status:** ❌ UNRESOLVED
+
+```zig
+pub fn writeInput(self: *Pty, data: []const u8) Error!void {
+    const n = write(self.master, data.ptr, data.len);
+    if (n < 0) return error.WriteFailed;
+}
+```
+
+If `write()` returns `0 <= n < data.len`, the remaining bytes are silently dropped. For PTY master writes (sending keystrokes to the child process), this means input can be lost without any error or retry.
+
+---
+
+### 125. `server/pty.zig` — `reap` uses WNOHANG but unconditionally sets pid to -1
+**File:** `src/server/pty.zig:176–181`
+**Severity:** MEDIUM
+**Status:** ❌ UNRESOLVED
+
+```zig
+pub fn reap(self: *Pty) void {
+    if (self.pid > 0) {
+        var status: c_int = 0;
+        _ = waitpid(self.pid, &status, 1); // WNOHANG
+        self.pid = -1;
+    }
+}
+```
+
+`WNOHANG` returns 0 if the child hasn't exited. The code ignores the return value and sets `pid = -1` regardless. If the process is still running (e.g. a slow shutdown), it becomes an untracked zombie, and the pid could be reused by the OS, leading to reaping the wrong process later.
+
+---
+
+### 126. `server/render.zig` — `self.sy - 1` underflows when `sy == 0`
+**File:** `src/server/render.zig:72, 228, 359`
+**Severity:** MEDIUM
+**Status:** ❌ UNRESOLVED
+
+```zig
+const merged_h = self.sy - 1;
+const h = @min(screen.grid.height, self.sy - 1);
+try self.moveTo(0, self.sy - 1);
+```
+
+`sy` is `u32`. If `sy == 0`, `self.sy - 1` wraps to `4294967295`. This causes `merged_h` to be ~4 billion, leading to massive allocation in `Screen.init`, or the render loop iterating an absurd number of times. While `server.zig` clamps `sy` to `>= 24`, the `Display` type itself has no guard.
+
+---
+
+### 127. `server/server.zig` — `findPaneAtNode` doesn't subtract border width
+**File:** `src/server/server.zig:1006–1023` (vs `906–917`)
+**Severity:** MEDIUM
+**Status:** ❌ UNRESOLVED
+
+```zig
+// findPaneAtNode (line 1010):
+return self.findPaneAtNode(s.a, x, y, lx, ly, split_w, lh);
+// collectPaneBounds (line 909):
+try self.collectPaneBounds(s.a, lx, ly, split_w -| 1, lh, result);
+```
+
+`collectPaneBounds` gives the left pane `split_w - 1` columns (reserving 1 column for the border). `findPaneAtNode` gives it `split_w` columns. A click on the border column is attributed to the left pane by `findPaneAtNode`, but the pane doesn't actually own that column. This causes mouse clicks on borders to focus the wrong pane.
+
+---
+
+### 128. `tty/tty.zig` — `cursorDown`/`cursorForward`/`drawLine` panic on zero dimensions
+**File:** `src/tty/tty.zig:94, 107, 429`
+**Severity:** MEDIUM
+**Status:** ❌ UNRESOLVED
+
+```zig
+// cursorDown:
+const max_down = self.sy - 1 -| @as(u32, @intCast(self.cy));
+// cursorForward:
+const max_forward = self.sx - 1 -| @as(u32, @intCast(self.cx));
+// drawLine:
+try self.cursorMove(width - 1, ly);
+```
+
+`self.sy - 1` and `self.sx - 1` are regular unsigned subtraction. If `sy == 0` or `sx == 0` (e.g., during a resize to zero rows/columns), this is a runtime integer underflow panic. The saturating subtraction (`-|`) is applied too late. Same for `width - 1` in `drawLine` when `width == 0`.
+
+---
+
+### 129. `tty/tty.zig` — `setCursorStyle` blink/steady mapping is inverted
+**File:** `src/tty/tty.zig:325–329`
+**Severity:** MEDIUM
+**Status:** ❌ UNRESOLVED
+
+```zig
+const n: u8 = switch (style) {
+    .block => if (self.cursor_visible) 2 else 1,
+    .underline => if (self.cursor_visible) 4 else 3,
+    .bar => if (self.cursor_visible) 6 else 5,
+};
+```
+
+DECSCUSR sequences: 1=blinking block, 2=steady block, 3=blinking underline, 4=steady underline, 5=blinking bar, 6=steady bar. The code emits steady styles (2/4/6) when the cursor IS visible and blinking styles (1/3/5) when hidden. This is backwards — a visible cursor should blink. Additionally, `cursor_visible` tracks show/hide state (DECTCEM), not blink preference, conflating two independent concepts.
+
+---
+
+### 130. `tty/tty.zig` — `writeCell` early return on combining char encode failure leaves `cx` stale
+**File:** `src/tty/tty.zig:386–395`
+**Severity:** MEDIUM
+**Status:** ❌ UNRESOLVED
+
+```zig
+const clen = std.unicode.utf8Encode(cp, &buf) catch return;
+try self.write(buf[0..clen]);
+```
+
+If `utf8Encode` fails for `comb1` or `comb2`, the function returns immediately via `catch return`. The base character was already written to the terminal (advancing the hardware cursor), but `self.cx` is never incremented. The cached cursor position is now out of sync with the actual terminal cursor, causing incorrect positioning decisions in subsequent calls until the next explicit `cursorMove`.
+
+---
+
+### 131. `input.zig` — SOS/PM/APC string doesn't handle ESC \ (ST) terminator correctly
+**File:** `src/input.zig:461–471`
+**Severity:** MEDIUM
+**Status:** ❌ UNRESOLVED (related to bug #18 which fixed OSC ST terminator, but SOS/PM/APC still broken)
+
+```zig
+fn advanceSosPmApc(self: *InputParser, byte: u8) void {
+    switch (byte) {
+        0x1B => {
+            self.state = .esc;
+        },
+        0x9C => { self.toGround(); },
+        else => {},
+    }
+}
+```
+
+When ESC is seen inside a SOS/PM/APC string, the parser transitions to `.esc` instead of staying in-string to check for `\` (completing the ST terminator). If the next byte is `\`, the `.esc` handler treats it as an unrecognized ESC sequence rather than terminating the string.
+
+---
+
+### 132. `server/loop.zig` — `addFd` silently ignores duplicate fd without updating events/udata
+**File:** `src/server/loop.zig:38–39`
+**Severity:** MEDIUM
+**Status:** ❌ UNRESOLVED (bug #38 was marked FIXED for duplicate registration, but this is a different issue — updating existing entries)
+
+```zig
+for (self.fds.items) |f| {
+    if (f.fd == fd) return;
+}
+```
+
+If `addFd` is called with an fd already in the list (e.g. to update the event mask or user data), it silently returns without updating anything. This can cause stale event masks or stale `udata` pointers, leading to missed events or dispatching to wrong handlers.
+
+---
+
+### 133. `server/server.zig` — `killSession` uses `swapRemove` — silently changes active session
+**File:** `src/server/server.zig:1241`
+**Severity:** MEDIUM
+**Status:** ❌ UNRESOLVED
+
+```zig
+var session = self.sessions.swapRemove(idx);
+```
+
+`swapRemove` replaces the removed element with the last element. Since `activeSession()` always returns `sessions.items[0]`, killing session[0] silently promotes the last session to active without any notification or state update. If the killed session was being displayed, the display client now shows a different session without re-initialization.
+
+---
+
+### 134. `server/server.zig` — `deinit` doesn't remove client fds from the event loop
+**File:** `src/server/server.zig:137–140`
+**Severity:** MEDIUM
+**Status:** ❌ UNRESOLVED
+
+```zig
+for (self.client_fds.items) |fd| {
+    _ = c.close(fd);
+}
+self.client_fds.deinit(self.allocator);
+```
+
+Client fds are closed but never removed from `self.loop.fds` via `removeFd`. After closing, the loop still has entries for these (now invalid) fds. If the loop is somehow used after partial cleanup, `poll()` will report errors for these stale fds.
+
+---
+
+### 135. `main.zig` — Command buffer over-allocated by 1 byte
+**File:** `src/main.zig:146–149`
+**Severity:** LOW
+**Status:** ❌ UNRESOLVED
+
+```zig
+var cmd_len: usize = 0;
+for (args.items[1..]) |arg| {
+    cmd_len += arg.len + 1;
+}
+```
+
+Each arg adds `+1` for a separator, but the writing loop only inserts separators *between* args (n-1 spaces for n args). The buffer is 1 byte too large. Not a crash, but `cmd_len` doesn't match actual content length.
+
+---
+
+### 136. `main.zig` — Unchecked `c.write` return for resize packet
+**File:** `src/main.zig:320, 366`
+**Severity:** LOW
+**Status:** ❌ UNRESOLVED
+
+```zig
+_ = c.write(server_fd, r_ser.ptr, r_ser.len);
+```
+
+The initial resize packet write is silently discarded. If it fails, the server has wrong terminal dimensions. Same issue at line 366 for resize-on-SIGWINCH.
+
+---
+
+### 137. `session.zig` — Window IDs are not unique after kills
+**File:** `src/session.zig:73`
+**Severity:** LOW
+**Status:** ❌ UNRESOLVED
+
+```zig
+const win_id = self.windows.items.len;
+```
+
+Window ID is derived from array length. After `killWindow` (which uses `swapRemove`), a new window can receive the same ID as a previously killed window. This breaks any code that uses window IDs for identification.
+
+---
+
+### 138. `input.zig` — CSI private marker can appear after parameter digits
+**File:** `src/input.zig:262–265`
+**Severity:** LOW
+**Status:** ❌ UNRESOLVED
+
+```zig
+0x3C...0x3F => {
+    self.intermediate = byte;
+},
+```
+
+Bytes `<=>?` are accepted at any position in the parameter string, not just before the first digit. A malformed sequence like `CSI 25?h` would set `intermediate = '?'` and be dispatched as DECSET, when it should be rejected. Per ECMA-48, the private prefix must precede all parameters.
+
+---
+
+### 139. `key_binding.zig` — Force unwrap in `mapCommandToAction` may panic
+**File:** `src/key_binding.zig:507`
+**Severity:** LOW
+**Status:** ❌ UNRESOLVED
+
+```zig
+const idx_str = trimmed[std.mem.lastIndexOfScalar(u8, trimmed, ' ').? + 1 ..];
+```
+
+The `.?` force-unwraps an optional. Although the prefix check on line 506 guarantees a space exists, this is fragile — any future change to the prefix strings could introduce a panic.
+
+---
+
+### 140. `key_binding.zig` — `val >= 0` is always true for `u8`
+**File:** `src/key_binding.zig:509`
+**Severity:** LOW
+**Status:** ❌ UNRESOLVED
+
+```zig
+if (val >= 0 and val <= 9) {
+```
+
+`val` is `u8`, so `val >= 0` is always true. Dead comparison, misleading to readers.
+
+---
+
+### 141. `format.zig` — `splitArgs` always appends trailing segment even when empty
+**File:** `src/format.zig:457–460`
+**Severity:** LOW
+**Status:** ❌ UNRESOLVED
+
+```zig
+if (start <= content.len) {
+    const arg = try allocator.dupe(u8, content[start..]);
+    try args.append(allocator, arg);
+}
+```
+
+`start <= content.len` is always true (start is `usize` and can never exceed `content.len`). When `start == content.len`, an empty string is appended. Every comma-separated operation always gets at least one extra empty argument.
+
+---
+
+### 142. `format.zig` — `expandTruncate` integer overflow on large digit sequences
+**File:** `src/format.zig:409–411`
+**Severity:** LOW
+**Status:** ❌ UNRESOLVED
+
+```zig
+while (i < content.len and std.ascii.isDigit(content[i])) {
+    n = n * 10 + (content[i] - '0');
+```
+
+No saturating arithmetic. If the digit string represents a number > `maxInt(usize)`, this wraps in release mode.
+
+---
+
+### 143. `colour.zig` — `parse` accepts trailing garbage after colour index
+**File:** `src/colour.zig:84, 88`
+**Severity:** LOW
+**Status:** ❌ UNRESOLVED
+
+```zig
+const n = std.fmt.parseInt(u8, s[6..], 10) catch return ParseError.InvalidIndexedColour;
+```
+
+`parseInt` stops at the first non-digit, so `"colour10abc"` parses as `colour10` and silently succeeds. Similarly for `"color10xyz"`. This accepts invalid input without error.
+
+---
+
+### 144. `char_width.zig` — Dead code: C1 control check unreachable
+**File:** `src/char_width.zig:93`
+**Severity:** LOW
+**Status:** ❌ UNRESOLVED
+
+```zig
+if (cp >= 0x80 and cp <= 0x9F) return 0;
+```
+
+This is unreachable: `cp < 0x0300` on line 88 is already true for 0x80–0x9F, so the function returns at line 89–90 before reaching line 93.
+
+---
+
+### 145. `char_width.zig` — Dead code in `isCombining`
+**File:** `src/char_width.zig:29–30`
+**Severity:** LOW
+**Status:** ❌ UNRESOLVED
+
+```zig
+if (cp < 0x0300) return cp >= 0x1160 and cp <= 0x11FF;
+if (cp >= 0x1100 and cp <= 0x115F) return false;
+```
+
+Line 30 is unreachable — all values 0x1100–0x115F are < 0x0300, so they're handled by line 29 (which returns `false` for them since they're < 0x1160).
+
+---
+
+### 146. `cfg.zig` — `set -u` silently dropped
+**File:** `src/cfg.zig:189`
+**Severity:** LOW
+**Status:** ❌ UNRESOLVED
+
+```zig
+'u' => return, // unset (handled elsewhere)
+```
+
+Returns success without appending any directive. The caller has no way to know the directive was discarded. Comment says "handled elsewhere" but there's no evidence of that.
+
+---
+
+### 147. `cfg.zig` — Combined flags like `-gw` misparsed
+**File:** `src/cfg.zig:183–192`
+**Severity:** LOW
+**Status:** ❌ UNRESOLVED
+
+```zig
+switch (remaining[1]) {
+    'g' => flags.flags.global = true,
+    ...
+}
+remaining = std.mem.trim(u8, if (remaining.len > 2) remaining[2..] else "", " \t");
+```
+
+Input `-gw option value` is parsed as flag `-g` with option name `w` and value `option value`. Should either parse both flags or reject.
+
+---
+
+### 148. `client/raw.zig` — BRKINT left enabled in raw mode
+**File:** `src/client/raw.zig:28`
+**Severity:** LOW
+**Status:** ❌ UNRESOLVED
+
+```zig
+raw.iflag = .{ .BRKINT = true };
+```
+
+`cfmakeraw` clears BRKINT. Leaving it enabled means a serial BREAK condition will generate SIGINT, which is undesirable in raw mode for a terminal multiplexer that needs to forward all input to panes.
+
+---
+
+### 149. `client/client.zig` — `recvPacket` doesn't validate msg_type
+**File:** `src/client/client.zig:88`
+**Severity:** LOW
+**Status:** ❌ UNRESOLVED
+
+```zig
+.msg_type = hdr[4],
+```
+
+The raw byte `hdr[4]` is stored directly as `msg_type` without validating it's a known `MessageType` enum value. Downstream code that switches on this may hit unexpected branches if a malformed packet arrives.
+
+---
+
+### 150. `tty/tty_key.zig` — Invalid UTF-8 lead bytes 0xC0–0xC1 accepted into multi-byte state
+**File:** `src/tty/tty_key.zig:73–77`
+**Severity:** LOW
+**Status:** ❌ UNRESOLVED
+
+```zig
+if (byte >= 0xc0 and byte <= 0xdf) {
+    rd.buf[0] = byte;
+    rd.pos = 1;
+    rd.state = .utf8_2;
+    return null;
+}
+```
+
+Bytes 0xC0 and 0xC1 are never valid UTF-8 lead bytes (they would produce overlong encodings of ASCII). The parser enters `utf8_2` state, consumes a continuation byte, then `utf8Decode` rejects it — silently dropping two bytes instead of one.
+
+---
+
+### 151. `tty/tty_key.zig` — Wheel left/right mouse buttons misidentified
+**File:** `src/tty/tty_key.zig:243–259`
+**Severity:** LOW
+**Status:** ❌ UNRESOLVED (related to bug #63 which fixed wheel release, but wheel left/right still broken)
+
+SGR mouse button values 66 (0x42, wheel left) and 67 (0x43, wheel right) are not detected by the wheel checks (`& 0xC3` yields 0x42/0x43, not 0x40/0x41). They fall through to the switch where `btn & 0x03` gives 2/3, mapping wheel-left to `.right` and wheel-right to `.release`.
+
+---
+
+### 152. `tty/tty.zig` — `writeCell` always advances `cx` by 1, ignoring wide character width
+**File:** `src/tty/tty.zig:398`
+**Severity:** LOW
+**Status:** ❌ UNRESOLVED
+
+```zig
+if (self.cx >= 0) self.cx += 1;
+```
+
+Wide characters (e.g., CJK, emoji) occupy 2 terminal columns, but `cx` is always incremented by 1. The terminal hardware cursor advances by 2, creating a mismatch with the cached position. This causes unnecessary `cursorMove` CUP sequences for every cell following a wide character.
+
+---
+
+### 153. `cmd/cmd.zig` — `src_pane` declared `undefined` in `cmdJoinPane`
+**File:** `src/cmd/cmd.zig:326`
+**Severity:** LOW
+**Status:** ❌ UNRESOLVED
+
+```zig
+var src_pane: *@import("../window.zig").Pane = undefined;
+```
+
+`src_pane` is initialized to `undefined`. If the control flow doesn't assign it before use (e.g., `src_arg` is null and `session.windows.items.len > 1` but all windows equal `dst_win`), the `if (src_pane == dst_pane)` check at line 354 reads `undefined`. Currently safe because the `for` loop always finds a different window, but fragile.
+
+---
+
+### 154. `server/server.zig` — `paneCwd` allocates memory with opaque ownership
+**File:** `src/server/server.zig:406–409`
+**Severity:** LOW
+**Status:** ❌ UNRESOLVED
+
+```zig
+pub fn paneCwd(self: *Server, pane: *Pane) ?[]const u8 {
+    const pty = pane.pty orelse return null;
+    return pty.getCwd(self.allocator) catch return null;
+}
+```
+
+Returns an allocated slice but the return type `?[]const u8` gives no indication the caller must free it. Callers in `executeAction` do free it correctly via `defer`, but the API is fragile — any new caller that doesn't know to free will leak.
+
+---
+
+### 155. `server/dispatch.zig` — `@intCast` from `usize` to `isize` can panic
+**File:** `src/server/dispatch.zig:103`
+**Severity:** LOW
+**Status:** ❌ UNRESOLVED
+
+```zig
+if (n < @as(isize, @intCast(result.data.len))) return error.WriteFailed;
+```
+
+If `result.data.len` exceeds `maxInt(isize)` (~2^63 on 64-bit), `@intCast` triggers a safety panic. While unlikely for command responses, it's technically unsafe.
+
+---
+
+### 156. `server/protocol.zig` — `Packet.make` integer overflow on large data
+**File:** `src/server/protocol.zig:71`
+**Severity:** LOW
+**Status:** ❌ UNRESOLVED
+
+```zig
+.length = @as(u32, @intCast(5 + data.len)),
+```
+
+If `data.len > maxInt(u32) - 5`, the addition overflows and `@intCast` panics. A ~4 GiB payload triggers this.
+
+---
+
+### 157. `server/socket.zig` — `bind` passes oversized `addrlen`
+**File:** `src/server/socket.zig:58`
+**Severity:** LOW
+**Status:** ❌ UNRESOLVED
+
+```zig
+_ = try mapErr(c.bind(fd, @ptrCast(&addr), @sizeOf(c.sockaddr.un)));
+```
+
+The `addrlen` should be the actual size of the populated address. Passing `@sizeOf(c.sockaddr.un)` (the full struct size, typically 110 bytes) works on most implementations but is technically incorrect per POSIX.
+
+---
+
+### 158. `status.zig` — Left and right sections can silently overlap
+**File:** `src/status.zig:52–56`
+**Severity:** LOW
+**Status:** ❌ UNRESOLVED
+
+```zig
+const left_len = @min(left.len, width);
+@memcpy(line[0..left_len], left[0..left_len]);
+const right_start = if (width > right_len) width - right_len else 0;
+@memcpy(line[right_start..][0..right_len], right[right.len - right_len ..][0..right_len]);
+```
+
+When `left_len + right_len > width`, the right section overwrites the left. No clipping is done to prevent overlap. Produces visually incorrect output when both sections are long.
+
+---
+
+### 159. `server/render.zig` — Status bar column tracking doesn't account for escape sequences
+**File:** `src/server/render.zig:360–400`
+**Severity:** LOW
+**Status:** ❌ UNRESOLVED
+
+The `col` counter tracks visible columns to pad the status bar to full width. However, it doesn't cap `session_name.len` or `win.name.len`. If the combined content exceeds `self.sx`, `col` overflows past `max_len` and the padding `while (col < max_len)` never executes, but the status bar has already written past the terminal width, causing line wrapping.
+
+---
+
+### 160. `server/server.zig` — `loadConfigFile` — `@intCast(size)` from `c_long` to `usize` can panic
+**File:** `src/server/server.zig:1354`
+**Severity:** LOW
+**Status:** ❌ UNRESOLVED
+
+```zig
+const content = try self.allocator.alloc(u8, @intCast(size));
+```
+
+`ftell` returns `c_long` (signed). If `size` is negative and the check is bypassed, `@intCast` panics.
+
+---
+
+### 161. `integration.zig` — `setupServer` discards exec result
+**File:** `src/integration.zig:14`
+**Severity:** LOW
+**Status:** ❌ UNRESOLVED
+
+```zig
+_ = c.exec(&server);
+```
+
+If `new-session` fails, the error is silently ignored and tests proceed with a broken server state.
+
+---
+
+### 162. `mode_copy.zig` — `@intCast` of `history.items.len` (usize) to u32
+**File:** `src/mode_copy.zig:103, 125`
+**Severity:** LOW
+**Status:** ❌ UNRESOLVED
+
+```zig
+self.scroll_offset = @min(self.scroll_offset + remaining, @as(u32, @intCast(grid.history.items.len)));
+```
+
+If history ever exceeds `maxInt(u32)` (~4 billion entries), this is a runtime panic. The history_limit is `u32` so it's unlikely in practice, but the cast is technically unsafe.
+
+---
+
+## Updated Summary
+
+| Severity | Count | Fixed | False Positive | Unresolved |
+|----------|-------|-------|----------------|------------|
+| Critical | 18 (14+4) | 11 | 3 | **4** |
+| High | 42 (29+13) | 28 | 1 | **13** |
+| Medium | 38 (18+20) | 17 | 1 | **20** |
+| Low | 54 (26+28) | 25 | 1 | **28** |
+| Total | 162 (99+63) | **81** | **6** | **65** |
+
 
