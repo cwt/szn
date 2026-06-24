@@ -16,6 +16,7 @@ pub const Error = server_mod.ServerError || client_mod.Error || connect.Error ||
 
 // Cached log file descriptor — opened once, reused for all log calls
 var log_fd: ?std.posix.fd_t = null;
+var log_fd_failed: bool = false;
 
 pub const std_options: std.Options = .{
     .logFn = logFn,
@@ -59,10 +60,17 @@ pub fn logFn(
 ) void {
     _ = scope;
     if (log_fd == null) {
+        if (log_fd_failed) return;
         var path_buf: [256]u8 = undefined;
-        const path = resolveLogPath(&path_buf) catch return;
+        const path = resolveLogPath(&path_buf) catch {
+            log_fd_failed = true;
+            return;
+        };
         const fd = open(path, O_WRONLY | O_CREAT | O_APPEND, 0o666);
-        if (fd < 0) return;
+        if (fd < 0) {
+            log_fd_failed = true;
+            return;
+        }
         log_fd = fd;
     }
     const fd = log_fd.?;
@@ -581,6 +589,24 @@ test "logFn handles buffer overflow without writing garbage — bug #89" {
     try std.testing.expect(read_buf[@intCast(n - 1)] == '\n');
     // Verify no null bytes (garbage would include uninitialized data)
     try std.testing.expect(std.mem.indexOfScalar(u8, read_buf[0..@intCast(n)], @as(u8, 0)) == null);
+}
+
+test "logFn does not retry open after failure — bug #98" {
+    const old_log_fd = log_fd;
+    const old_log_fd_failed = log_fd_failed;
+    defer {
+        log_fd = old_log_fd;
+        log_fd_failed = old_log_fd_failed;
+    }
+    log_fd = null;
+    log_fd_failed = true;
+
+    // This call should return immediately without trying to open.
+    // If it tried to open, it would need resolveLogPath + open which
+    // could fail with env-dependent errors. Instead, log_fd stays null.
+    logFn(.info, .default, "should not retry", .{});
+    try std.testing.expect(log_fd == null);
+    try std.testing.expect(log_fd_failed);
 }
 
 test "resolveLogPath fallback on invalid XDG_STATE_HOME" {

@@ -1123,7 +1123,7 @@ The return value of `mkdir` is discarded. If directory creation fails (permissio
 ### 98. `logFn` retries `open()` on every call forever if it fails once
 **File:** `src/main.zig:61–67`
 **Severity:** LOW
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — added `log_fd_failed` bool; once set, `logFn` returns immediately.
 
 ```zig
 if (log_fd == null) {
