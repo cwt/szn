@@ -40,7 +40,7 @@ fn resolveLogPath(buf: []u8) Error![:0]const u8 {
             return try resolveHomeOrTmp(buf);
         const rc = c.mkdir(dir_z.ptr, 0o755);
         if (rc < 0) {
-            const err = std.posix.errno(rc);
+            const err = std.c.errno(rc);
             if (err != .EXIST) {
                 return try resolveHomeOrTmp(buf);
             }
@@ -59,7 +59,7 @@ fn resolveHomeOrTmp(buf: []u8) Error![:0]const u8 {
             return try resolveTmp(buf);
         const rc = c.mkdir(dir_z.ptr, 0o700);
         if (rc < 0) {
-            const err = std.posix.errno(rc);
+            const err = std.c.errno(rc);
             if (err != .EXIST) {
                 return try resolveTmp(buf);
             }
@@ -162,6 +162,22 @@ pub fn log(comptime level: Level, comptime msg: []const u8, args: anytype) void 
         .err => .err,
     };
     std.log.scoped(.szn).log(zig_level, "[szn] " ++ msg, args);
+}
+
+test "errno retrieval via std.c.errno correctly reads EEXIST from mkdir" {
+    const tmp_dir = "/tmp/szn_test_errno_eextst";
+    defer _ = c.rmdir(tmp_dir);
+
+    // Create the directory first
+    var rc = c.mkdir(tmp_dir, 0o755);
+    try std.testing.expect(rc == 0);
+
+    // mkdir again should fail with EEXIST
+    rc = c.mkdir(tmp_dir, 0o755);
+    try std.testing.expect(rc < 0);
+
+    const err = c.errno(rc);
+    try std.testing.expectEqual(std.c.E.EXIST, err);
 }
 
 test "logFn writes single line atomically" {

@@ -25,7 +25,7 @@ pub const Error = error{
 
 fn mapErr(rc: c_int) Error!i32 {
     if (rc >= 0) return rc;
-    return switch (std.posix.errno(rc)) {
+    return switch (std.c.errno(rc)) {
         .AGAIN => error.WouldBlock,
         .ADDRINUSE => error.AddressInUse,
         .CONNRESET => error.ConnectionReset,

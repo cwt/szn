@@ -1186,29 +1186,14 @@ for (events) |ev| {
 ### 102. `main.zig` — `errno` retrieval is always `.SUCCESS`, client disconnects on transient errors
 **File:** `src/main.zig:380, 400`
 **Severity:** CRITICAL
-**Status:** ❌ UNRESOLVED (may be regression of bug #20)
-
-```zig
-const err = std.posix.errno(-1);
-if (err != .AGAIN and err != .INTR) {
-    running = false;
-}
-```
-
-`std.posix.errno(-1)` always returns `.SUCCESS` because it just wraps the argument as an `E` enum. The actual errno from the failed `c.read` is never retrieved. This means the `if` condition is always true, so any `read` returning -1 (including transient `EAGAIN`/`EINTR`) immediately sets `running = false`. The client disconnects on any non-fatal read error. Bug #20 claims this was fixed but the current code still uses the broken pattern.
+**Status:** ✅ FIXED — replaced `std.posix.errno(-1)` with `std.c.errno(n)` which reads the actual errno via `_errno().*`. EAGAIN/EINTR now correctly prevent disconnect.
 
 ---
 
 ### 103. `log.zig` + `socket_path.zig` — Wrong errno retrieval for C library calls
 **File:** `src/log.zig:43, 62`, `src/socket_path.zig:36`
 **Severity:** CRITICAL
-**Status:** ❌ UNRESOLVED — `socket_path.zig:36` now correctly uses `std.c.errno`. `log.zig:43,62` still uses `std.posix.errno(rc)` — same broken pattern. Also `server/socket.zig:28` has the same issue (see #163).
-
-```zig
-const err = std.posix.errno(rc);
-```
-
-`std.posix.errno` interprets the return value as `-errno` (raw syscall convention). C library `mkdir` returns `-1` and sets the global `errno`. This will always yield errno `1` (EPERM) instead of the actual error (e.g., EACCES, ENOENT). Should use `std.c._errno()` or equivalent. Bug #82 fixed this in `connect.zig` but the same pattern persists in `log.zig` and `socket_path.zig`.
+**Status:** ✅ FIXED — `log.zig:43,62` replaced `std.posix.errno(rc)` with `std.c.errno(rc)`. `socket_path.zig:36` was already correct. Test added for EEXIST detection from `mkdir`. The related `server/socket.zig:28` issue is tracked as #163.
 
 ---
 
@@ -2075,11 +2060,7 @@ If history ever exceeds `maxInt(u32)` (~4 billion entries), this is a runtime pa
 ### 163. `server/socket.zig` — Wrong errno retrieval in `mapErr` (same as #103)
 **File:** `src/server/socket.zig:28`
 **Severity:** MEDIUM
-**Status:** ❌ UNRESOLVED
-
-```zig
-return switch (std.posix.errno(rc)) {
-```
+**Status:** ✅ FIXED — replaced `std.posix.errno(rc)` with `std.c.errno(rc)`.
 
 Uses `std.posix.errno(rc)` instead of `std.c.errno(rc)`. Same issue as bugs #103 and #82: C library `socket()`/`bind()`/`listen()`/`accept()` return -1 on error, but `std.posix.errno(-1)` derives errno 1 (EPERM) instead of the actual error. All socket operation failures fall through to `error.Unexpected`, making server startup failures impossible to diagnose correctly.
 

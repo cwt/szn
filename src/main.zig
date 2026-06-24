@@ -377,7 +377,7 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
                 const sd_ser = sd_pkt.serialize(&sd_buf);
                 _ = c.write(server_fd, sd_ser.ptr, sd_ser.len);
             } else if (n == -1) {
-                const err = std.posix.errno(-1);
+                const err = std.c.errno(n);
                 if (err != .AGAIN and err != .INTR) {
                     running = false;
                 }
@@ -397,7 +397,7 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
             if (n > 0) {
                 read_buf.items.len += @as(usize, @intCast(n));
             } else if (n == -1) {
-                const err = std.posix.errno(-1);
+                const err = std.c.errno(n);
                 if (err != .AGAIN and err != .INTR) {
                     running = false;
                 }
