@@ -197,7 +197,7 @@ pub const WINDOW_OPTIONS = &[_]OptionDef{
     .{ .name = "mode-keys", .type = .choice, .default = OptionValue{ .choice = "emacs" }, .choices = &[_][]const u8{ "emacs", "vi" } },
     .{ .name = "monitor-activity", .type = .flag, .default = OptionValue{ .flag = false } },
     .{ .name = "monitor-silence", .type = .number, .default = OptionValue{ .number = 0 }, .min = 0, .max = 86400 },
-    .{ .name = "remain-on-exit", .type = .flag, .default = OptionValue{ .flag = false } },
+    .{ .name = "remain-on-exit", .type = .flag, .default = OptionValue{ .flag = true } },
     .{ .name = "synchronize-panes", .type = .flag, .default = OptionValue{ .flag = false } },
     .{ .name = "word-separators", .type = .string, .default = OptionValue{ .string = " -_@" } },
     .{ .name = "fill-character", .type = .string, .default = OptionValue{ .string = " " } },

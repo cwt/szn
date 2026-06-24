@@ -51,15 +51,13 @@ fn mapErr(rc: c_int) Error!i32 {
 }
 
 test "mapErr reads actual errno, not derived from rc" {
-    // Bug #82: std.posix.errno(rc) derives errno from -rc, always 1 for rc == -1.
-    // c.errno(rc) reads _errno().* directly. Verify correct errors map.
-    std.c._errno().* = 2; // ENOENT
+    std.c._errno().* = @intCast(@intFromEnum(std.c.E.NOENT));
     try testing.expectEqual(error.SocketNotFound, mapErr(-1));
 
-    std.c._errno().* = 61; // ECONNREFUSED
+    std.c._errno().* = @intCast(@intFromEnum(std.c.E.CONNREFUSED));
     try testing.expectEqual(error.ConnectionRefused, mapErr(-1));
 
-    std.c._errno().* = 4; // EINTR
+    std.c._errno().* = @intCast(@intFromEnum(std.c.E.INTR));
     try testing.expectEqual(error.Interrupted, mapErr(-1));
 }
 

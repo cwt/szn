@@ -33,18 +33,29 @@ extern "c" fn ftell(stream: ?*anyopaque) c_long;
 extern "c" fn fread(ptr: ?*anyopaque, size: usize, n: usize, stream: ?*anyopaque) usize;
 extern "c" fn access(pathname: [*c]const u8, mode: c_int) c_int;
 
-const passwd = extern struct {
-    pw_name: [*:0]const u8,
-    pw_passwd: [*:0]const u8,
-    pw_uid: c.uid_t,
-    pw_gid: c.gid_t,
-    pw_change: c_long,
-    pw_class: [*:0]const u8,
-    pw_gecos: [*:0]const u8,
-    pw_dir: [*:0]const u8,
-    pw_shell: [*:0]const u8,
-    pw_expire: c_long,
-};
+const passwd = if (@import("builtin").os.tag.isDarwin())
+    extern struct {
+        pw_name: [*:0]const u8,
+        pw_passwd: [*:0]const u8,
+        pw_uid: c.uid_t,
+        pw_gid: c.gid_t,
+        pw_change: c_long,
+        pw_class: [*:0]const u8,
+        pw_gecos: [*:0]const u8,
+        pw_dir: [*:0]const u8,
+        pw_shell: [*:0]const u8,
+        pw_expire: c_long,
+    }
+else
+    extern struct {
+        pw_name: [*:0]const u8,
+        pw_passwd: [*:0]const u8,
+        pw_uid: c.uid_t,
+        pw_gid: c.gid_t,
+        pw_gecos: [*:0]const u8,
+        pw_dir: [*:0]const u8,
+        pw_shell: [*:0]const u8,
+    };
 
 extern "c" fn getuid() c.uid_t;
 extern "c" fn getpwuid(uid: c.uid_t) ?*const passwd;
@@ -258,13 +269,35 @@ pub const Server = struct {
                 self.loop.removeFd(ev.fd);
                 exited = true;
             };
-        } else if (has_hup or has_err) {
+        } else if (has_hup) {
+            self.loop.removeFd(ev.fd);
+            // Drain any remaining buffered data before declaring exit.
+            // On Linux the kernel can report POLLHUP while data is still
+            // buffered in the PTY; reading it avoids premature pane death.
+            if (pane.feedPty()) |_| {
+                // Data was read — keep the pane alive, but the fd is already
+                // removed from the poll loop.  Re-add it so future output
+                // (e.g. the shell prompt) wakes us up again.
+                self.watchPanePty(pane) catch {};
+            } else |_| {
+                exited = true;
+            }
+        } else if (has_err) {
             self.loop.removeFd(ev.fd);
             exited = true;
         }
 
         if (exited) {
-            self.destroyPane(pane);
+            // Honour remain-on-exit: if set, keep the pane alive (dead but
+            // visible) instead of destroying it along with its window/session.
+            const remain = if (pane.window) |w| w.options.asFlag("remain-on-exit") orelse false else false;
+            if (remain) {
+                std.log.info("pane exited, remain-on-exit set — keeping pane", .{});
+                pane.dirty = true;
+                self.dirty = true;
+            } else {
+                self.destroyPane(pane);
+            }
         }
         return true;
     }

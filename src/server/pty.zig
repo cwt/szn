@@ -80,7 +80,7 @@ pub fn setCloexec(fd: i32) void {
     _ = fcntl(fd, F_SETFD, FD_CLOEXEC);
 }
 
-const TIOCSWINSZ: c_ulong = 0x80087467;
+const TIOCSWINSZ: c_ulong = if (@import("builtin").os.tag == .macos) 0x80087467 else 0x5414;
 const DEFAULT_SHELL: []const u8 = "/bin/zsh";
 
 extern "c" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
@@ -217,12 +217,14 @@ pub const Pty = struct {
             return buf[0..len];
         } else if (builtin.os.tag == .linux) {
             var path_buf: [64]u8 = undefined;
-            const path = std.fmt.bufPrint(&path_buf, "/proc/{d}/comm", .{pgid}) catch return error.ReadFailed;
-            const file = std.fs.openFileAbsolute(path, .{}) catch return error.ReadFailed;
-            defer file.close();
-            const bytes_read = file.readAll(buf) catch return error.ReadFailed;
-            var name = buf[0..bytes_read];
-            name = std.mem.trimRight(u8, name, "\r\n\x00 ");
+            const path = std.fmt.bufPrintZ(&path_buf, "/proc/{d}/comm", .{pgid}) catch return error.ReadFailed;
+            const fd = std.c.open(path, std.c.O{ .ACCMODE = .RDONLY }, @as(std.c.mode_t, 0));
+            if (fd < 0) return error.ReadFailed;
+            defer _ = std.c.close(fd);
+            const n = std.c.read(fd, buf.ptr, buf.len);
+            if (n <= 0) return error.ReadFailed;
+            const raw_name = buf[0..@as(usize, @intCast(n))];
+            const name = std.mem.trimEnd(u8, raw_name, "\r\n\x00 ");
             return name;
         } else {
             return error.ReadFailed;
