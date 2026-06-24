@@ -527,7 +527,7 @@ pub const Server = struct {
             .resize_right => {
                 const current_w = pane.screen.grid.width;
                 const current_h = pane.screen.grid.height;
-                const target_w = current_w + 1;
+                const target_w = current_w +| 1;
                 pane.resizeTerminal(target_w, current_h) catch {};
             },
             .resize_up => {
@@ -539,7 +539,7 @@ pub const Server = struct {
             .resize_down => {
                 const current_w = pane.screen.grid.width;
                 const current_h = pane.screen.grid.height;
-                const target_h = current_h + 1;
+                const target_h = current_h +| 1;
                 pane.resizeTerminal(current_w, target_h) catch {};
             },
             else => {},
@@ -1484,6 +1484,18 @@ test "prefix interception and key dispatching" {
     const old_width = original_second_pane.screen.grid.width;
     try server.executeAction(.resize_right);
     try testing.expectEqual(old_width + 1, original_second_pane.screen.grid.width);
+
+    // Test resize_down
+    const old_height = original_second_pane.screen.grid.height;
+    try server.executeAction(.resize_down);
+    try testing.expectEqual(old_height + 1, original_second_pane.screen.grid.height);
+}
+
+test "saturating arithmetic in resize actions — bug #94" {
+    // Verify +| saturates instead of panicking on overflow
+    const max: u32 = std.math.maxInt(u32);
+    try testing.expectEqual(max, max +| 1);
+    try testing.expectEqual(@as(u32, 42), @as(u32, 41) +| 1);
 }
 
 test "resolve shell option and env and database" {

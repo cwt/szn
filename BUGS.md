@@ -1065,7 +1065,7 @@ if (n != serialized.len) return error.WriteFailed;  // no retry
 ### 94. Integer overflow in `resize_right` action
 **File:** `src/server/server.zig:530`
 **Severity:** LOW
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — changed `+` to `+|` (saturating add). Same for `resize_down`. Unit test added.
 
 ```zig
 const target_w = current_w + 1;  // wraps to 0 if current_w == maxInt(u32)
