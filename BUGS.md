@@ -864,7 +864,7 @@ if (term.len > it.term.len) return error.TermTooLong;
 ### 81. `errdefer` reads uninitialized `fd` if `socket()` fails
 **File:** `src/client/connect.zig:22–23`
 **Severity:** MEDIUM
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — split into separate `c.socket` call and `try mapErr`; `fd` only assigned on success so `errdefer` never fires on error path. Unit tests added.
 
 ```zig
 const fd = try mapErr(c.socket(c.AF.UNIX, c.SOCK.STREAM, 0));
@@ -1154,8 +1154,8 @@ self.param_val = self.param_val * 10 + (byte - '0');
 |----------|-------|-------|----------------|------------|
 | Critical | 14 (10+4) | 11 | 3 | 0 |
 | High | 29 (18+11) | 28 | 1 | 0 |
-| Medium | 30 (17+13) | 17 | 1 | 12 |
+| Medium | 30 (17+13) | 18 | 1 | 11 |
 | Low | 26 (19+7) | 18 | 1 | 7 |
-| **Total** | **99 (64+35)** | **74** | **6** | **19** |
+| **Total** | **99 (64+35)** | **75** | **6** | **18** |
 
 

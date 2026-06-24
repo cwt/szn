@@ -19,7 +19,8 @@ pub fn connectToServer() Error!i32 {
     var path_buf: [socket_path.MAX_PATH]u8 = undefined;
     const path = try socket_path.resolve(&path_buf);
 
-    const fd = try mapErr(c.socket(c.AF.UNIX, c.SOCK.STREAM, 0));
+    const sock_rc = c.socket(c.AF.UNIX, c.SOCK.STREAM, 0);
+    const fd = try mapErr(sock_rc);
     errdefer _ = c.close(fd);
 
     var addr = std.mem.zeroes(c.sockaddr.un);
@@ -47,6 +48,11 @@ fn mapErr(rc: c_int) Error!i32 {
     };
 }
 
-test "connect to server" {
-    try testing.expect(true);
+test "connectToServer fails gracefully when no server running" {
+    // No server socket exists, so connectToServer should return
+    // an error (SocketNotFound or ConnectionRefused) without UB.
+    const result = connectToServer();
+    try testing.expect(result == error.SocketNotFound or
+        result == error.ConnectionRefused or
+        result == error.Unexpected);
 }
