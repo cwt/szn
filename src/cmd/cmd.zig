@@ -392,6 +392,8 @@ fn cmdBreakPane(server: *Server, args: []const []const u8) CmdResult {
 
     const new_win = session.newWindow(server.allocator, "window") catch return .err;
     if (new_win.panes.items.len > 0) {
+        var old_pane = new_win.panes.items[0];
+        old_pane.deinit();
         new_win.panes.items[0] = pane;
         new_win.registerPane(pane);
         new_win.layout.root.leaf = pane;
