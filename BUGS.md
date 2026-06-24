@@ -1168,18 +1168,9 @@ self.param_val = self.param_val * 10 + (byte - '0');
 ---
 
 ### 101. `server/server.zig` — Use-after-free during batch PTY event processing
-**File:** `src/server/server.zig:305–321`
+**File:** `src/server/server.zig:185–240`
 **Severity:** CRITICAL
-**Status:** ❌ UNRESOLVED — partially mitigated by `isPaneValid` guard (`server.zig:257-261`). Remaining risk: if arena reuses the same address for a new `Pane`, the pointer comparison false-positives. Arena allocation makes this practically impossible.
-
-```zig
-for (events) |ev| {
-    if (self.handlePtyEvent(ev)) continue;
-    // ...
-}
-```
-
-`pollOnce` returns a batch of events. If event[0] is a PTY HUP that triggers `destroyPane` → `killSession`, the session/window/pane memory is freed. If event[1] references another pane in the same session (via `udata`), accessing it is a use-after-free. The `isPaneValid` check (bug #57 fix) mitigates this for the specific pane, but the cascading `killSession` frees the entire session including other panes.
+**Status:** ✅ FIXED — `handlePtyEvent` now returns a `PtyResult` enum (`not_ours`, `handled`, `destroyed`). When the pane is destroyed, the event loop `break`s the batch immediately, deferring remaining events to the next `pollOnce` call. The existing `isPaneValid` guard provides an additional safety layer.
 
 ---
 

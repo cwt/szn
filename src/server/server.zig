@@ -186,7 +186,11 @@ pub const Server = struct {
         reapZombies();
         const events = try self.loop.pollOnce(self.allocator, 100);
         for (events) |ev| {
-            if (self.handlePtyEvent(ev)) continue;
+            switch (self.handlePtyEvent(ev)) {
+                .destroyed => break,
+                .handled => continue,
+                .not_ours => {},
+            }
 
             const has_in = (ev.revents & @as(i16, @intCast(std.posix.POLL.IN))) != 0;
             const has_hup = (ev.revents & @as(i16, @intCast(std.posix.POLL.HUP))) != 0;
@@ -249,15 +253,17 @@ pub const Server = struct {
         return false;
     }
 
-    fn handlePtyEvent(self: *Server, ev: loop_mod.PollEvent) bool {
-        if (ev.fd == self.listener_fd or ev.fd == self.stdin_fd) return false;
+    const PtyResult = enum { not_ours, handled, destroyed };
+
+    fn handlePtyEvent(self: *Server, ev: loop_mod.PollEvent) PtyResult {
+        if (ev.fd == self.listener_fd or ev.fd == self.stdin_fd) return .not_ours;
         for (self.client_fds.items) |cfd| {
-            if (ev.fd == cfd) return false;
+            if (ev.fd == cfd) return .not_ours;
         }
-        const pane: *Pane = @ptrCast(@alignCast(ev.udata orelse return false));
+        const pane: *Pane = @ptrCast(@alignCast(ev.udata orelse return .not_ours));
         if (!self.isPaneValid(pane)) {
             std.log.debug("handlePtyEvent: received event for invalid/stale pane pointer", .{});
-            return true;
+            return .handled;
         }
         const has_in = (ev.revents & @as(i16, @intCast(std.posix.POLL.IN))) != 0;
         const has_hup = (ev.revents & @as(i16, @intCast(std.posix.POLL.HUP))) != 0;
@@ -302,6 +308,7 @@ pub const Server = struct {
             exited = true;
         }
 
+        var destroyed = false;
         if (exited) {
             const remain = if (pane.window) |w| w.options.asFlag("remain-on-exit") orelse false else false;
             // Only honour remain-on-exit if there are other panes/windows/
@@ -318,9 +325,10 @@ pub const Server = struct {
                 self.dirty = true;
             } else {
                 self.destroyPane(pane);
+                destroyed = true;
             }
         }
-        return true;
+        return if (destroyed) .destroyed else .handled;
     }
 
     pub fn destroyPane(self: *Server, pane: *Pane) void {
@@ -1707,8 +1715,8 @@ test "handlePtyEvent ignores event with stale pane pointer" {
         .udata = @ptrCast(&dummy_pane),
     };
 
-    const handled = server.handlePtyEvent(ev);
-    try testing.expect(handled);
+    const result = server.handlePtyEvent(ev);
+    try testing.expect(result == .handled);
 }
 
 test "processInput esc_buf capacity limit" {
