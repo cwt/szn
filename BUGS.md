@@ -1437,7 +1437,7 @@ If `dupeZ` fails (OOM) at index `i`, the strings already allocated at indices `0
 ### 124. `server/pty.zig` — `writeInput` doesn't verify all bytes were written
 **File:** `src/server/pty.zig:202–205`
 **Severity:** MEDIUM
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — added retry loop with partial write handling and EINTR recovery. Pipe-based test added.
 
 ```zig
 pub fn writeInput(self: *Pty, data: []const u8) Error!void {

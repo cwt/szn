@@ -207,8 +207,16 @@ pub const Pty = struct {
     }
 
     pub fn writeInput(self: *Pty, data: []const u8) Error!void {
-        const n = write(self.master, data.ptr, data.len);
-        if (n < 0) return error.WriteFailed;
+        var off: usize = 0;
+        while (off < data.len) {
+            const n = write(self.master, data.ptr + off, data.len - off);
+            if (n < 0) {
+                if (std.c.errno(n) == .INTR) continue;
+                return error.WriteFailed;
+            }
+            if (n == 0) return error.WriteFailed;
+            off += @as(usize, @intCast(n));
+        }
     }
 
     pub fn setWinSize(self: *Pty, ws: *const std.c.winsize) Error!void {
@@ -266,11 +274,32 @@ test "pty slave has FD_CLOEXEC set" {
     try testing.expect((flags & FD_CLOEXEC) != 0);
 }
 
+const c_sys = @cImport({
+    @cInclude("unistd.h");
+});
+
 test "spawn with multiple argv elements — bug #123" {
     var pty = try Pty.open();
     defer pty.deinit();
 
     const argv = [_][]const u8{ "sh", "-c", "true" };
     try pty.spawn(testing.allocator, &argv, "", "", null);
-    // spawn succeeded; pty.deinit will clean up
+}
+
+test "writeInput retries partial write — bug #124" {
+    // Use a pipe as a fake PTY master
+    var fds: [2]i32 = undefined;
+    if (c_sys.pipe(&fds) < 0) return error.PipeFailed;
+    defer _ = c_sys.close(fds[0]);
+    defer _ = c_sys.close(fds[1]);
+
+    var pty = Pty{ .master = fds[1], .slave = -1, .pid = -1 };
+
+    const data = "hello, pty!";
+    try pty.writeInput(data);
+
+    var buf: [64]u8 = undefined;
+    const n = c_sys.read(fds[0], &buf, buf.len);
+    try testing.expect(n == data.len);
+    try testing.expectEqualStrings(data, buf[0..@intCast(n)]);
 }
