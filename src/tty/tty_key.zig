@@ -35,7 +35,7 @@ const State = enum {
 
 pub const InputReader = struct {
     state: State = .ground,
-    buf: [64]u8 = undefined,
+    buf: [256]u8 = undefined,
     pos: usize = 0,
 
     pub fn reset(self: *InputReader) void {
@@ -112,6 +112,7 @@ pub const InputReader = struct {
             return null;
         }
         if (rd.pos >= rd.buf.len) {
+            std.log.debug("input: buffer overflow, dropping sequence", .{});
             rd.state = .ground;
             rd.pos = 0;
             return null;
@@ -139,6 +140,7 @@ pub const InputReader = struct {
             return parseSgrMouse(seq, byte == 'm');
         }
         if (rd.pos >= rd.buf.len) {
+            std.log.debug("input: buffer overflow, dropping sequence", .{});
             rd.state = .ground;
             rd.pos = 0;
             return null;
@@ -163,6 +165,7 @@ pub const InputReader = struct {
             return null;
         }
         if (rd.pos >= rd.buf.len) {
+            std.log.debug("input: buffer overflow, dropping sequence", .{});
             rd.state = .ground;
             rd.pos = 0;
             return null;
@@ -541,6 +544,26 @@ test "sgr mouse wheel release" {
     const ev = rd.feed('m').?;
     try testing.expect(ev == .mouse);
     try testing.expectEqual(.scroll_up, ev.mouse.button);
+}
+
+test "CSI buffer overflow resets to ground and allows recovery — bug #84" {
+    var rd = InputReader{};
+
+    try testing.expect(rd.feed(0x1b) == null);
+    try testing.expect(rd.feed('[') == null);
+
+    // Feed 256 intermediate bytes (fills the 256-byte buf)
+    var i: usize = 0;
+    while (i < 256) : (i += 1) {
+        try testing.expect(rd.feed('0') == null);
+    }
+
+    // 257th byte triggers overflow, state resets to ground
+    _ = rd.feed('0');
+    try testing.expectEqual(.ground, rd.state);
+
+    // A subsequent valid sequence should still work
+    try testing.expect(rd.feed('a') != null);
 }
 
 

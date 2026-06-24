@@ -907,7 +907,7 @@ if (col != self.cx or @as(u64, @intCast(ly)) != @as(u64, @intCast(self.cy))) {
 ### 84. CSI/SGR mouse/UTF-8 input buffer overflow silently discards data
 **File:** `src/tty/tty_key.zig:114–168`
 **Severity:** MEDIUM
-**Status:** ❌ UNRESOLVED (duplicate of #19, but different code paths)
+**Status:** ✅ FIXED — increased input buffer from 64 to 256 bytes. Added debug log on overflow. Unit test for overflow recovery added.
 
 The `InputReader` has a fixed 64-byte buffer. For kitty extended key sequences with event types, the parameter string can exceed 64 bytes. When overflow occurs, the entire sequence is silently discarded with no event, no error — the keystroke is lost.
 
@@ -1154,8 +1154,8 @@ self.param_val = self.param_val * 10 + (byte - '0');
 |----------|-------|-------|----------------|------------|
 | Critical | 14 (10+4) | 11 | 3 | 0 |
 | High | 29 (18+11) | 28 | 1 | 0 |
-| Medium | 30 (17+13) | 20 | 1 | 9 |
+| Medium | 30 (17+13) | 21 | 1 | 8 |
 | Low | 26 (19+7) | 18 | 1 | 7 |
-| **Total** | **99 (64+35)** | **77** | **6** | **16** |
+| **Total** | **99 (64+35)** | **78** | **6** | **15** |
 
 
