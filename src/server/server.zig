@@ -1266,7 +1266,7 @@ pub const Server = struct {
         const idx = for (self.sessions.items, 0..) |s, i| {
             if (std.mem.eql(u8, s.name, name)) break i;
         } else return error.SessionNotFound;
-        var session = self.sessions.swapRemove(idx);
+        var session = self.sessions.orderedRemove(idx);
         session.deinit(self.allocator);
         self.allocator.destroy(session);
         self.dirty = true;
@@ -1781,5 +1781,19 @@ test "findPaneAtNode accounts for border width — bug #127" {
     // Click on the border column (col 39) — should return null
     const border = server.findPaneAtNode(win.layout.root, 39, 0, 0, 0, 80, 24);
     try testing.expect(border == null);
+}
+
+test "killSession preserves active session — bug #133" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    _ = try server.newSession("first", 80, 24);
+    _ = try server.newSession("second", 80, 24);
+    try testing.expectEqualStrings("first", server.activeSession().?.name);
+
+    // killSession with orderedRemove preserves session[0]
+    try server.killSession("first");
+    try testing.expect(server.sessions.items.len == 1);
+    try testing.expectEqualStrings("second", server.activeSession().?.name);
 }
 

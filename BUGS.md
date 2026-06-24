@@ -1588,7 +1588,7 @@ If `addFd` is called with an fd already in the list (e.g. to update the event ma
 ### 133. `server/server.zig` — `killSession` uses `swapRemove` — silently changes active session
 **File:** `src/server/server.zig:1241`
 **Severity:** MEDIUM
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — replaced `swapRemove` with `orderedRemove` to preserve session ordering. Test added.
 
 ```zig
 var session = self.sessions.swapRemove(idx);
