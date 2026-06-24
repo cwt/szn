@@ -315,10 +315,13 @@ fn spawnDaemonAndAttach(allocator: std.mem.Allocator) Error!void {
 }
 
 fn waitForSocket() Error!void {
+    const c_usleep = struct {
+        extern "c" fn usleep(usec: c_uint) c_int;
+    }.usleep;
     var attempts: u32 = 0;
     while (attempts < 100) : (attempts += 1) {
         if (socket_mod.socketExists()) return;
-        _ = std.posix.poll(&[0]std.posix.pollfd{}, 50) catch 0;
+        _ = c_usleep(50000);
     }
     return error.SocketNotFound;
 }

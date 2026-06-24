@@ -173,7 +173,12 @@ pub const Server = struct {
     pub fn reapZombies() void {
         if (sigchldFlag.load(.seq_cst)) {
             sigchldFlag.store(false, .seq_cst);
-            while (c.waitpid(-1, null, 1) > 0) {}
+            var status: c_int = 0;
+            while (true) {
+                const pid = c.waitpid(-1, &status, 1);
+                if (pid <= 0) break;
+                std.log.info("reapZombies reaped pid {d} with status {d}", .{pid, status});
+            }
         }
     }
 
@@ -275,8 +280,10 @@ pub const Server = struct {
             // process group goes empty (e.g. vim/htop just exited) while the
             // shell still holds the slave open.  Check whether the shell
             // process is actually dead before declaring exit.
+            var status: c_int = 0;
             const shell_alive = if (pane.pty) |pty| blk: {
-                const rc = c.waitpid(pty.pid, null, 1); // WNOHANG
+                const rc = c.waitpid(pty.pid, &status, 1); // WNOHANG
+                std.log.info("HUP waitpid(pid={d}) returned {d}, status={d}", .{pty.pid, rc, status});
                 break :blk rc == 0;
             } else false;
             _ = pane.feedPty() catch {};
@@ -284,6 +291,10 @@ pub const Server = struct {
                 std.log.info("pty process exited (HUP)", .{});
                 exited = true;
             } else {
+                const c_usleep = struct {
+                    extern "c" fn usleep(usec: c_uint) c_int;
+                }.usleep;
+                _ = c_usleep(5000);
                 self.watchPanePty(pane) catch {};
             }
         } else if (has_err) {
@@ -609,7 +620,7 @@ pub const Server = struct {
         const session = self.activeSession() orelse return;
         const window = session.active_window orelse return;
         const pane = window.active_pane orelse return;
-        const pty = &(pane.pty orelse return);
+        const pty = if (pane.pty) |*p| p else null;
 
         var i: usize = 0;
         var esc_buf: std.ArrayList(u8) = .empty;
@@ -791,16 +802,16 @@ pub const Server = struct {
                         }
 
                         if (!handled) {
-                            pty.writeInput(esc_buf.items) catch {};
+                            if (pty) |p| p.writeInput(esc_buf.items) catch {};
                         }
                         esc_buf.clearRetainingCapacity();
                     } else if (self.input_reader.state == .ground) {
-                        pty.writeInput(esc_buf.items) catch {};
+                        if (pty) |p| p.writeInput(esc_buf.items) catch {};
                         esc_buf.clearRetainingCapacity();
                     }
                 } else {
                     if (self.dispatcher.prefix_state == .normal) {
-                        pty.writeInput(&[_]u8{byte}) catch {};
+                        if (pty) |p| p.writeInput(&[_]u8{byte}) catch {};
                     } else {
                         if (self.input_reader.feed(byte)) |event| {
                             self.dispatcher.prefix_state = .normal;

@@ -176,7 +176,7 @@ pub const Pty = struct {
     pub fn reap(self: *Pty) void {
         if (self.pid > 0) {
             var status: c_int = 0;
-            _ = waitpid(self.pid, &status, 0);
+            _ = waitpid(self.pid, &status, 1); // WNOHANG
             self.pid = -1;
         }
     }
@@ -186,7 +186,9 @@ pub const Pty = struct {
             _ = std.c.kill(self.pid, std.c.SIG.KILL);
         }
         _ = close(self.master);
-        if (self.slave >= 0) _ = close(self.slave);
+        if (self.slave >= 0) {
+            _ = close(self.slave);
+        }
         self.reap();
     }
 
