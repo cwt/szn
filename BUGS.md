@@ -1411,7 +1411,7 @@ If `$HOME` exceeds ~120 characters, `bufPrintZ` returns `NoSpaceLeft`, which pro
 ### 122. `mode_copy.zig` — Selection coordinates are screen-space, not grid-space
 **File:** `src/mode_copy.zig:14`
 **Severity:** MEDIUM
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — added `start_scroll_offset` to `Selection`, stored at selection start. `yankSelection` uses it to map screen-y back to correct grid content even if the user scrolled after starting the selection.
 
 Selection `start_y`/`end_y` are cursor positions in screen coordinates. If the user scrolls between `startSelection` and `yankSelection`, the start coordinates refer to different content than when they were set. tmux tracks absolute grid positions. This causes incorrect yank after scrolling.
 

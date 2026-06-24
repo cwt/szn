@@ -21,6 +21,10 @@ pub const Selection = struct {
     end_x: u32 = 0,
     end_y: u32 = 0,
     active: bool = false,
+    /// Scroll offset at the time the selection was started.
+    /// Used to map screen-space coordinates back to grid content
+    /// even if the user scrolls after starting the selection.
+    start_scroll_offset: u32 = 0,
 };
 
 pub const KeyResult = enum { consumed, exit_mode, ignored };
@@ -144,6 +148,7 @@ pub const CopyMode = struct {
             .end_x = self.cursor_x,
             .end_y = self.cursor_y,
             .active = true,
+            .start_scroll_offset = self.scroll_offset,
         };
     }
 
@@ -183,8 +188,12 @@ pub const CopyMode = struct {
     }
 
     fn getCellAt(self: *const CopyMode, grid: *const Grid, x: u32, screen_y: u32) Cell {
+        return self.getCellAtOffset(grid, x, screen_y, self.scroll_offset);
+    }
+
+    fn getCellAtOffset(_: *const CopyMode, grid: *const Grid, x: u32, screen_y: u32, scroll_offset: u32) Cell {
         const hist_len = grid.history.items.len;
-        const scroll = @as(usize, @intCast(self.scroll_offset));
+        const scroll = @as(usize, @intCast(scroll_offset));
         if (scroll > hist_len) return Cell.empty();
 
         const combined_idx = (hist_len - scroll) + @as(usize, @intCast(screen_y));
@@ -216,7 +225,7 @@ pub const CopyMode = struct {
 
             var x = line_start;
             while (x <= line_end) : (x += 1) {
-                const cell = self.getCellAt(grid, x, screen_y);
+                const cell = self.getCellAtOffset(grid, x, screen_y, self.selection.start_scroll_offset);
                 if (cell.char != 0 and cell.char != ' ') {
                     var buf: [4]u8 = undefined;
                     const len = std.unicode.utf8Encode(cell.char, &buf) catch {
@@ -1087,6 +1096,7 @@ test "yank selection from scrolled-back history" {
         .end_x = 2,
         .end_y = 0,
         .active = true,
+        .start_scroll_offset = 3,
     };
 
     const result = try cm.yankSelection(testing.allocator, &g);
