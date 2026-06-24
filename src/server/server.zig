@@ -240,7 +240,7 @@ pub const Server = struct {
         }
         const pane: *Pane = @ptrCast(@alignCast(ev.udata orelse return false));
         if (!self.isPaneValid(pane)) {
-            std.log.warn("handlePtyEvent: received event for invalid/stale pane pointer", .{});
+            std.log.debug("handlePtyEvent: received event for invalid/stale pane pointer", .{});
             return true;
         }
         const has_in = (ev.revents & @as(i16, @intCast(std.posix.POLL.IN))) != 0;

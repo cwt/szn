@@ -70,7 +70,7 @@ extern "c" fn getpid() c_int;
 
         try pty.spawn(allocator, argv, szn_env, szn_pane, cwd);
         self.pty = pty;
-        self.cwd = if (cwd) |cwd_val| try allocator.dupe(u8, cwd_val) else null;
+        self.cwd = if (cwd) |cwd_val| try self.screen.grid.allocator.dupe(u8, cwd_val) else null;
     }
 
     pub fn getParser(self: *Pane) *InputParser {
