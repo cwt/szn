@@ -20,12 +20,53 @@ pub const PaneBounds = struct {
 
 pub const Error = tty.Error || error{OutOfMemory};
 
+pub const ThemeColours = struct {
+    status_fg: Colour,
+    status_bg: Colour,
+    pane_border_fg: Colour,
+    pane_active_border_fg: Colour,
+};
+
 pub const Display = struct {
     fd: i32,
     sx: u32,
     sy: u32,
     capture: ?*std.ArrayList(u8) = null,
     capture_allocator: ?std.mem.Allocator = null,
+
+    fn writeColourFg(self: Display, color: Colour) Error!void {
+        switch (color.tag) {
+            .default_, .terminal => {},
+            .indexed => {
+                var buf: [32]u8 = undefined;
+                const s = std.fmt.bufPrint(&buf, "\x1b[38;5;{}m", .{@as(u8, @truncate(color.value))}) catch unreachable;
+                try self.writeBytes(s);
+            },
+            .rgb => {
+                const rgb = color.toRgb().?;
+                var buf: [32]u8 = undefined;
+                const s = std.fmt.bufPrint(&buf, "\x1b[38;2;{};{};{}m", .{ rgb[0], rgb[1], rgb[2] }) catch unreachable;
+                try self.writeBytes(s);
+            },
+        }
+    }
+
+    fn writeColourBg(self: Display, color: Colour) Error!void {
+        switch (color.tag) {
+            .default_, .terminal => {},
+            .indexed => {
+                var buf: [32]u8 = undefined;
+                const s = std.fmt.bufPrint(&buf, "\x1b[48;5;{}m", .{@as(u8, @truncate(color.value))}) catch unreachable;
+                try self.writeBytes(s);
+            },
+            .rgb => {
+                const rgb = color.toRgb().?;
+                var buf: [32]u8 = undefined;
+                const s = std.fmt.bufPrint(&buf, "\x1b[48;2;{};{};{}m", .{ rgb[0], rgb[1], rgb[2] }) catch unreachable;
+                try self.writeBytes(s);
+            },
+        }
+    }
 
     fn writeBytes(self: Display, bytes: []const u8) Error!void {
         if (self.capture) |cap| {
@@ -65,6 +106,7 @@ pub const Display = struct {
         windows: []const *Window,
         active_window: ?*Window,
         layout_root: *const @import("../layout.zig").Node,
+        theme: ThemeColours,
     ) Error!void {
         try self.writeBytes("\x1b[?25l");
 
@@ -110,7 +152,7 @@ pub const Display = struct {
             }
         }
 
-        try drawLayoutBorders(layout_root, 0, 0, merged_w, merged_h, &merged_screen, active_pane, bounds);
+        try drawLayoutBorders(layout_root, 0, 0, merged_w, merged_h, &merged_screen, active_pane, bounds, theme.pane_border_fg, theme.pane_active_border_fg);
 
         var active_bounds: ?PaneBounds = null;
         for (bounds) |pb| {
@@ -135,7 +177,7 @@ pub const Display = struct {
 
         try self.renderContent(&merged_screen);
         try self.renderSixelImages(bounds);
-        try self.renderStatusBar(session_name, windows, active_window);
+        try self.renderStatusBar(session_name, windows, active_window, theme.status_fg, theme.status_bg);
 
         if (merged_screen.cursor.visible) {
             try self.moveTo(merged_screen.cursor.x, merged_screen.cursor.y);
@@ -152,6 +194,8 @@ pub const Display = struct {
         merged_screen: *Screen,
         active_pane: *Pane,
         bounds: []const PaneBounds,
+        border_fg: Colour,
+        active_border_fg: Colour,
     ) !void {
         switch (node.*) {
             .leaf => {},
@@ -161,7 +205,7 @@ pub const Display = struct {
                     if (split_w > 0 and lx + split_w - 1 < merged_screen.grid.width) {
                         const border_x = lx + split_w - 1;
                         const is_active_border = isBorderActive(border_x, ly, lh, true, active_pane, bounds);
-                        const border_fg = if (is_active_border) Colour.fromIndexed(2) else Colour.fromIndexed(8);
+                        const border_col = if (is_active_border) active_border_fg else border_fg;
 
                         var y: u32 = ly;
                         while (y < ly + lh) : (y += 1) {
@@ -172,17 +216,17 @@ pub const Display = struct {
                             } else {
                                 cell.char = 0x2502; // '│'
                             }
-                            cell.fg = border_fg;
+                            cell.fg = border_col;
                         }
                     }
-                    try drawLayoutBorders(s.a, lx, ly, split_w -| 1, lh, merged_screen, active_pane, bounds);
-                    try drawLayoutBorders(s.b, lx + split_w, ly, lw -| split_w, lh, merged_screen, active_pane, bounds);
+                    try drawLayoutBorders(s.a, lx, ly, split_w -| 1, lh, merged_screen, active_pane, bounds, border_fg, active_border_fg);
+                    try drawLayoutBorders(s.b, lx + split_w, ly, lw -| split_w, lh, merged_screen, active_pane, bounds, border_fg, active_border_fg);
                 } else {
                     const split_h = @max(1, @as(u32, @intFromFloat(@as(f64, @floatFromInt(lh)) * s.proportion)));
                     if (split_h > 0 and ly + split_h - 1 < merged_screen.grid.height) {
                         const border_y = ly + split_h - 1;
                         const is_active_border = isBorderActive(lx, border_y, lw, false, active_pane, bounds);
-                        const border_fg = if (is_active_border) Colour.fromIndexed(2) else Colour.fromIndexed(8);
+                        const border_col = if (is_active_border) active_border_fg else border_fg;
 
                         var x: u32 = lx;
                         while (x < lx + lw) : (x += 1) {
@@ -193,11 +237,11 @@ pub const Display = struct {
                             } else {
                                 cell.char = 0x2500; // '─'
                             }
-                            cell.fg = border_fg;
+                            cell.fg = border_col;
                         }
                     }
-                    try drawLayoutBorders(s.a, lx, ly, lw, split_h -| 1, merged_screen, active_pane, bounds);
-                    try drawLayoutBorders(s.b, lx, ly + split_h, lw, lh -| split_h, merged_screen, active_pane, bounds);
+                    try drawLayoutBorders(s.a, lx, ly, lw, split_h -| 1, merged_screen, active_pane, bounds, border_fg, active_border_fg);
+                    try drawLayoutBorders(s.b, lx, ly + split_h, lw, lh -| split_h, merged_screen, active_pane, bounds, border_fg, active_border_fg);
                 }
             },
         }
@@ -355,9 +399,10 @@ pub const Display = struct {
         try self.writeBytes("\x1b[m");
     }
 
-    fn renderStatusBar(self: Display, session_name: []const u8, windows: []const *Window, active_window: ?*Window) Error!void {
+    fn renderStatusBar(self: Display, session_name: []const u8, windows: []const *Window, active_window: ?*Window, fg: Colour, bg: Colour) Error!void {
         try self.moveTo(0, self.sy -| 1);
-        try self.writeBytes("\x1b[7m");
+        try self.writeColourFg(fg);
+        try self.writeColourBg(bg);
 
         var col: u32 = 0;
 
@@ -480,7 +525,7 @@ test "renderStatusBar with long window name" {
 
     const windows = [_]*Window{&win1};
 
-    try display.renderStatusBar("my-session", &windows, &win1);
+    try display.renderStatusBar("my-session", &windows, &win1, Colour.default_(), Colour.default_());
 
     // Verify it renders the long window name successfully
     try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "very_long_window_name_that_previously_would_have_failed") != null);
@@ -518,7 +563,12 @@ test "renderAll cursor visibility hide" {
     const Node = @import("../layout.zig").Node;
     const node = Node{ .leaf = pane };
 
-    try display.renderAll(allocator, &bounds, pane, "my-session", &windows, &win, &node);
+    try display.renderAll(allocator, &bounds, pane, "my-session", &windows, &win, &node, .{
+        .status_fg = Colour.default_(),
+        .status_bg = Colour.default_(),
+        .pane_border_fg = Colour.fromIndexed(8),
+        .pane_active_border_fg = Colour.fromIndexed(2),
+    });
 
     // Verify the cursor was NOT shown at the end
     const has_show_cursor = std.mem.indexOf(u8, capture_buf.items, "\x1b[?25h") != null;

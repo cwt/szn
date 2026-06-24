@@ -192,6 +192,10 @@ pub const SESSION_OPTIONS = &[_]OptionDef{
     .{ .name = "default-terminal", .type = .string, .default = OptionValue{ .string = "tmux-256color" } },
     .{ .name = "status", .type = .choice, .default = OptionValue{ .choice = "on" }, .choices = &[_][]const u8{ "off", "on", "2", "3", "4", "5" } },
     .{ .name = "status-interval", .type = .number, .default = OptionValue{ .number = 15 }, .min = 0, .max = 86400 },
+    .{ .name = "status-fg", .type = .colour, .default = OptionValue{ .colour = Colour.default_() } },
+    .{ .name = "status-bg", .type = .colour, .default = OptionValue{ .colour = Colour.fromRgb(0x00, 0x5f, 0xaf) } },
+    .{ .name = "pane-border-fg", .type = .colour, .default = OptionValue{ .colour = Colour.fromRgb(0x55, 0x55, 0x55) } },
+    .{ .name = "pane-active-border-fg", .type = .colour, .default = OptionValue{ .colour = Colour.fromRgb(0x00, 0x5f, 0xaf) } },
     .{ .name = "history-limit", .type = .number, .default = OptionValue{ .number = 2000 }, .min = 0, .max = 1000000 },
     .{ .name = "mouse", .type = .flag, .default = OptionValue{ .flag = true } },
     .{ .name = "prefix", .type = .key, .default = OptionValue{ .key = Key{ .char = .{ .code = 'b', .mod = .{ .ctrl = true } } } } }, // C-b

@@ -25,6 +25,7 @@ const key_binding_mod = @import("../key_binding.zig");
 const pty_mod = @import("pty.zig");
 const cfg = @import("../cfg.zig");
 const options = @import("../options.zig");
+const Colour = @import("../colour.zig").Colour;
 
 extern "c" fn fopen(filename: [*c]const u8, modes: [*c]const u8) ?*anyopaque;
 extern "c" fn fclose(stream: ?*anyopaque) c_int;
@@ -1221,6 +1222,12 @@ pub const Server = struct {
             session.windows.items,
             session.active_window,
             window.layout.root,
+            .{
+                .status_fg = session.options.asColour("status-fg") orelse Colour.default_(),
+                .status_bg = session.options.asColour("status-bg") orelse Colour.default_(),
+                .pane_border_fg = session.options.asColour("pane-border-fg") orelse Colour.default_(),
+                .pane_active_border_fg = session.options.asColour("pane-active-border-fg") orelse Colour.default_(),
+            },
         ) catch |err| {
             std.log.warn("render error: {any}", .{err});
             return;
