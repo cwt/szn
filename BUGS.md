@@ -630,7 +630,7 @@ After `append` succeeds, the `errdefer` is still active. If any subsequent opera
 ### 66. `setAttributes` fails to turn off removed attributes
 **File:** `src/tty/tty.zig:144–171`
 **Severity:** CRITICAL
-**Status:** ✅ FIXED — attrCodes changed to string slices for double_underline → 21, curly_underline → 4:3.
+**Status:** ⚠️ PARTIALLY FIXED — attrCodes changed (double_underline→`"21"`, curly_underline→`"4:3"`) but the `<` bitmask comparison at line 154 is **still present and wrong**. `{bold}`→`{italic}` (1→2): `2 < 1` is false, so bold is never turned off. The early-return paths (`changed == 0`, `new == 0`) handle trivial cases but the core logic remains broken.
 
 ```zig
 if (@as(u16, @bitCast(self.attrs)) != 0 and @as(u16, @bitCast(attrs)) < @as(u16, @bitCast(self.attrs))) {
@@ -1184,7 +1184,7 @@ On Linux, `VMIN = 6` and `VTIME = 5`. Writing to indices 16 and 17 sets `VWERASE
 ### 101. `server/server.zig` — Use-after-free during batch PTY event processing
 **File:** `src/server/server.zig:305–321`
 **Severity:** CRITICAL
-**Status:** ❌ UNRESOLVED
+**Status:** ❌ UNRESOLVED — partially mitigated by `isPaneValid` guard (`server.zig:257-261`). Remaining risk: if arena reuses the same address for a new `Pane`, the pointer comparison false-positives. Arena allocation makes this practically impossible.
 
 ```zig
 for (events) |ev| {
@@ -1216,7 +1216,7 @@ if (err != .AGAIN and err != .INTR) {
 ### 103. `log.zig` + `socket_path.zig` — Wrong errno retrieval for C library calls
 **File:** `src/log.zig:43, 62`, `src/socket_path.zig:36`
 **Severity:** CRITICAL
-**Status:** ❌ UNRESOLVED (related to bug #82 which only fixed `connect.zig`)
+**Status:** ❌ UNRESOLVED — `socket_path.zig:36` now correctly uses `std.c.errno`. `log.zig:43,62` still uses `std.posix.errno(rc)` — same broken pattern. Also `server/socket.zig:28` has the same issue (see #163).
 
 ```zig
 const err = std.posix.errno(rc);
@@ -1692,7 +1692,7 @@ var session = self.sessions.swapRemove(idx);
 ### 134. `server/server.zig` — `deinit` doesn't remove client fds from the event loop
 **File:** `src/server/server.zig:137–140`
 **Severity:** MEDIUM
-**Status:** ❌ UNRESOLVED
+**Status:** ❌ FALSE POSITIVE — `self.loop.deinit()` (line 131) frees the loop's internal state (`fds` ArrayList, `event_buf`) before client fds are closed. No stale fd entries remain in the loop at the time of close.
 
 ```zig
 for (self.client_fds.items) |fd| {
@@ -1821,7 +1821,7 @@ No saturating arithmetic. If the digit string represents a number > `maxInt(usiz
 ### 143. `colour.zig` — `parse` accepts trailing garbage after colour index
 **File:** `src/colour.zig:84, 88`
 **Severity:** LOW
-**Status:** ❌ UNRESOLVED
+**Status:** ❌ FALSE POSITIVE — `std.fmt.parseInt` in Zig 0.16.0 requires fully valid input. `"colour10abc"` → `s[6..]` = `"10abc"` → parseInt fails on `'a'`, returns `error.InvalidCharacter`, caught as `ParseError.InvalidIndexedColour`.
 
 ```zig
 const n = std.fmt.parseInt(u8, s[6..], 10) catch return ParseError.InvalidIndexedColour;
@@ -2086,14 +2086,27 @@ If history ever exceeds `maxInt(u32)` (~4 billion entries), this is a runtime pa
 
 ---
 
+### 163. `server/socket.zig` — Wrong errno retrieval in `mapErr` (same as #103)
+**File:** `src/server/socket.zig:28`
+**Severity:** MEDIUM
+**Status:** ❌ UNRESOLVED
+
+```zig
+return switch (std.posix.errno(rc)) {
+```
+
+Uses `std.posix.errno(rc)` instead of `std.c.errno(rc)`. Same issue as bugs #103 and #82: C library `socket()`/`bind()`/`listen()`/`accept()` return -1 on error, but `std.posix.errno(-1)` derives errno 1 (EPERM) instead of the actual error. All socket operation failures fall through to `error.Unexpected`, making server startup failures impossible to diagnose correctly.
+
+---
+
 ## Updated Summary
 
 | Severity | Count | Fixed | False Positive | Unresolved |
 |----------|-------|-------|----------------|------------|
-| Critical | 18 (14+4) | 11 | 3 | **4** |
+| Critical | 18 (14+4) | 10 | 3 | **5** |
 | High | 42 (29+13) | 28 | 1 | **13** |
-| Medium | 38 (18+20) | 17 | 1 | **20** |
-| Low | 54 (26+28) | 25 | 1 | **28** |
-| Total | 162 (99+63) | **81** | **6** | **65** |
+| Medium | 39 (18+21) | 17 | 2 | **20** |
+| Low | 54 (26+28) | 25 | 2 | **27** |
+| Total | 163 (99+64) | **80** | **8** | **65** |
 
 
