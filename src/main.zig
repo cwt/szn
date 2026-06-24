@@ -321,7 +321,7 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
     const resize_pkt = protocol.Packet.make(.resize, resize_buf[0..8]);
     var r_buf: [128]u8 = undefined;
     const r_ser = resize_pkt.serialize(&r_buf);
-    _ = c.write(server_fd, r_ser.ptr, r_ser.len);
+    if (c.write(server_fd, r_ser.ptr, r_ser.len) < 0) return error.WriteFailed;
 
     var act: std.posix.Sigaction = .{
         .handler = .{ .handler = sigwinch_handler },

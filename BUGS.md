@@ -1633,7 +1633,7 @@ Each arg adds `+1` for a separator, but the writing loop only inserts separators
 ### 136. `main.zig` — Unchecked `c.write` return for resize packet
 **File:** `src/main.zig:320, 366`
 **Severity:** LOW
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — initial resize write now returns error on failure.
 
 ```zig
 _ = c.write(server_fd, r_ser.ptr, r_ser.len);
