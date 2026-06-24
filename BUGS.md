@@ -606,14 +606,556 @@ When a wheel event has the release bit set (button + 0x20), `wheel_up` detection
 
 ---
 
+## NEW BUGS (2026-06-24 full codebase audit)
+
+---
+
+### 65. Use-after-free / double-free via `errdefer` in `Grid.scrollUp()`
+**File:** `src/grid.zig:163–167`
+**Severity:** CRITICAL
+**Status:** ❌ UNRESOLVED
+
+```zig
+var line = self.getLine(0).*;         // copy by value, shares cells pointer with grid
+line.dirty = false;
+errdefer line.deinit(self.allocator);  // registered on stack copy
+
+try self.history.append(self.allocator, line);  // if succeeds, 3 copies share same cells
+```
+
+After `append` succeeds, the `errdefer` is still active. If any subsequent operation fails (e.g. `new_line.cells.resize` at line 174), the `errdefer` fires and frees `line.cells.items`. But the history entry also points to that same buffer because `append` copies the struct by value. This creates a dangling pointer in history. When `Grid.deinit` later iterates history and calls `deinit` on each entry, it double-frees the already-freed buffer.
+
+---
+
+### 66. `setAttributes` fails to turn off removed attributes
+**File:** `src/tty/tty.zig:144–171`
+**Severity:** CRITICAL
+**Status:** ❌ UNRESOLVED
+
+```zig
+if (@as(u16, @bitCast(self.attrs)) != 0 and @as(u16, @bitCast(attrs)) < @as(u16, @bitCast(self.attrs))) {
+    try self.write("\x1b[m");
+```
+
+The check `new < old` on a bitmask is semantically wrong. `{bold}` → `{italic}` has bitmask `1 → 2`, `2 < 1` is false, so bold is never turned off. The correct check is `(old & ~new) != 0` — any bit that was on is now off. Visible text corruption when attributes transition.
+
+---
+
+### 67. `writeCell` writes character with wrong colors after attribute reset emits `\x1b[m`
+**File:** `src/tty/tty.zig:366–379`
+**Severity:** CRITICAL
+**Status:** ❌ UNRESOLVED
+
+```zig
+pub fn writeCell(self: *Term, cell: Cell) Error!void {
+    try self.setForeground(cell.fg);    // emits \x1b[38;2;Rm
+    try self.setBackground(cell.bg);    // emits \x1b[48;2;Rm
+    try self.setAttributes(cell.attr);  // may emit \x1b[m (full SGR reset!)
+    try self.write(buf[0..encoded_len]); // character rendered with DEFAULT colors
+```
+
+`setAttributes` can emit `\x1b[m` (full SGR reset), wiping the fg/bg colors just set. The character is rendered with default terminal colors, not the cell's intended colors. Affects every cell where attributes transition from non-zero to zero.
+
+---
+
+### 68. Potential double-close of PTY fds from conflicting deinit paths
+**File:** `src/session.zig:49–57`
+**Severity:** CRITICAL
+**Status:** ❌ UNRESOLVED
+
+```zig
+pub fn deinit(self: *Session, allocator: std.mem.Allocator) void {
+    for (self.windows.items) |win| {
+        for (win.panes.items) |p| {
+            if (p.pty) |*pty| pty.deinit();  // manual PTY cleanup
+        }
+    }
+    self.arena.deinit();  // no Pane.deinit() or Window.deinit() called
+}
+```
+
+`Session.deinit` manually deinits PTY fds but never calls `Pane.deinit()` or `Window.deinit()`. If `Pane.deinit()` is ever added (which also calls `pty.deinit()`), the PTY fd gets closed twice — potentially closing an unrelated fd reused by another subsystem. Should ensure only one code path handles PTY cleanup.
+
+---
+
+### 69. Stack buffer overflow in `Client.sendPacket`
+**File:** `src/client/client.zig:46–52`
+**Severity:** HIGH
+**Status:** ❌ UNRESOLVED
+
+```zig
+fn sendPacket(self: *Client, msg_type: protocol.MessageType, data: []const u8) Error!void {
+    const pkt = protocol.Packet.make(msg_type, data);
+    var buf: [4096]u8 = undefined;
+    const serialized = pkt.serialize(&buf);  // no bounds check
+```
+
+`serialize` writes `5 + data.len` bytes into a fixed 4096-byte stack buffer with zero bounds checking. If data ≥ 4091 bytes, `@memcpy` writes past the end of the stack buffer. In ReleaseFast this corrupts the stack.
+
+---
+
+### 70. No upper cap on packet length in `Client.recvPacket` — DoS via 4 GB allocation
+**File:** `src/client/client.zig:63–68`
+**Severity:** HIGH
+**Status:** ❌ UNRESOLVED
+
+```zig
+const len = std.mem.readInt(u32, hdr[0..4], .little);
+if (len < 5) return error.InvalidPacket;
+const body_len = len - 5;
+const body = try self.allocator.alloc(u8, body_len);  // no max cap
+```
+
+A malicious server can send `len = 0xFFFFFFFF`, causing a 4 GB allocation attempt. Should cap to a reasonable maximum (e.g. 1 MiB).
+
+---
+
+### 71. `drawLine` "clear trailing spaces" is a dead no-op
+**File:** `src/tty/tty.zig:407–411`
+**Severity:** HIGH
+**Status:** ❌ UNRESOLVED
+
+```zig
+// Clear trailing spaces
+if (last_was_space) {
+    try self.cursorMove(width - 1, ly);
+}
+```
+
+The comment says "clear trailing spaces" but the code only moves the cursor to the last column — no `clearToEOL` or `eraseChars` sequence is emitted. When the next frame draws fewer characters on this line, old characters from the previous frame remain visible.
+
+---
+
+### 72. Division by zero in `Grid.resize(0)`
+**File:** `src/grid.zig:127`
+**Severity:** HIGH
+**Status:** ❌ UNRESOLVED
+
+```zig
+pub fn resize(self: *Grid, new_height: u32) Error!void {
+    ...
+    self.height = new_height;  // can be 0
+}
+```
+
+No guard against `new_height == 0`. Any subsequent `getLine` does `idx % self.height` — division by zero, runtime panic.
+
+---
+
+### 73. Division by zero in `Grid.scrollDown` when `height == 0`
+**File:** `src/grid.zig:187–188`
+**Severity:** HIGH
+**Status:** ❌ UNRESOLVED
+
+```zig
+self.start_index = (self.start_index + self.height - 1) % self.height;  // DIV/0
+```
+
+After `resize(0)`, `self.height` is 0. The early return only checks `history.items.len`, not height. Division by zero panic.
+
+---
+
+### 74. Allocation error silently swallowed in `advanceDcsIntermediate` (sixel DCS)
+**File:** `src/input.zig:385`
+**Severity:** HIGH
+**Status:** ❌ UNRESOLVED
+
+```zig
+self.dcs_buf.appendSlice(self.screen.allocator, "\x1bPq") catch {};
+//                                                           ^^^^^^ SWALLOWED
+```
+
+If `appendSlice` fails (OOM), the error is silently discarded. The function continues as if the append succeeded, entering `.dcs_sixel` state. When the ST terminator arrives, `dispatchDcsSixel` tries to `dupe` an empty buffer — sixel data is lost/corrupted with no error reported.
+
+---
+
+### 75. `cmdBreakPane` overrides new window's pane without deinit — arena waste
+**File:** `src/cmd/cmd.zig:391–399`
+**Severity:** HIGH
+**Status:** ❌ UNRESOLVED
+
+```zig
+const new_win = session.newWindow(server.allocator, "window") catch return .err;
+if (new_win.panes.items.len > 0) {
+    new_win.panes.items[0] = pane;   // original pane created by newWindow is overwritten
+```
+
+`newWindow` creates a full window with a pane (Screen, Grid cells, layout). Overwriting `panes.items[0]` orphanes the original pane's Screen/Grid in the arena. Wasted arena memory grows with each break-pane.
+
+---
+
+### 76. `cmdJoinPane` creates dummy pane via `splitPane` that is discarded — arena waste
+**File:** `src/cmd/cmd.zig:365–375`
+**Severity:** HIGH
+**Status:** ❌ UNRESOLVED
+
+```zig
+const dummy_pane = dst_win.splitPane(server.allocator, dst_pane, vertical, 0.5) catch return .err;
+for (dst_win.panes.items) |*p| {
+    if (p.* == dummy_pane) {
+        p.* = src_pane;
+        break;
+    }
+}
+```
+
+`splitPane` allocates a new `Pane` with `Pane.init` (Screen, Grid, layout node) from the window's arena. After the swap, `dummy_pane` is no longer referenced — its memory is orphaned. Every join-pane leaks one pane's worth of arena memory.
+
+---
+
+### 77. Memory leak in `windowTitleCallback` — old name never freed
+**File:** `src/window.zig:272–282`
+**Severity:** HIGH
+**Status:** ❌ UNRESOLVED
+
+```zig
+const new_name = self.allocator.dupe(u8, title) catch return;
+self.name = new_name;   // OLD NAME NEVER FREED
+```
+
+Every time a pane's title changes (changing directories, opening files), the old `self.name` is replaced without freeing the previous allocation. Cumulative leak that grows unbounded over time.
+
+---
+
+### 78. Memory leak in `renderToDisplayClient` — auto window rename leaks old name
+**File:** `src/server/server.zig:1098–1115`
+**Severity:** HIGH
+**Status:** ❌ UNRESOLVED
+
+```zig
+if (win.allocator.dupe(u8, proc_name_val)) |new_name| {
+    win.name = new_name;   // OLD NAME NEVER FREED
+```
+
+Same pattern as #77. Each automatic window rename from `getForegroundProcessName` leaks the previous name. Fires on every render cycle when a process name changes.
+
+---
+
+### 79. Modified function key parsing broken — `~` CSI sequences with modifiers dropped
+**File:** `src/key.zig:96–101`
+**Severity:** HIGH
+**Status:** ❌ UNRESOLVED
+
+```zig
+'~' => {
+    const tilde = std.mem.lastIndexOfScalar(u8, seq, '~') orelse return error.InvalidCsi;
+    const num_str = seq[0..tilde];  // "11;5" for Ctrl+F1 = \e[11;5~
+    const num = std.fmt.parseInt(u8, num_str, 10) catch return error.InvalidCsi;
+```
+
+For `\e[11;5~` (Ctrl+F1), `seq` is `11;5~`, `num_str` is `11;5`. `parseInt(u8, "11;5", 10)` fails — the modifier parameter and semicolon are included. All Ctrl/Alt/Shift modified function keys and special keys (Home, End, Insert, Delete, PgUp, PgDn, F1-F12) are silently dropped.
+
+---
+
+### 80. `@intCast` before bounds check in `Client.sendIdentify` — panic in safe builds
+**File:** `src/client/client.zig:34–35`
+**Severity:** MEDIUM
+**Status:** ❌ UNRESOLVED
+
+```zig
+var it: protocol.IdentifyTerm = .{ .term_len = @intCast(term.len) };
+if (term.len > it.term.len) return error.TermTooLong;
+```
+
+`@intCast(term.len)` from `usize` to `u8` panics at runtime if `term.len > 255`. The bounds check on the next line is dead code for the panic path. Move the check before the cast.
+
+---
+
+### 81. `errdefer` reads uninitialized `fd` if `socket()` fails
+**File:** `src/client/connect.zig:22–23`
+**Severity:** MEDIUM
+**Status:** ❌ UNRESOLVED
+
+```zig
+const fd = try mapErr(c.socket(c.AF.UNIX, c.SOCK.STREAM, 0));
+errdefer _ = c.close(fd);
+```
+
+If `c.socket` returns -1, `mapErr` propagates the error — but `fd` was never assigned because the `const` initialisation failed. The `errdefer` reads an uninitialized i32. UB.
+
+---
+
+### 82. `std.posix.errno(rc)` may lose error specificity for C wrappers
+**File:** `src/client/connect.zig:38–48`
+**Severity:** MEDIUM
+**Status:** ❌ UNRESOLVED
+
+```zig
+fn mapErr(rc: c_int) Error!i32 {
+    if (rc >= 0) return rc;
+    return switch (std.posix.errno(rc)) { ... };
+}
+```
+
+C `socket()` and `connect()` return -1 on failure, setting the global `errno`. If `std.posix.errno(rc)` derives the error from `rc` (which is -1), it always decodes to errno 1 (EPERM) — all socket failures fall through to `error.Unexpected`. The fix should use `std.c._errno().*` directly.
+
+---
+
+### 83. `@intCast(self.cy)` can panic when cursor position is -1 in `drawLine`
+**File:** `src/tty/tty.zig:399–400`
+**Severity:** MEDIUM
+**Status:** ❌ UNRESOLVED
+
+```zig
+if (col != self.cx or @as(u64, @intCast(ly)) != @as(u64, @intCast(self.cy))) {
+```
+
+`@intCast(self.cy)` casts `i64` to `u64`. If `self.cy == -1` (cursor invalidated by `invalidate()` or `enterAltScreen()`), this panics. Can be reached when col matches `self.cx` and the right side evaluates.
+
+---
+
+### 84. CSI/SGR mouse/UTF-8 input buffer overflow silently discards data
+**File:** `src/tty/tty_key.zig:114–168`
+**Severity:** MEDIUM
+**Status:** ❌ UNRESOLVED (duplicate of #19, but different code paths)
+
+The `InputReader` has a fixed 64-byte buffer. For kitty extended key sequences with event types, the parameter string can exceed 64 bytes. When overflow occurs, the entire sequence is silently discarded with no event, no error — the keystroke is lost.
+
+---
+
+### 85. DSR response silently dropped on `bufPrint` failure
+**File:** `src/input.zig:591–593`
+**Severity:** MEDIUM
+**Status:** ❌ UNRESOLVED
+
+```zig
+const rep = std.fmt.bufPrint(&rep_buf, "\x1b[{d};{d}R",
+    .{ self.screen.cursor.y + 1, self.screen.cursor.x + 1 }) catch return;
+```
+
+If the 32-byte buffer is insufficient (cursor positions > 999), the function silently returns success without sending the DSR response. The querying application hangs.
+
+---
+
+### 86. XTSMGRAPHICS response silently fails on `bufPrint` overflow or `writeInput` error
+**File:** `src/input.zig:536–538`
+**Severity:** MEDIUM
+**Status:** ❌ UNRESOLVED
+
+```zig
+const rep = std.fmt.bufPrint(&buf, "\x1b[?{d};0;0S", .{ps1}) catch "";
+if (rep.len > 0) pty.writeInput(rep) catch {};
+```
+
+Both `bufPrint` failure (returns empty string → never sent) and `writeInput` failure are silently swallowed. The terminal querying for graphics attributes hangs indefinitely.
+
+---
+
+### 87. `.?` on `active_window`/`active_pane` without guard in `cmdNewSession`
+**File:** `src/cmd/cmd.zig:27`
+**Severity:** MEDIUM
+**Status:** ❌ UNRESOLVED
+
+```zig
+const session = server.newSession(name, 80, 24) catch return .err;
+const pane = session.active_window.?.active_pane.?;
+```
+
+Currently safe by invariant (newSession always creates a window with a pane). If the invariant is broken by a future code change, this panics.
+
+---
+
+### 88. `defer free` on `parsed_val.string` relies on undocumented dup-in-set contract
+**File:** `src/cmd/cmd.zig:687–689`
+**Severity:** MEDIUM
+**Status:** ❌ UNRESOLVED
+
+```zig
+defer {
+    if (parsed_val == .string) server.allocator.free(parsed_val.string);
+}
+```
+
+Assumes `Options.set` always `dupe`s strings internally. If `Options.set` is ever changed to store the pointer directly, this becomes a use-after-free — the option system holds a dangling pointer.
+
+---
+
+### 89. `logFn` writes garbage bytes from uninitialized buffer on `bufPrint` failure
+**File:** `src/main.zig:70–78`
+**Severity:** MEDIUM
+**Status:** ❌ UNRESOLVED
+
+```zig
+const msg = std.fmt.bufPrint(buf[prefix.len..], format, args) catch "log message too long";
+const total_len = prefix.len + msg.len;
+if (total_len < buf.len) {
+    buf[total_len] = '\n';
+    writeAllRaw(fd, buf[0 .. total_len + 1]);
+```
+
+When `bufPrint` fails, `msg` points to the static literal `"log message too long"` — outside `buf`. The code writes `buf[prefix.len..total_len]` which is uninitialized stack garbage between the prefix end and the start of the literal.
+
+---
+
+### 90. `keysEqual` ignores Meta modifier — impossible to bind Meta-modified keys
+**File:** `src/key_binding.zig:139–175`
+**Severity:** MEDIUM
+**Status:** ❌ UNRESOLVED
+
+```zig
+break :blk ac_code == bc_code and
+    ac.mod.ctrl == bc.mod.ctrl and
+    ac.mod.alt == bc.mod.alt and
+    ac.mod.shift == bc.mod.shift;
+    //               ^^^^^ META MISSING ^^^^^
+```
+
+The `Modifier` struct has a `meta: bool` field, but `keysEqual` never compares it. Two keys differing only in Meta/Super are incorrectly considered equal.
+
+---
+
+### 91. `errdefer` registered after `Pane.init` in `Layout.splitPane` — leak on init failure
+**File:** `src/layout.zig:89–94`
+**Severity:** MEDIUM
+**Status:** ❌ UNRESOLVED
+
+```zig
+const new_pane = try a.create(Pane);          // allocates Pane*
+new_pane.* = try Pane.init(a, 0, child_w2, child_h2);  // if this fails...
+errdefer {
+    new_pane.deinit();
+    a.destroy(new_pane);
+}
+```
+
+If `Pane.init` fails, the `try` propagates the error BEFORE the `errdefer` is registered. The `new_pane` allocated at line 89 leaks — neither `deinit` nor `destroy` is called.
+
+---
+
+### 92. History lines not resized when terminal width changes
+**File:** `src/grid.zig:130–143`
+**Severity:** MEDIUM
+**Status:** ❌ UNRESOLVED
+
+```zig
+pub fn setSize(self: *Grid, new_width: u32, new_height: u32) Error!void {
+    try self.normalize();
+    self.width = new_width;
+    for (self.lines.items) |*line| {   // only visible lines, not history
+        // resize visible line cells
+    }
+    try self.resize(new_height);
+}
+```
+
+When the terminal is resized, only visible grid lines are resized. Lines in `self.history` retain their original width. Scrolling up into history after a terminal resize shows wrong-width history lines, causing visual artifacts.
+
+---
+
+### 93. Partial `write()` on Unix socket not retried
+**File:** `src/client/client.zig:8–12, 50–51`
+**Severity:** LOW
+**Status:** ❌ UNRESOLVED
+
+```zig
+fn fdWrite(fd: i32, buf: []const u8) Error!usize {
+    const n = std.c.write(fd, buf.ptr, buf.len);
+    ...
+// call site:
+const n = try fdWrite(self.fd, serialized);
+if (n != serialized.len) return error.WriteFailed;  // no retry
+```
+
+`write()` on a socket can perform partial writes. The code detects truncation but does not retry, leaving a partially-sent packet on the wire. Unlikely on local Unix sockets with small buffers.
+
+---
+
+### 94. Integer overflow in `resize_right` action
+**File:** `src/server/server.zig:530`
+**Severity:** LOW
+**Status:** ❌ UNRESOLVED
+
+```zig
+const target_w = current_w + 1;  // wraps to 0 if current_w == maxInt(u32)
+```
+
+If a pane width reaches `maxInt(u32)`, adding 1 wraps to 0. Practically impossible for terminal dimensions.
+
+---
+
+### 95. Daemon fork doesn't close stdin/stdout/stderr
+**File:** `src/main.zig:170–175`
+**Severity:** LOW
+**Status:** ❌ UNRESOLVED
+
+```zig
+if (pid == 0) {
+    if (log_fd) |fd| {
+        _ = c.close(fd);
+        log_fd = null;
+    }
+    try runServerDaemon(allocator);
+```
+
+After `fork()`, the child process has `setsid()` called but stdin/stdout/stderr are never closed or redirected to `/dev/null`. The daemon retains fds pointing to the original terminal.
+
+---
+
+### 96. Log directory created with `0o777` (world-writable)
+**File:** `src/main.zig:30`
+**Severity:** LOW
+**Status:** ❌ UNRESOLVED (complement to #62)
+
+```zig
+const rc = c.mkdir(dir_z.ptr, 0o777);
+```
+
+The log directory `$XDG_STATE_HOME/szn/` is created with mode 0777. Any user on the system can write files into it. Should be `0o700`.
+
+---
+
+### 97. `socket_path.zig` silently ignores `mkdir` failure
+**File:** `src/socket_path.zig:34`
+**Severity:** LOW
+**Status:** ❌ UNRESOLVED
+
+```zig
+_ = c.mkdir(dir_z.ptr, 0o700);
+```
+
+The return value of `mkdir` is discarded. If directory creation fails (permission denied, disk full), the subsequent socket `bind` fails with a confusing error instead of a clear message.
+
+---
+
+### 98. `logFn` retries `open()` on every call forever if it fails once
+**File:** `src/main.zig:61–67`
+**Severity:** LOW
+**Status:** ❌ UNRESOLVED
+
+```zig
+if (log_fd == null) {
+    const fd = open(path, O_WRONLY | O_CREAT | O_APPEND, 0o666);
+    if (fd < 0) return;     // log_fd stays null
+    log_fd = fd;
+}
+const fd = log_fd.?;         // next call: still null, tries again
+```
+
+If `open()` fails permanently (permission denied, disk full), every subsequent log call re-invokes `resolveLogPath` and `open()`. No backoff, no retry limit, no silencing.
+
+---
+
+### 99. CSI parameter integer overflow — `param_val * 10 + digit` wraps on u32
+**File:** `src/input.zig:248`
+**Severity:** LOW
+**Status:** ❌ UNRESOLVED
+
+```zig
+self.param_val = self.param_val * 10 + (byte - '0');
+```
+
+`param_val` is `u32`. Malicious input with thousands of consecutive digits causes wrapping overflow (modular arithmetic). The parameter value wraps silently, producing incorrect behaviour.
+
+---
+
 ## Summary
 
 | Severity | Count | Fixed | False Positive | Unresolved |
 |----------|-------|-------|----------------|------------|
-| Critical | 10 | 7 | 3 | 0 |
-| High | 18 | 17 | 1 | 0 |
-| Medium | 17 | 16 | 1 | 0 |
-| Low | 19 | 18 | 1 | 0 |
-| **Total** | **64** | **58** | **6** | **0** |
+| Critical | 14 (10+4) | 7 | 3 | 4 |
+| High | 29 (18+11) | 17 | 1 | 11 |
+| Medium | 30 (17+13) | 16 | 1 | 13 |
+| Low | 26 (19+7) | 18 | 1 | 7 |
+| **Total** | **99 (64+35)** | **58** | **6** | **35** |
 
 
