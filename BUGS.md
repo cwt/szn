@@ -1224,16 +1224,9 @@ self.param_val = self.param_val * 10 + (byte - '0');
 ---
 
 ### 109. `tty/fd_writer.zig` — Missing EINTR handling in writeAll and writeByte
-**File:** `src/tty/fd_writer.zig:16–17, 25–27`
+**File:** `src/tty/fd_writer.zig:16–17, 28–29`
 **Severity:** HIGH
-**Status:** ❌ UNRESOLVED
-
-```zig
-const n = c.write(self.fd, remaining.ptr, @intCast(remaining.len));
-if (n < 0) return error.WriteFailed;
-```
-
-`c.write` can return -1 with `errno == EINTR` when interrupted by a signal. The code treats this as a permanent failure instead of retrying. Terminal I/O is particularly susceptible to signal interruption (SIGWINCH, SIGCHLD, etc.). Same issue in `writeByte` at lines 25–27.
+**Status:** ✅ FIXED — both writeAll and writeByte now retry on EINTR. Pipe-based tests added verifying correct write-through.
 
 ---
 
