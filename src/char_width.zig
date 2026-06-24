@@ -220,7 +220,6 @@ const zero_width_ranges = [_]WidthRange{
     .{ .start = 0x1082, .end = 0x108D, .width = 0 },
     .{ .start = 0x108F, .end = 0x108F, .width = 0 },
     .{ .start = 0x109A, .end = 0x109D, .width = 0 },
-    .{ .start = 0x1100, .end = 0x115F, .width = 0 },
     .{ .start = 0x1160, .end = 0x11FF, .width = 0 },
     .{ .start = 0x135D, .end = 0x135F, .width = 0 },
     .{ .start = 0x1712, .end = 0x1715, .width = 0 },
@@ -494,6 +493,14 @@ test "charWidth: emoji are wide" {
 test "charWidth: ZWJ and variation selectors are zero-width" {
     try std.testing.expectEqual(@as(u2, 0), charWidth(0x200D)); // ZWJ
     try std.testing.expectEqual(@as(u2, 0), charWidth(0xFE0F)); // variation selector
+}
+
+test "charWidth: Hangul Jamo are wide (bug #104)" {
+    try std.testing.expectEqual(@as(u4, 2), charWidth(0x1100));
+    try std.testing.expectEqual(@as(u4, 2), charWidth(0x115F));
+    try std.testing.expectEqual(@as(u4, 2), charWidth(0x1102));
+    try std.testing.expectEqual(@as(u4, 0), charWidth(0x1160)); // Jungseong — still zero-width
+    try std.testing.expectEqual(@as(u4, 0), charWidth(0x11FF)); // Jongseong — still zero-width
 }
 
 test "charWidth: sorted tables invariant" {

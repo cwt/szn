@@ -1189,16 +1189,9 @@ self.param_val = self.param_val * 10 + (byte - '0');
 ---
 
 ### 104. `char_width.zig` — Hangul Jamo 0x1100–0x115F reported as width 0 instead of 2
-**File:** `src/char_width.zig:96–97, 223, 412`
+**File:** `src/char_width.zig:223`
 **Severity:** HIGH
-**Status:** ❌ UNRESOLVED
-
-```zig
-if (searchTable(cp, &zero_width_ranges)) return 0;
-if (searchTable(cp, &wide_ranges)) return 2;
-```
-
-The range `0x1100–0x115F` appears in **both** `zero_width_ranges` (line 223) and `wide_ranges` (line 412). Since `zero_width_ranges` is checked first, `charWidth` returns 0 instead of the correct value 2. These are Hangul Jamo leading consonants — they are wide characters. This causes incorrect terminal column positioning for Korean text.
+**Status:** ✅ FIXED — removed the duplicate `0x1100–0x115F` entry from `zero_width_ranges` (it was correctly in `wide_ranges`). Test added verifying Jamo leading consonants as width 2.
 
 ---
 
