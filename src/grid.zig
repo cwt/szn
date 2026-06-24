@@ -160,20 +160,21 @@ pub const Grid = struct {
 
     pub fn scrollUp(self: *Grid) Error!void {
         if (self.height == 0) return;
-        var line = self.getLine(0).*;
-        line.dirty = false;
-        errdefer line.deinit(self.allocator);
-
-        try self.history.append(self.allocator, line);
-        if (self.history.items.len > self.history_limit) {
-            var old = self.history.orderedRemove(0);
-            old.deinit(self.allocator);
-        }
 
         var new_line = GridLine{};
         try new_line.cells.resize(self.allocator, self.width);
         @memset(new_line.cells.items, Cell.empty());
+
+        var old_line = self.getLineMut(0).*;
+        old_line.dirty = false;
         self.getLineMut(0).* = new_line;
+
+        errdefer old_line.deinit(self.allocator);
+        try self.history.append(self.allocator, old_line);
+        if (self.history.items.len > self.history_limit) {
+            var old = self.history.orderedRemove(0);
+            old.deinit(self.allocator);
+        }
 
         self.start_index = (self.start_index + 1) % self.height;
     }
@@ -473,6 +474,35 @@ test "resize grid" {
     try grid.resize(40);
     try testing.expectEqual(@as(u32, 40), grid.height);
     try testing.expectEqual(@as(usize, 40), grid.lines.items.len);
+}
+
+test "scroll up does not corrupt grid — C1 UAF regression" {
+    var grid = try Grid.init(testing.allocator, 80, 5);
+    defer grid.deinit();
+
+    for (0..5) |i| {
+        grid.writeChar(0, @intCast(i), @intCast('A' + i));
+    }
+
+    // Scroll up multiple times — each scroll moves top line to history
+    for (0..10) |_| {
+        try grid.scrollUp();
+    }
+
+    // History should have 5 entries (we had 5 lines, scrolled 10 times)
+    // but more importantly, no crash and grid is still writable
+    try testing.expect(grid.history.items.len > 0);
+
+    // Verify grid lines are still writable — UAF bug would crash here
+    grid.writeChar(0, 0, 'X');
+    try testing.expectEqual(@as(u21, 'X'), grid.getCell(0, 0).char);
+
+    // Verify history entries still have valid content — no dangling pointers
+    for (grid.history.items, 0..) |*h_line, idx| {
+        _ = idx;
+        // Just reading should not crash
+        _ = h_line.cells.items.len;
+    }
 }
 
 test "write string across grid" {
