@@ -271,16 +271,20 @@ pub const Server = struct {
             };
         } else if (has_hup) {
             self.loop.removeFd(ev.fd);
-            // Drain any remaining buffered data before declaring exit.
-            // On Linux the kernel can report POLLHUP while data is still
-            // buffered in the PTY; reading it avoids premature pane death.
-            if (pane.feedPty()) |_| {
-                // Data was read — keep the pane alive, but the fd is already
-                // removed from the poll loop.  Re-add it so future output
-                // (e.g. the shell prompt) wakes us up again.
-                self.watchPanePty(pane) catch {};
-            } else |_| {
+            // On Linux the kernel can report POLLHUP when the foreground
+            // process group goes empty (e.g. vim/htop just exited) while the
+            // shell still holds the slave open.  Check whether the shell
+            // process is actually dead before declaring exit.
+            const shell_alive = if (pane.pty) |pty| blk: {
+                const rc = c.waitpid(pty.pid, null, 1); // WNOHANG
+                break :blk rc == 0;
+            } else false;
+            _ = pane.feedPty() catch {};
+            if (!shell_alive) {
+                std.log.info("pty process exited (HUP)", .{});
                 exited = true;
+            } else {
+                self.watchPanePty(pane) catch {};
             }
         } else if (has_err) {
             self.loop.removeFd(ev.fd);
@@ -288,11 +292,17 @@ pub const Server = struct {
         }
 
         if (exited) {
-            // Honour remain-on-exit: if set, keep the pane alive (dead but
-            // visible) instead of destroying it along with its window/session.
             const remain = if (pane.window) |w| w.options.asFlag("remain-on-exit") orelse false else false;
-            if (remain) {
+            // Only honour remain-on-exit if there are other panes/windows/
+            // sessions to keep the server alive.  Otherwise destroy so the
+            // client can exit cleanly (e.g. user typed "exit").
+            const has_other_panes = if (pane.window) |w| w.panes.items.len > 1 else false;
+            if (remain and has_other_panes) {
                 std.log.info("pane exited, remain-on-exit set — keeping pane", .{});
+                if (pane.pty) |*pty| {
+                    pty.deinit();
+                    pane.pty = null;
+                }
                 pane.dirty = true;
                 self.dirty = true;
             } else {
