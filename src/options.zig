@@ -70,6 +70,9 @@ pub const Options = struct {
         self.allocator.free(self.values);
     }
 
+    /// Set an option value. The value is **cloned** internally (strings are
+    /// `allocator.dupe`'d). The caller retains ownership of the passed value
+    /// and may free it immediately after this call.
     pub fn set(self: *Options, name: []const u8, value: OptionValue) Error!void {
         const idx = self.findDef(name) orelse return error.UnknownOption;
         const def = self.table[idx];
@@ -310,4 +313,18 @@ test "colour option" {
     try opts.set("clock-mode-colour", OptionValue{ .colour = red });
     const c = opts.asColour("clock-mode-colour").?;
     try testing.expectEqual(@as(u8, 1), @as(u8, @truncate(c.value)));
+}
+
+test "Options.set dupes strings — caller retains ownership" {
+    var opts = try Options.init(testing.allocator, SESSION_OPTIONS);
+    defer opts.deinit();
+
+    // Allocate a string, transfer to Options.set, then free the original.
+    const original = try testing.allocator.dupe(u8, "/bin/bash");
+    defer testing.allocator.free(original);
+
+    try opts.set("default-shell", OptionValue{ .string = original });
+
+    // After freeing the original, Options must still hold its own copy.
+    try testing.expectEqualStrings("/bin/bash", opts.asString("default-shell").?);
 }

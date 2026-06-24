@@ -958,7 +958,7 @@ Currently safe by invariant (newSession always creates a window with a pane). If
 ### 88. `defer free` on `parsed_val.string` relies on undocumented dup-in-set contract
 **File:** `src/cmd/cmd.zig:687–689`
 **Severity:** MEDIUM
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — added doc comment on `Options.set` that it always dupes strings. Unit test verifies caller can free originals after set.
 
 ```zig
 defer {
@@ -1154,8 +1154,8 @@ self.param_val = self.param_val * 10 + (byte - '0');
 |----------|-------|-------|----------------|------------|
 | Critical | 14 (10+4) | 11 | 3 | 0 |
 | High | 29 (18+11) | 28 | 1 | 0 |
-| Medium | 30 (17+13) | 24 | 1 | 5 |
+| Medium | 30 (17+13) | 25 | 1 | 4 |
 | Low | 26 (19+7) | 18 | 1 | 7 |
-| **Total** | **99 (64+35)** | **81** | **6** | **12** |
+| **Total** | **99 (64+35)** | **82** | **6** | **11** |
 
 
