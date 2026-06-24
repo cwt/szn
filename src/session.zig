@@ -50,7 +50,7 @@ pub const Session = struct {
         _ = allocator;
         for (self.windows.items) |win| {
             for (win.panes.items) |p| {
-                if (p.pty) |*pty| pty.deinit();
+                p.deinit();
             }
         }
         self.arena.deinit();
@@ -86,7 +86,7 @@ pub const Session = struct {
 
         _ = self.windows.swapRemove(idx);
         for (win.panes.items) |p| {
-            if (p.pty) |*pty| pty.deinit();
+            p.deinit();
         }
 
         if (self.active_window == win) {
