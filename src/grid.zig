@@ -113,6 +113,7 @@ pub const Grid = struct {
     }
 
     pub fn resize(self: *Grid, new_height: u32) Error!void {
+        if (new_height == 0) return;
         try self.normalize();
         while (self.lines.items.len < new_height) {
             var line = GridLine{};
@@ -180,7 +181,7 @@ pub const Grid = struct {
     }
 
     pub fn scrollDown(self: *Grid) Error!void {
-        if (self.history.items.len == 0) return;
+        if (self.height == 0 or self.history.items.len == 0) return;
         var line = self.history.pop().?;
         errdefer line.deinit(self.allocator);
 
@@ -503,6 +504,29 @@ test "scroll up does not corrupt grid — C1 UAF regression" {
         // Just reading should not crash
         _ = h_line.cells.items.len;
     }
+}
+
+test "resize to zero is no-op" {
+    var grid = try Grid.init(testing.allocator, 80, 24);
+    defer grid.deinit();
+
+    try grid.resize(0);
+    try testing.expectEqual(@as(u32, 24), grid.height);
+    try testing.expectEqual(@as(usize, 24), grid.lines.items.len);
+}
+
+test "scrollDown with zero height does not crash" {
+    var grid = try Grid.init(testing.allocator, 80, 24);
+    defer grid.deinit();
+
+    try grid.scrollUp();
+    try testing.expectEqual(@as(usize, 1), grid.history.items.len);
+
+    try grid.resize(0);
+    try testing.expectEqual(@as(u32, 24), grid.height);
+
+    try grid.scrollDown();
+    // Should not crash — scrollDown should be no-op after resize(0) guard
 }
 
 test "write string across grid" {

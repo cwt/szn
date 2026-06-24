@@ -729,7 +729,7 @@ The comment says "clear trailing spaces" but the code only moves the cursor to t
 ### 72. Division by zero in `Grid.resize(0)`
 **File:** `src/grid.zig:127`
 **Severity:** HIGH
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — added `if (new_height == 0) return;` guard. Unit test added.
 
 ```zig
 pub fn resize(self: *Grid, new_height: u32) Error!void {
@@ -745,7 +745,7 @@ No guard against `new_height == 0`. Any subsequent `getLine` does `idx % self.he
 ### 73. Division by zero in `Grid.scrollDown` when `height == 0`
 **File:** `src/grid.zig:187–188`
 **Severity:** HIGH
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — added `self.height == 0` check to scrollDown guard. Unit test added.
 
 ```zig
 self.start_index = (self.start_index + self.height - 1) % self.height;  // DIV/0
@@ -1153,9 +1153,9 @@ self.param_val = self.param_val * 10 + (byte - '0');
 | Severity | Count | Fixed | False Positive | Unresolved |
 |----------|-------|-------|----------------|------------|
 | Critical | 14 (10+4) | 11 | 3 | 0 |
-| High | 29 (18+11) | 20 | 1 | 8 |
+| High | 29 (18+11) | 22 | 1 | 6 |
 | Medium | 30 (17+13) | 16 | 1 | 13 |
 | Low | 26 (19+7) | 18 | 1 | 7 |
-| **Total** | **99 (64+35)** | **65** | **6** | **28** |
+| **Total** | **99 (64+35)** | **67** | **6** | **26** |
 
 
