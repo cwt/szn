@@ -787,7 +787,7 @@ if (new_win.panes.items.len > 0) {
 ### 76. `cmdJoinPane` creates dummy pane via `splitPane` that is discarded — arena waste
 **File:** `src/cmd/cmd.zig:365–375`
 **Severity:** HIGH
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — deinit dummy_pane after extracting its dimensions and replacing its references with src_pane.
 
 ```zig
 const dummy_pane = dst_win.splitPane(server.allocator, dst_pane, vertical, 0.5) catch return .err;
@@ -1153,9 +1153,9 @@ self.param_val = self.param_val * 10 + (byte - '0');
 | Severity | Count | Fixed | False Positive | Unresolved |
 |----------|-------|-------|----------------|------------|
 | Critical | 14 (10+4) | 11 | 3 | 0 |
-| High | 29 (18+11) | 24 | 1 | 4 |
+| High | 29 (18+11) | 25 | 1 | 3 |
 | Medium | 30 (17+13) | 16 | 1 | 13 |
 | Low | 26 (19+7) | 18 | 1 | 7 |
-| **Total** | **99 (64+35)** | **69** | **6** | **24** |
+| **Total** | **99 (64+35)** | **70** | **6** | **23** |
 
 

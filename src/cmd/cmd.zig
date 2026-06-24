@@ -363,6 +363,8 @@ fn cmdJoinPane(server: *Server, args: []const []const u8) CmdResult {
     }
 
     const dummy_pane = dst_win.splitPane(server.allocator, dst_pane, vertical, 0.5) catch return .err;
+    const dummy_width = dummy_pane.screen.grid.width;
+    const dummy_height = dummy_pane.screen.grid.height;
 
     for (dst_win.panes.items) |*p| {
         if (p.* == dummy_pane) {
@@ -374,7 +376,9 @@ fn cmdJoinPane(server: *Server, args: []const []const u8) CmdResult {
     const dummy_node = dst_win.layout.findLeafParent(dst_win.layout.root, dummy_pane) orelse return .err;
     dummy_node.leaf = src_pane;
 
-    src_pane.resizeTerminal(dummy_pane.screen.grid.width, dummy_pane.screen.grid.height) catch return .err;
+    dummy_pane.deinit();
+
+    src_pane.resizeTerminal(dummy_width, dummy_height) catch return .err;
 
     dst_win.setActivePane(src_pane);
     return .ok;
