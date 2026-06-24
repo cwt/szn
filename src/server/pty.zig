@@ -103,6 +103,13 @@ pub const Pty = struct {
         const args = argv orelse &.{DEFAULT_SHELL};
 
         var argv_z = try allocator.alloc(?[*:0]const u8, args.len + 1);
+        @memset(argv_z, null);
+        errdefer {
+            for (argv_z) |z| {
+                if (z) |s| allocator.free(std.mem.span(s));
+            }
+            allocator.free(argv_z);
+        }
         for (args, 0..) |arg, i| {
             argv_z[i] = try allocator.dupeZ(u8, arg);
         }
@@ -240,7 +247,6 @@ test "openpty creates master and slave" {
     try testing.expect(pty.master >= 0);
     try testing.expect(pty.slave >= 0);
 }
-
 test "pty master has FD_CLOEXEC set" {
     var pty = try Pty.open();
     defer pty.deinit();
@@ -258,4 +264,13 @@ test "pty slave has FD_CLOEXEC set" {
     const flags = fcntl(pty.slave, @as(c_int, 1), @as(c_int, 0));
     try testing.expect(flags >= 0);
     try testing.expect((flags & FD_CLOEXEC) != 0);
+}
+
+test "spawn with multiple argv elements — bug #123" {
+    var pty = try Pty.open();
+    defer pty.deinit();
+
+    const argv = [_][]const u8{ "sh", "-c", "true" };
+    try pty.spawn(testing.allocator, &argv, "", "", null);
+    // spawn succeeded; pty.deinit will clean up
 }

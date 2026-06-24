@@ -1420,7 +1420,7 @@ Selection `start_y`/`end_y` are cursor positions in screen coordinates. If the u
 ### 123. `server/pty.zig` — Memory leak on partial `dupeZ` failure in `spawn`
 **File:** `src/server/pty.zig:105–108`
 **Severity:** MEDIUM
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — added `@memset(argv_z, null)` init and `errdefer` to free already-allocated strings if a later `dupeZ` fails.
 
 ```zig
 var argv_z = try allocator.alloc(?[*:0]const u8, args.len + 1);
