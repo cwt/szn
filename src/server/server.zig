@@ -1015,14 +1015,14 @@ pub const Server = struct {
                 if (s.direction == .horizontal) {
                     const split_w = @max(1, @as(u32, @intFromFloat(@as(f64, @floatFromInt(lw)) * s.proportion)));
                     if (x < lx + split_w) {
-                        return self.findPaneAtNode(s.a, x, y, lx, ly, split_w, lh);
+                        return self.findPaneAtNode(s.a, x, y, lx, ly, split_w -| 1, lh);
                     } else {
                         return self.findPaneAtNode(s.b, x, y, lx + split_w, ly, lw - split_w, lh);
                     }
                 } else {
                     const split_h = @max(1, @as(u32, @intFromFloat(@as(f64, @floatFromInt(lh)) * s.proportion)));
                     if (y < ly + split_h) {
-                        return self.findPaneAtNode(s.a, x, y, lx, ly, lw, split_h);
+                        return self.findPaneAtNode(s.a, x, y, lx, ly, lw, split_h -| 1);
                     } else {
                         return self.findPaneAtNode(s.b, x, y, lx, ly + split_h, lw, lh - split_h);
                     }
@@ -1759,6 +1759,27 @@ test "processInput esc_buf capacity limit" {
     try testing.expectEqual(.ground, server.input_reader.state);
 }
 
+test "findPaneAtNode accounts for border width — bug #127" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
 
+    const s = try server.newSession("test", 80, 24);
+    const win = s.active_window.?;
+    const pane1 = win.active_pane.?;
 
+    // Split horizontally: pane1 (left, 39 cols) + border (1 col) + pane2 (right, 40 cols)
+    const pane2 = try win.splitPane(testing.allocator, pane1, false, 0.5);
+
+    // Click on left pane (col 0)
+    const found1 = server.findPaneAtNode(win.layout.root, 0, 0, 0, 0, 80, 24);
+    try testing.expect(found1 == pane1);
+
+    // Click on right pane (col 50)
+    const found2 = server.findPaneAtNode(win.layout.root, 50, 0, 0, 0, 80, 24);
+    try testing.expect(found2 == pane2);
+
+    // Click on the border column (col 39) — should return null
+    const border = server.findPaneAtNode(win.layout.root, 39, 0, 0, 0, 80, 24);
+    try testing.expect(border == null);
+}
 

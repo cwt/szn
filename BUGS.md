@@ -1487,7 +1487,7 @@ try self.moveTo(0, self.sy - 1);
 ### 127. `server/server.zig` — `findPaneAtNode` doesn't subtract border width
 **File:** `src/server/server.zig:1006–1023` (vs `906–917`)
 **Severity:** MEDIUM
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — `findPaneAtNode` now uses `split_w -| 1` for left child width, matching `collectPaneBounds`. Border clicks return null (no pane found). Test added.
 
 ```zig
 // findPaneAtNode (line 1010):
