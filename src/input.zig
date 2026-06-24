@@ -532,9 +532,14 @@ pub const InputParser = struct {
                     // We report sixel as supported with no size limit (0;0).
                     const ps1 = self.param(0);
                     if (self.pty) |pty| {
-                        var buf: [32]u8 = undefined;
-                        const rep = std.fmt.bufPrint(&buf, "\x1b[?{d};0;0S", .{ps1}) catch "";
-                        if (rep.len > 0) pty.writeInput(rep) catch {};
+                        var buf: [64]u8 = undefined;
+                        const rep = std.fmt.bufPrint(&buf, "\x1b[?{d};0;0S", .{ps1}) catch {
+                            std.log.warn("XTSMGRAPHICS response buffer too small for ps1={d}", .{ps1});
+                            return;
+                        };
+                        pty.writeInput(rep) catch |err| {
+                            std.log.warn("XTSMGRAPHICS writeInput error: {any}", .{err});
+                        };
                     }
                 } else {
                     const n = self.paramDefault(0, 1);

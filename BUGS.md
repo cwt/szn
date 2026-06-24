@@ -930,7 +930,7 @@ If the 32-byte buffer is insufficient (cursor positions > 999), the function sil
 ### 86. XTSMGRAPHICS response silently fails on `bufPrint` overflow or `writeInput` error
 **File:** `src/input.zig:536–538`
 **Severity:** MEDIUM
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — increased buffer to 64 bytes, log warnings on both failure paths.
 
 ```zig
 const rep = std.fmt.bufPrint(&buf, "\x1b[?{d};0;0S", .{ps1}) catch "";
@@ -1154,8 +1154,8 @@ self.param_val = self.param_val * 10 + (byte - '0');
 |----------|-------|-------|----------------|------------|
 | Critical | 14 (10+4) | 11 | 3 | 0 |
 | High | 29 (18+11) | 28 | 1 | 0 |
-| Medium | 30 (17+13) | 22 | 1 | 7 |
+| Medium | 30 (17+13) | 23 | 1 | 6 |
 | Low | 26 (19+7) | 18 | 1 | 7 |
-| **Total** | **99 (64+35)** | **79** | **6** | **14** |
+| **Total** | **99 (64+35)** | **80** | **6** | **13** |
 
 
