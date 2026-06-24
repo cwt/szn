@@ -1251,7 +1251,7 @@ return protocol.Packet{
 ### 111. `mode_copy.zig` — `yankSelection` computes wrong bounds for reverse selections
 **File:** `src/mode_copy.zig:205–206`
 **Severity:** HIGH
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — replaced incorrect `sy == start_y` / `ey == end_y` checks with `start_is_top` flag matching `isSelected` logic. Test added for reverse multi-line selection.
 
 ```zig
 const sx = if (sy == self.selection.start_y) self.selection.start_x else 0;

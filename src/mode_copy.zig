@@ -202,8 +202,9 @@ pub const CopyMode = struct {
 
         const sy = @min(self.selection.start_y, self.selection.end_y);
         const ey = @max(self.selection.start_y, self.selection.end_y);
-        const sx = if (sy == self.selection.start_y) self.selection.start_x else 0;
-        const ex = if (ey == self.selection.end_y) self.selection.end_x else grid.width -| 1;
+        const start_is_top = (self.selection.start_y <= self.selection.end_y);
+        const sx = if (start_is_top) self.selection.start_x else self.selection.end_x;
+        const ex = if (start_is_top) self.selection.end_x else self.selection.start_x;
 
         var result: std.ArrayListUnmanaged(u8) = .empty;
         errdefer result.deinit(allocator);
@@ -1017,6 +1018,40 @@ test "yank multi-line selection" {
     defer testing.allocator.free(result);
     try testing.expect(std.mem.indexOf(u8, result, "A") != null);
     try testing.expect(std.mem.indexOf(u8, result, "B") != null);
+}
+
+test "yank selection reverse (bottom-to-top) bounds" {
+    var cm = CopyMode.init(.vi);
+    var g = try Grid.init(testing.allocator, 5, 2);
+    defer g.deinit();
+
+    g.writeChar(0, 0, 'A');
+    g.writeChar(1, 0, 'B');
+    g.writeChar(2, 0, 'C');
+    g.writeChar(3, 0, 'D');
+    g.writeChar(4, 0, 'E');
+    g.writeChar(0, 1, 'F');
+    g.writeChar(1, 1, 'G');
+    g.writeChar(2, 1, 'H');
+    g.writeChar(3, 1, 'I');
+    g.writeChar(4, 1, 'J');
+
+    // Reverse selection: start at (3,1), end at (1,0)
+    // Should yank the same as forward selection (1,0)->(3,1): BCD + FGHI = "BCDFGHI"
+    cm.selection = .{
+        .start_x = 3,
+        .start_y = 1,
+        .end_x = 1,
+        .end_y = 0,
+        .active = true,
+    };
+
+    const result = try cm.yankSelection(testing.allocator, &g);
+    defer testing.allocator.free(result);
+    // Reverse selection from (3,1) to (1,0) should yank the same
+    // range as forward selection (1,0) to (3,1): line0 cols 1-4,
+    // line1 cols 0-3 => "BCDE\nFGHI"
+    try testing.expectEqualStrings("BCDE\nFGHI", result);
 }
 
 test "yank selection from scrolled-back history" {
