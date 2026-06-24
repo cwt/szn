@@ -850,7 +850,7 @@ For `\e[11;5~` (Ctrl+F1), `seq` is `11;5~`, `num_str` is `11;5`. `parseInt(u8, "
 ### 80. `@intCast` before bounds check in `Client.sendIdentify` — panic in safe builds
 **File:** `src/client/client.zig:34–35`
 **Severity:** MEDIUM
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — moved the bounds check (`term.len > 64`) before the `@intCast`. Unit test added.
 
 ```zig
 var it: protocol.IdentifyTerm = .{ .term_len = @intCast(term.len) };
@@ -1154,8 +1154,8 @@ self.param_val = self.param_val * 10 + (byte - '0');
 |----------|-------|-------|----------------|------------|
 | Critical | 14 (10+4) | 11 | 3 | 0 |
 | High | 29 (18+11) | 28 | 1 | 0 |
-| Medium | 30 (17+13) | 16 | 1 | 13 |
+| Medium | 30 (17+13) | 17 | 1 | 12 |
 | Low | 26 (19+7) | 18 | 1 | 7 |
-| **Total** | **99 (64+35)** | **73** | **6** | **20** |
+| **Total** | **99 (64+35)** | **74** | **6** | **19** |
 
 

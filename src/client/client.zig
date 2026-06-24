@@ -33,8 +33,8 @@ pub const Client = struct {
     }
 
     pub fn sendIdentify(self: *Client, term: []const u8) Error!void {
+        if (term.len > 64) return error.TermTooLong;
         var it: protocol.IdentifyTerm = .{ .term_len = @intCast(term.len) };
-        if (term.len > it.term.len) return error.TermTooLong;
         @memcpy(it.term[0..term.len], term);
         var buf: [128]u8 = undefined;
         const data = it.encode(&buf);
@@ -124,4 +124,21 @@ test "recvPacket rejects oversized length" {
     try testing.expectEqual(@as(isize, 5), n);
 
     try testing.expectError(error.PacketTooLarge, client.recvPacket());
+}
+
+test "sendIdentify rejects term longer than 64 bytes" {
+    const testing = std.testing;
+
+    var fds: [2]i32 = undefined;
+    if (std.c.pipe(&fds) != 0) return error.Unexpected;
+    defer _ = std.c.close(fds[0]);
+    defer _ = std.c.close(fds[1]);
+
+    var client = Client{ .allocator = testing.allocator, .fd = fds[1] };
+
+    const long_term = try testing.allocator.alloc(u8, 100);
+    defer testing.allocator.free(long_term);
+    @memset(long_term, 'x');
+
+    try testing.expectError(error.TermTooLong, client.sendIdentify(long_term));
 }
