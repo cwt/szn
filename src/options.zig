@@ -158,6 +158,7 @@ fn validateType(def: OptionDef, value: OptionValue) Error!void {
 fn cloneValue(allocator: std.mem.Allocator, value: OptionValue) Error!OptionValue {
     return switch (value) {
         .string => |s| OptionValue{ .string = try allocator.dupe(u8, s) },
+        .choice => |c| OptionValue{ .choice = try allocator.dupe(u8, c) },
         inline else => value,
     };
 }
@@ -165,7 +166,8 @@ fn cloneValue(allocator: std.mem.Allocator, value: OptionValue) Error!OptionValu
 fn freeValue(allocator: std.mem.Allocator, value: OptionValue) void {
     switch (value) {
         .string => |s| allocator.free(s),
-        .number, .colour, .key, .flag, .choice => {},
+        .choice => |c| allocator.free(c),
+        .number, .colour, .key, .flag => {},
     }
 }
 
@@ -327,4 +329,29 @@ test "Options.set dupes strings — caller retains ownership" {
 
     // After freeing the original, Options must still hold its own copy.
     try testing.expectEqualStrings("/bin/bash", opts.asString("default-shell").?);
+}
+
+test "Options.set dupes choice values — caller retains ownership" {
+    var opts = try Options.init(testing.allocator, SESSION_OPTIONS);
+    defer opts.deinit();
+
+    const original = try testing.allocator.dupe(u8, "on");
+    defer testing.allocator.free(original);
+
+    try opts.set("status", OptionValue{ .choice = original });
+
+    try testing.expectEqualStrings("on", opts.get("status").?.choice);
+}
+
+test "Options.freeValue frees choice strings — bug #116" {
+    const allocator = testing.allocator;
+    var opts = try Options.init(allocator, SESSION_OPTIONS);
+    defer opts.deinit();
+
+    const dyn = try allocator.dupe(u8, "off");
+    try opts.set("status", OptionValue{ .choice = dyn });
+    allocator.free(dyn);
+
+    // If choice was not cloned, this would be use-after-free.
+    try testing.expectEqualStrings("off", opts.get("status").?.choice);
 }
