@@ -1103,6 +1103,7 @@ pub const Server = struct {
                         if (pty.getForegroundProcessName(&proc_buf)) |proc_name_val| {
                             if (proc_name_val.len > 0 and !std.mem.eql(u8, win.name, proc_name_val)) {
                                 if (win.allocator.dupe(u8, proc_name_val)) |new_name| {
+                                    win.allocator.free(win.name);
                                     win.name = new_name;
                                     ap.dirty = true;
                                     self.dirty = true;

@@ -806,7 +806,7 @@ for (dst_win.panes.items) |*p| {
 ### 77. Memory leak in `windowTitleCallback` — old name never freed
 **File:** `src/window.zig:272–282`
 **Severity:** HIGH
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — free old name before assigning new dupe.
 
 ```zig
 const new_name = self.allocator.dupe(u8, title) catch return;
@@ -820,7 +820,7 @@ Every time a pane's title changes (changing directories, opening files), the old
 ### 78. Memory leak in `renderToDisplayClient` — auto window rename leaks old name
 **File:** `src/server/server.zig:1098–1115`
 **Severity:** HIGH
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — free old name before assigning new dupe.
 
 ```zig
 if (win.allocator.dupe(u8, proc_name_val)) |new_name| {
@@ -1153,9 +1153,9 @@ self.param_val = self.param_val * 10 + (byte - '0');
 | Severity | Count | Fixed | False Positive | Unresolved |
 |----------|-------|-------|----------------|------------|
 | Critical | 14 (10+4) | 11 | 3 | 0 |
-| High | 29 (18+11) | 25 | 1 | 3 |
+| High | 29 (18+11) | 27 | 1 | 1 |
 | Medium | 30 (17+13) | 16 | 1 | 13 |
 | Low | 26 (19+7) | 18 | 1 | 7 |
-| **Total** | **99 (64+35)** | **70** | **6** | **23** |
+| **Total** | **99 (64+35)** | **72** | **6** | **21** |
 
 

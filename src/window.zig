@@ -275,6 +275,7 @@ fn windowTitleCallback(ctx: ?*anyopaque, title: []const u8) void {
     if (std.mem.eql(u8, self.name, title)) return;
 
     const new_name = self.allocator.dupe(u8, title) catch return;
+    self.allocator.free(self.name);
     self.name = new_name;
     for (self.panes.items) |p| {
         p.dirty = true;
