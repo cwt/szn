@@ -29,8 +29,11 @@ pub fn resolve(buf: []u8) Error![:0]const u8 {
 
     if (std.c.getenv("HOME")) |home| {
         const home_str = std.mem.span(home);
-        var dir_path: [128]u8 = undefined;
-        const dir_z = try std.fmt.bufPrintZ(&dir_path, "{s}/.szn", .{home_str});
+        var dir_path: [MAX_PATH]u8 = undefined;
+        const dir_z = std.fmt.bufPrintZ(&dir_path, "{s}/.szn", .{home_str}) catch {
+            const path = try std.fmt.bufPrintZ(buf[0..MAX_PATH], "/tmp/szn-{d}.sock", .{getuid()});
+            return path;
+        };
         const rc = c.mkdir(dir_z.ptr, 0o700);
         if (rc < 0) {
             const err = std.c.errno(rc);
@@ -47,10 +50,7 @@ pub fn resolve(buf: []u8) Error![:0]const u8 {
     return path;
 }
 
-test "resolve produces a valid path — bug #97" {
+test "resolve produces a valid path — bug #97, #121" {
     var buf: [MAX_PATH]u8 = undefined;
-    // Must not crash under any env. We can't easily mock getenv, but
-    // the fix (checking mkdir return value instead of _ =) compiles and
-    // links — that's the essential part.
     _ = resolve(&buf) catch {};
 }

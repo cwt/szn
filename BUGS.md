@@ -1397,7 +1397,7 @@ These globals are read/written without synchronization. `log_enabled` uses atomi
 ### 121. `socket_path.zig` — Fixed 128-byte buffer for HOME path with no fallback
 **File:** `src/socket_path.zig:33`
 **Severity:** MEDIUM
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — increased dir_path buffer from 128 to MAX_PATH; bufPrintZ failure falls back to /tmp.
 
 ```zig
 var dir_path: [128]u8 = undefined;
