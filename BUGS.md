@@ -1317,7 +1317,7 @@ return Key{ .char = .{ .code = @intCast(codepoint), .mod = k_mod } };
 ### 116. `options.zig` — `choice` values are not cloned or freed
 **File:** `src/options.zig:158–163, 165–170`
 **Severity:** MEDIUM
-**Status:** ✅ FIXED — `cloneValue` now dupes choice strings; `freeValue` frees them. Tests added.
+**Status:** ❌ UNRESOLVED
 
 ```zig
 fn cloneValue(allocator: std.mem.Allocator, value: OptionValue) Error!OptionValue {
