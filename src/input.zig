@@ -245,7 +245,7 @@ pub const InputParser = struct {
             '0'...'9' => {
                 self.collecting_param = true;
                 self.params_started = true;
-                self.param_val = self.param_val * 10 + (byte - '0');
+                self.param_val = self.param_val *| 10 +| (byte - '0');
             },
             ':' => {
                 self.pushParam();
@@ -1052,6 +1052,20 @@ test "default param (1) for cursor movement" {
     var parser = InputParser.init(&screen);
     try parser.feed("\x1b[A");
     try testing.expectEqual(@as(u32, 4), screen.cursor.y);
+}
+
+test "CSI param overflow saturates — bug #99" {
+    // 12 consecutive digits would overflow u32 with plain multiply+add.
+    // With *| and +|, the value should saturate at maxInt(u32).
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+    var parser = InputParser.init(&screen);
+
+    // Feed ESC [ 999999999999 A (enough digits to overflow u32)
+    try parser.feed("\x1b[999999999999A");
+    // param_val saturates at maxInt(u32); CUU cursor up with
+    // maxInt(u32) should clamp to screen top.
+    try testing.expectEqual(@as(u32, 0), screen.cursor.y);
 }
 
 test "VPR vertical position relative" {

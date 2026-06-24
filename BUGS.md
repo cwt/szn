@@ -1141,7 +1141,7 @@ If `open()` fails permanently (permission denied, disk full), every subsequent l
 ### 99. CSI parameter integer overflow — `param_val * 10 + digit` wraps on u32
 **File:** `src/input.zig:248`
 **Severity:** LOW
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — `*` → `*|` and `+` → `+|` for saturating arithmetic.
 
 ```zig
 self.param_val = self.param_val * 10 + (byte - '0');
@@ -1158,7 +1158,7 @@ self.param_val = self.param_val * 10 + (byte - '0');
 | Critical | 14 (10+4) | 11 | 3 | 0 |
 | High | 29 (18+11) | 28 | 1 | 0 |
 | Medium | 18 (5+13) | 17 | 1 | 0 |
-| Low | 26 (19+7) | 18 | 1 | 7 |
-| **Total** | **99 (64+35)** | **82** | **6** | **11** |
+| Low | 26 (19+7) | 25 | 1 | 0 |
+| Total | 99 (64+35) | **81** | **6** | **0** |
 
 
