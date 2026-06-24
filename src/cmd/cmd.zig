@@ -323,7 +323,7 @@ fn cmdJoinPane(server: *Server, args: []const []const u8) CmdResult {
     }
 
     var src_win = dst_win;
-    var src_pane: *@import("../window.zig").Pane = undefined;
+    var src_pane: ?*@import("../window.zig").Pane = null;
 
     if (src_arg) |sa| {
         const colon = std.mem.indexOfScalar(u8, sa, ':');
@@ -351,9 +351,10 @@ fn cmdJoinPane(server: *Server, args: []const []const u8) CmdResult {
         }
     }
 
-    if (src_pane == dst_pane) return .err;
+    if (src_pane == null or src_pane.? == dst_pane) return .err;
 
-    src_win.extractPane(server.allocator, src_pane);
+    const sp = src_pane orelse return .err;
+    src_win.extractPane(server.allocator, sp);
     if (src_win.panes.items.len == 0) {
         const a = session.arenaAllocator();
         const dummy = a.create(Pane) catch return .err;
@@ -368,19 +369,19 @@ fn cmdJoinPane(server: *Server, args: []const []const u8) CmdResult {
 
     for (dst_win.panes.items) |*p| {
         if (p.* == dummy_pane) {
-            p.* = src_pane;
-            dst_win.registerPane(src_pane);
+            p.* = sp;
+            dst_win.registerPane(sp);
             break;
         }
     }
     const dummy_node = dst_win.layout.findLeafParent(dst_win.layout.root, dummy_pane) orelse return .err;
-    dummy_node.leaf = src_pane;
+    dummy_node.leaf = sp;
 
     dummy_pane.deinit();
 
-    src_pane.resizeTerminal(dummy_width, dummy_height) catch return .err;
+    sp.resizeTerminal(dummy_width, dummy_height) catch return .err;
 
-    dst_win.setActivePane(src_pane);
+    dst_win.setActivePane(sp);
     return .ok;
 }
 

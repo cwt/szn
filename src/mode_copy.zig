@@ -104,7 +104,7 @@ pub const CopyMode = struct {
         } else {
             const remaining = page - self.cursor_y;
             self.cursor_y = 0;
-            self.scroll_offset = @min(self.scroll_offset + remaining, @as(u32, @intCast(grid.history.items.len)));
+            self.scroll_offset = @min(self.scroll_offset + remaining, @as(u32, @intCast(@as(usize, @min(grid.history.items.len, std.math.maxInt(u32))))));
         }
     }
 
@@ -126,7 +126,7 @@ pub const CopyMode = struct {
         } else {
             const remaining = half - self.cursor_y;
             self.cursor_y = 0;
-            self.scroll_offset = @min(self.scroll_offset + remaining, @as(u32, @intCast(grid.history.items.len)));
+            self.scroll_offset = @min(self.scroll_offset + remaining, @as(u32, @intCast(@as(usize, @min(grid.history.items.len, std.math.maxInt(u32))))));
         }
     }
 

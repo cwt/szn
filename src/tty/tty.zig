@@ -375,7 +375,7 @@ pub const Term = struct {
         var buf: [4]u8 = undefined;
         const encoded_len = std.unicode.utf8Encode(cell.char, &buf) catch {
             try self.write("?");
-            if (self.cx >= 0) self.cx += 1;
+        if (self.cx >= 0) self.cx += char_width.charWidth(cell.char);
             return;
         };
         try self.write(buf[0..encoded_len]);

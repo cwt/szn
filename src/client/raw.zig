@@ -35,7 +35,7 @@ pub const RawTerminal = struct {
 
     pub fn setRaw(self: *RawTerminal) Error!void {
         var raw = self.original;
-        raw.iflag = .{ .BRKINT = true };
+        raw.iflag = .{ .BRKINT = false };
         raw.lflag = .{};
         raw.oflag = .{};
         raw.cc[VMIN] = 1;

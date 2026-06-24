@@ -411,6 +411,7 @@ pub const Server = struct {
         try self.watchPanePty(pane);
     }
 
+    /// Returns an allocated slice. Caller must free with `allocator.free`.
     pub fn paneCwd(self: *Server, pane: *Pane) ?[]const u8 {
         const pty = pane.pty orelse return null;
         return pty.getCwd(self.allocator) catch return null;
@@ -765,6 +766,8 @@ pub const Server = struct {
                                                     .release => 3,
                                                     .scroll_up => 64,
                                                     .scroll_down => 65,
+                                                    .scroll_left => 66,
+                                                    .scroll_right => 67,
                                                 };
                                                 if (m.mod.shift) btn |= 4;
                                                 if (m.mod.alt) btn |= 8;
@@ -1379,7 +1382,7 @@ pub const Server = struct {
         if (size < 0) return error.ReadFailed;
         _ = fseek(f, 0, 0); // SEEK_SET = 0
 
-        const content = try self.allocator.alloc(u8, @intCast(size));
+        const content = try self.allocator.alloc(u8, @as(usize, @intCast(size)));
         defer self.allocator.free(content);
 
         const read_bytes = fread(content.ptr, 1, content.len, f);

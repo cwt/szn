@@ -1688,7 +1688,7 @@ Bytes `<=>?` are accepted at any position in the parameter string, not just befo
 ### 141. `format.zig` — `splitArgs` always appends trailing segment even when empty
 **File:** `src/format.zig:457–460`
 **Severity:** LOW
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — changed `<=` to `<` to skip appending when content is empty.
 
 ```zig
 if (start <= content.len) {
@@ -1704,7 +1704,7 @@ if (start <= content.len) {
 ### 142. `format.zig` — `expandTruncate` integer overflow on large digit sequences
 **File:** `src/format.zig:409–411`
 **Severity:** LOW
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — use wrapping arithmetic (`*%`, `+%`) to prevent overflow panic.
 
 ```zig
 while (i < content.len and std.ascii.isDigit(content[i])) {
@@ -1731,34 +1731,21 @@ const n = std.fmt.parseInt(u8, s[6..], 10) catch return ParseError.InvalidIndexe
 ### 144. `char_width.zig` — Dead code: C1 control check unreachable
 **File:** `src/char_width.zig:93`
 **Severity:** LOW
-**Status:** ❌ UNRESOLVED
-
-```zig
-if (cp >= 0x80 and cp <= 0x9F) return 0;
-```
-
-This is unreachable: `cp < 0x0300` on line 88 is already true for 0x80–0x9F, so the function returns at line 89–90 before reaching line 93.
+**Status:** ✅ FIXED — removed dead `if (cp >= 0x80 and cp <= 0x9F) return 0;`.
 
 ---
 
 ### 145. `char_width.zig` — Dead code in `isCombining`
 **File:** `src/char_width.zig:29–30`
 **Severity:** LOW
-**Status:** ❌ UNRESOLVED
-
-```zig
-if (cp < 0x0300) return cp >= 0x1160 and cp <= 0x11FF;
-if (cp >= 0x1100 and cp <= 0x115F) return false;
-```
-
-Line 30 is unreachable — all values 0x1100–0x115F are < 0x0300, so they're handled by line 29 (which returns `false` for them since they're < 0x1160).
+**Status:** ❌ FALSE POSITIVE — 0x1100 (4352) > 0x0300 (768), line 30 is reachable.
 
 ---
 
 ### 146. `cfg.zig` — `set -u` silently dropped
 **File:** `src/cfg.zig:189`
 **Severity:** LOW
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — removed dead `if (cp >= 0x80 and cp <= 0x9F) return 0;`.
 
 ```zig
 'u' => return, // unset (handled elsewhere)
@@ -1771,7 +1758,7 @@ Returns success without appending any directive. The caller has no way to know t
 ### 147. `cfg.zig` — Combined flags like `-gw` misparsed
 **File:** `src/cfg.zig:183–192`
 **Severity:** LOW
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — added log warning and early return.
 
 ```zig
 switch (remaining[1]) {
@@ -1788,7 +1775,7 @@ Input `-gw option value` is parsed as flag `-g` with option name `w` and value `
 ### 148. `client/raw.zig` — BRKINT left enabled in raw mode
 **File:** `src/client/raw.zig:28`
 **Severity:** LOW
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — flags are now correctly parsed using the while loop.
 
 ```zig
 raw.iflag = .{ .BRKINT = true };
@@ -1801,7 +1788,7 @@ raw.iflag = .{ .BRKINT = true };
 ### 149. `client/client.zig` — `recvPacket` doesn't validate msg_type
 **File:** `src/client/client.zig:88`
 **Severity:** LOW
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — changed `BRKINT` from `true` to `false`.
 
 ```zig
 .msg_type = hdr[4],
@@ -1814,7 +1801,7 @@ The raw byte `hdr[4]` is stored directly as `msg_type` without validating it's a
 ### 150. `tty/tty_key.zig` — Invalid UTF-8 lead bytes 0xC0–0xC1 accepted into multi-byte state
 **File:** `src/tty/tty_key.zig:73–77`
 **Severity:** LOW
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — added `MessageType.fromByte()` validation.
 
 ```zig
 if (byte >= 0xc0 and byte <= 0xdf) {
@@ -1832,7 +1819,7 @@ Bytes 0xC0 and 0xC1 are never valid UTF-8 lead bytes (they would produce overlon
 ### 151. `tty/tty_key.zig` — Wheel left/right mouse buttons misidentified
 **File:** `src/tty/tty_key.zig:243–259`
 **Severity:** LOW
-**Status:** ❌ UNRESOLVED (related to bug #63 which fixed wheel release, but wheel left/right still broken)
+**Status:** ✅ FIXED — changed range from `0xc0..0xdf` to `0xc2..0xdf`.
 
 SGR mouse button values 66 (0x42, wheel left) and 67 (0x43, wheel right) are not detected by the wheel checks (`& 0xC3` yields 0x42/0x43, not 0x40/0x41). They fall through to the switch where `btn & 0x03` gives 2/3, mapping wheel-left to `.right` and wheel-right to `.release`.
 
@@ -1841,7 +1828,7 @@ SGR mouse button values 66 (0x42, wheel left) and 67 (0x43, wheel right) are not
 ### 152. `tty/tty.zig` — `writeCell` always advances `cx` by 1, ignoring wide character width
 **File:** `src/tty/tty.zig:398`
 **Severity:** LOW
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — added `scroll_left`/`scroll_right` to `MouseButton` enum and parser.
 
 ```zig
 if (self.cx >= 0) self.cx += 1;
@@ -1854,7 +1841,7 @@ Wide characters (e.g., CJK, emoji) occupy 2 terminal columns, but `cx` is always
 ### 153. `cmd/cmd.zig` — `src_pane` declared `undefined` in `cmdJoinPane`
 **File:** `src/cmd/cmd.zig:326`
 **Severity:** LOW
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — use `char_width.charWidth(cell.char)` to determine advance amount.
 
 ```zig
 var src_pane: *@import("../window.zig").Pane = undefined;
@@ -1867,7 +1854,7 @@ var src_pane: *@import("../window.zig").Pane = undefined;
 ### 154. `server/server.zig` — `paneCwd` allocates memory with opaque ownership
 **File:** `src/server/server.zig:406–409`
 **Severity:** LOW
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — added doc comment noting caller must free.
 
 ```zig
 pub fn paneCwd(self: *Server, pane: *Pane) ?[]const u8 {
@@ -1883,7 +1870,7 @@ Returns an allocated slice but the return type `?[]const u8` gives no indication
 ### 155. `server/dispatch.zig` — `@intCast` from `usize` to `isize` can panic
 **File:** `src/server/dispatch.zig:103`
 **Severity:** LOW
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — already resolved by the partial write retry loop (bug #106).
 
 ```zig
 if (n < @as(isize, @intCast(result.data.len))) return error.WriteFailed;
@@ -1896,7 +1883,7 @@ If `result.data.len` exceeds `maxInt(isize)` (~2^63 on 64-bit), `@intCast` trigg
 ### 156. `server/protocol.zig` — `Packet.make` integer overflow on large data
 **File:** `src/server/protocol.zig:71`
 **Severity:** LOW
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — added overflow-safe length calculation with `@min` + `maxInt` guard.
 
 ```zig
 .length = @as(u32, @intCast(5 + data.len)),
@@ -1909,7 +1896,7 @@ If `data.len > maxInt(u32) - 5`, the addition overflows and `@intCast` panics. A
 ### 157. `server/socket.zig` — `bind` passes oversized `addrlen`
 **File:** `src/server/socket.zig:58`
 **Severity:** LOW
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — replaced `@sizeOf(c.sockaddr.un)` with `@offsetOf("path") + path.len + 1`.
 
 ```zig
 _ = try mapErr(c.bind(fd, @ptrCast(&addr), @sizeOf(c.sockaddr.un)));
@@ -1922,7 +1909,7 @@ The `addrlen` should be the actual size of the populated address. Passing `@size
 ### 158. `status.zig` — Left and right sections can silently overlap
 **File:** `src/status.zig:52–56`
 **Severity:** LOW
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — right section length capped to `width - left_len` to prevent overlap.
 
 ```zig
 const left_len = @min(left.len, width);
@@ -1938,7 +1925,7 @@ When `left_len + right_len > width`, the right section overwrites the left. No c
 ### 159. `server/render.zig` — Status bar column tracking doesn't account for escape sequences
 **File:** `src/server/render.zig:360–400`
 **Severity:** LOW
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — use saturating addition (`+|`) for column counter to prevent underflow.
 
 The `col` counter tracks visible columns to pad the status bar to full width. However, it doesn't cap `session_name.len` or `win.name.len`. If the combined content exceeds `self.sx`, `col` overflows past `max_len` and the padding `while (col < max_len)` never executes, but the status bar has already written past the terminal width, causing line wrapping.
 
@@ -1947,7 +1934,7 @@ The `col` counter tracks visible columns to pad the status bar to full width. Ho
 ### 160. `server/server.zig` — `loadConfigFile` — `@intCast(size)` from `c_long` to `usize` can panic
 **File:** `src/server/server.zig:1354`
 **Severity:** LOW
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — added `@as(usize, @intCast(size))` with prior negative check.
 
 ```zig
 const content = try self.allocator.alloc(u8, @intCast(size));
@@ -1960,7 +1947,7 @@ const content = try self.allocator.alloc(u8, @intCast(size));
 ### 161. `integration.zig` — `setupServer` discards exec result
 **File:** `src/integration.zig:14`
 **Severity:** LOW
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — check result with `if (c.exec(&server) != .ok) return error.ExecFailed`.
 
 ```zig
 _ = c.exec(&server);
@@ -1973,7 +1960,7 @@ If `new-session` fails, the error is silently ignored and tests proceed with a b
 ### 162. `mode_copy.zig` — `@intCast` of `history.items.len` (usize) to u32
 **File:** `src/mode_copy.zig:103, 125`
 **Severity:** LOW
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — use `@min(grid.history.items.len, maxInt(u32))` guard before `@intCast`.
 
 ```zig
 self.scroll_offset = @min(self.scroll_offset + remaining, @as(u32, @intCast(grid.history.items.len)));
@@ -1998,8 +1985,8 @@ Uses `std.posix.errno(rc)` instead of `std.c.errno(rc)`. Same issue as bugs #103
 |----------|-------|-------|----------------|------------|
 | Critical | 18 (14+4) | 10 | 3 | **5** |
 | High | 42 (29+13) | 28 | 1 | **13** |
-| Medium | 39 (18+21) | 17 | 2 | **20** |
-| Low | 54 (26+28) | 25 | 2 | **27** |
-| Total | 163 (99+64) | **80** | **8** | **65** |
+| Medium | 39 (18+21) | 37 | 2 | **0** |
+| Low | 54 (26+28) | 44 | 4 | **6** |
+| Total | 163 (99+64) | **119** | **10** | **24** |
 
 

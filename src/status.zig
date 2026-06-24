@@ -51,8 +51,9 @@ pub const StatusBar = struct {
         const left_len = @min(left.len, width);
         @memcpy(line[0..left_len], left[0..left_len]);
 
-        const right_len = @min(right.len, width);
-        const right_start = if (width > right_len) width - right_len else 0;
+        const max_right = width -| left_len;
+        const right_len = @min(right.len, max_right);
+        const right_start = width - right_len;
         @memcpy(line[right_start..][0..right_len], right[right.len - right_len ..][0..right_len]);
 
         const centre_len = centre.len;

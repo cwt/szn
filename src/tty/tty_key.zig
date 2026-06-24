@@ -70,7 +70,7 @@ pub const InputReader = struct {
             return Event{ .key = .{ .char = .{ .code = c, .mod = .{ .ctrl = true } } } };
         }
         if (byte >= 0x20 and byte <= 0x7e) return Event{ .key = .{ .char = .{ .code = byte } } };
-        if (byte >= 0xc0 and byte <= 0xdf) {
+        if (byte >= 0xc2 and byte <= 0xdf) {
             rd.buf[0] = byte;
             rd.pos = 1;
             rd.state = .utf8_2;
@@ -243,11 +243,17 @@ pub fn parseSgrMouse(params: []const u8, release: bool) ?Event {
     const btn_type = btn & 0x03;
     const wheel_up = (btn & 0xC3) == 0x40;
     const wheel_down = (btn & 0xC3) == 0x41;
+    const wheel_left = (btn & 0xC3) == 0x42;
+    const wheel_right = (btn & 0xC3) == 0x43;
 
     const button: MouseButton = if (wheel_up)
         .scroll_up
     else if (wheel_down)
         .scroll_down
+    else if (wheel_left)
+        .scroll_left
+    else if (wheel_right)
+        .scroll_right
     else if (release)
         .release
     else switch (btn_type) {

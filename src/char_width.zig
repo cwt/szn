@@ -89,9 +89,6 @@ pub fn charWidth(cp: u21) u2 {
         if (cp < 0x20 or (cp >= 0x7F and cp <= 0xA0)) return 0;
         return 1;
     }
-    // Control characters C1
-    if (cp >= 0x80 and cp <= 0x9F) return 0;
-
     // Binary search in the non-trivial ranges table
     if (searchTable(cp, &zero_width_ranges)) return 0;
     if (searchTable(cp, &wide_ranges)) return 2;

@@ -11,7 +11,7 @@ fn setupServer(allocator: std.mem.Allocator) !Server {
     {
         var c = try parse("new-session test", allocator);
         defer c.deinit(allocator);
-        _ = c.exec(&server);
+        if (c.exec(&server) != .ok) return error.ExecFailed;
     }
     return server;
 }

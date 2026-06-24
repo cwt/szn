@@ -93,9 +93,10 @@ pub const Packet = struct {
     }
 
     pub fn make(msg_type: MessageType, data: []const u8) Packet {
+        const total_len = 5 + data.len;
         return Packet{
             .header = .{
-                .length = @as(u32, @intCast(5 + data.len)),
+                .length = if (total_len > std.math.maxInt(u32)) std.math.maxInt(u32) else @as(u32, @intCast(total_len)),
                 .msg_type = @intFromEnum(msg_type),
             },
             .data = data,

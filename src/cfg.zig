@@ -186,7 +186,7 @@ fn parseSet(allocator: std.mem.Allocator, args: []const u8, result: *ParseResult
             'g' => flags.flags.global = true,
             's' => flags.flags.session = true,
             'w' => flags.flags.window = true,
-            'u' => return, // unset (handled elsewhere)
+            'u' => return,
             else => break,
         }
         remaining = std.mem.trim(u8, if (remaining.len > 2) remaining[2..] else "", " \t");

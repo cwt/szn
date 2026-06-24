@@ -55,7 +55,7 @@ pub fn createListener() Error!i32 {
     }
     @memcpy(addr.path[0..path.len], path);
 
-    _ = try mapErr(c.bind(fd, @ptrCast(&addr), @sizeOf(c.sockaddr.un)));
+    _ = try mapErr(c.bind(fd, @ptrCast(&addr), @as(c.socklen_t, @intCast(@offsetOf(c.sockaddr.un, "path") + path.len + 1))));
     _ = try mapErr(c.listen(fd, 128));
 
     // Child processes must not inherit the listener socket

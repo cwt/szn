@@ -82,10 +82,12 @@ pub const Client = struct {
             off += n;
         }
 
+        const msg_type_byte = hdr[4];
+        _ = protocol.MessageType.fromByte(msg_type_byte) orelse return error.InvalidPacket;
         return protocol.Packet{
             .header = .{
                 .length = len,
-                .msg_type = hdr[4],
+                .msg_type = msg_type_byte,
             },
             .data = body,
             .is_owned = true,

@@ -364,7 +364,7 @@ pub const Display = struct {
         try self.writeBytes(" [");
         try self.writeBytes(session_name);
         try self.writeBytes("]");
-        col += 3 + @as(u32, @intCast(session_name.len));
+        col +|= 3 + @as(u32, @intCast(session_name.len));
 
         for (windows, 0..) |win, idx| {
             const is_active = (win == active_window);
@@ -377,14 +377,14 @@ pub const Display = struct {
             var win_idx_buf: [32]u8 = undefined;
             const win_idx_str = std.fmt.bufPrint(&win_idx_buf, " {d}:", .{idx}) catch " win:";
             try self.writeBytes(win_idx_str);
-            col += @intCast(win_idx_str.len);
+            col +|= @intCast(win_idx_str.len);
 
             try self.writeBytes(win.name);
-            col += @intCast(win.name.len);
+            col +|= @intCast(win.name.len);
 
             if (suffix.len > 0) {
                 try self.writeBytes(suffix);
-                col += @intCast(suffix.len);
+                col +|= @intCast(suffix.len);
             }
 
             if (is_active) {

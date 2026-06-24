@@ -407,7 +407,7 @@ fn expandTruncate(allocator: std.mem.Allocator, content: []const u8, ctx: *const
 
     var n: usize = 0;
     while (i < content.len and std.ascii.isDigit(content[i])) {
-        n = n * 10 + (content[i] - '0');
+        n = n *% 10 +% (content[i] - '0');
         i += 1;
     }
 
@@ -454,7 +454,7 @@ fn splitArgs(allocator: std.mem.Allocator, content: []const u8, args: *std.Array
         i += 1;
     }
 
-    if (start <= content.len) {
+    if (start < content.len) {
         const arg = try allocator.dupe(u8, content[start..]);
         try args.append(allocator, arg);
     }

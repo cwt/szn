@@ -38,6 +38,8 @@ pub const MouseButton = enum(u8) {
     release,
     scroll_up,
     scroll_down,
+    scroll_left,
+    scroll_right,
 };
 
 pub const Key = union(enum) {
@@ -310,6 +312,8 @@ pub fn format(key: Key, buf: []u8) []const u8 {
                 .release => "MouseUp1",
                 .scroll_up => "WheelUp",
                 .scroll_down => "WheelDown",
+                .scroll_left => "WheelLeft",
+                .scroll_right => "WheelRight",
             };
             return std.fmt.bufPrint(buf, "{s}({d},{d})", .{ btn, m.x, m.y }) catch "[?]";
         },
