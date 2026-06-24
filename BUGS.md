@@ -1573,7 +1573,7 @@ When ESC is seen inside a SOS/PM/APC string, the parser transitions to `.esc` in
 ### 132. `server/loop.zig` — `addFd` silently ignores duplicate fd without updating events/udata
 **File:** `src/server/loop.zig:38–39`
 **Severity:** MEDIUM
-**Status:** ❌ UNRESOLVED (bug #38 was marked FIXED for duplicate registration, but this is a different issue — updating existing entries)
+**Status:** ✅ FIXED — `addFd` now updates events and udata for existing fd entries. Test added. (bug #38 was marked FIXED for duplicate registration, but this is a different issue — updating existing entries)
 
 ```zig
 for (self.fds.items) |f| {

@@ -35,8 +35,11 @@ pub const Loop = struct {
     }
 
     pub fn addFd(self: *Loop, allocator: std.mem.Allocator, fd: i32, events: i16, udata: ?*anyopaque) Error!void {
-        for (self.fds.items) |f| {
-            if (f.fd == fd) return;
+        for (self.fds.items) |*f| {
+            if (f.fd == fd) {
+                f.* = FdEntry{ .fd = fd, .events = events, .udata = udata };
+                return;
+            }
         }
         try self.fds.append(allocator, FdEntry{
             .fd = fd,
@@ -122,4 +125,19 @@ test "loop handles more than 64 fds without stack overflow" {
 
     const events = try loop.pollOnce(testing.allocator, 0);
     try testing.expectEqual(@as(usize, 0), events.len);
+}
+
+test "addFd updates existing fd events and udata — bug #132" {
+    var loop = Loop.init();
+    defer loop.deinit(testing.allocator);
+
+    try loop.addFd(testing.allocator, 42, @as(i16, @intCast(std.posix.POLL.IN)), @as(?*anyopaque, @ptrFromInt(@as(usize, 1))));
+    try testing.expectEqual(@as(usize, 1), loop.fds.items.len);
+    try testing.expectEqual(@as(i32, 42), loop.fds.items[0].fd);
+
+    // Re-add same fd with different events and udata
+    try loop.addFd(testing.allocator, 42, @as(i16, @intCast(std.posix.POLL.OUT)), @as(?*anyopaque, @ptrFromInt(@as(usize, 2))));
+    try testing.expectEqual(@as(usize, 1), loop.fds.items.len); // no duplicate
+    try testing.expectEqual(@as(i16, @intCast(std.posix.POLL.OUT)), loop.fds.items[0].events);
+    try testing.expectEqual(@as(?*anyopaque, @ptrFromInt(@as(usize, 2))), loop.fds.items[0].udata);
 }
