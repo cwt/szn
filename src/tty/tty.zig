@@ -8,6 +8,7 @@ const Cell = grid.Cell;
 const Attr = grid.Attr;
 const CursorStyle = screen.CursorStyle;
 const fd_writer = @import("fd_writer.zig");
+const char_width = @import("../char_width.zig");
 const Writer = std.Io.Writer;
 
 pub const Error = fd_writer.Error;
@@ -364,17 +365,36 @@ pub const Term = struct {
     // ── Drawing ──
 
     pub fn writeCell(self: *Term, cell: Cell) Error!void {
+        // Skip padding cells — they belong to the previous wide character
+        if (cell.is_padding) return;
+
         try self.setAttributes(cell.attr);
         try self.setForeground(cell.fg);
         try self.setBackground(cell.bg);
+
         var buf: [4]u8 = undefined;
         const encoded_len = std.unicode.utf8Encode(cell.char, &buf) catch {
-            // If encoding fails, write a placeholder '?' and skip
             try self.write("?");
             if (self.cx >= 0) self.cx += 1;
             return;
         };
         try self.write(buf[0..encoded_len]);
+
+        if (cell.comb1 != 0) {
+            const cp = char_width.combiningCodepoint(cell.comb1);
+            if (cp != 0) {
+                const clen = std.unicode.utf8Encode(cp, &buf) catch return;
+                try self.write(buf[0..clen]);
+            }
+        }
+        if (cell.comb2 != 0) {
+            const cp = char_width.combiningCodepoint(cell.comb2);
+            if (cp != 0) {
+                const clen = std.unicode.utf8Encode(cp, &buf) catch return;
+                try self.write(buf[0..clen]);
+            }
+        }
+
         if (self.cx >= 0) self.cx += 1;
     }
 

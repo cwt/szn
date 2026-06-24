@@ -2,6 +2,7 @@ const std = @import("std");
 const testing = std.testing;
 const colour = @import("colour.zig");
 const grid = @import("grid.zig");
+const char_width = @import("char_width.zig");
 
 /// A sixel image stored as the raw DCS bytes (ESC P ... ESC \) received from
 /// the child process. We keep the original bytes so we can re-emit them
@@ -229,6 +230,67 @@ pub const Screen = struct {
             return;
         }
         if (char < 0x20 and char != '\x1b') return;
+
+        const width = char_width.charWidth(char);
+
+        if (width == 0) {
+            if (self.cursor.x == 0) return;
+            var base_x = self.cursor.x - 1;
+            var prev_cell = self.grid.getCell(base_x, self.cursor.y);
+            if (prev_cell.is_padding) {
+                if (self.cursor.x < 2) return;
+                base_x = self.cursor.x - 2;
+                prev_cell = self.grid.getCell(base_x, self.cursor.y);
+            }
+            if (prev_cell.char == ' ' or prev_cell.char == 0) return;
+            const cidx = char_width.combiningIndex(char);
+            if (cidx == 0) return;
+            if (prev_cell.comb1 == 0) {
+                prev_cell.comb1 = cidx;
+            } else if (prev_cell.comb2 == 0) {
+                prev_cell.comb2 = cidx;
+            }
+            self.grid.setCell(base_x, self.cursor.y, prev_cell);
+            self.dirty = true;
+            return;
+        }
+
+        if (width == 2) {
+            if (self.mode.line_wrap and self.cursor.x + 2 > self.grid.width) {
+                self.cursor.x = 0;
+                if (self.cursor.y + 1 >= self.grid.height) {
+                    try self.grid.scrollUp();
+                    const bottom_line = self.grid.getLineMut(self.grid.height - 1);
+                    @memset(bottom_line.cells.items, self.eraseCell());
+                    bottom_line.dirty = true;
+                } else if (self.scroll_region != null and self.cursor.y == self.scroll_region.?[1]) {
+                    try self.scrollUpInRegion();
+                } else {
+                    self.cursor.y += 1;
+                }
+            }
+            if (self.cursor.x + 1 >= self.grid.width and !self.mode.line_wrap) return;
+            if (self.cursor.x >= self.grid.width) return;
+
+            var cell = self.cur_cell;
+            cell.char = char;
+            self.grid.setCell(self.cursor.x, self.cursor.y, cell);
+
+            var pad_cell = self.cur_cell;
+            pad_cell.char = 0;
+            pad_cell.is_padding = true;
+            if (self.cursor.x + 1 < self.grid.width) {
+                self.grid.setCell(self.cursor.x + 1, self.cursor.y, pad_cell);
+            }
+            self.dirty = true;
+
+            if (self.mode.line_wrap) {
+                self.cursor.x += 2;
+            } else {
+                self.cursor.x = @min(self.cursor.x + 2, self.grid.width - 1);
+            }
+            return;
+        }
 
         if (self.mode.line_wrap) {
             if (self.cursor.x >= self.grid.width) {
@@ -1212,5 +1274,80 @@ test "scrollUp and scrollDown respect scroll region" {
     try testing.expectEqual(@as(u21, '3'), screen.grid.getCell(0, 3).char);
 }
 
+test "writeChar: combining character attaches to previous cell" {
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
 
+    try screen.writeChar('ก');
+    try testing.expectEqual(@as(u32, 1), screen.cursor.x);
+    try testing.expectEqual(@as(u21, 'ก'), screen.grid.getCell(0, 0).char);
+    try testing.expectEqual(@as(u13, 0), screen.grid.getCell(0, 0).comb1);
+    try testing.expectEqual(@as(u13, 0), screen.grid.getCell(0, 0).comb2);
 
+    // Thai tone mark (mai ek, U+0E48) — zero-width combining
+    try screen.writeChar(0x0E48);
+    // Cursor should NOT advance for combining char
+    try testing.expectEqual(@as(u32, 1), screen.cursor.x);
+    // Base cell should now have the combining mark in comb1
+    try testing.expectEqual(@as(u21, 'ก'), screen.grid.getCell(0, 0).char);
+    try testing.expect(char_width.combiningCodepoint(screen.grid.getCell(0, 0).comb1) == 0x0E48);
+    try testing.expectEqual(@as(u13, 0), screen.grid.getCell(0, 0).comb2);
+}
+
+test "writeChar: two combining marks stack correctly (Thai ที่)" {
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+
+    try screen.writeChar(0x0E17); // ท (tho thahan)
+    try testing.expectEqual(@as(u32, 1), screen.cursor.x);
+
+    try screen.writeChar(0x0E35); // ี (sara ii) — first combining
+    try testing.expectEqual(@as(u32, 1), screen.cursor.x); // no advance
+    try testing.expect(char_width.combiningCodepoint(screen.grid.getCell(0, 0).comb1) == 0x0E35);
+    try testing.expectEqual(@as(u13, 0), screen.grid.getCell(0, 0).comb2);
+
+    try screen.writeChar(0x0E48); // ่ (mai ek) — second combining
+    try testing.expectEqual(@as(u32, 1), screen.cursor.x); // no advance
+    // Both combining marks should be preserved
+    try testing.expect(char_width.combiningCodepoint(screen.grid.getCell(0, 0).comb1) == 0x0E35);
+    try testing.expect(char_width.combiningCodepoint(screen.grid.getCell(0, 0).comb2) == 0x0E48);
+}
+
+test "writeChar: combining char at column 0 is ignored" {
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+
+    screen.cursor.x = 0;
+    try screen.writeChar(0x0E48); // combining mark at x=0
+    // Cursor should not move, no cell written
+    try testing.expectEqual(@as(u32, 0), screen.cursor.x);
+    try testing.expectEqual(@as(u21, ' '), screen.grid.getCell(0, 0).char);
+}
+
+test "writeChar: wide character writes padding cell" {
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+
+    try screen.writeChar(0x4E2D); // CJK ideograph (wide)
+    try testing.expectEqual(@as(u32, 2), screen.cursor.x);
+    try testing.expectEqual(@as(u21, 0x4E2D), screen.grid.getCell(0, 0).char);
+    try testing.expect(!screen.grid.getCell(0, 0).is_padding);
+
+    const pad_cell = screen.grid.getCell(1, 0);
+    try testing.expect(pad_cell.is_padding);
+}
+
+test "writeChar: combining after wide character" {
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+
+    try screen.writeChar(0x4E2D); // wide CJK
+    try testing.expectEqual(@as(u32, 2), screen.cursor.x);
+
+    try screen.writeChar(0x0301); // combining acute accent
+    // Cursor should NOT advance
+    try testing.expectEqual(@as(u32, 2), screen.cursor.x);
+    // Combining should be on the base wide character, not the padding
+    const base_cell = screen.grid.getCell(0, 0);
+    try testing.expect(char_width.combiningCodepoint(base_cell.comb1) == 0x0301);
+}

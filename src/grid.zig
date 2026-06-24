@@ -22,11 +22,12 @@ pub const Attr = packed struct(u16) {
 
 pub const Cell = packed struct(u128) {
     char: u21,
+    comb1: u13 = 0,
+    comb2: u13 = 0,
     attr: Attr,
     fg: Colour,
     bg: Colour,
-    _padding: u6 = 0,
-    _pad2: u21 = 0,
+    is_padding: bool = false,
 
     pub fn empty() Cell {
         return .{

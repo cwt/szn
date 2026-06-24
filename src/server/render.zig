@@ -8,6 +8,7 @@ const Attr = @import("../grid.zig").Attr;
 const Window = @import("../window.zig").Window;
 const Pane = @import("../window.zig").Pane;
 const tty = @import("../tty/tty.zig");
+const char_width = @import("../char_width.zig");
 
 pub const PaneBounds = struct {
     pane: *Pane,
@@ -256,6 +257,8 @@ pub const Display = struct {
                     }
                 }
 
+                if (cell.is_padding) continue;
+
                 if (@as(u32, @bitCast(cell.fg)) != @as(u32, @bitCast(active_fg)) or
                     @as(u32, @bitCast(cell.bg)) != @as(u32, @bitCast(active_bg)) or
                     @as(u16, @bitCast(cell.attr)) != @as(u16, @bitCast(active_attr)))
@@ -328,6 +331,21 @@ pub const Display = struct {
                         continue;
                     };
                     try self.writeBytes(buf[0..len]);
+
+                    if (cell.comb1 != 0) {
+                        const ccp1 = char_width.combiningCodepoint(cell.comb1);
+                        if (ccp1 != 0) {
+                            const clen = std.unicode.utf8Encode(ccp1, &buf) catch unreachable;
+                            try self.writeBytes(buf[0..clen]);
+                        }
+                    }
+                    if (cell.comb2 != 0) {
+                        const ccp2 = char_width.combiningCodepoint(cell.comb2);
+                        if (ccp2 != 0) {
+                            const clen = std.unicode.utf8Encode(ccp2, &buf) catch unreachable;
+                            try self.writeBytes(buf[0..clen]);
+                        }
+                    }
                 } else {
                     try self.writeBytes("?");
                 }
