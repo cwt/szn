@@ -329,7 +329,7 @@ fn runServerDaemon(allocator: std.mem.Allocator) Error!void {
     _ = c.close(0);
     _ = c.close(1);
     _ = c.close(2);
-    const dev_null = c.open("/dev/null", c.O{ .ACCMODE = .RDWR }, 0);
+    const dev_null = c.open("/dev/null", c.O{ .ACCMODE = .RDWR }, @as(c_uint, 0));
     if (dev_null >= 0) {
         _ = c.dup2(dev_null, 0);
         _ = c.dup2(dev_null, 1);
