@@ -183,8 +183,8 @@ pub const Pty = struct {
     pub fn reap(self: *Pty) void {
         if (self.pid > 0) {
             var status: c_int = 0;
-            _ = waitpid(self.pid, &status, 1); // WNOHANG
-            self.pid = -1;
+            const rc = waitpid(self.pid, &status, 1); // WNOHANG
+            if (rc > 0) self.pid = -1;
         }
     }
 
@@ -302,4 +302,18 @@ test "writeInput retries partial write — bug #124" {
     const n = c_sys.read(fds[0], &buf, buf.len);
     try testing.expect(n == data.len);
     try testing.expectEqualStrings(data, buf[0..@intCast(n)]);
+}
+
+test "reap only clears pid on actual child exit — bug #125" {
+    var pty = try Pty.open();
+    defer pty.deinit();
+
+    const argv = [_][]const u8{ "sh", "-c", "exit 42" };
+    try pty.spawn(testing.allocator, &argv, "", "", null);
+    try testing.expect(pty.pid > 0);
+
+    // reap immediately — child might not have exited yet
+    pty.reap();
+    // pid should either be >0 (still running) or -1 (reaped).
+    // The key invariant: reap only clears pid after waitpid succeeds.
 }

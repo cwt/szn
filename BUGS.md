@@ -1453,7 +1453,7 @@ If `write()` returns `0 <= n < data.len`, the remaining bytes are silently dropp
 ### 125. `server/pty.zig` — `reap` uses WNOHANG but unconditionally sets pid to -1
 **File:** `src/server/pty.zig:176–181`
 **Severity:** MEDIUM
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — `reap` now only sets `pid = -1` when `waitpid` returns > 0 (child reaped). If the child is still running, pid remains valid for future reap/kill.
 
 ```zig
 pub fn reap(self: *Pty) void {
