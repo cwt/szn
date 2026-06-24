@@ -1383,7 +1383,7 @@ Unlike `stripInlineComment` which tracks `\\` escapes, this function treats any 
 ### 120. `log.zig` — Data race on `log_fd` and `log_fd_failed` globals
 **File:** `src/log.zig:31–32, 94–107`
 **Severity:** MEDIUM
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — `log_fd_failed` changed to `std.atomic.Value(bool)`. All reads/writes use `.load(.seq_cst)` / `.store(.seq_cst)`.
 
 ```zig
 var log_fd: ?std.posix.fd_t = null;

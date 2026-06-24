@@ -29,7 +29,7 @@ const O_TRUNC = switch (builtin.os.tag) {
 };
 
 var log_fd: ?std.posix.fd_t = null;
-var log_fd_failed: bool = false;
+var log_fd_failed: std.atomic.Value(bool) = std.atomic.Value(bool).init(false);
 var log_enabled: std.atomic.Value(bool) = std.atomic.Value(bool).init(false);
 
 fn resolveLogPath(buf: []u8) Error![:0]const u8 {
@@ -92,15 +92,15 @@ pub fn logFn(
     _ = scope;
     if (!log_enabled.load(.seq_cst)) return;
     if (log_fd == null) {
-        if (log_fd_failed) return;
+        if (log_fd_failed.load(.seq_cst)) return;
         var path_buf: [256]u8 = undefined;
         const path = resolveLogPath(&path_buf) catch {
-            log_fd_failed = true;
+            log_fd_failed.store(true, .seq_cst);
             return;
         };
         const fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0o600);
         if (fd < 0) {
-            log_fd_failed = true;
+            log_fd_failed.store(true, .seq_cst);
             return;
         }
         log_fd = fd;
@@ -137,7 +137,7 @@ pub fn enable(path_or_default: []const u8) void {
     if (fd < 0) return;
     if (log_fd) |old| _ = c.close(old);
     log_fd = fd;
-    log_fd_failed = false;
+    log_fd_failed.store(false, .seq_cst);
     log_enabled.store(true, .seq_cst);
 }
 
@@ -146,7 +146,7 @@ pub fn disable() void {
         _ = c.close(fd);
     }
     log_fd = null;
-    log_fd_failed = false;
+    log_fd_failed.store(false, .seq_cst);
     log_enabled.store(false, .seq_cst);
 }
 
@@ -245,20 +245,20 @@ test "logFn handles buffer overflow without writing garbage" {
 
 test "logFn does not retry open after failure" {
     const old_log_fd = log_fd;
-    const old_log_fd_failed = log_fd_failed;
+    const old_log_fd_failed = log_fd_failed.load(.seq_cst);
     const old_enabled = log_enabled.load(.seq_cst);
     defer {
         log_fd = old_log_fd;
-        log_fd_failed = old_log_fd_failed;
+        log_fd_failed.store(old_log_fd_failed, .seq_cst);
         log_enabled.store(old_enabled, .seq_cst);
     }
     log_fd = null;
-    log_fd_failed = true;
+    log_fd_failed.store(true, .seq_cst);
     log_enabled.store(true, .seq_cst);
 
     logFn(.info, .default, "should not retry", .{});
     try std.testing.expect(log_fd == null);
-    try std.testing.expect(log_fd_failed);
+    try std.testing.expect(log_fd_failed.load(.seq_cst));
 }
 
 test "logFn silently discards when not enabled" {
@@ -266,15 +266,15 @@ test "logFn silently discards when not enabled" {
     _ = std.c.unlink(sub_path);
 
     const old_log_fd = log_fd;
-    const old_log_fd_failed = log_fd_failed;
+    const old_log_fd_failed = log_fd_failed.load(.seq_cst);
     const old_enabled = log_enabled.load(.seq_cst);
     defer {
         log_fd = old_log_fd;
-        log_fd_failed = old_log_fd_failed;
+        log_fd_failed.store(old_log_fd_failed, .seq_cst);
         log_enabled.store(old_enabled, .seq_cst);
     }
     log_fd = null;
-    log_fd_failed = false;
+    log_fd_failed.store(false, .seq_cst);
     log_enabled.store(false, .seq_cst);
 
     logFn(.info, .default, "this should not appear", .{});
@@ -311,15 +311,15 @@ test "enable and disable cycle" {
     defer _ = std.c.unlink(sub_path);
 
     const old_log_fd = log_fd;
-    const old_log_fd_failed = log_fd_failed;
+    const old_log_fd_failed = log_fd_failed.load(.seq_cst);
     const old_enabled = log_enabled.load(.seq_cst);
     defer {
         log_fd = old_log_fd;
-        log_fd_failed = old_log_fd_failed;
+        log_fd_failed.store(old_log_fd_failed, .seq_cst);
         log_enabled.store(old_enabled, .seq_cst);
     }
     log_fd = null;
-    log_fd_failed = false;
+    log_fd_failed.store(false, .seq_cst);
     log_enabled.store(false, .seq_cst);
 
     enable(sub_path);
