@@ -147,28 +147,32 @@ pub fn keysEqual(a: Key, b: Key) bool {
             break :blk ac_code == bc_code and
                 ac.mod.ctrl == bc.mod.ctrl and
                 ac.mod.alt == bc.mod.alt and
-                ac.mod.shift == bc.mod.shift;
+                ac.mod.shift == bc.mod.shift and
+                ac.mod.meta == bc.mod.meta;
         },
         .function => |af| blk: {
             const bf = b.function;
             break :blk af.key == bf.key and
                 af.mod.ctrl == bf.mod.ctrl and
                 af.mod.alt == bf.mod.alt and
-                af.mod.shift == bf.mod.shift;
+                af.mod.shift == bf.mod.shift and
+                af.mod.meta == bf.mod.meta;
         },
         .arrow => |aa| blk: {
             const ba = b.arrow;
             break :blk aa.key == ba.key and
                 aa.mod.ctrl == ba.mod.ctrl and
                 aa.mod.alt == ba.mod.alt and
-                aa.mod.shift == ba.mod.shift;
+                aa.mod.shift == ba.mod.shift and
+                aa.mod.meta == ba.mod.meta;
         },
         .special => |as| blk: {
             const bs = b.special;
             break :blk as.key == bs.key and
                 as.mod.ctrl == bs.mod.ctrl and
                 as.mod.alt == bs.mod.alt and
-                as.mod.shift == bs.mod.shift;
+                as.mod.shift == bs.mod.shift and
+                as.mod.meta == bs.mod.meta;
         },
         .mouse => false,
     };
@@ -409,6 +413,42 @@ test "keys equal same special" {
     const a = Key{ .special = .{ .key = .enter, .mod = .{} } };
     const b = Key{ .special = .{ .key = .enter, .mod = .{} } };
     try testing.expect(keysEqual(a, b));
+}
+
+test "keys not equal different meta modifier — bug #90" {
+    const a = Key{ .char = .{ .code = 'a', .mod = .{} } };
+    const b = Key{ .char = .{ .code = 'a', .mod = .{ .meta = true } } };
+    try testing.expect(!keysEqual(a, b));
+}
+
+test "keys equal same meta modifier — bug #90" {
+    const a = Key{ .char = .{ .code = 'a', .mod = .{ .meta = true } } };
+    const b = Key{ .char = .{ .code = 'a', .mod = .{ .meta = true } } };
+    try testing.expect(keysEqual(a, b));
+}
+
+test "keys not equal meta vs alt — bug #90" {
+    const a = Key{ .char = .{ .code = 'a', .mod = .{ .meta = true } } };
+    const b = Key{ .char = .{ .code = 'a', .mod = .{ .alt = true } } };
+    try testing.expect(!keysEqual(a, b));
+}
+
+test "arrow keys not equal different meta modifier — bug #90" {
+    const a = Key{ .arrow = .{ .key = .up, .mod = .{} } };
+    const b = Key{ .arrow = .{ .key = .up, .mod = .{ .meta = true } } };
+    try testing.expect(!keysEqual(a, b));
+}
+
+test "function keys not equal different meta modifier — bug #90" {
+    const a = Key{ .function = .{ .key = .f1, .mod = .{} } };
+    const b = Key{ .function = .{ .key = .f1, .mod = .{ .meta = true } } };
+    try testing.expect(!keysEqual(a, b));
+}
+
+test "special keys not equal different meta modifier — bug #90" {
+    const a = Key{ .special = .{ .key = .enter, .mod = .{} } };
+    const b = Key{ .special = .{ .key = .enter, .mod = .{ .meta = true } } };
+    try testing.expect(!keysEqual(a, b));
 }
 
 test "dispatcher two prefixes in sequence" {

@@ -140,6 +140,15 @@ pub const Grid = struct {
                 @memset(line.cells.items[old_len..], Cell.empty());
             }
         }
+        for (self.history.items) |*line| {
+            const old_len = line.cells.items.len;
+            if (old_len > new_width) {
+                line.cells.shrinkRetainingCapacity(new_width);
+            } else if (old_len < new_width) {
+                try line.cells.resize(self.allocator, new_width);
+                @memset(line.cells.items[old_len..], Cell.empty());
+            }
+        }
         try self.resize(new_height);
     }
 
@@ -542,4 +551,22 @@ test "write string across grid" {
         const cell = grid.getCell(@intCast(i), 0);
         try testing.expectEqual(@as(u21, c), cell.char);
     }
+}
+
+test "setSize resizes history lines — bug #92" {
+    var grid = try Grid.init(testing.allocator, 80, 5);
+    defer grid.deinit();
+
+    // Fill grid and scroll some lines into history
+    for (0..5) |i| {
+        grid.writeChar(0, @intCast(i), @intCast('A' + i));
+    }
+    for (0..3) |_| try grid.scrollUp();
+    try testing.expectEqual(@as(usize, 3), grid.history.items.len);
+    try testing.expectEqual(@as(usize, 80), grid.history.items[0].cells.items.len);
+
+    // Resize width to 40 — history lines should be resized too
+    try grid.setSize(40, 5);
+    try testing.expectEqual(@as(u32, 40), grid.width);
+    try testing.expectEqual(@as(usize, 40), grid.history.items[0].cells.items.len);
 }

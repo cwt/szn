@@ -68,7 +68,13 @@ pub fn logFn(
     const fd = log_fd.?;
     var buf: [4096]u8 = undefined;
     const prefix = std.fmt.bufPrint(&buf, "[{s}] ", .{@tagName(level)}) catch return;
-    const msg = std.fmt.bufPrint(buf[prefix.len..], format, args) catch "log message too long";
+    const msg = std.fmt.bufPrint(buf[prefix.len..], format, args) catch {
+        // bufPrint failed — write prefix + fallback directly to avoid
+        // reading uninitialized stack bytes past the prefix.
+        writeAllRaw(fd, buf[0..prefix.len]);
+        writeAllRaw(fd, "log message too long\n");
+        return;
+    };
     const total_len = prefix.len + msg.len;
     if (total_len < buf.len) {
         buf[total_len] = '\n';
@@ -501,45 +507,88 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
     }
 }
 
-test "logFn writes single line atomically" {
-    const allocator = std.testing.allocator;
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
+test "logFn writes single line atomically — bug #89" {
+    // Use a temp file via posix syscalls to avoid Io.File API differences
+    const sub_path = "/tmp/szn_test_log_atomic.log";
+    const fd = std.c.open(sub_path, std.c.O{
+        .ACCMODE = .RDWR,
+        .CREAT = true,
+        .TRUNC = true,
+    }, @as(c_uint, 0o644));
+    if (fd < 0) return error.FileOpen;
+    defer _ = std.c.close(fd);
+    defer _ = std.c.unlink(sub_path);
 
-    const file = try tmp.dir.createFile("test_log.log", .{ .read = true });
-    defer file.close();
-
-    // Temporarily redirect log_fd to our temp file
     const old_log_fd = log_fd;
     defer log_fd = old_log_fd;
-    log_fd = file.handle;
+    log_fd = fd;
 
     logFn(.info, .default, "Test formatted log: {d} + {d} = {d}", .{ 1, 2, 3 });
 
-    // Seek back to start and read
-    try file.seekTo(0);
-    const contents = try file.readToEndAlloc(allocator, 1024);
-    defer allocator.free(contents);
+    // Read back using c.pread (available via libc)
+    var buf: [1024]u8 = undefined;
+    const n = std.c.pread(fd, &buf, buf.len, 0);
+    if (n < 0) return error.ReadFailed;
 
-    try std.testing.expectEqualStrings("[info] Test formatted log: 1 + 2 = 3\n", contents);
+    try std.testing.expectEqualStrings("[info] Test formatted log: 1 + 2 = 3\n", buf[0..@intCast(n)]);
+}
+
+test "logFn handles buffer overflow without writing garbage — bug #89" {
+    const sub_path = "/tmp/szn_test_log_overflow.log";
+    const fd = std.c.open(sub_path, std.c.O{
+        .ACCMODE = .RDWR,
+        .CREAT = true,
+        .TRUNC = true,
+    }, @as(c_uint, 0o644));
+    if (fd < 0) return error.FileOpen;
+    defer _ = std.c.close(fd);
+    defer _ = std.c.unlink(sub_path);
+
+    const old_log_fd = log_fd;
+    defer log_fd = old_log_fd;
+    log_fd = fd;
+
+    // bufPrint for the message part has ~4096 - prefix.len bytes.
+    // Send a format string that produces >4096 bytes of output to trigger
+    // the overflow fallback path.
+    var big_buf: [5000]u8 = undefined;
+    @memset(big_buf[0..5000], 'X');
+    const big_str = big_buf[0..4096];
+    logFn(.info, .default, "{s}", .{big_str});
+
+    // Read back using c.pread
+    var read_buf: [8192]u8 = undefined;
+    const n = std.c.pread(fd, &read_buf, read_buf.len, 0);
+    if (n < 0) return error.ReadFailed;
+
+    // Should contain the fallback message "log message too long"
+    // OR the actual formatted prefix + message + newline.
+    // Either way, no garbage bytes (uninitialized stack data) should be written.
+    try std.testing.expect(n > 0);
+    try std.testing.expect(read_buf[@intCast(n - 1)] == '\n');
+    // Verify no null bytes (garbage would include uninitialized data)
+    try std.testing.expect(std.mem.indexOfScalar(u8, read_buf[0..@intCast(n)], @as(u8, 0)) == null);
 }
 
 test "resolveLogPath fallback on invalid XDG_STATE_HOME" {
     const old_xdg = std.c.getenv("XDG_STATE_HOME");
-    
-    _ = std.c.setenv("XDG_STATE_HOME", "/nonexistent/invalid/dir/szn_test", 1);
-    
+
+    // setenv is not declared in std.c, declare it locally
+    const setenv = struct {
+        extern "c" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
+    }.setenv;
+
+    _ = setenv("XDG_STATE_HOME", "/nonexistent/invalid/dir/szn_test", 1);
+
     var path_buf: [256]u8 = undefined;
     const path = try resolveLogPath(&path_buf);
-    
+
     try std.testing.expectEqualStrings("/tmp/szn.log", path);
 
     if (old_xdg) |old| {
-        _ = std.c.setenv("XDG_STATE_HOME", old, 1);
+        _ = setenv("XDG_STATE_HOME", old, 1);
     } else {
-        // Since std.c may not expose unsetenv uniformly on all systems,
-        // we can set it to an empty value.
-        _ = std.c.setenv("XDG_STATE_HOME", "", 1);
+        _ = setenv("XDG_STATE_HOME", "", 1);
     }
 }
 

@@ -31,4 +31,5 @@ comptime {
     _ = @import("server/render.zig");
     _ = @import("tty/fd_writer.zig");
     _ = @import("integration.zig");
+    _ = @import("main.zig");
 }

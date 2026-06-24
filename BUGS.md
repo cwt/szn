@@ -973,7 +973,7 @@ Assumes `Options.set` always `dupe`s strings internally. If `Options.set` is eve
 ### 89. `logFn` writes garbage bytes from uninitialized buffer on `bufPrint` failure
 **File:** `src/main.zig:70–78`
 **Severity:** MEDIUM
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — catch block writes prefix + fallback directly instead of using `buf`.
 
 ```zig
 const msg = std.fmt.bufPrint(buf[prefix.len..], format, args) catch "log message too long";
@@ -985,12 +985,14 @@ if (total_len < buf.len) {
 
 When `bufPrint` fails, `msg` points to the static literal `"log message too long"` — outside `buf`. The code writes `buf[prefix.len..total_len]` which is uninitialized stack garbage between the prefix end and the start of the literal.
 
+**Fix:** The catch block now writes the prefix and fallback string directly via `writeAllRaw` and returns early, never reading uninitialized stack memory.
+
 ---
 
 ### 90. `keysEqual` ignores Meta modifier — impossible to bind Meta-modified keys
 **File:** `src/key_binding.zig:139–175`
 **Severity:** MEDIUM
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — added `.mod.meta` comparison to all four `keysEqual` branches. Unit tests added.
 
 ```zig
 break :blk ac_code == bc_code and
@@ -1007,7 +1009,7 @@ The `Modifier` struct has a `meta: bool` field, but `keysEqual` never compares i
 ### 91. `errdefer` registered after `Pane.init` in `Layout.splitPane` — leak on init failure
 **File:** `src/layout.zig:89–94`
 **Severity:** MEDIUM
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — restructured to catch Pane.init failure explicitly before registering the full-cleanup errdefer.
 
 ```zig
 const new_pane = try a.create(Pane);          // allocates Pane*
@@ -1025,7 +1027,7 @@ If `Pane.init` fails, the `try` propagates the error BEFORE the `errdefer` is re
 ### 92. History lines not resized when terminal width changes
 **File:** `src/grid.zig:130–143`
 **Severity:** MEDIUM
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — added history line resize loop after visible lines loop. Unit test added.
 
 ```zig
 pub fn setSize(self: *Grid, new_width: u32, new_height: u32) Error!void {
