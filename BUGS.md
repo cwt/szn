@@ -916,7 +916,7 @@ The `InputReader` has a fixed 64-byte buffer. For kitty extended key sequences w
 ### 85. DSR response silently dropped on `bufPrint` failure
 **File:** `src/input.zig:591–593`
 **Severity:** MEDIUM
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — increased DSR response buffer from 32 to 64 bytes and added `std.log.warn` on overflow.
 
 ```zig
 const rep = std.fmt.bufPrint(&rep_buf, "\x1b[{d};{d}R",
@@ -1154,8 +1154,8 @@ self.param_val = self.param_val * 10 + (byte - '0');
 |----------|-------|-------|----------------|------------|
 | Critical | 14 (10+4) | 11 | 3 | 0 |
 | High | 29 (18+11) | 28 | 1 | 0 |
-| Medium | 30 (17+13) | 21 | 1 | 8 |
+| Medium | 30 (17+13) | 22 | 1 | 7 |
 | Low | 26 (19+7) | 18 | 1 | 7 |
-| **Total** | **99 (64+35)** | **78** | **6** | **15** |
+| **Total** | **99 (64+35)** | **79** | **6** | **14** |
 
 

@@ -587,8 +587,11 @@ pub const InputParser = struct {
                 const n = self.param(0);
                 if (n == 6) {
                     if (self.pty) |pty| {
-                        var rep_buf: [32]u8 = undefined;
-                        const rep = std.fmt.bufPrint(&rep_buf, "\x1b[{d};{d}R", .{ self.screen.cursor.y + 1, self.screen.cursor.x + 1 }) catch return;
+                        var rep_buf: [64]u8 = undefined;
+                        const rep = std.fmt.bufPrint(&rep_buf, "\x1b[{d};{d}R", .{ self.screen.cursor.y + 1, self.screen.cursor.x + 1 }) catch {
+                            std.log.warn("DSR response buffer too small for cursor position", .{});
+                            return;
+                        };
                         pty.writeInput(rep) catch |err| {
                             std.log.warn("DSR writeInput error: {any}", .{err});
                         };
