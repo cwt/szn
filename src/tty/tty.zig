@@ -16,7 +16,7 @@ const attrFields = blk: {
     const all = std.meta.fields(Attr);
     break :blk all[0 .. all.len - 1]; // exclude _padding
 };
-const attrCodes = [_]u8{ 1, 2, 3, 4, 5, 7, 8, 9, 53, 4, 4 };
+const attrCodes = [_][]const u8{ "1", "2", "3", "4", "5", "7", "8", "9", "53", "21", "4:3" };
 
 comptime {
     // Guard against Attr field reordering: field count must match attrCodes
@@ -163,7 +163,7 @@ pub const Term = struct {
         inline for (attrFields, 0..) |field, i| {
             if (@field(attrs, field.name)) {
                 if (!first) try self.writeByte(';');
-                try self.print("{}", .{attrCodes[i]});
+                try self.write(attrCodes[i]);
                 first = false;
             }
         }
@@ -364,9 +364,9 @@ pub const Term = struct {
     // ── Drawing ──
 
     pub fn writeCell(self: *Term, cell: Cell) Error!void {
+        try self.setAttributes(cell.attr);
         try self.setForeground(cell.fg);
         try self.setBackground(cell.bg);
-        try self.setAttributes(cell.attr);
         var buf: [4]u8 = undefined;
         const encoded_len = std.unicode.utf8Encode(cell.char, &buf) catch {
             // If encoding fails, write a placeholder '?' and skip
@@ -764,6 +764,70 @@ test "mouse SGR mode" {
     const out2 = written(&term.writer);
     try testing.expect(std.mem.indexOf(u8, out2, "\x1b[?1000l") != null);
     try testing.expect(std.mem.indexOf(u8, out2, "\x1b[?1006l") != null);
+}
+
+test "double underline emits SGR 21 — C2 fix" {
+    var buf: [64]u8 = undefined;
+    var term = Term.init(Writer.fixed(&buf), 80, 24);
+
+    const cell = Cell{
+        .char = 'X',
+        .attr = .{ .double_underline = true },
+        .fg = Colour.default_(),
+        .bg = Colour.default_(),
+    };
+    try term.writeCell(cell);
+
+    const out = written(&term.writer);
+    try testing.expect(std.mem.indexOf(u8, out, "\x1b[21m") != null);
+}
+
+test "curly underline emits SGR 4:3 — C2 fix" {
+    var buf: [64]u8 = undefined;
+    var term = Term.init(Writer.fixed(&buf), 80, 24);
+
+    const cell = Cell{
+        .char = 'X',
+        .attr = .{ .curly_underline = true },
+        .fg = Colour.default_(),
+        .bg = Colour.default_(),
+    };
+    try term.writeCell(cell);
+
+    const out = written(&term.writer);
+    try testing.expect(std.mem.indexOf(u8, out, "\x1b[4:3m") != null);
+}
+
+test "setAttributes reset does not clobber colors — C3 fix" {
+    var buf: [128]u8 = undefined;
+    var term = Term.init(Writer.fixed(&buf), 80, 24);
+
+    // First set some attrs + color
+    var cell = Cell{
+        .char = 'A',
+        .attr = .{ .bold = true, .italic = true },
+        .fg = Colour.fromRgb(255, 0, 0),
+        .bg = Colour.default_(),
+    };
+    try term.writeCell(cell);
+    term.writer.end = 0;
+
+    // Now write a cell with fewer attrs — triggers reset path
+    cell = Cell{
+        .char = 'B',
+        .attr = .{ .bold = true },
+        .fg = Colour.fromRgb(0, 255, 0),
+        .bg = Colour.default_(),
+    };
+    try term.writeCell(cell);
+
+    const out = written(&term.writer);
+    // The reset (\x1b[m) must be followed by color sequences,
+    // not preceded by orphaned color escapes
+    const reset_pos = std.mem.indexOf(u8, out, "\x1b[m") orelse return error.TestFailed;
+    const fg_pos = std.mem.indexOf(u8, out, "\x1b[38;2;0;255;0m") orelse return error.TestFailed;
+    try testing.expect(reset_pos < fg_pos);
+    try testing.expect(std.mem.indexOf(u8, out, "B") != null);
 }
 
 test "draw screen draws all lines" {
