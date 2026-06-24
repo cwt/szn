@@ -3,7 +3,7 @@ const c = std.c;
 const protocol = @import("../server/protocol.zig");
 const connect = @import("connect.zig");
 
-pub const Error = protocol.Error || connect.Error || error{ConnectionClosed, ReadFailed, WriteFailed, InvalidPacket, TermTooLong};
+pub const Error = protocol.Error || connect.Error || error{ConnectionClosed, ReadFailed, WriteFailed, InvalidPacket, TermTooLong, PacketTooLarge};
 
 fn fdWrite(fd: i32, buf: []const u8) Error!usize {
     const n = std.c.write(fd, buf.ptr, buf.len);
@@ -44,6 +44,7 @@ pub const Client = struct {
     }
 
     fn sendPacket(self: *Client, msg_type: protocol.MessageType, data: []const u8) Error!void {
+        if (5 + data.len > 4096) return error.PacketTooLarge;
         const pkt = protocol.Packet.make(msg_type, data);
         var buf: [4096]u8 = undefined;
         const serialized = pkt.serialize(&buf);
@@ -84,3 +85,20 @@ pub const Client = struct {
         };
     }
 };
+
+test "sendPacket rejects oversized data" {
+    const testing = std.testing;
+
+    var fds: [2]i32 = undefined;
+    if (std.c.pipe(&fds) != 0) return error.Unexpected;
+    defer _ = std.c.close(fds[0]);
+    defer _ = std.c.close(fds[1]);
+
+    var client = Client{ .allocator = testing.allocator, .fd = fds[1] };
+
+    const big_data = try testing.allocator.alloc(u8, 4092);
+    defer testing.allocator.free(big_data);
+    @memset(big_data, 'A');
+
+    try testing.expectError(error.PacketTooLarge, client.sendPacket(.command, big_data));
+}

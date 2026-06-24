@@ -681,7 +681,7 @@ pub fn deinit(self: *Session, allocator: std.mem.Allocator) void {
 ### 69. Stack buffer overflow in `Client.sendPacket`
 **File:** `src/client/client.zig:46–52`
 **Severity:** HIGH
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — added bounds check for `5 + data.len > 4096` before serializing into fixed stack buffer. Unit test added.
 
 ```zig
 fn sendPacket(self: *Client, msg_type: protocol.MessageType, data: []const u8) Error!void {
@@ -1153,9 +1153,9 @@ self.param_val = self.param_val * 10 + (byte - '0');
 | Severity | Count | Fixed | False Positive | Unresolved |
 |----------|-------|-------|----------------|------------|
 | Critical | 14 (10+4) | 11 | 3 | 0 |
-| High | 29 (18+11) | 17 | 1 | 11 |
+| High | 29 (18+11) | 18 | 1 | 10 |
 | Medium | 30 (17+13) | 16 | 1 | 13 |
 | Low | 26 (19+7) | 18 | 1 | 7 |
-| **Total** | **99 (64+35)** | **62** | **6** | **31** |
+| **Total** | **99 (64+35)** | **63** | **6** | **30** |
 
 
