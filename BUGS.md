@@ -758,7 +758,7 @@ After `resize(0)`, `self.height` is 0. The early return only checks `history.ite
 ### 74. Allocation error silently swallowed in `advanceDcsIntermediate` (sixel DCS)
 **File:** `src/input.zig:385`
 **Severity:** HIGH
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — changed `catch {}` to `try` and return type to `Error!void`. Unit test added.
 
 ```zig
 self.dcs_buf.appendSlice(self.screen.allocator, "\x1bPq") catch {};
@@ -1153,9 +1153,9 @@ self.param_val = self.param_val * 10 + (byte - '0');
 | Severity | Count | Fixed | False Positive | Unresolved |
 |----------|-------|-------|----------------|------------|
 | Critical | 14 (10+4) | 11 | 3 | 0 |
-| High | 29 (18+11) | 22 | 1 | 6 |
+| High | 29 (18+11) | 23 | 1 | 5 |
 | Medium | 30 (17+13) | 16 | 1 | 13 |
 | Low | 26 (19+7) | 18 | 1 | 7 |
-| **Total** | **99 (64+35)** | **67** | **6** | **26** |
+| **Total** | **99 (64+35)** | **68** | **6** | **25** |
 
 

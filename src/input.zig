@@ -145,7 +145,7 @@ pub const InputParser = struct {
             .osc_esc => self.advanceOscEsc(byte),
             .dcs_entry => try self.advanceDcsEntry(byte),
             .dcs_param => try self.advanceDcsParam(byte),
-            .dcs_intermediate => self.advanceDcsIntermediate(byte),
+            .dcs_intermediate => try self.advanceDcsIntermediate(byte),
             .dcs_final => self.advanceDcsFinal(byte),
             .dcs_sixel => try self.advanceDcsSixel(byte),
             .dcs_sixel_esc => try self.advanceDcsSixelEsc(byte),
@@ -375,14 +375,13 @@ pub const InputParser = struct {
         }
     }
 
-    fn advanceDcsIntermediate(self: *InputParser, byte: u8) void {
+    fn advanceDcsIntermediate(self: *InputParser, byte: u8) Error!void {
         switch (byte) {
             0x20...0x2F => {},
             'q' => {
-                // Sixel final after intermediate byte(s) — still valid
                 self.dcs_is_sixel = true;
                 self.dcs_buf.clearRetainingCapacity();
-                self.dcs_buf.appendSlice(self.screen.allocator, "\x1bPq") catch {};
+                try self.dcs_buf.appendSlice(self.screen.allocator, "\x1bPq");
                 self.state = .dcs_sixel;
             },
             0x40...'p', 'r'...0x7E => {
@@ -1754,6 +1753,19 @@ test "XTSMGRAPHICS (CSI ? 2 ; 1 S) reports sixel supported" {
     const got = drainFd(p.read_fd, &buf);
     // Ps1=2 echoed back, status=0 (supported), width=0 height=0 (unlimited)
     try testing.expectEqualStrings("\x1b[?2;0;0S", got);
+}
+
+test "DCS sixel intermediate propagates append error" {
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+    var parser = InputParser.init(&screen);
+    defer parser.deinit(testing.allocator);
+
+    // A DCS sixel sequence: ESC P q <data> ESC \
+    try parser.feed("\x1bPq#0;2;100;200;0;0;0;0;0\x1b\\");
+    // Should not crash — advanceDcsIntermediate must propagate errors from appendSlice.
+    // (Happy-path: sixel data was buffered and dispatched without error.)
+    try testing.expect(parser.state == .ground);
 }
 
 test "XTSMGRAPHICS does not interfere with scroll-up (CSI S without ?)" {
