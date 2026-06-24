@@ -713,7 +713,7 @@ A malicious server can send `len = 0xFFFFFFFF`, causing a 4 GB allocation attemp
 ### 71. `drawLine` "clear trailing spaces" is a dead no-op
 **File:** `src/tty/tty.zig:407–411`
 **Severity:** HIGH
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — added `clearToEOL()` after cursor move to actually erase trailing characters. Unit test added.
 
 ```zig
 // Clear trailing spaces
@@ -1153,9 +1153,9 @@ self.param_val = self.param_val * 10 + (byte - '0');
 | Severity | Count | Fixed | False Positive | Unresolved |
 |----------|-------|-------|----------------|------------|
 | Critical | 14 (10+4) | 11 | 3 | 0 |
-| High | 29 (18+11) | 19 | 1 | 9 |
+| High | 29 (18+11) | 20 | 1 | 8 |
 | Medium | 30 (17+13) | 16 | 1 | 13 |
 | Low | 26 (19+7) | 18 | 1 | 7 |
-| **Total** | **99 (64+35)** | **64** | **6** | **29** |
+| **Total** | **99 (64+35)** | **65** | **6** | **28** |
 
 

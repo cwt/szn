@@ -407,6 +407,7 @@ pub const Term = struct {
         // Clear trailing spaces
         if (last_was_space) {
             try self.cursorMove(width - 1, ly);
+            try self.clearToEOL();
         }
     }
 
@@ -736,6 +737,20 @@ test "draw line skips leading spaces" {
 
     const out = written(&term.writer);
     try testing.expect(std.mem.indexOf(u8, out, "Hello") != null);
+}
+
+test "draw line clears trailing spaces" {
+    var buf: [512]u8 = undefined;
+    var term = Term.init(Writer.fixed(&buf), 80, 24);
+
+    var s = try screen.Screen.init(testing.allocator, 80, 24);
+    defer s.deinit();
+    try s.writeStr("Hello");
+
+    try term.drawLine(&s, 0);
+
+    const out = written(&term.writer);
+    try testing.expect(std.mem.indexOf(u8, out, "\x1b[K") != null);
 }
 
 test "invalidate resets cached state" {
