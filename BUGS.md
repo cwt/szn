@@ -1341,7 +1341,7 @@ fn freeValue(allocator: std.mem.Allocator, value: OptionValue) void {
 ### 117. `cfg.zig` — Quoted string parser doesn't verify closing quote
 **File:** `src/cfg.zig:212–214`
 **Severity:** MEDIUM
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — added `s[s.len-1] == '"'` check. Missing closing quote falls through to default string parsing. Tests added.
 
 ```zig
 if (s.len >= 2 and s[0] == '"') {

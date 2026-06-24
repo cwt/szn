@@ -209,7 +209,7 @@ pub fn parseValue(allocator: std.mem.Allocator, s: []const u8) Error!OptionValue
     if (std.mem.eql(u8, s, "false") or std.mem.eql(u8, s, "off")) return OptionValue{ .flag = false };
 
     // Quoted string
-    if (s.len >= 2 and s[0] == '"') {
+    if (s.len >= 2 and s[0] == '"' and s[s.len - 1] == '"') {
         const inner = s[1 .. s.len - 1];
         return OptionValue{ .string = try allocator.dupe(u8, inner) };
     }
@@ -556,4 +556,27 @@ test "parseValue key" {
     defer if (v3 == .string) testing.allocator.free(v3.string);
     try testing.expect(v3 == .string);
     try testing.expectEqualStrings("hello", v3.string);
+}
+
+test "parseValue quoted string rejects missing closing quote — bug #117" {
+    const allocator = testing.allocator;
+
+    // Valid quoted string produces inner content
+    const v1 = try parseValue(allocator, "\"hello\"");
+    defer if (v1 == .string) allocator.free(v1.string);
+    try testing.expect(v1 == .string);
+    try testing.expectEqualStrings("hello", v1.string);
+
+    // Missing closing quote — should NOT strip the quote and last char.
+    // Old code would produce "hell" (stripped opening quote, last char dropped).
+    const v2 = try parseValue(allocator, "\"hello");
+    defer if (v2 == .string) allocator.free(v2.string);
+    try testing.expect(v2 == .string);
+    try testing.expectEqualStrings("\"hello", v2.string);
+
+    // Empty quoted string (valid)
+    const v3 = try parseValue(allocator, "\"\"");
+    defer if (v3 == .string) allocator.free(v3.string);
+    try testing.expect(v3 == .string);
+    try testing.expectEqualStrings("", v3.string);
 }
