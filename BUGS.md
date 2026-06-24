@@ -1217,16 +1217,9 @@ self.param_val = self.param_val * 10 + (byte - '0');
 ---
 
 ### 108. `server/server.zig` — Unchecked writes to display client
-**File:** `src/server/server.zig:1222–1223`
+**File:** `src/server/server.zig:1230–1231`
 **Severity:** HIGH
-**Status:** ❌ UNRESOLVED
-
-```zig
-_ = c.write(display_fd, &hdr, 5);
-_ = c.write(display_fd, self.render_buf.items.ptr, self.render_buf.items.len);
-```
-
-Both writes discard the return value. Partial writes, EPIPE (client disconnected), and EAGAIN are all silently ignored. The client may receive a truncated or corrupted frame. If the client has disconnected, the server keeps rendering to a dead fd.
+**Status:** ✅ FIXED — both writes now use retry loops with EINTR handling, same pattern as #106. Partial writes and EPIPE no longer silently truncated.
 
 ---
 

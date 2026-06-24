@@ -1227,8 +1227,28 @@ pub const Server = struct {
             const pkt = protocol.Packet.make(.output, self.render_buf.items);
             var hdr: [5]u8 = undefined;
             pkt.header.encode(&hdr);
-            _ = c.write(display_fd, &hdr, 5);
-            _ = c.write(display_fd, self.render_buf.items.ptr, self.render_buf.items.len);
+
+            // Write header — retry partial writes
+            var hdr_remaining: []const u8 = hdr[0..];
+            while (hdr_remaining.len > 0) {
+                const n = c.write(display_fd, hdr_remaining.ptr, hdr_remaining.len);
+                if (n < 0) {
+                    if (std.c.errno(n) == .INTR) continue;
+                    return;
+                }
+                hdr_remaining = hdr_remaining[@intCast(n)..];
+            }
+
+            // Write body — retry partial writes
+            var body_remaining: []const u8 = self.render_buf.items;
+            while (body_remaining.len > 0) {
+                const n = c.write(display_fd, body_remaining.ptr, body_remaining.len);
+                if (n < 0) {
+                    if (std.c.errno(n) == .INTR) continue;
+                    return;
+                }
+                body_remaining = body_remaining[@intCast(n)..];
+            }
         }
     }
 
