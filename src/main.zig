@@ -164,7 +164,10 @@ fn mainInner(init: std.process.Init) Error!void {
         try client.sendCommand(cmd);
         const reply = try client.recvPacket();
         defer reply.deinit(allocator);
-        const msg_type = @as(protocol.MessageType, @enumFromInt(reply.header.msg_type));
+        const msg_type = protocol.MessageType.fromByte(reply.header.msg_type) orelse {
+            std.debug.print("Invalid message type from server: {}\n", .{reply.header.msg_type});
+            std.process.exit(1);
+        };
         switch (msg_type) {
             .ready => {
                 if (is_new_cmd) {
@@ -415,7 +418,10 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
                 }
                 if (read_buf.items.len - read_pos < pkt_len) break;
 
-                const msg_type = @as(protocol.MessageType, @enumFromInt(read_buf.items[read_pos + 4]));
+                const msg_type = protocol.MessageType.fromByte(read_buf.items[read_pos + 4]) orelse {
+                    read_pos += pkt_len;
+                    continue;
+                };
                 const data = read_buf.items[read_pos + 5 .. read_pos + pkt_len];
 
                 switch (msg_type) {

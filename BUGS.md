@@ -1265,7 +1265,7 @@ When `start_y > end_y` (user selected bottom-to-top): `sy = end_y`, so `sy != st
 ### 112. `main.zig` — `@enumFromInt` without validation for MessageType
 **File:** `src/main.zig:418`
 **Severity:** HIGH
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — added `MessageType.fromByte()` validation helper that returns `null` for invalid byte values. Both call sites in main.zig use `orelse` to handle the error (exit for recvPacket path, skip for interactive client). Tests added.
 
 ```zig
 const msg_type = @as(protocol.MessageType, @enumFromInt(read_buf.items[read_pos + 4]));
