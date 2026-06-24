@@ -1148,7 +1148,7 @@ self.param_val = self.param_val * 10 + (byte - '0');
 
 | Severity | Count | Fixed | False Positive | Unresolved |
 |----------|-------|-------|----------------|------------|
-| Critical | 14 (10+4) | 12 | 3 | 0 |
+| Critical | 14 (10+4) | 13 | 3 | 0 |
 | High | 29 (18+11) | 28 | 1 | 0 |
 | Medium | 18 (5+13) | 17 | 1 | 0 |
 | Low | 26 (19+7) | 25 | 1 | 0 |
@@ -1161,16 +1161,9 @@ self.param_val = self.param_val * 10 + (byte - '0');
 ---
 
 ### 100. `client/raw.zig` — VMIN/VTIME indices are macOS values, completely wrong on Linux
-**File:** `src/client/raw.zig:9–10`
+**File:** `src/client/raw.zig:9–20`
 **Severity:** CRITICAL
-**Status:** ❌ UNRESOLVED
-
-```zig
-const VMIN: usize = 16;
-const VTIME: usize = 17;
-```
-
-On Linux, `VMIN = 6` and `VTIME = 5`. Writing to indices 16 and 17 sets `VWERASE` and `VREPRINT` (or similar) instead of the intended read-behavior control fields. The terminal's minimum-read and timeout behavior will be completely wrong — `setRaw` will not configure the terminal for character-at-a-time input as intended. Core functionality is broken on the target platform.
+**Status:** ✅ FIXED — replaced hardcoded macOS values with `switch` on `@import("builtin").os.tag`: Linux → VMIN=6/VTIME=5, macOS → VMIN=16/VTIME=17, FreeBSD → VMIN=4/VTIME=5. Test added to verify platform constants.
 
 ---
 

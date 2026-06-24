@@ -6,8 +6,18 @@ pub const Error = error{
     SetRawFailed,
 };
 
-const VMIN: usize = 16;
-const VTIME: usize = 17;
+const VMIN: u6 = switch (@import("builtin").os.tag) {
+    .linux => 6,
+    .macos, .ios => 16,
+    .freebsd => 4,
+    else => 6,
+};
+const VTIME: u6 = switch (@import("builtin").os.tag) {
+    .linux => 5,
+    .macos, .ios => 17,
+    .freebsd => 5,
+    else => 5,
+};
 
 pub const RawTerminal = struct {
     fd: i32,
@@ -33,3 +43,23 @@ pub const RawTerminal = struct {
         if (c.tcsetattr(self.fd, c.TCSA.FLUSH, &raw) < 0) return error.SetRawFailed;
     }
 };
+
+const testing = @import("std").testing;
+
+test "VMIN and VTIME match the target platform" {
+    switch (@import("builtin").os.tag) {
+        .linux => {
+            try testing.expectEqual(@as(u6, 6), VMIN);
+            try testing.expectEqual(@as(u6, 5), VTIME);
+        },
+        .macos, .ios => {
+            try testing.expectEqual(@as(u6, 16), VMIN);
+            try testing.expectEqual(@as(u6, 17), VTIME);
+        },
+        .freebsd => {
+            try testing.expectEqual(@as(u6, 4), VMIN);
+            try testing.expectEqual(@as(u6, 5), VTIME);
+        },
+        else => {},
+    }
+}
