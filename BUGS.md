@@ -1045,9 +1045,9 @@ When the terminal is resized, only visible grid lines are resized. Lines in `sel
 ---
 
 ### 93. Partial `write()` on Unix socket not retried
-**File:** `src/client/client.zig:8–12, 50–51`
+**File:** `src/client/client.zig:8–14`
 **Severity:** LOW
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — `fdWrite` now retries in a loop until all bytes are written or an error occurs.
 
 ```zig
 fn fdWrite(fd: i32, buf: []const u8) Error!usize {

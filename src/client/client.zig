@@ -7,10 +7,14 @@ pub const Error = protocol.Error || connect.Error || error{ConnectionClosed, Rea
 
 pub const MAX_PACKET_SIZE = 1024 * 1024; // 1 MiB max to prevent DoS
 
-fn fdWrite(fd: i32, buf: []const u8) Error!usize {
-    const n = std.c.write(fd, buf.ptr, buf.len);
-    if (n < 0) return error.WriteFailed;
-    return @as(usize, @intCast(n));
+fn fdWrite(fd: i32, buf: []const u8) Error!void {
+    var off: usize = 0;
+    while (off < buf.len) {
+        const n = std.c.write(fd, buf.ptr + off, buf.len - off);
+        if (n < 0) return error.WriteFailed;
+        if (n == 0) return error.WriteFailed;
+        off += @as(usize, @intCast(n));
+    }
 }
 
 fn fdRead(fd: i32, buf: []u8) Error!usize {
@@ -50,8 +54,7 @@ pub const Client = struct {
         const pkt = protocol.Packet.make(msg_type, data);
         var buf: [4096]u8 = undefined;
         const serialized = pkt.serialize(&buf);
-        const n = try fdWrite(self.fd, serialized);
-        if (n != serialized.len) return error.WriteFailed;
+        try fdWrite(self.fd, serialized);
     }
 
     pub fn recvPacket(self: *Client) Error!protocol.Packet {
@@ -124,6 +127,27 @@ test "recvPacket rejects oversized length" {
     try testing.expectEqual(@as(isize, 5), n);
 
     try testing.expectError(error.PacketTooLarge, client.recvPacket());
+}
+
+test "fdWrite retries on partial write — bug #93" {
+    const testing = std.testing;
+
+    // Use a pipe — partial writes on pipes are rare with small buffers,
+    // but we test that fdWrite handles the full data correctly.
+    var fds: [2]i32 = undefined;
+    if (std.c.pipe(&fds) != 0) return error.Unexpected;
+    defer _ = std.c.close(fds[0]);
+    defer _ = std.c.close(fds[1]);
+
+    // Write data that fits in the pipe buffer
+    const data = "hello world";
+    try fdWrite(fds[1], data);
+
+    // Read it back
+    var buf: [64]u8 = undefined;
+    const n = std.c.read(fds[0], &buf, buf.len);
+    try testing.expectEqual(@as(isize, @intCast(data.len)), n);
+    try testing.expectEqualStrings(data, buf[0..@as(usize, @intCast(n))]);
 }
 
 test "sendIdentify rejects term longer than 64 bytes" {
