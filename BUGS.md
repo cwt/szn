@@ -1521,7 +1521,7 @@ try self.cursorMove(width - 1, ly);
 ### 129. `tty/tty.zig` — `setCursorStyle` blink/steady mapping is inverted
 **File:** `src/tty/tty.zig:325–329`
 **Severity:** MEDIUM
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — swapped values: visible cursor now emits blinking variant (1/3/5), hidden emits steady (2/4/6). Test updated.
 
 ```zig
 const n: u8 = switch (style) {

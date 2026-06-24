@@ -323,9 +323,9 @@ pub const Term = struct {
         if (style == self.cursor_style and self.cursor_visible) return;
         self.cursor_style = style;
         const n: u8 = switch (style) {
-            .block => if (self.cursor_visible) 2 else 1,
-            .underline => if (self.cursor_visible) 4 else 3,
-            .bar => if (self.cursor_visible) 6 else 5,
+            .block => if (self.cursor_visible) 1 else 2,
+            .underline => if (self.cursor_visible) 3 else 4,
+            .bar => if (self.cursor_visible) 5 else 6,
         };
         try self.print("\x1b[{} q", .{n});
     }
@@ -690,8 +690,9 @@ test "scroll up/down" {
 test "set cursor style" {
     var buf: [64]u8 = undefined;
     var term = Term.init(Writer.fixed(&buf), 80, 24);
+    // cursor_visible defaults to true → should emit blinking variant
     try term.setCursorStyle(.bar);
-    try testing.expectEqualSlices(u8, "\x1b[6 q", written(&term.writer));
+    try testing.expectEqualSlices(u8, "\x1b[5 q", written(&term.writer));
 }
 
 test "show/hide cursor" {
