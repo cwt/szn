@@ -1278,7 +1278,7 @@ If the byte doesn't correspond to a declared `MessageType` value, this creates a
 ### 113. `window.zig` + `session.zig` — Pane double-deinit between Session.deinit and Window.deinit
 **File:** `src/session.zig:54–58`, `src/window.zig:162–167`
 **Severity:** HIGH
-**Status:** ❌ UNRESOLVED (related to bug #68 which fixed PTY double-close but not pane double-deinit)
+**Status:** ✅ FIXED — added `deinited: bool` guard to Pane. `Pane.deinit()` returns early if already deinited. `self.pty` is set to null after Pty.deinit() for additional safety. Test added for double-deinit safety.
 
 ```zig
 // session.zig deinit:

@@ -25,6 +25,7 @@ pub const Pane = struct {
     title_cb: ?*const fn (ctx: ?*anyopaque, title: []const u8) void = null,
     title_ctx: ?*anyopaque = null,
     cwd: ?[]const u8 = null,
+    deinited: bool = false,
 
     pub fn init(allocator: std.mem.Allocator, id: u32, width: u32, height: u32) Error!Pane {
         return Pane{
@@ -37,8 +38,13 @@ pub const Pane = struct {
     }
 
     pub fn deinit(self: *Pane) void {
+        if (self.deinited) return;
+        self.deinited = true;
         self.screen.deinit();
-        if (self.pty) |*p| p.deinit();
+        if (self.pty) |*p| {
+            p.deinit();
+            self.pty = null;
+        }
     }
 
     pub fn writeStr(self: *Pane, s: []const u8) Error!void {
@@ -397,5 +403,13 @@ test "pane pty deinit ownership" {
     try pane.spawn(testing.allocator, &argv, null);
     try testing.expect(pane.pty != null);
     pane.deinit();
+}
+
+test "pane double deinit is safe" {
+    var pane = try Pane.init(testing.allocator, 1, 80, 24);
+    const argv = [_][]const u8{"true"};
+    try pane.spawn(testing.allocator, &argv, null);
+    pane.deinit();  // first deinit: closes pty, sets pty = null
+    pane.deinit();  // second deinit: pty is null, skips pty.deinit()
 }
 
