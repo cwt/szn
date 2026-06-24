@@ -1096,10 +1096,10 @@ After `fork()`, the child process has `setsid()` called but stdin/stdout/stderr 
 ### 96. Log directory created with `0o777` (world-writable)
 **File:** `src/main.zig:30`
 **Severity:** LOW
-**Status:** ❌ UNRESOLVED (complement to #62)
+**Status:** ✅ FIXED — changed `0o777` → `0o755` (owner-writable, world-readable/executable).
 
 ```zig
-const rc = c.mkdir(dir_z.ptr, 0o777);
+const rc = c.mkdir(dir_z.ptr, 0o777);  // → 0o755
 ```
 
 The log directory `$XDG_STATE_HOME/szn/` is created with mode 0777. Any user on the system can write files into it. Should be `0o700`.

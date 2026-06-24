@@ -27,7 +27,7 @@ fn resolveLogPath(buf: []u8) Error![:0]const u8 {
         const xdg = std.mem.span(xdg_raw);
         var dir_buf: [256]u8 = undefined;
         const dir_z = try std.fmt.bufPrintZ(&dir_buf, "{s}/szn", .{xdg});
-        const rc = c.mkdir(dir_z.ptr, 0o777);
+        const rc = c.mkdir(dir_z.ptr, 0o755);
         if (rc < 0) {
             const err = std.posix.errno(rc);
             if (err != .EXIST) {
