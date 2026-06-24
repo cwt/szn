@@ -1552,7 +1552,7 @@ If `utf8Encode` fails for `comb1` or `comb2`, the function returns immediately v
 ### 131. `input.zig` — SOS/PM/APC string doesn't handle ESC \ (ST) terminator correctly
 **File:** `src/input.zig:461–471`
 **Severity:** MEDIUM
-**Status:** ❌ UNRESOLVED (related to bug #18 which fixed OSC ST terminator, but SOS/PM/APC still broken)
+**Status:** ✅ FIXED — added `sos_pm_apc_esc` sub-state. ESC inside SOS/PM/APC now waits for `\` to terminate, matching OSC behavior. Test added. (related to bug #18 which fixed OSC ST terminator, but SOS/PM/APC still broken)
 
 ```zig
 fn advanceSosPmApc(self: *InputParser, byte: u8) void {

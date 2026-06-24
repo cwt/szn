@@ -46,6 +46,7 @@ pub const InputParser = struct {
         dcs_sixel,      // accumulating sixel payload bytes
         dcs_sixel_esc,  // saw ESC inside sixel — waiting for \\ (ST)
         sos_pm_apc_string,
+        sos_pm_apc_esc,  // saw ESC inside SOS/PM/APC — waiting for \\ (ST)
     };
 
     pub fn init(screen: *Screen) InputParser {
@@ -155,6 +156,7 @@ pub const InputParser = struct {
             .dcs_sixel => try self.advanceDcsSixel(byte),
             .dcs_sixel_esc => try self.advanceDcsSixelEsc(byte),
             .sos_pm_apc_string => self.advanceSosPmApc(byte),
+            .sos_pm_apc_esc => self.advanceSosPmApcEsc(byte),
         }
     }
 
@@ -466,12 +468,20 @@ pub const InputParser = struct {
     fn advanceSosPmApc(self: *InputParser, byte: u8) void {
         switch (byte) {
             0x1B => {
-                self.state = .esc;
+                self.state = .sos_pm_apc_esc;
             },
             0x9C => {
                 self.toGround();
             },
             else => {},
+        }
+    }
+
+    fn advanceSosPmApcEsc(self: *InputParser, byte: u8) void {
+        if (byte == '\\') {
+            self.toGround();
+        } else {
+            self.state = .sos_pm_apc_string;
         }
     }
 
@@ -1834,4 +1844,20 @@ test "partial UTF-8 aborted by ESC — bug #114" {
 
     // No stray '?' (failed UTF-8 replacement) should have been written.
     try testing.expectEqual(@as(u21, ' '), screen.grid.getCell(5, 10).char);
+}
+
+test "SOS/PM/APC with ESC backslash ST terminator — bug #131" {
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+
+    var parser = InputParser.init(&screen);
+    defer parser.deinit(testing.allocator);
+
+    // SOS (ESC X) begins a string; ESC \ (ST) should terminate it.
+    try parser.feed(&[_]u8{ 0x1B, 'X', 'h', 'e', 'l', 'l', 'o', 0x1B, '\\' });
+    try testing.expect(parser.state == .ground);
+
+    // Also test 8-bit SOS (0x98) + ESC \ termination
+    try parser.feed(&[_]u8{ 0x98, 'w', 'o', 'r', 'l', 'd', 0x1B, '\\' });
+    try testing.expect(parser.state == .ground);
 }
