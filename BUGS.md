@@ -1317,7 +1317,7 @@ return Key{ .char = .{ .code = @intCast(codepoint), .mod = k_mod } };
 ### 116. `options.zig` — `choice` values are not cloned or freed
 **File:** `src/options.zig:158–163, 165–170`
 **Severity:** MEDIUM
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — `cloneValue` now dupes choice strings; `freeValue` frees them. `errdefer`s in `init()` and `clone()` now clean up already-cloned values on allocation failure. Tests added.
 
 ```zig
 fn cloneValue(allocator: std.mem.Allocator, value: OptionValue) Error!OptionValue {
@@ -1985,9 +1985,9 @@ Uses `std.posix.errno(rc)` instead of `std.c.errno(rc)`. Same issue as bugs #103
 |----------|-------|-------|----------------|------------|
 | Critical | 18 (14+4) | 15 | 3 | **0** |
 | High | 39 (29+10) | 38 | 1 | **0** |
-| Medium | 52 (18+34) | 49 | 2 | **1** |
+| Medium | 52 (18+34) | 50 | 2 | **0** |
 | Low | 54 (26+28) | 51 | 3 | **0** |
 | Total | 163 (99+64) | **153** | **9** | **1** |
-| Total | 163 (99+64) | **154** | **9** | **0** |
+| Total | 163 (99+64) | **155** | **9** | **0** |
 
 
