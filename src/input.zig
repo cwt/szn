@@ -114,16 +114,21 @@ pub const InputParser = struct {
     pub fn advance(self: *InputParser, byte: u8) Error!void {
         if (self.state == .ground) {
             if (self.utf8_expected > 0) {
-                self.utf8_buf[self.utf8_len] = byte;
-                self.utf8_len += 1;
-                if (self.utf8_len == self.utf8_expected) {
-                    const cp = std.unicode.utf8Decode(self.utf8_buf[0..self.utf8_expected]) catch '?';
-                    try self.screen.writeChar(cp);
-                    self.utf8_expected = 0;
-                    self.utf8_len = 0;
+                if (byte >= 0x80 and byte <= 0xBF) {
+                    self.utf8_buf[self.utf8_len] = byte;
+                    self.utf8_len += 1;
+                    if (self.utf8_len == self.utf8_expected) {
+                        const cp = std.unicode.utf8Decode(self.utf8_buf[0..self.utf8_expected]) catch '?';
+                        try self.screen.writeChar(cp);
+                        self.utf8_expected = 0;
+                        self.utf8_len = 0;
+                    }
+                    return;
                 }
-                return;
-            } else if (byte >= 0xC2 and byte <= 0xF4) {
+                self.utf8_expected = 0;
+                self.utf8_len = 0;
+            }
+            if (byte >= 0xC2 and byte <= 0xF4) {
                 const expected = std.unicode.utf8ByteSequenceLength(byte) catch 0;
                 if (expected >= 2 and expected <= 4) {
                     self.utf8_expected = @intCast(expected);
@@ -1805,4 +1810,28 @@ test "XTSMGRAPHICS does not interfere with scroll-up (CSI S without ?)" {
 
     // 'A' moved to history; visible row 0 is now what was row 1 ('B').
     try testing.expectEqual(@as(u21, 'B'), screen.grid.getCell(0, 0).char);
+}
+
+test "partial UTF-8 aborted by ESC — bug #114" {
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+
+    var parser = InputParser.init(&screen);
+    defer parser.deinit(testing.allocator);
+
+    screen.cursor.x = 5;
+    screen.cursor.y = 10;
+
+    // Feed a UTF-8 lead byte (0xC3 starts a 2-byte sequence) then ESC.
+    // With the bug, ESC is consumed as a continuation byte and the CSI
+    // below is processed from .ground, writing 'A' and 'B' as characters.
+    // With the fix, ESC aborts the partial UTF-8 and transitions to .esc.
+    try parser.feed(&[_]u8{ 0xC3, 0x1B, '[', 'A' }); // CSI A = cursor up
+
+    // Cursor should have moved up from y=10 to y=9.
+    try testing.expectEqual(@as(u32, 5), screen.cursor.x);
+    try testing.expectEqual(@as(u32, 9), screen.cursor.y);
+
+    // No stray '?' (failed UTF-8 replacement) should have been written.
+    try testing.expectEqual(@as(u21, ' '), screen.grid.getCell(5, 10).char);
 }

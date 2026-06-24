@@ -1295,7 +1295,7 @@ for (win.panes.items) |p| { p.deinit(); }
 ### 114. `input.zig` — UTF-8 state not cleared on parser reset or state transitions
 **File:** `src/input.zig:116–134, 61–75`
 **Severity:** MEDIUM
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — partial UTF-8 sequence now only accepts valid continuation bytes (0x80–0xBF). Bytes outside this range (e.g. ESC 0x1B) abort the sequence and are processed normally. Test added.
 
 If a partial UTF-8 sequence is interrupted by a C1 byte (0x80–0x9F) that changes state, `utf8_expected` remains set. When the parser later returns to `.ground`, stale UTF-8 state causes the next printable byte to be incorrectly treated as a UTF-8 continuation byte. The `reset()` function does clear it, but mid-stream state transitions (like entering ESC from ground) do not.
 
