@@ -1370,7 +1370,7 @@ Only checks for `-g ` (space). Input `set-environment -g\tFOO bar` fails to matc
 ### 119. `cfg.zig` — `parseIfShell` doesn't handle escaped quotes
 **File:** `src/cfg.zig:359–366`
 **Severity:** MEDIUM
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — added escape-aware `findUnescapedQuote` and `unescapeQuoted` helpers. `\"` sequences inside quoted strings are properly handled. Tests added.
 
 ```zig
 const second_q = std.mem.indexOfScalarPos(u8, args, first_q + 1, '"') orelse ...;

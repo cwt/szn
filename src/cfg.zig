@@ -353,17 +353,48 @@ fn parseSetEnv(allocator: std.mem.Allocator, args: []const u8, result: *ParseRes
     }
 }
 
+fn unescapeQuoted(allocator: std.mem.Allocator, s: []const u8) Error![]const u8 {
+    if (std.mem.indexOfScalar(u8, s, '\\') == null) return allocator.dupe(u8, s);
+    var result = try std.ArrayListUnmanaged(u8).initCapacity(allocator, s.len);
+    errdefer result.deinit(allocator);
+    var i: usize = 0;
+    while (i < s.len) {
+        if (s[i] == '\\' and i + 1 < s.len and s[i + 1] == '"') {
+            try result.append(allocator, '"');
+            i += 2;
+        } else {
+            try result.append(allocator, s[i]);
+            i += 1;
+        }
+    }
+    return result.toOwnedSlice(allocator);
+}
+
+fn findUnescapedQuote(s: []const u8, start: usize) ?usize {
+    var i = start;
+    while (i < s.len) {
+        if (s[i] == '\\' and i + 1 < s.len and s[i + 1] == '"') {
+            i += 2;
+        } else if (s[i] == '"') {
+            return i;
+        } else {
+            i += 1;
+        }
+    }
+    return null;
+}
+
 fn parseIfShell(allocator: std.mem.Allocator, args: []const u8, result: *ParseResult) Error!void {
     // Format: "condition" "command"
-    // Find two quoted strings
-    const first_q = std.mem.indexOfScalar(u8, args, '"') orelse return error.MissingQuotes;
-    const second_q = std.mem.indexOfScalarPos(u8, args, first_q + 1, '"') orelse return error.MissingQuotes;
-    const condition = try allocator.dupe(u8, args[first_q + 1 .. second_q]);
+    // Find two quoted strings (escape-aware: \" is not a quote terminator)
+    const first_q = findUnescapedQuote(args, 0) orelse return error.MissingQuotes;
+    const second_q = findUnescapedQuote(args, first_q + 1) orelse return error.MissingQuotes;
+    const condition = try unescapeQuoted(allocator, args[first_q + 1 .. second_q]);
 
     const rest = std.mem.trim(u8, args[second_q + 1 ..], " \t");
     if (rest.len == 0 or rest[0] != '"') return error.MissingQuotes;
-    const third_q = std.mem.indexOfScalarPos(u8, rest, 1, '"') orelse return error.MissingQuotes;
-    const command = try allocator.dupe(u8, rest[1..third_q]);
+    const third_q = findUnescapedQuote(rest, 1) orelse return error.MissingQuotes;
+    const command = try unescapeQuoted(allocator, rest[1..third_q]);
 
     try result.directives.append(allocator, Directive{ .if_shell = IfShell{ .condition = condition, .command = command } });
 }
@@ -522,6 +553,19 @@ test "if-shell directive" {
     try testing.expect(d == .if_shell);
     try testing.expectEqualStrings("test -f /tmp/x", d.if_shell.condition);
     try testing.expectEqualStrings("set -g mouse on", d.if_shell.command);
+}
+
+test "if-shell with escaped quotes — bug #119" {
+    // Input: if-shell "test \"foo\"" "command"
+    const input = "if-shell \"test \\\"foo\\\"\" \"command\"";
+    var result = try parseConfig(testing.allocator, input);
+    defer result.deinit(testing.allocator);
+
+    try testing.expectEqual(@as(usize, 1), result.directives.items.len);
+    const d = result.directives.items[0];
+    try testing.expect(d == .if_shell);
+    try testing.expectEqualStrings("test \"foo\"", d.if_shell.condition);
+    try testing.expectEqualStrings("command", d.if_shell.command);
 }
 
 test "bind-key directive" {
