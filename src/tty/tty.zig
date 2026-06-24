@@ -151,7 +151,7 @@ pub const Term = struct {
             return;
         }
 
-        if (@as(u16, @bitCast(self.attrs)) != 0 and @as(u16, @bitCast(attrs)) < @as(u16, @bitCast(self.attrs))) {
+        if (@as(u16, @bitCast(self.attrs)) != 0 and (@as(u16, @bitCast(self.attrs)) & ~@as(u16, @bitCast(attrs))) != 0) {
             try self.write("\x1b[m");
             self.fg = null;
             self.bg = null;
@@ -850,6 +850,53 @@ test "curly underline emits SGR 4:3 — C2 fix" {
 
     const out = written(&term.writer);
     try testing.expect(std.mem.indexOf(u8, out, "\x1b[4:3m") != null);
+}
+
+test "setAttributes turns off removed attrs — bold to italic" {
+    var buf: [128]u8 = undefined;
+    var term = Term.init(Writer.fixed(&buf), 80, 24);
+
+    var cell = Cell{
+        .char = 'A',
+        .attr = .{ .bold = true },
+        .fg = Colour.default_(),
+        .bg = Colour.default_(),
+    };
+    try term.writeCell(cell);
+    term.writer.end = 0;
+
+    cell.attr = .{ .italic = true };
+    try term.writeCell(cell);
+
+    const out = written(&term.writer);
+    // Must contain reset, then italic
+    const reset_pos = std.mem.indexOf(u8, out, "\x1b[m") orelse return error.TestFailed;
+    const italic_pos = std.mem.indexOf(u8, out, "\x1b[3m") orelse return error.TestFailed;
+    try testing.expect(reset_pos < italic_pos);
+    try testing.expect(std.mem.indexOf(u8, out, "A") != null);
+}
+
+test "setAttributes adds attrs without reset when no bits removed" {
+    var buf: [128]u8 = undefined;
+    var term = Term.init(Writer.fixed(&buf), 80, 24);
+
+    var cell = Cell{
+        .char = 'A',
+        .attr = .{ .bold = true },
+        .fg = Colour.default_(),
+        .bg = Colour.default_(),
+    };
+    try term.writeCell(cell);
+    term.writer.end = 0;
+
+    cell.attr = .{ .bold = true, .italic = true };
+    try term.writeCell(cell);
+
+    const out = written(&term.writer);
+    // Should NOT contain reset — only combined attr sequence
+    try testing.expect(std.mem.indexOf(u8, out, "\x1b[m") == null);
+    try testing.expect(std.mem.indexOf(u8, out, "\x1b[1;3m") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "A") != null);
 }
 
 test "setAttributes reset does not clobber colors — C3 fix" {

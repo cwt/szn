@@ -628,16 +628,9 @@ After `append` succeeds, the `errdefer` is still active. If any subsequent opera
 ---
 
 ### 66. `setAttributes` fails to turn off removed attributes
-**File:** `src/tty/tty.zig:144–171`
+**File:** `src/tty/tty.zig:154`
 **Severity:** CRITICAL
-**Status:** ⚠️ PARTIALLY FIXED — attrCodes changed (double_underline→`"21"`, curly_underline→`"4:3"`) but the `<` bitmask comparison at line 154 is **still present and wrong**. `{bold}`→`{italic}` (1→2): `2 < 1` is false, so bold is never turned off. The early-return paths (`changed == 0`, `new == 0`) handle trivial cases but the core logic remains broken.
-
-```zig
-if (@as(u16, @bitCast(self.attrs)) != 0 and @as(u16, @bitCast(attrs)) < @as(u16, @bitCast(self.attrs))) {
-    try self.write("\x1b[m");
-```
-
-The check `new < old` on a bitmask is semantically wrong. `{bold}` → `{italic}` has bitmask `1 → 2`, `2 < 1` is false, so bold is never turned off. The correct check is `(old & ~new) != 0` — any bit that was on is now off. Visible text corruption when attributes transition.
+**Status:** ✅ FIXED — Changed `<` bitmask comparison to `(old & ~new) != 0`. Tests added for bold→italic (triggers reset) and bold→{bold,italic} (no reset).
 
 ---
 
@@ -1155,7 +1148,7 @@ self.param_val = self.param_val * 10 + (byte - '0');
 
 | Severity | Count | Fixed | False Positive | Unresolved |
 |----------|-------|-------|----------------|------------|
-| Critical | 14 (10+4) | 11 | 3 | 0 |
+| Critical | 14 (10+4) | 12 | 3 | 0 |
 | High | 29 (18+11) | 28 | 1 | 0 |
 | Medium | 18 (5+13) | 17 | 1 | 0 |
 | Low | 26 (19+7) | 25 | 1 | 0 |
