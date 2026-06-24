@@ -1304,7 +1304,7 @@ If a partial UTF-8 sequence is interrupted by a C1 byte (0x80–0x9F) that chang
 ### 115. `key.zig` — `@intCast` may panic on out-of-range kitty codepoint
 **File:** `src/key.zig:153`
 **Severity:** MEDIUM
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — added `codepoint > 0x10FFFF` guard before `@intCast`. Invalid codepoints return `error.InvalidCsi`. Tests added.
 
 ```zig
 return Key{ .char = .{ .code = @intCast(codepoint), .mod = k_mod } };

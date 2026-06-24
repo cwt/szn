@@ -150,6 +150,7 @@ pub fn parseCsi(seq: []const u8) ParseError!Key {
                 };
             } else Modifier{};
 
+            if (codepoint > 0x10FFFF) return error.InvalidCsi;
             return Key{ .char = .{ .code = @intCast(codepoint), .mod = k_mod } };
         },
         else => return error.UnknownKey,
@@ -647,6 +648,11 @@ test "format output buffer overflow" {
     const key2 = Key{ .special = .{ .key = .escape, .mod = .{ .shift = true } } };
     const s2 = format(key2, &buf2);
     try testing.expectEqualStrings("[?]", s2);
+}
+
+test "parse kitty rejects codepoint > Unicode max — bug #115" {
+    try testing.expectError(error.InvalidCsi, parse("\x1b[4194304u")); // 0x400000
+    try testing.expectError(error.InvalidCsi, parse("\x1b[1114112u")); // 0x110000
 }
 
 
