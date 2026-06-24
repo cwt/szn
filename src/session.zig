@@ -38,6 +38,9 @@ pub const Session = struct {
 
         const initial_win = try allocator.create(Window);
         initial_win.* = try Window.init(allocator, 0, name, width, height, &self.window_options);
+        // Window.init sets pane.window to a stack-local pointer; fixup to the
+        // heap-allocated window so options lookups (remain-on-exit etc.) work.
+        for (initial_win.panes.items) |p| p.window = initial_win;
         try self.windows.append(allocator, initial_win);
         self.active_window = initial_win;
     }
@@ -70,6 +73,7 @@ pub const Session = struct {
         const win_id = self.windows.items.len;
         const new_win = try a.create(Window);
         new_win.* = try Window.init(a, @intCast(win_id), name, self.width, self.height, &self.window_options);
+        for (new_win.panes.items) |p| p.window = new_win;
         try self.windows.append(a, new_win);
         if (self.active_window) |prev| {
             self.last_window = prev;
