@@ -24,7 +24,7 @@ pub const CmdEntry = struct {
 fn cmdNewSession(server: *Server, args: []const []const u8) CmdResult {
     const name = if (args.len > 1) args[1] else "default";
     const session = server.newSession(name, 80, 24) catch return .err;
-    const pane = session.active_window.?.active_pane.?;
+    const pane = (session.active_window orelse return .err).active_pane orelse return .err;
     server.setupPane(session, pane, null) catch return .err;
     if (server.sessions.items.len > 1) {
         const idx = server.sessions.items.len - 1;
@@ -1392,6 +1392,11 @@ test "new-session exec creates session" {
     const result = cmd.exec(&server);
     try testing.expectEqual(.ok, result);
     try testing.expectEqual(@as(usize, 1), server.sessions.items.len);
+
+    // Invariant: newSession must create a window with a pane.
+    const s = server.sessions.items[0];
+    try testing.expect(s.active_window != null);
+    try testing.expect(s.active_window.?.active_pane != null);
 }
 
 test "kill-session removes session" {

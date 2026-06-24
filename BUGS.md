@@ -944,7 +944,7 @@ Both `bufPrint` failure (returns empty string → never sent) and `writeInput` f
 ### 87. `.?` on `active_window`/`active_pane` without guard in `cmdNewSession`
 **File:** `src/cmd/cmd.zig:27`
 **Severity:** MEDIUM
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — replaced `.?` with `orelse return .err`. Test extended to verify window/pane invariants.
 
 ```zig
 const session = server.newSession(name, 80, 24) catch return .err;
@@ -1154,8 +1154,8 @@ self.param_val = self.param_val * 10 + (byte - '0');
 |----------|-------|-------|----------------|------------|
 | Critical | 14 (10+4) | 11 | 3 | 0 |
 | High | 29 (18+11) | 28 | 1 | 0 |
-| Medium | 30 (17+13) | 23 | 1 | 6 |
+| Medium | 30 (17+13) | 24 | 1 | 5 |
 | Low | 26 (19+7) | 18 | 1 | 7 |
-| **Total** | **99 (64+35)** | **80** | **6** | **13** |
+| **Total** | **99 (64+35)** | **81** | **6** | **12** |
 
 
