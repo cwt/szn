@@ -5,6 +5,8 @@ const connect = @import("connect.zig");
 
 pub const Error = protocol.Error || connect.Error || error{ConnectionClosed, ReadFailed, WriteFailed, InvalidPacket, TermTooLong, PacketTooLarge};
 
+pub const MAX_PACKET_SIZE = 1024 * 1024; // 1 MiB max to prevent DoS
+
 fn fdWrite(fd: i32, buf: []const u8) Error!usize {
     const n = std.c.write(fd, buf.ptr, buf.len);
     if (n < 0) return error.WriteFailed;
@@ -63,6 +65,7 @@ pub const Client = struct {
 
         const len = std.mem.readInt(u32, hdr[0..4], .little);
         if (len < 5) return error.InvalidPacket;
+        if (len > MAX_PACKET_SIZE) return error.PacketTooLarge;
         const body_len = len - 5;
 
         // Dynamically allocate body buffer to support arbitrary reply sizes
@@ -101,4 +104,24 @@ test "sendPacket rejects oversized data" {
     @memset(big_data, 'A');
 
     try testing.expectError(error.PacketTooLarge, client.sendPacket(.command, big_data));
+}
+
+test "recvPacket rejects oversized length" {
+    const testing = std.testing;
+
+    var fds: [2]i32 = undefined;
+    if (std.c.pipe(&fds) != 0) return error.Unexpected;
+    defer _ = std.c.close(fds[0]);
+    defer _ = std.c.close(fds[1]);
+
+    var client = Client{ .allocator = testing.allocator, .fd = fds[0] };
+
+    // Write a header with a huge length (MAX_PACKET_SIZE + 1)
+    var hdr: [5]u8 = undefined;
+    std.mem.writeInt(u32, hdr[0..4], MAX_PACKET_SIZE + 1, .little);
+    hdr[4] = @intFromEnum(protocol.MessageType.output);
+    const n = std.c.write(fds[1], &hdr, hdr.len);
+    try testing.expectEqual(@as(isize, 5), n);
+
+    try testing.expectError(error.PacketTooLarge, client.recvPacket());
 }

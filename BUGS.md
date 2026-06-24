@@ -697,7 +697,7 @@ fn sendPacket(self: *Client, msg_type: protocol.MessageType, data: []const u8) E
 ### 70. No upper cap on packet length in `Client.recvPacket` — DoS via 4 GB allocation
 **File:** `src/client/client.zig:63–68`
 **Severity:** HIGH
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — added `MAX_PACKET_SIZE = 1 MiB` cap; oversized lengths return `PacketTooLarge`. Unit test added.
 
 ```zig
 const len = std.mem.readInt(u32, hdr[0..4], .little);
@@ -1153,9 +1153,9 @@ self.param_val = self.param_val * 10 + (byte - '0');
 | Severity | Count | Fixed | False Positive | Unresolved |
 |----------|-------|-------|----------------|------------|
 | Critical | 14 (10+4) | 11 | 3 | 0 |
-| High | 29 (18+11) | 18 | 1 | 10 |
+| High | 29 (18+11) | 19 | 1 | 9 |
 | Medium | 30 (17+13) | 16 | 1 | 13 |
 | Low | 26 (19+7) | 18 | 1 | 7 |
-| **Total** | **99 (64+35)** | **63** | **6** | **30** |
+| **Total** | **99 (64+35)** | **64** | **6** | **29** |
 
 
