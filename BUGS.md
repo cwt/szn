@@ -1109,10 +1109,11 @@ The log directory `$XDG_STATE_HOME/szn/` is created with mode 0777. Any user on 
 ### 97. `socket_path.zig` silently ignores `mkdir` failure
 **File:** `src/socket_path.zig:34`
 **Severity:** LOW
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — `_ = mkdir` → checks `rc < 0` and non-`.EXIST` with `c.errno`.
 
 ```zig
 _ = c.mkdir(dir_z.ptr, 0o700);
+// → checks rc and EEXIST
 ```
 
 The return value of `mkdir` is discarded. If directory creation fails (permission denied, disk full), the subsequent socket `bind` fails with a confusing error instead of a clear message.
