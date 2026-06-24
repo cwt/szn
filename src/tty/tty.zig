@@ -396,7 +396,7 @@ pub const Term = struct {
                 col += 1;
                 continue;
             }
-            if (col != self.cx or @as(u64, @intCast(ly)) != @as(u64, @intCast(self.cy))) {
+            if (self.cx < 0 or self.cy < 0 or col != @as(u32, @intCast(self.cx)) or ly != @as(u32, @intCast(self.cy))) {
                 try self.cursorMove(col, ly);
             }
             try self.writeCell(cell);
@@ -765,6 +765,25 @@ test "invalidate resets cached state" {
     try testing.expectEqual(@as(i64, -1), term.cx);
     try testing.expectEqual(@as(i64, -1), term.cy);
     try testing.expectEqual(@as(?Colour, null), term.fg);
+}
+
+test "drawLine handles invalidated cursor without panic — bug #83" {
+    var buf: [512]u8 = undefined;
+    var term = Term.init(Writer.fixed(&buf), 80, 24);
+
+    var s = try screen.Screen.init(testing.allocator, 80, 24);
+    defer s.deinit();
+    try s.writeStr("Hello");
+
+    // Force cx >= 0 but cy = -1 so the second expression in the
+    // drawLine cursor check is evaluated.
+    term.cx = 0;
+    term.cy = -1;
+
+    // Should not panic on @intCast(-1)
+    try term.drawLine(&s, 0);
+    const out = written(&term.writer);
+    try testing.expect(std.mem.indexOf(u8, out, "Hello") != null);
 }
 
 test "mouse SGR mode" {

@@ -894,7 +894,7 @@ C `socket()` and `connect()` return -1 on failure, setting the global `errno`. I
 ### 83. `@intCast(self.cy)` can panic when cursor position is -1 in `drawLine`
 **File:** `src/tty/tty.zig:399–400`
 **Severity:** MEDIUM
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — added `self.cx < 0 or self.cy < 0` guard before the `@intCast` to short-circuit on invalid cursor. Unit test added.
 
 ```zig
 if (col != self.cx or @as(u64, @intCast(ly)) != @as(u64, @intCast(self.cy))) {
@@ -1154,8 +1154,8 @@ self.param_val = self.param_val * 10 + (byte - '0');
 |----------|-------|-------|----------------|------------|
 | Critical | 14 (10+4) | 11 | 3 | 0 |
 | High | 29 (18+11) | 28 | 1 | 0 |
-| Medium | 30 (17+13) | 19 | 1 | 10 |
+| Medium | 30 (17+13) | 20 | 1 | 9 |
 | Low | 26 (19+7) | 18 | 1 | 7 |
-| **Total** | **99 (64+35)** | **76** | **6** | **17** |
+| **Total** | **99 (64+35)** | **77** | **6** | **16** |
 
 
