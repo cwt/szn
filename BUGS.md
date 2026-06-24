@@ -1472,7 +1472,7 @@ pub fn reap(self: *Pty) void {
 ### 126. `server/render.zig` — `self.sy - 1` underflows when `sy == 0`
 **File:** `src/server/render.zig:72, 228, 359`
 **Severity:** MEDIUM
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — replaced `-` with `-|` (saturating subtraction) in all three locations. Test added.
 
 ```zig
 const merged_h = self.sy - 1;

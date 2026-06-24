@@ -69,7 +69,7 @@ pub const Display = struct {
         try self.writeBytes("\x1b[?25l");
 
         const merged_w = self.sx;
-        const merged_h = self.sy - 1;
+        const merged_h = self.sy -| 1;
 
         var merged_screen = try Screen.init(allocator, merged_w, merged_h);
         defer merged_screen.deinit();
@@ -225,7 +225,7 @@ pub const Display = struct {
     }
 
     fn renderContent(self: Display, screen: *Screen) Error!void {
-        const h = @min(screen.grid.height, self.sy - 1);
+        const h = @min(screen.grid.height, self.sy -| 1);
         const w = @min(screen.grid.width, self.sx);
 
         var active_fg = Colour.default_();
@@ -356,7 +356,7 @@ pub const Display = struct {
     }
 
     fn renderStatusBar(self: Display, session_name: []const u8, windows: []const *Window, active_window: ?*Window) Error!void {
-        try self.moveTo(0, self.sy - 1);
+        try self.moveTo(0, self.sy -| 1);
         try self.writeBytes("\x1b[7m");
 
         var col: u32 = 0;
@@ -569,4 +569,10 @@ test "renderSixelImages emits DCS at correct absolute position" {
     try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1bPqA\x1b\\") != null);
     // … and a SGR reset after it.
     try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1b[m") != null);
+}
+
+test "sy saturating subtraction — bug #126" {
+    try testing.expectEqual(@as(u32, 0), @as(u32, 0) -| 1);
+    try testing.expectEqual(@as(u32, 0), @as(u32, 1) -| 1);
+    try testing.expectEqual(@as(u32, 2), @as(u32, 3) -| 1);
 }
