@@ -162,7 +162,7 @@ fn mainInner(init: std.process.Init) Error!void {
         const cmd = cmd_buf[0..offset];
 
         try client.sendCommand(cmd);
-        const reply = try client.recvPacket();
+        var reply = try client.recvPacket();
         defer reply.deinit(allocator);
         const msg_type = protocol.MessageType.fromByte(reply.header.msg_type) orelse {
             std.debug.print("Invalid message type from server: {}\n", .{reply.header.msg_type});
