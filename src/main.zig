@@ -145,8 +145,9 @@ fn mainInner(init: std.process.Init) Error!void {
 
         var cmd_len: usize = 0;
         for (args.items[1..]) |arg| {
-            cmd_len += arg.len + 1;
+            cmd_len += arg.len;
         }
+        cmd_len +|= args.items.len -| 2; // n-1 separators for n args
         var cmd_buf = try allocator.alloc(u8, cmd_len);
         defer allocator.free(cmd_buf);
 

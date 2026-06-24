@@ -1617,7 +1617,7 @@ Client fds are closed but never removed from `self.loop.fds` via `removeFd`. Aft
 ### 135. `main.zig` — Command buffer over-allocated by 1 byte
 **File:** `src/main.zig:146–149`
 **Severity:** LOW
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — separate arg-length accumulation from separator counting.
 
 ```zig
 var cmd_len: usize = 0;
