@@ -92,15 +92,29 @@ pub fn sendResponse(fd: i32, result: *const DispatchResult) Error!void {
     const pkt = Packet.make(result.response_type, result.data);
     var hdr_buf: [5]u8 = undefined;
     pkt.header.encode(&hdr_buf);
-    
-    // Write header
-    var n = std.c.write(fd, &hdr_buf, 5);
-    if (n < 5) return error.WriteFailed;
-    
-    // Write data body directly from slice
+
+    // Write header — retry partial writes
+    var hdr_remaining: []const u8 = hdr_buf[0..];
+    while (hdr_remaining.len > 0) {
+        const n = std.c.write(fd, hdr_remaining.ptr, hdr_remaining.len);
+        if (n < 0) {
+            if (std.c.errno(n) == .INTR) continue;
+            return error.WriteFailed;
+        }
+        hdr_remaining = hdr_remaining[@intCast(n)..];
+    }
+
+    // Write data body — retry partial writes
     if (result.data.len > 0) {
-        n = std.c.write(fd, result.data.ptr, result.data.len);
-        if (n < @as(isize, @intCast(result.data.len))) return error.WriteFailed;
+        var body_remaining: []const u8 = result.data;
+        while (body_remaining.len > 0) {
+            const n = std.c.write(fd, body_remaining.ptr, body_remaining.len);
+            if (n < 0) {
+                if (std.c.errno(n) == .INTR) continue;
+                return error.WriteFailed;
+            }
+            body_remaining = body_remaining[@intCast(n)..];
+        }
     }
 }
 
@@ -238,6 +252,30 @@ test "dispatch result deinit handles non-owned data" {
         .is_owned = false,
     };
     result.deinit();
+}
+
+test "sendResponse writes header and data" {
+    var pipe_fds: [2]i32 = undefined;
+    if (std.c.pipe(&pipe_fds) < 0) return error.Skip;
+    defer _ = std.c.close(pipe_fds[0]);
+    defer _ = std.c.close(pipe_fds[1]);
+
+    const result = DispatchResult{
+        .response_type = .ready,
+        .data = "hello",
+        .allocator = testing.allocator,
+        .is_owned = false,
+    };
+    try sendResponse(pipe_fds[1], &result);
+
+    var buf: [256]u8 = undefined;
+    const n = std.c.read(pipe_fds[0], &buf, buf.len);
+    if (n < 0) return error.Skip;
+    // header: 4-byte little-endian len (5 + 5 = 10) + 1-byte type
+    try testing.expectEqual(@as(u32, 10), std.mem.readInt(u32, buf[0..4], .little));
+    try testing.expectEqual(@as(u8, @intFromEnum(MessageType.ready)), buf[4]);
+    // body follows
+    try testing.expectEqualStrings("hello", buf[5..10]);
 }
 
 test "dispatch kill-window" {

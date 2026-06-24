@@ -1203,20 +1203,9 @@ self.param_val = self.param_val * 10 + (byte - '0');
 ---
 
 ### 106. `server/dispatch.zig` — Partial writes not retried on socket I/O
-**File:** `src/server/dispatch.zig:97–104`
+**File:** `src/server/dispatch.zig:91–109`
 **Severity:** HIGH
-**Status:** ❌ UNRESOLVED
-
-```zig
-var n = std.c.write(fd, &hdr_buf, 5);
-if (n < 5) return error.WriteFailed;
-if (result.data.len > 0) {
-    n = std.c.write(fd, result.data.len);
-    if (n < @as(isize, @intCast(result.data.len))) return error.WriteFailed;
-}
-```
-
-`write()` on a socket may return fewer bytes than requested (partial write). The code treats any short write as a hard failure and returns immediately, losing the remaining data. For stream sockets, a write loop is required. Additionally, if the header is partially written (e.g. 3 of 5 bytes), the remaining 2 bytes are never sent, corrupting the protocol stream.
+**Status:** ✅ FIXED — both header and body writes now loop retrying partial writes with EINTR handling. Test added using pipe.
 
 ---
 
