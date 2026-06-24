@@ -332,9 +332,9 @@ fn parseSetEnv(allocator: std.mem.Allocator, args: []const u8, result: *ParseRes
     var remaining = trimmed;
     var global = false;
 
-    if (std.mem.startsWith(u8, remaining, "-g ")) {
+    if (remaining.len >= 2 and remaining[0] == '-' and remaining[1] == 'g') {
         global = true;
-        remaining = std.mem.trim(u8, remaining[3..], " \t");
+        remaining = std.mem.trim(u8, if (remaining.len > 2) remaining[2..] else "", " \t");
     }
 
     if (std.mem.indexOfScalar(u8, remaining, '=')) |eq_pos| {
@@ -482,6 +482,18 @@ test "set-environment without value unsets" {
     const d = result.directives.items[0];
     try testing.expect(d == .set_environment);
     try testing.expect(d.set_environment.value == null);
+}
+
+test "set-environment -g followed by tab — bug #118" {
+    var result = try parseConfig(testing.allocator, "set-environment -g\tFOO\tbar");
+    defer result.deinit(testing.allocator);
+
+    try testing.expectEqual(@as(usize, 1), result.directives.items.len);
+    const d = result.directives.items[0];
+    try testing.expect(d == .set_environment);
+    try testing.expect(d.set_environment.flags.global);
+    try testing.expectEqualStrings("FOO", d.set_environment.name);
+    try testing.expectEqualStrings("bar", d.set_environment.value.?);
 }
 
 test "source-file directive" {

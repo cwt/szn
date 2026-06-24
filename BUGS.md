@@ -1357,7 +1357,7 @@ Only checks `s[0] == '"'`, never verifies `s[s.len-1] == '"'`. Input `"hello` (n
 ### 118. `cfg.zig` — `parseSetEnv` doesn't recognize `-g` followed by tab
 **File:** `src/cfg.zig:335`
 **Severity:** MEDIUM
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — replaced `startsWith(u8, "-g ")` with `remaining[0] == '-' and remaining[1] == 'g'` + trim, matching the pattern used by `parseSet`. Tab-separated flags now work. Test added.
 
 ```zig
 if (std.mem.startsWith(u8, remaining, "-g ")) {
