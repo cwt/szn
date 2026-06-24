@@ -1646,7 +1646,7 @@ The initial resize packet write is silently discarded. If it fails, the server h
 ### 137. `session.zig` — Window IDs are not unique after kills
 **File:** `src/session.zig:73`
 **Severity:** LOW
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — added `next_win_id` counter; IDs are now monotonically increasing. Test added.
 
 ```zig
 const win_id = self.windows.items.len;
@@ -1659,7 +1659,7 @@ Window ID is derived from array length. After `killWindow` (which uses `swapRemo
 ### 138. `input.zig` — CSI private marker can appear after parameter digits
 **File:** `src/input.zig:262–265`
 **Severity:** LOW
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — private marker only accepted when `param_count == 0` and no digits seen. Test added.
 
 ```zig
 0x3C...0x3F => {

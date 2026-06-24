@@ -267,8 +267,12 @@ pub const InputParser = struct {
                 self.pushParam();
             },
             0x3C...0x3F => {
-                // < = > ? — private marker prefix, stay in param state
-                self.intermediate = byte;
+                // Private marker prefix — only valid before any parameters
+                if (self.param_count == 0 and !self.collecting_param) {
+                    self.intermediate = byte;
+                } else {
+                    self.state = .csi_intermediate;
+                }
             },
             0x20...0x2F => {
                 // intermediate bytes — transition to intermediate state
@@ -1859,5 +1863,11 @@ test "SOS/PM/APC with ESC backslash ST terminator — bug #131" {
 
     // Also test 8-bit SOS (0x98) + ESC \ termination
     try parser.feed(&[_]u8{ 0x98, 'w', 'o', 'r', 'l', 'd', 0x1B, '\\' });
+    try testing.expect(parser.state == .ground);
+}
+
+test "CSI private marker after parameter digits is rejected — bug #138" {
+    var parser = InputParser.init(undefined);
+    try parser.feed(&[_]u8{ 0x1B, '[', '2', '5', '?', 'h' });
     try testing.expect(parser.state == .ground);
 }

@@ -17,6 +17,7 @@ pub const Session = struct {
     height: u32,
     options: options_mod.Options,
     window_options: options_mod.Options,
+    next_win_id: u32 = 0,
 
     pub fn init(self: *Session, backing: std.mem.Allocator, id: u32, name: []const u8, width: u32, height: u32, global_options: ?*const options_mod.Options, global_window_options: ?*const options_mod.Options) Error!void {
         self.arena = std.heap.ArenaAllocator.init(backing);
@@ -70,7 +71,8 @@ pub const Session = struct {
     pub fn newWindow(self: *Session, allocator: std.mem.Allocator, name: []const u8) Error!*Window {
         _ = allocator;
         const a = self.arenaAllocator();
-        const win_id = self.windows.items.len;
+        const win_id = self.next_win_id;
+        self.next_win_id += 1;
         const new_win = try a.create(Window);
         new_win.* = try Window.init(a, @intCast(win_id), name, self.width, self.height, &self.window_options);
         for (new_win.panes.items) |p| p.window = new_win;
@@ -189,4 +191,19 @@ test "session active window persists after kill" {
     session.killWindow(testing.allocator, first);
 
     try testing.expectEqual(nw, session.active_window);
+}
+
+test "window IDs are unique after kills — bug #137" {
+    var session: Session = undefined;
+    try session.init(testing.allocator, 1, "default", 80, 24, null, null);
+    defer session.deinit(testing.allocator);
+
+    const w1 = try session.newWindow(testing.allocator, "one");
+    const w2 = try session.newWindow(testing.allocator, "two");
+    _ = w2;
+
+    session.killWindow(testing.allocator, w1);
+    const w3 = try session.newWindow(testing.allocator, "three");
+    try testing.expect(w3.id != w1.id);
+    try testing.expect(w3.id > w1.id);
 }
