@@ -1503,7 +1503,7 @@ try self.collectPaneBounds(s.a, lx, ly, split_w -| 1, lh, result);
 ### 128. `tty/tty.zig` — `cursorDown`/`cursorForward`/`drawLine` panic on zero dimensions
 **File:** `src/tty/tty.zig:94, 107, 429`
 **Severity:** MEDIUM
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — replaced `-` with `-|` in `self.sy - 1`, `self.sx - 1`, and `width - 1`. Test added.
 
 ```zig
 // cursorDown:

@@ -91,7 +91,7 @@ pub const Term = struct {
     pub fn cursorDown(self: *Term, n: u32) Error!void {
         if (n == 0) return;
         if (self.cy >= 0) {
-            const max_down = self.sy - 1 -| @as(u32, @intCast(self.cy));
+            const max_down = (self.sy -| 1) -| @as(u32, @intCast(self.cy));
             self.cy += @min(max_down, n);
         }
         if (n == 1) {
@@ -104,7 +104,7 @@ pub const Term = struct {
     pub fn cursorForward(self: *Term, n: u32) Error!void {
         if (n == 0) return;
         if (self.cx >= 0) {
-            const max_forward = self.sx - 1 -| @as(u32, @intCast(self.cx));
+            const max_forward = (self.sx -| 1) -| @as(u32, @intCast(self.cx));
             self.cx += @min(max_forward, n);
         }
         if (n == 1) {
@@ -426,7 +426,7 @@ pub const Term = struct {
 
         // Clear trailing spaces
         if (last_was_space) {
-            try self.cursorMove(width - 1, ly);
+            try self.cursorMove(width -| 1, ly);
             try self.clearToEOL();
         }
     }
@@ -949,4 +949,11 @@ test "draw screen draws all lines" {
     try testing.expect(std.mem.indexOf(u8, out, "AB") != null);
     try testing.expect(std.mem.indexOf(u8, out, "CD") != null);
     try testing.expect(std.mem.indexOf(u8, out, "EF") != null);
+}
+
+test "cursorDown/cursorForward with zero dimensions — bug #128" {
+    var buf: [64]u8 = undefined;
+    var term = Term.init(Writer.fixed(&buf), 0, 0);
+    try term.cursorDown(1);
+    try term.cursorForward(1);
 }
