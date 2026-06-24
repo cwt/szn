@@ -29,7 +29,7 @@ extern "c" fn proc_pidinfo(pid: c_int, flavor: c_int, arg: u64, buffer: *anyopaq
 extern "c" fn chdir(path: [*:0]const u8) c_int;
 extern "c" fn readlink(path: [*:0]const u8, buf: [*]u8, bufsiz: usize) isize;
 
-const PROC_PIDVNODEPATHINFO: c_int = 11;
+const PROC_PIDVNODEPATHINFO: c_int = 9;
 const MAXPATHLEN: usize = 1024;
 
 const vinfo_stat = extern struct {
