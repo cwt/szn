@@ -1987,7 +1987,6 @@ Uses `std.posix.errno(rc)` instead of `std.c.errno(rc)`. Same issue as bugs #103
 | High | 39 (29+10) | 38 | 1 | **0** |
 | Medium | 52 (18+34) | 50 | 2 | **0** |
 | Low | 54 (26+28) | 51 | 3 | **0** |
-| Total | 163 (99+64) | **153** | **9** | **1** |
 | Total | 163 (99+64) | **155** | **9** | **0** |
 
 
