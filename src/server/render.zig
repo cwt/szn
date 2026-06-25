@@ -39,13 +39,13 @@ pub const Display = struct {
             .default_, .terminal => {},
             .indexed => {
                 var buf: [32]u8 = undefined;
-                const s = std.fmt.bufPrint(&buf, "\x1b[38;5;{}m", .{@as(u8, @truncate(color.value))}) catch unreachable;
+                const s = std.fmt.bufPrint(&buf, "\x1b[38;5;{}m", .{@as(u8, @truncate(color.value))}) catch return;
                 try self.writeBytes(s);
             },
             .rgb => {
                 const rgb = color.toRgb().?;
                 var buf: [32]u8 = undefined;
-                const s = std.fmt.bufPrint(&buf, "\x1b[38;2;{};{};{}m", .{ rgb[0], rgb[1], rgb[2] }) catch unreachable;
+                const s = std.fmt.bufPrint(&buf, "\x1b[38;2;{};{};{}m", .{ rgb[0], rgb[1], rgb[2] }) catch return;
                 try self.writeBytes(s);
             },
         }
@@ -56,13 +56,13 @@ pub const Display = struct {
             .default_, .terminal => {},
             .indexed => {
                 var buf: [32]u8 = undefined;
-                const s = std.fmt.bufPrint(&buf, "\x1b[48;5;{}m", .{@as(u8, @truncate(color.value))}) catch unreachable;
+                const s = std.fmt.bufPrint(&buf, "\x1b[48;5;{}m", .{@as(u8, @truncate(color.value))}) catch return;
                 try self.writeBytes(s);
             },
             .rgb => {
                 const rgb = color.toRgb().?;
                 var buf: [32]u8 = undefined;
-                const s = std.fmt.bufPrint(&buf, "\x1b[48;2;{};{};{}m", .{ rgb[0], rgb[1], rgb[2] }) catch unreachable;
+                const s = std.fmt.bufPrint(&buf, "\x1b[48;2;{};{};{}m", .{ rgb[0], rgb[1], rgb[2] }) catch return;
                 try self.writeBytes(s);
             },
         }
@@ -72,7 +72,16 @@ pub const Display = struct {
         if (self.capture) |cap| {
             try cap.appendSlice(self.capture_allocator.?, bytes);
         } else {
-            if (c.write(self.fd, bytes.ptr, bytes.len) < 0) return error.WriteFailed;
+            var off: usize = 0;
+            while (off < bytes.len) {
+                const n = c.write(self.fd, bytes.ptr + off, bytes.len - off);
+                if (n < 0) {
+                    if (std.c.errno(n) == .INTR) continue;
+                    return error.WriteFailed;
+                }
+                if (n == 0) return error.WriteFailed;
+                off += @as(usize, @intCast(n));
+            }
         }
     }
 
@@ -329,10 +338,12 @@ pub const Display = struct {
                     active_bg = cell.bg;
                     active_attr = cell.attr;
 
-                    var sgr_buf: [128]u8 = undefined;
+                    var sgr_buf: [256]u8 = undefined;
                     var sgr_pos: usize = 0;
 
-                    sgr_pos += (std.fmt.bufPrint(sgr_buf[sgr_pos..], "\x1b[m", .{}) catch unreachable).len;
+                    if (std.fmt.bufPrint(sgr_buf[sgr_pos..], "\x1b[m", .{})) |reset_str| {
+                        sgr_pos += reset_str.len;
+                    } else |_| {}
 
                     const attrFields = comptime blk: {
                         const all = std.meta.fields(Attr);
@@ -354,29 +365,38 @@ pub const Display = struct {
 
                     inline for (attrFields, 0..) |field, idx| {
                         if (@field(active_attr, field.name)) {
-                            sgr_pos += (std.fmt.bufPrint(sgr_buf[sgr_pos..], "\x1b[{s}m", .{attrCodes[idx]}) catch unreachable).len;
+                            const written = std.fmt.bufPrint(sgr_buf[sgr_pos..], "\x1b[{s}m", .{attrCodes[idx]}) catch break;
+                            sgr_pos += written.len;
                         }
                     }
 
                     switch (active_fg.tag) {
                         .default_, .terminal => {},
                         .indexed => {
-                            sgr_pos += (std.fmt.bufPrint(sgr_buf[sgr_pos..], "\x1b[38;5;{}m", .{@as(u8, @truncate(active_fg.value))}) catch unreachable).len;
+                            if (std.fmt.bufPrint(sgr_buf[sgr_pos..], "\x1b[38;5;{}m", .{@as(u8, @truncate(active_fg.value))})) |printed| {
+                                sgr_pos += printed.len;
+                            } else |_| {}
                         },
                         .rgb => {
                             const rgb = active_fg.toRgb().?;
-                            sgr_pos += (std.fmt.bufPrint(sgr_buf[sgr_pos..], "\x1b[38;2;{};{};{}m", .{ rgb[0], rgb[1], rgb[2] }) catch unreachable).len;
+                            if (std.fmt.bufPrint(sgr_buf[sgr_pos..], "\x1b[38;2;{};{};{}m", .{ rgb[0], rgb[1], rgb[2] })) |printed| {
+                                sgr_pos += printed.len;
+                            } else |_| {}
                         },
                     }
 
                     switch (active_bg.tag) {
                         .default_, .terminal => {},
                         .indexed => {
-                            sgr_pos += (std.fmt.bufPrint(sgr_buf[sgr_pos..], "\x1b[48;5;{}m", .{@as(u8, @truncate(active_bg.value))}) catch unreachable).len;
+                            if (std.fmt.bufPrint(sgr_buf[sgr_pos..], "\x1b[48;5;{}m", .{@as(u8, @truncate(active_bg.value))})) |printed| {
+                                sgr_pos += printed.len;
+                            } else |_| {}
                         },
                         .rgb => {
                             const rgb = active_bg.toRgb().?;
-                            sgr_pos += (std.fmt.bufPrint(sgr_buf[sgr_pos..], "\x1b[48;2;{};{};{}m", .{ rgb[0], rgb[1], rgb[2] }) catch unreachable).len;
+                            if (std.fmt.bufPrint(sgr_buf[sgr_pos..], "\x1b[48;2;{};{};{}m", .{ rgb[0], rgb[1], rgb[2] })) |printed| {
+                                sgr_pos += printed.len;
+                            } else |_| {}
                         },
                     }
 
@@ -401,14 +421,14 @@ pub const Display = struct {
                     if (cell.comb1 != 0) {
                         const ccp1 = char_width.combiningCodepoint(cell.comb1);
                         if (ccp1 != 0) {
-                            const clen = std.unicode.utf8Encode(ccp1, &buf) catch unreachable;
+                            const clen = std.unicode.utf8Encode(ccp1, &buf) catch continue;
                             try self.writeBytes(buf[0..clen]);
                         }
                     }
                     if (cell.comb2 != 0) {
                         const ccp2 = char_width.combiningCodepoint(cell.comb2);
                         if (ccp2 != 0) {
-                            const clen = std.unicode.utf8Encode(ccp2, &buf) catch unreachable;
+                            const clen = std.unicode.utf8Encode(ccp2, &buf) catch continue;
                             try self.writeBytes(buf[0..clen]);
                         }
                     }
@@ -528,6 +548,46 @@ test "renderContent double and curly underline" {
     // Verify SGR escape sequences are in the output
     try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1b[4:2m") != null);
     try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1b[4:3m") != null);
+}
+
+test "renderContent all attributes + RGB colours — no SGR buffer overflow — bug #164" {
+    const allocator = std.testing.allocator;
+    var screen = try Screen.init(allocator, 5, 1);
+    defer screen.deinit();
+
+    screen.grid.setCell(0, 0, Cell.withChar('A'));
+    var cell = screen.grid.getCell(0, 0);
+    cell.fg = Colour.fromRgb(255, 128, 0);
+    cell.bg = Colour.fromRgb(0, 128, 255);
+    cell.attr.bold = true;
+    cell.attr.dim = true;
+    cell.attr.italic = true;
+    cell.attr.underline = true;
+    cell.attr.blink = true;
+    cell.attr.reverse = true;
+    cell.attr.concealed = true;
+    cell.attr.strikethrough = true;
+    cell.attr.overline = true;
+    cell.attr.double_underline = true;
+    cell.attr.curly_underline = true;
+    screen.grid.setCell(0, 0, cell);
+
+    var capture_buf: std.ArrayList(u8) = .empty;
+    defer capture_buf.deinit(allocator);
+
+    const display = Display{
+        .fd = -1,
+        .sx = 5,
+        .sy = 2,
+        .capture = &capture_buf,
+        .capture_allocator = allocator,
+    };
+
+    try display.renderContent(&screen);
+
+    try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1b[1m") != null);
+    try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1b[38;2;255;128;0m") != null);
+    try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1b[48;2;0;128;255m") != null);
 }
 
 test "renderStatusBar with long window name" {

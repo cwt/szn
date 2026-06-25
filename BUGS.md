@@ -1986,7 +1986,7 @@ Uses `std.posix.errno(rc)` instead of `std.c.errno(rc)`. Same issue as bugs #103
 ### 164. `server/render.zig` — SGR buffer overflow with all 11 attributes + RGB fg/bg
 **File:** `src/server/render.zig:332`
 **Severity:** CRITICAL
-**Status:** UNRESOLVED
+**Status:** ✅ FIXED — buffer increased from 128 to 256 bytes; all `catch unreachable` replaced with graceful skip (`catch ""` or `catch break`) so overflow just drops the attribute instead of crashing.
 
 ```zig
 var sgr_buf: [128]u8 = undefined;
