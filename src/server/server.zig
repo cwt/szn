@@ -648,14 +648,46 @@ pub const Server = struct {
                     p.writeInput(&[_]u8{@intCast(ch.code)}) catch {};
                 }
             },
+            .arrow => |a| {
+                const seq: []const u8 = switch (a.key) {
+                    .up => "\x1b[A",
+                    .down => "\x1b[B",
+                    .right => "\x1b[C",
+                    .left => "\x1b[D",
+                };
+                p.writeInput(seq) catch {};
+            },
             .special => |s| {
                 switch (s.key) {
                     .enter => p.writeInput("\r") catch {},
                     .tab => p.writeInput("\t") catch {},
                     .backspace => p.writeInput("\x7f") catch {},
                     .escape => p.writeInput("\x1b") catch {},
-                    else => {},
+                    .home => p.writeInput("\x1b[H") catch {},
+                    .end => p.writeInput("\x1b[F") catch {},
+                    .page_up => p.writeInput("\x1b[5~") catch {},
+                    .page_down => p.writeInput("\x1b[6~") catch {},
+                    .insert => p.writeInput("\x1b[2~") catch {},
+                    .delete_ => p.writeInput("\x1b[3~") catch {},
+                    .btab => p.writeInput("\x1b[Z") catch {},
                 }
+            },
+            .function => |f| {
+                const seq: []const u8 = switch (f.key) {
+                    .f1 => "\x1bOP",
+                    .f2 => "\x1bOQ",
+                    .f3 => "\x1bOR",
+                    .f4 => "\x1bOS",
+                    .f5 => "\x1b[15~",
+                    .f6 => "\x1b[17~",
+                    .f7 => "\x1b[18~",
+                    .f8 => "\x1b[19~",
+                    .f9 => "\x1b[20~",
+                    .f10 => "\x1b[21~",
+                    .f11 => "\x1b[23~",
+                    .f12 => "\x1b[24~",
+                };
+                p.writeInput(seq) catch {};
             },
             else => {},
         }
