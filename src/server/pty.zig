@@ -129,6 +129,17 @@ pub const Pty = struct {
             _ = close(self.master);
             _ = login_tty(self.slave);
 
+            // Set sane terminal defaults so bare \n in cooked-mode output
+            // is converted to \r\n before reaching the master.  openpty()
+            // leaves c_oflag=0 which disables this conversion.
+            {
+                var term: std.c.termios = undefined;
+                _ = std.c.tcgetattr(0, &term);
+                term.oflag.OPOST = true;
+                term.oflag.ONLCR = true;
+                _ = std.c.tcsetattr(0, std.c.TCSA.FLUSH, &term);
+            }
+
             if (cwd_z) |c| _ = chdir(c);
 
             _ = setenv("TERM", "tmux-256color", 1);

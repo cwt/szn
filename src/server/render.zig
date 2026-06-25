@@ -87,11 +87,13 @@ pub const Display = struct {
 
     pub fn enterAltScreen(self: Display) Error!void {
         try self.writeBytes("\x1b[?1049h");
+        try self.writeBytes("\x1b[>1u");
         try self.writeBytes("\x1b[?1000h\x1b[?1006h");
         try self.writeBytes("\x1b[?25l");
     }
 
     pub fn exitAltScreen(self: Display) Error!void {
+        try self.writeBytes("\x1b[<1u");
         try self.writeBytes("\x1b[?1000l\x1b[?1006l");
         try self.writeBytes("\x1b[?25h");
         try self.writeBytes("\x1b[?1049l");

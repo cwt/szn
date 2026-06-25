@@ -627,6 +627,40 @@ pub const Server = struct {
         try self.processInput(buf[0..@as(usize, @intCast(n))]);
     }
 
+    fn writeKeyToPty(pty: ?*@import("pty.zig").Pty, k: @import("../key.zig").Key) void {
+        const p = pty orelse return;
+        switch (k) {
+            .char => |ch| {
+                if (ch.mod.ctrl) {
+                    const ctrl_byte: u8 = @intCast(ch.code & 0x1F);
+                    if (ch.mod.alt) {
+                        p.writeInput(&[_]u8{ 0x1b, ctrl_byte }) catch {};
+                    } else {
+                        p.writeInput(&[_]u8{ctrl_byte}) catch {};
+                    }
+                } else if (ch.mod.alt) {
+                    if (ch.code <= 0x7F) {
+                        p.writeInput(&[_]u8{ 0x1b, @intCast(ch.code) }) catch {};
+                    }
+                } else if (ch.code >= 0x20 and ch.code <= 0x7E) {
+                    p.writeInput(&[_]u8{@intCast(ch.code)}) catch {};
+                } else if (ch.code < 0x20) {
+                    p.writeInput(&[_]u8{@intCast(ch.code)}) catch {};
+                }
+            },
+            .special => |s| {
+                switch (s.key) {
+                    .enter => p.writeInput("\r") catch {},
+                    .tab => p.writeInput("\t") catch {},
+                    .backspace => p.writeInput("\x7f") catch {},
+                    .escape => p.writeInput("\x1b") catch {},
+                    else => {},
+                }
+            },
+            else => {},
+        }
+    }
+
     pub fn processInput(self: *Server, buf: []const u8) ServerError!void {
         const session = self.activeSession() orelse return;
         const window = session.active_window orelse return;
@@ -815,7 +849,10 @@ pub const Server = struct {
                         }
 
                         if (!handled) {
-                            if (pty) |p| p.writeInput(esc_buf.items) catch {};
+                            switch (event) {
+                                .key => |k| writeKeyToPty(pty, k),
+                                else => if (pty) |p| p.writeInput(esc_buf.items) catch {},
+                            }
                         }
                         esc_buf.clearRetainingCapacity();
                     } else if (self.input_reader.state == .ground) {
