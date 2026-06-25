@@ -1979,14 +1979,99 @@ Uses `std.posix.errno(rc)` instead of `std.c.errno(rc)`. Same issue as bugs #103
 
 ---
 
+## NEW BUGS (2026-06-25 — SGR overflow, partial writes, crash-on-escape found by opencode crash)
+
+---
+
+### 164. `server/render.zig` — SGR buffer overflow with all 11 attributes + RGB fg/bg
+**File:** `src/server/render.zig:332`
+**Severity:** CRITICAL
+**Status:** UNRESOLVED
+
+```zig
+var sgr_buf: [128]u8 = undefined;
+```
+
+The SGR buffer has 128 bytes. Worst-case: `\x1b[m` (3) + 11 attrs at `\x1b[{s}m` (max 8 each = 88) + RGB fg `\x1b[38;2;R;G;Bm` (20) + RGB bg `\x1b[48;2;R;G;Bm` (20) = 131 bytes > 128. All `bufPrint` calls use `catch unreachable` — when this overflows, **szn panics instantly**.
+
+This is triggered when any cell has all 11 rendering attributes active simultaneously (bold+dim+italic+underline+blink+reverse+concealed+strikethrough+overline+double_underline+curly_underline) with RGB fg and bg colours. opencode's terminal output with rich formatting can easily trigger this.
+
+**Fix:** Increase buffer to 256 bytes, replace all `catch unreachable` with graceful skip (continue/break) when buffer is full.
+
+---
+
+### 165. `server/render.zig` — `writeBytes` doesn't retry partial writes
+**File:** `src/server/render.zig:75`
+**Severity:** HIGH
+**Status:** UNRESOLVED
+
+```zig
+if (c.write(self.fd, bytes.ptr, bytes.len) < 0) return error.WriteFailed;
+```
+
+`c.write()` can return a positive value less than `bytes.len` (partial write). The code only checks for `< 0`. Remaining bytes are silently dropped, corrupting terminal output. If a partial write occurs mid-escape-sequence, the terminal gets corrupted state — garbled display, wrong colours, broken borders.
+
+All `writeColourFg`, `writeColourBg`, `writeString`, `writeStr`, `renderContent`, `renderStatusBar`, `moveTo`, `enterAltScreen`, `exitAltScreen`, `renderAll`, and `renderSixelImages` go through this function.
+
+**Fix:** Add retry loop handling partial writes and EINTR, matching the pattern used in `renderToDisplayClient` (server.zig:1200–1220).
+
+---
+
+### 166. `main.zig` — Output write to stdout ignores errors and partial writes
+**File:** `src/main.zig:453`
+**Severity:** HIGH
+**Status:** UNRESOLVED
+
+```zig
+.output => {
+    _ = c.write(stdout_fd, data.ptr, data.len);
+},
+```
+
+No error check, no partial write retry. When opencode generates large output, the socket read can return a big chunk, and writing it to stdout may only partially succeed. Data is silently lost, causing garbled display.
+
+**Fix:** Add retry loop with EINTR and partial write handling. Also fix the `stdin_data` write to server_fd (line 449) which similarly ignores errors.
+
+---
+
+### 167. `server/render.zig` — `utf8Encode` `catch unreachable` for combining codepoints
+**File:** `src/server/render.zig:404, 411`
+**Severity:** MEDIUM
+**Status:** UNRESOLVED
+
+```zig
+const clen = std.unicode.utf8Encode(ccp1, &buf) catch unreachable;
+```
+
+If `combiningCodepoint()` returns a codepoint > 0x10FFFF (non-BMP surrogate or invalid), `utf8Encode` panics. This is triggered by corrupted grid data or edge-case combining character sequences.
+
+**Fix:** Replace `catch unreachable` with `catch continue` to skip the invalid combining character.
+
+---
+
+### 168. `server/pty.zig` — `execvp` assumes argv_z[0] is non-null
+**File:** `src/server/pty.zig:150`
+**Severity:** MEDIUM
+**Status:** UNRESOLVED
+
+```zig
+_ = execvp(argv_z[0].?, @ptrCast(argv_z.ptr));
+```
+
+`argv_z[0].?` uses the force-unwrap operator `.?`. While the current callers always provide at least one arg (DEFAULT_SHELL fallback at line 103), empty argv from a future caller would panic. Should have an explicit guard before the exec call.
+
+**Fix:** Add `assert(argv_z[0] != null)` or `if (argv_z[0] == null) std.process.exit(1);`.
+
+---
+
 ## Updated Summary
 
 | Severity | Count | Fixed | False Positive | Unresolved |
 |----------|-------|-------|----------------|------------|
-| Critical | 18 (14+4) | 15 | 3 | **0** |
-| High | 39 (29+10) | 38 | 1 | **0** |
-| Medium | 52 (18+34) | 50 | 2 | **0** |
+| Critical | 19 (18+1) | 15 | 3 | **1** |
+| High | 41 (39+2) | 38 | 1 | **2** |
+| Medium | 54 (52+2) | 50 | 2 | **2** |
 | Low | 54 (26+28) | 51 | 3 | **0** |
-| Total | 163 (99+64) | **155** | **9** | **0** |
+| Total | 168 (163+5) | **155** | **9** | **5** |
 
 
