@@ -1,6 +1,6 @@
 .{
     .name = .szn,
-    .version = "0.0.0",
+    .version = "0.1.0",
     .paths = .{""},
     .fingerprint = 0xd62cd238fa72e5d9,
 }
