@@ -16,6 +16,7 @@ pub const InputParser = struct {
     collecting_param: bool = false,
     params_started: bool = false,
     intermediate: u8 = 0,
+    private_marker: u8 = 0,
     osc_buf: [256]u8 = undefined,
     osc_len: u32 = 0,
     pty: ?*@import("server/pty.zig").Pty = null,
@@ -66,6 +67,7 @@ pub const InputParser = struct {
         self.collecting_param = false;
         self.params_started = false;
         self.intermediate = 0;
+        self.private_marker = 0;
         self.osc_len = 0;
         self.utf8_len = 0;
         self.utf8_expected = 0;
@@ -164,6 +166,7 @@ pub const InputParser = struct {
         self.state = .ground;
         self.clearParams();
         self.intermediate = 0;
+        self.private_marker = 0;
         self.osc_len = 0;
     }
 
@@ -269,6 +272,7 @@ pub const InputParser = struct {
             0x3C...0x3F => {
                 // Private marker prefix — only valid before any parameters
                 if (self.param_count == 0 and !self.collecting_param) {
+                    self.private_marker = byte;
                     self.intermediate = byte;
                 } else {
                     self.state = .csi_intermediate;
@@ -276,6 +280,7 @@ pub const InputParser = struct {
             },
             0x20...0x2F => {
                 // intermediate bytes — transition to intermediate state
+                self.pushParam();
                 self.intermediate = byte;
                 self.state = .csi_intermediate;
             },
@@ -499,6 +504,10 @@ pub const InputParser = struct {
                 const n = self.paramDefault(0, 1);
                 self.screen.insertChars(n);
             },
+            'b' => {
+                const count = self.paramDefault(0, 1);
+                try self.screen.repeatLastChar(count);
+            },
             'A' => self.screen.cursorUp(p),
             'B' => self.screen.cursorDown(p),
             'C' => self.screen.cursorForward(p),
@@ -596,20 +605,39 @@ pub const InputParser = struct {
                 }
             },
             'm' => {
-                if (self.param_count == 0) {
-                    self.screen.setSgr(&.{}, &.{});
-                } else {
-                    self.screen.setSgr(self.params[0..self.param_count], self.sub_params[0..self.param_count]);
+                if (self.intermediate == 0) {
+                    if (self.param_count == 0) {
+                        self.screen.setSgr(&.{}, &.{});
+                    } else {
+                        self.screen.setSgr(self.params[0..self.param_count], self.sub_params[0..self.param_count]);
+                    }
+                } else if (self.intermediate == '>') {
+                    const sub_mode = self.param(0);
+                    if (sub_mode == 4) {
+                        if (self.param_count >= 2) {
+                            self.screen.extkeys = @intCast(self.params[1]);
+                        } else {
+                            self.screen.extkeys = 0;
+                        }
+                    }
                 }
             },
             'r' => {
-                const top = (self.paramDefault(0, 1) -| 1);
-                const bottom = (self.paramDefault(1, self.screen.grid.height) -| 1);
-                self.screen.setScrollRegion(top, bottom);
+                if (self.intermediate == 0) {
+                    const top = (self.paramDefault(0, 1) -| 1);
+                    const bottom = (self.paramDefault(1, self.screen.grid.height) -| 1);
+                    self.screen.setScrollRegion(top, bottom);
+                }
             },
             'n' => {
                 const n = self.param(0);
-                if (n == 6) {
+                if (n == 5) {
+                    if (self.pty) |pty| {
+                        pty.writeInput("\x1b[0n") catch |err| {
+                            std.log.warn("DSR status writeInput error: {any}", .{err});
+                        };
+                    }
+                } else if (n == 6) {
                     if (self.pty) |pty| {
                         var rep_buf: [64]u8 = undefined;
                         const rep = std.fmt.bufPrint(&rep_buf, "\x1b[{d};{d}R", .{ self.screen.cursor.y + 1, self.screen.cursor.x + 1 }) catch {
@@ -642,10 +670,86 @@ pub const InputParser = struct {
                 }
             },
             's' => {
-                self.screen.saveCursor();
+                if (self.intermediate == 0) {
+                    self.screen.saveCursor();
+                }
             },
             'u' => {
-                self.screen.restoreCursor();
+                if (self.intermediate == 0) {
+                    self.screen.restoreCursor();
+                } else if (self.intermediate == '=') {
+                    const flags = self.param(0);
+                    const mode = if (self.param_count >= 2) self.params[1] else 1;
+                    switch (mode) {
+                        1 => {
+                            self.screen.kitty_kbd_flags = flags;
+                        },
+                        2 => {
+                            if (self.screen.kitty_kbd_stack_len < self.screen.kitty_kbd_stack.len) {
+                                self.screen.kitty_kbd_stack[self.screen.kitty_kbd_stack_len] = self.screen.kitty_kbd_flags;
+                                self.screen.kitty_kbd_stack_len += 1;
+                            }
+                            self.screen.kitty_kbd_flags = flags;
+                        },
+                        3 => {
+                            const count = if (self.param_count >= 1) self.params[0] else 1;
+                            var pop_count: u32 = 0;
+                            while (pop_count < count and self.screen.kitty_kbd_stack_len > 0) : (pop_count += 1) {
+                                self.screen.kitty_kbd_stack_len -= 1;
+                                self.screen.kitty_kbd_flags = self.screen.kitty_kbd_stack[self.screen.kitty_kbd_stack_len];
+                            }
+                        },
+                        else => {},
+                    }
+                } else if (self.intermediate == '?') {
+                    if (self.pty) |pty| {
+                        var rep_buf: [64]u8 = undefined;
+                        const rep = std.fmt.bufPrint(&rep_buf, "\x1b[?{d}u", .{self.screen.kitty_kbd_flags}) catch return;
+                        pty.writeInput(rep) catch |err| {
+                            std.log.warn("CSI ? u writeInput error: {any}", .{err});
+                        };
+                    }
+                }
+            },
+            'p' => {
+                if (self.intermediate == '$') {
+                    const mode = self.param(0);
+                    var status: u8 = 0;
+                    if (self.private_marker == '?') {
+                        status = switch (mode) {
+                            1 => if (self.screen.mode.keypad) @as(u8, 1) else @as(u8, 2),
+                            7 => if (self.screen.mode.line_wrap) @as(u8, 1) else @as(u8, 2),
+                            25 => if (self.screen.mode.cursor) @as(u8, 1) else @as(u8, 2),
+                            1000 => if (self.screen.mode.mouse_standard) @as(u8, 1) else @as(u8, 2),
+                            1002 => if (self.screen.mode.mouse_button) @as(u8, 1) else @as(u8, 2),
+                            1004 => if (self.screen.mode.focus) @as(u8, 1) else @as(u8, 2),
+                            1006 => if (self.screen.mode.mouse_sgr) @as(u8, 1) else @as(u8, 2),
+                            1049 => if (self.screen.mode.alt_screen) @as(u8, 1) else @as(u8, 2),
+                            2004 => if (self.screen.mode.paste) @as(u8, 1) else @as(u8, 2),
+                            2026 => if (self.screen.mode.sync) @as(u8, 1) else @as(u8, 2),
+                            else => @as(u8, 0), // Not recognized
+                        };
+                        if (self.pty) |pty| {
+                            var rep_buf: [64]u8 = undefined;
+                            const rep = std.fmt.bufPrint(&rep_buf, "\x1b[?{d};{d}$y", .{ mode, status }) catch return;
+                            pty.writeInput(rep) catch |err| {
+                                std.log.warn("DECRQM private response writeInput error: {any}", .{err});
+                            };
+                        }
+                    } else {
+                        status = switch (mode) {
+                            4 => if (self.screen.mode.insert) @as(u8, 1) else @as(u8, 2),
+                            else => @as(u8, 0), // Not recognized
+                        };
+                        if (self.pty) |pty| {
+                            var rep_buf: [64]u8 = undefined;
+                            const rep = std.fmt.bufPrint(&rep_buf, "\x1b[{d};{d}$y", .{ mode, status }) catch return;
+                            pty.writeInput(rep) catch |err| {
+                                std.log.warn("DECRQM ANSI response writeInput error: {any}", .{err});
+                            };
+                        }
+                    }
+                }
             },
             else => {},
         }
@@ -667,6 +771,7 @@ pub const InputParser = struct {
                     try self.screen.useAltScreen(enable);
                 },
                 2004 => self.screen.mode.paste = enable,
+                2026 => self.screen.mode.sync = enable,
                 else => {},
             }
         }
@@ -729,14 +834,28 @@ test "ground printable chars" {
     try testing.expectEqual(@as(u32, 5), screen.cursor.x);
 }
 
+test "CSI b REP repeat last char" {
+    var screen = try Screen.init(testing.allocator, 10, 3);
+    defer screen.deinit();
+    var parser = InputParser.init(&screen);
+    try parser.feed("A\x1b[3b");
+    try testing.expectEqual(@as(u21, 'A'), screen.grid.getCell(0, 0).char);
+    try testing.expectEqual(@as(u21, 'A'), screen.grid.getCell(1, 0).char);
+    try testing.expectEqual(@as(u21, 'A'), screen.grid.getCell(2, 0).char);
+    try testing.expectEqual(@as(u21, 'A'), screen.grid.getCell(3, 0).char);
+    try testing.expectEqual(@as(u32, 4), screen.cursor.x);
+}
+
 test "newline via parser" {
     var screen = try Screen.init(testing.allocator, 10, 3);
     defer screen.deinit();
     var parser = InputParser.init(&screen);
+    // LF moves down only; cursor X is preserved.  'c' follows after 'b' on
+    // the next row — i.e., at (2, 1), not (0, 1).
     try parser.feed("ab\nc");
     try testing.expectEqual(@as(u21, 'a'), screen.grid.getCell(0, 0).char);
     try testing.expectEqual(@as(u21, 'b'), screen.grid.getCell(1, 0).char);
-    try testing.expectEqual(@as(u21, 'c'), screen.grid.getCell(0, 1).char);
+    try testing.expectEqual(@as(u21, 'c'), screen.grid.getCell(2, 1).char);
 }
 
 test "carriage return" {
@@ -851,7 +970,7 @@ test "IL insert lines" {
     var screen = try Screen.init(testing.allocator, 10, 5);
     defer screen.deinit();
     var parser = InputParser.init(&screen);
-    try screen.writeStr("line1\nline2\nline3");
+    try screen.writeStr("line1\r\nline2\r\nline3");
     screen.cursor.y = 1;
     try parser.feed("\x1b[2L");
     try testing.expectEqual(@as(u21, ' '), screen.grid.getCell(0, 1).char);
@@ -863,7 +982,7 @@ test "DL delete lines" {
     var screen = try Screen.init(testing.allocator, 10, 5);
     defer screen.deinit();
     var parser = InputParser.init(&screen);
-    try screen.writeStr("line1\nline2\nline3");
+    try screen.writeStr("line1\r\nline2\r\nline3");
     screen.cursor.y = 1;
     try parser.feed("\x1b[M");
     try testing.expectEqual(@as(u21, ' '), screen.grid.getCell(0, 4).char);
@@ -900,7 +1019,7 @@ test "SU scroll up" {
     var screen = try Screen.init(testing.allocator, 10, 5);
     defer screen.deinit();
     var parser = InputParser.init(&screen);
-    try screen.writeStr("line1\nline2\nline3\nline4");
+    try screen.writeStr("line1\r\nline2\r\nline3\r\nline4");
     try parser.feed("\x1b[S");
     try testing.expectEqual(@as(u21, 'l'), screen.grid.getCell(0, 0).char);
 }
@@ -955,7 +1074,7 @@ test "IND index" {
     var screen = try Screen.init(testing.allocator, 10, 3);
     defer screen.deinit();
     var parser = InputParser.init(&screen);
-    try screen.writeStr("line1\nline2");
+    try screen.writeStr("line1\r\nline2");
     screen.cursor.y = 2;
     try parser.feed("\x1bD");
     try testing.expectEqual(@as(u32, 2), screen.cursor.y);
@@ -966,7 +1085,7 @@ test "RI reverse index" {
     var screen = try Screen.init(testing.allocator, 10, 3);
     defer screen.deinit();
     var parser = InputParser.init(&screen);
-    try screen.writeStr("line1\nline2");
+    try screen.writeStr("line1\r\nline2");
     screen.cursor.y = 1;
     try parser.feed("\x1bM");
     try testing.expectEqual(@as(u32, 0), screen.cursor.y);
@@ -1776,6 +1895,102 @@ test "DA2 (CSI > c) responds with secondary attributes" {
     const got = drainFd(p.read_fd, &buf);
     try testing.expectEqualStrings("\x1b[>0;10;0c", got);
 }
+
+test "DSR cursor position over pipe" {
+    var p = try makePipePty();
+    defer _ = c_sys.close(p.read_fd);
+    defer p.pty.deinit();
+
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+    screen.cursor.x = 3;
+    screen.cursor.y = 7;
+
+    var parser = InputParser.init(&screen);
+    defer parser.deinit(testing.allocator);
+    parser.pty = &p.pty;
+
+    try parser.feed("\x1b[6n");
+    var buf: [64]u8 = undefined;
+    const got = drainFd(p.read_fd, &buf);
+    try testing.expectEqualStrings("\x1b[8;4R", got);
+}
+
+test "DECRQM responds with mode status" {
+    var p = try makePipePty();
+    defer _ = c_sys.close(p.read_fd);
+    defer p.pty.deinit();
+
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+    var parser = InputParser.init(&screen);
+    defer parser.deinit(testing.allocator);
+    parser.pty = &p.pty;
+
+    // Test DECRQM private mode 2026 (synchronized output) — default reset (2)
+    try parser.feed("\x1b[?2026$p");
+    var buf: [64]u8 = undefined;
+    var got = drainFd(p.read_fd, &buf);
+    try testing.expectEqualStrings("\x1b[?2026;2$y", got);
+
+    // Test DECRQM private mode 2026 after enabling it
+    try parser.feed("\x1b[?2026h");
+    try testing.expect(screen.mode.sync);
+    try parser.feed("\x1b[?2026$p");
+    got = drainFd(p.read_fd, &buf);
+    try testing.expectEqualStrings("\x1b[?2026;1$y", got);
+
+    // Test DECRQM ANSI mode 4 (insert) — default reset (2)
+    try parser.feed("\x1b[4$p");
+    got = drainFd(p.read_fd, &buf);
+    try testing.expectEqualStrings("\x1b[4;2$y", got);
+
+    // Test DECRQM unknown private mode (e.g. 2027) — not recognized (0)
+    try parser.feed("\x1b[?2027$p");
+    got = drainFd(p.read_fd, &buf);
+    try testing.expectEqualStrings("\x1b[?2027;0$y", got);
+}
+
+
+test "kitty keyboard protocol and extkeys" {
+    var p = try makePipePty();
+    defer _ = c_sys.close(p.read_fd);
+    defer p.pty.deinit();
+
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+    var parser = InputParser.init(&screen);
+    defer parser.deinit(testing.allocator);
+    parser.pty = &p.pty;
+
+    // Test extkeys mode setting
+    try parser.feed("\x1b[>4;2m");
+    try testing.expectEqual(@as(u8, 2), screen.extkeys);
+
+    try parser.feed("\x1b[>4m");
+    try testing.expectEqual(@as(u8, 0), screen.extkeys);
+
+    // Test kitty kbd flags setting/querying
+    try parser.feed("\x1b[=1;1u");
+    try testing.expectEqual(@as(u32, 1), screen.kitty_kbd_flags);
+
+    try parser.feed("\x1b[?u");
+    var buf: [64]u8 = undefined;
+    const got = drainFd(p.read_fd, &buf);
+    try testing.expectEqualStrings("\x1b[?1u", got);
+
+    // Test kitty kbd stack operations (push/pop)
+    try parser.feed("\x1b[=5;2u"); // push 5
+    try testing.expectEqual(@as(u32, 5), screen.kitty_kbd_flags);
+    try testing.expectEqual(@as(u8, 1), screen.kitty_kbd_stack_len);
+    try testing.expectEqual(@as(u32, 1), screen.kitty_kbd_stack[0]);
+
+    try parser.feed("\x1b[=1;3u"); // pop 1
+    try testing.expectEqual(@as(u32, 1), screen.kitty_kbd_flags);
+    try testing.expectEqual(@as(u8, 0), screen.kitty_kbd_stack_len);
+}
+
+
 
 test "XTSMGRAPHICS (CSI ? 2 ; 1 S) reports sixel supported" {
     var p = try makePipePty();

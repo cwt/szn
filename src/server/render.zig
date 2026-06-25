@@ -109,6 +109,7 @@ pub const Display = struct {
         theme: ThemeColours,
     ) Error!void {
         try self.writeBytes("\x1b[?25l");
+        try self.writeBytes("\x1b[?2026h");
 
         const merged_w = self.sx;
         const merged_h = self.sy -| 1;
@@ -183,6 +184,7 @@ pub const Display = struct {
             try self.moveTo(merged_screen.cursor.x, merged_screen.cursor.y);
             try self.writeBytes("\x1b[?25h");
         }
+        try self.writeBytes("\x1b[?2026l");
     }
 
     fn drawLayoutBorders(
@@ -292,7 +294,15 @@ pub const Display = struct {
                     @as(?*const std.ArrayListUnmanaged(Cell), null);
             };
 
+            // Track the terminal cursor column within this row.
+            // We start at column 0 via an absolute move, then advance cur_cx as
+            // we write characters.  Before writing any non-padding cell we check
+            // that the tracked position matches the grid column; if it has drifted
+            // (e.g. after a wide-char encoding fallback) we re-anchor with a fresh
+            // absolute moveTo.
             try self.moveTo(0, @intCast(y));
+            var cur_cx: u32 = 0;
+
             for (0..w) |x| {
                 var cell = if (cells) |cls| (if (x < cls.items.len) cls.items[x] else Cell.empty()) else Cell.empty();
                 if (screen.copy_mode) |cm| {
@@ -302,6 +312,12 @@ pub const Display = struct {
                 }
 
                 if (cell.is_padding) continue;
+
+                // Re-anchor cursor if we have drifted from the expected column.
+                if (cur_cx != @as(u32, @intCast(x))) {
+                    try self.moveTo(@intCast(x), @intCast(y));
+                    cur_cx = @intCast(x);
+                }
 
                 if (@as(u32, @bitCast(cell.fg)) != @as(u32, @bitCast(active_fg)) or
                     @as(u32, @bitCast(cell.bg)) != @as(u32, @bitCast(active_bg)) or
@@ -368,13 +384,17 @@ pub const Display = struct {
                 const cp = cell.char;
                 if (cp == 0 or cp == ' ') {
                     try self.writeBytes(" ");
+                    cur_cx += 1;
                 } else if (cp >= 0x20 and cp != 0x7F) {
                     var buf: [4]u8 = undefined;
+                    const cw = char_width.charWidth(@intCast(cp));
                     const len = std.unicode.utf8Encode(@intCast(cp), &buf) catch {
                         try self.writeBytes("?");
+                        cur_cx += 1;
                         continue;
                     };
                     try self.writeBytes(buf[0..len]);
+                    cur_cx += if (cw > 0) @as(u32, cw) else 1;
 
                     if (cell.comb1 != 0) {
                         const ccp1 = char_width.combiningCodepoint(cell.comb1);
@@ -392,6 +412,7 @@ pub const Display = struct {
                     }
                 } else {
                     try self.writeBytes("?");
+                    cur_cx += 1;
                 }
             }
         }

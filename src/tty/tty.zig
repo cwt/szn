@@ -375,7 +375,7 @@ pub const Term = struct {
         var buf: [4]u8 = undefined;
         const encoded_len = std.unicode.utf8Encode(cell.char, &buf) catch {
             try self.write("?");
-        if (self.cx >= 0) self.cx += char_width.charWidth(cell.char);
+            if (self.cx >= 0) self.cx += 1;
             return;
         };
         try self.write(buf[0..encoded_len]);
@@ -403,7 +403,7 @@ pub const Term = struct {
             }
         }
 
-        if (self.cx >= 0) self.cx += 1;
+        if (self.cx >= 0) self.cx += char_width.charWidth(cell.char);
     }
 
     pub fn drawCell(self: *Term, _x: u32, _y: u32, cell: Cell) Error!void {
@@ -415,12 +415,30 @@ pub const Term = struct {
 
     pub fn drawLine(self: *Term, s: *screen.Screen, ly: u32) Error!void {
         const width = s.grid.width;
-        var col: u32 = 0;
-        var last_was_space: bool = true;
 
-        while (col < width) {
+        // Find the last non-empty column (ignoring padding cells themselves)
+        var last_col: ?u32 = null;
+        var i: u32 = width;
+        while (i > 0) {
+            i -= 1;
+            const cell = s.grid.getCell(i, ly);
+            if (!cell.eql(Cell.empty()) and !cell.is_padding) {
+                last_col = i;
+                break;
+            }
+        }
+
+        if (last_col == null) {
+            try self.cursorMove(0, ly);
+            try self.clearToEOL();
+            return;
+        }
+
+        const end_col = last_col.?;
+        var col: u32 = 0;
+        while (col <= end_col) {
             const cell = s.grid.getCell(col, ly);
-            if (cell.char == ' ' and last_was_space) {
+            if (cell.is_padding) {
                 col += 1;
                 continue;
             }
@@ -428,13 +446,14 @@ pub const Term = struct {
                 try self.cursorMove(col, ly);
             }
             try self.writeCell(cell);
-            last_was_space = (cell.char == ' ');
             col += 1;
         }
 
-        // Clear trailing spaces
-        if (last_was_space) {
-            try self.cursorMove(width -| 1, ly);
+        const next_col = end_col + char_width.charWidth(s.grid.getCell(end_col, ly).char);
+        if (next_col < width) {
+            if (self.cx < 0 or self.cy < 0 or next_col != @as(u32, @intCast(self.cx)) or ly != @as(u32, @intCast(self.cy))) {
+                try self.cursorMove(next_col, ly);
+            }
             try self.clearToEOL();
         }
     }
@@ -959,9 +978,9 @@ test "draw screen draws all lines" {
     var s = try screen.Screen.init(testing.allocator, 5, 3);
     defer s.deinit();
     try s.writeStr("AB");
-    try s.writeStr("\n");
+    try s.writeStr("\r\n");
     try s.writeStr("CD");
-    try s.writeStr("\n");
+    try s.writeStr("\r\n");
     try s.writeStr("EF");
 
     try term.drawScreen(&s);

@@ -60,7 +60,8 @@ pub const Mode = packed struct(u32) {
     alt_screen: bool = false,
     cursor: bool = true,
     origin: bool = false,
-    _padding: u20 = 0,
+    sync: bool = false,
+    _padding: u19 = 0,
 };
 
 pub const Screen = struct {
@@ -79,6 +80,11 @@ pub const Screen = struct {
     tab_stop: u32 = 8,
     /// Sixel images received from child processes, kept for re-emission.
     sixel_images: std.ArrayListUnmanaged(SixelImage) = .empty,
+    last_char: ?u21 = null,
+    extkeys: u8 = 0,
+    kitty_kbd_flags: u32 = 0,
+    kitty_kbd_stack: [8]u32 = [_]u32{0} ** 8,
+    kitty_kbd_stack_len: u8 = 0,
 
     pub fn init(allocator: std.mem.Allocator, width: u32, height: u32) Error!Screen {
         return Screen{
@@ -192,8 +198,10 @@ pub const Screen = struct {
     }
 
     pub fn writeChar(self: *Screen, char: u21) Error!void {
+        if (char < 0x20) {
+            self.last_char = null;
+        }
         if (char == '\n') {
-            self.cursor.x = 0;
             if (self.cursor.y + 1 >= self.grid.height) {
                 try self.grid.scrollUp();
                 const bottom_line = self.grid.getLineMut(self.grid.height - 1);
@@ -232,6 +240,9 @@ pub const Screen = struct {
         if (char < 0x20 and char != '\x1b') return;
 
         const width = char_width.charWidth(char);
+        if (width > 0) {
+            self.last_char = char;
+        }
 
         if (width == 0) {
             if (self.cursor.x == 0) return;
@@ -331,6 +342,15 @@ pub const Screen = struct {
     pub fn writeStr(self: *Screen, s: []const u8) Error!void {
         for (s) |c| {
             try self.writeChar(c);
+        }
+    }
+
+    pub fn repeatLastChar(self: *Screen, count: u32) Error!void {
+        if (self.last_char) |lc| {
+            var i: u32 = 0;
+            while (i < count) : (i += 1) {
+                try self.writeChar(lc);
+            }
         }
     }
 
@@ -770,6 +790,10 @@ pub const Screen = struct {
         self.mode = .{};
         self.scroll_region = null;
         self.cur_cell = Cell.empty();
+        self.last_char = null;
+        self.extkeys = 0;
+        self.kitty_kbd_flags = 0;
+        self.kitty_kbd_stack_len = 0;
         self.grid.clear();
         self.dirty = true;
     }
@@ -846,11 +870,13 @@ test "newline moves to next line" {
     var screen = try Screen.init(testing.allocator, 80, 24);
     defer screen.deinit();
 
+    // LF moves down only; cursor X is preserved (CR resets X separately).
     try screen.writeStr("abc\ndef");
-    try testing.expectEqual(@as(u32, 3), screen.cursor.x);
+    try testing.expectEqual(@as(u32, 6), screen.cursor.x);
     try testing.expectEqual(@as(u32, 1), screen.cursor.y);
     try testing.expectEqual(@as(u21, 'a'), screen.grid.getCell(0, 0).char);
-    try testing.expectEqual(@as(u21, 'd'), screen.grid.getCell(0, 1).char);
+    // 'd' lands at col 3 (where cursor was after 'abc').
+    try testing.expectEqual(@as(u21, 'd'), screen.grid.getCell(3, 1).char);
 }
 
 test "carriage return resets x" {
@@ -1238,7 +1264,7 @@ test "scrollUp and scrollDown respect scroll region" {
     defer screen.deinit();
 
     // Populate lines
-    try screen.writeStr("0000000000\n1111111111\n2222222222\n3333333333\n4444444444");
+    try screen.writeStr("0000000000\r\n1111111111\r\n2222222222\r\n3333333333\r\n4444444444");
 
     // Set scroll region to lines 1..3 inclusive (0-indexed: 1, 2, 3)
     screen.setScrollRegion(1, 3);

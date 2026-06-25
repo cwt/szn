@@ -410,6 +410,7 @@ pub const Server = struct {
         defer self.allocator.free(shell);
         try pane.spawn(self.allocator, &[_][]const u8{shell}, cwd);
         try self.watchPanePty(pane);
+        pane.drainPty();
     }
 
     /// Returns an allocated slice. Caller must free with `allocator.free`.

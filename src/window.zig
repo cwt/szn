@@ -119,6 +119,40 @@ extern "c" fn getpid() c_int;
         }
         self.dirty = true;
     }
+
+    pub fn drainPty(self: *Pane) void {
+        const pty = self.pty orelse return;
+        var pfd: [1]std.posix.pollfd = .{.{
+            .fd = pty.master,
+            .events = std.posix.POLL.IN,
+            .revents = 0,
+        }};
+        const ready = std.posix.poll(&pfd, 0) catch return;
+        if (ready > 0) {
+            self.feedPty() catch {};
+        }
+    }
+
+    /// Wait briefly for a newly-spawned child to produce its terminal
+    /// detection queries, then drain the PTY so the response round-trip
+    /// completes before the event loop's first blocking poll.
+    pub fn initPty(self: *Pane) void {
+        const pty = self.pty orelse return;
+        var pfd: [1]std.posix.pollfd = .{.{
+            .fd = pty.master,
+            .events = std.posix.POLL.IN,
+            .revents = 0,
+        }};
+        const ready = std.posix.poll(&pfd, 100) catch return;
+        if (ready == 0) return;
+        self.feedPty() catch return;
+        // Drain any further data that arrived during processing
+        while (true) {
+            const more = std.posix.poll(&pfd, 0) catch break;
+            if (more == 0) break;
+            self.feedPty() catch break;
+        }
+    }
 };
 
 /// Window represents a window containing one or more panes.

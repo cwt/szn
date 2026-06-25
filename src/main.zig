@@ -273,6 +273,7 @@ fn runServerDaemon(allocator: std.mem.Allocator) Error!void {
     std.log.info("spawning shell: {s}", .{shell});
     try pane.spawn(allocator, &[_][]const u8{shell}, null);
     try server.watchPanePty(pane);
+    pane.initPty();
 
     server.display_sx = sx;
     server.display_sy = sy;
