@@ -13,7 +13,7 @@ TMUX="tmux -u"
 
 cleanup() {
     $SZN kill-session 2>/dev/null || true
-    kill -9 $(pidof szn) 2>/dev/null || true
+    pkill -9 szn 2>/dev/null || true
     $TMUX kill-server 2>/dev/null || true
     sleep 0.2
 }
@@ -22,7 +22,11 @@ trap cleanup EXIT
 rss_kb() {
     local pid=$1 label=$2
     local rss
-    rss=$(awk '/VmRSS/{print $2}' /proc/$pid/status 2>/dev/null || echo "N/A")
+    if [[ "$(uname)" == Darwin ]]; then
+        rss=$(ps -o rss= -p "$pid" 2>/dev/null || echo "N/A")
+    else
+        rss=$(awk '/VmRSS/{print $2}' /proc/$pid/status 2>/dev/null || echo "N/A")
+    fi
     printf "  %-30s %s kB\n" "$label" "$rss"
 }
 
@@ -31,8 +35,8 @@ header() {
     echo -e "${BOLD}${CYAN}━━━ $1 ━━━${RESET}"
 }
 
-prepare_tmux() { "$TMUX kill-server 2>/dev/null; sleep 0.3"; }
-prepare_szn()  { "kill -9 \$(pidof szn) 2>/dev/null || true; sleep 0.3"; }
+prepare_tmux() { $TMUX kill-server 2>/dev/null; sleep 0.3; }
+prepare_szn()  { pkill -9 szn 2>/dev/null || true; sleep 0.3; }
 
 # ── build ──
 echo -e "${DIM}building szn …${RESET}"
@@ -51,7 +55,7 @@ hyperfine --warmup 5 --min-runs 20 \
 header "2. Startup time — szn"
 # -------------------------------------------------------------------------
 hyperfine --warmup 5 --min-runs 20 \
-    --prepare "kill -9 \$(pidof szn) 2>/dev/null || true; sleep 0.3" \
+    --prepare "pkill -9 szn 2>/dev/null || true; sleep 0.3" \
     -n "szn new -d" \
     "$SZN new-session -d b 2>/dev/null && $SZN kill-session"
 
@@ -120,7 +124,7 @@ hyperfine --warmup 5 --min-runs 20 \
     "$TMUX new -d -s b 2>/dev/null && $TMUX kill-session -t b"
 
 hyperfine --warmup 5 --min-runs 20 \
-    --prepare "kill -9 \$(pidof szn) 2>/dev/null || true; sleep 0.3" \
+    --prepare "pkill -9 szn 2>/dev/null || true; sleep 0.3" \
     -n "szn new + kill" \
     "$SZN new-session -d b 2>/dev/null && $SZN kill-session"
 
