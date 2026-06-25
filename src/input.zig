@@ -522,7 +522,7 @@ pub const InputParser = struct {
                 self.screen.cursorUp(n);
                 self.screen.cursor.x = 0;
             },
-            'G' => {
+            'G', '`' => {
                 const x = (self.paramDefault(0, 1) -| 1);
                 self.screen.cursorColumn(x);
             },
