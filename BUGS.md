@@ -2003,7 +2003,7 @@ This is triggered when any cell has all 11 rendering attributes active simultane
 ### 165. `server/render.zig` — `writeBytes` doesn't retry partial writes
 **File:** `src/server/render.zig:75`
 **Severity:** HIGH
-**Status:** UNRESOLVED
+**Status:** ✅ FIXED — added retry loop with partial write handling and EINTR detection.
 
 ```zig
 if (c.write(self.fd, bytes.ptr, bytes.len) < 0) return error.WriteFailed;
@@ -2037,7 +2037,7 @@ No error check, no partial write retry. When opencode generates large output, th
 ### 167. `server/render.zig` — `utf8Encode` `catch unreachable` for combining codepoints
 **File:** `src/server/render.zig:404, 411`
 **Severity:** MEDIUM
-**Status:** UNRESOLVED
+**Status:** ✅ FIXED — replaced `catch unreachable` with `catch continue` for both comb1 and comb2.
 
 ```zig
 const clen = std.unicode.utf8Encode(ccp1, &buf) catch unreachable;
@@ -2068,10 +2068,10 @@ _ = execvp(argv_z[0].?, @ptrCast(argv_z.ptr));
 
 | Severity | Count | Fixed | False Positive | Unresolved |
 |----------|-------|-------|----------------|------------|
-| Critical | 19 (18+1) | 15 | 3 | **1** |
-| High | 41 (39+2) | 38 | 1 | **2** |
-| Medium | 54 (52+2) | 50 | 2 | **2** |
+| Critical | 19 (18+1) | 16 | 3 | **0** |
+| High | 41 (39+2) | 39 | 1 | **1** |
+| Medium | 54 (52+2) | 51 | 2 | **1** |
 | Low | 54 (26+28) | 51 | 3 | **0** |
-| Total | 168 (163+5) | **155** | **9** | **5** |
+| Total | 168 (163+5) | **157** | **9** | **2** |
 
 
