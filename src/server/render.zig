@@ -208,12 +208,12 @@ pub const Display = struct {
                     const split_w = @max(1, @as(u32, @intFromFloat(@as(f64, @floatFromInt(lw)) * s.proportion)));
                     if (split_w > 0 and lx + split_w - 1 < merged_screen.grid.width) {
                         const border_x = lx + split_w - 1;
-                        const is_active_border = isBorderActive(border_x, ly, lh, true, active_pane, bounds);
-                        const border_col = if (is_active_border) active_border_fg else border_fg;
 
                         var y: u32 = ly;
                         while (y < ly + lh) : (y += 1) {
                             if (y >= merged_screen.grid.height) break;
+                            const is_active = isBorderActiveAt(border_x, y, true, active_pane, bounds);
+                            const border_col = if (is_active) active_border_fg else border_fg;
                             var cell = &merged_screen.grid.getLineMut(y).cells.items[border_x];
                             if (cell.char == 0x2500) {
                                 cell.char = 0x253C; // '┼'
@@ -229,12 +229,12 @@ pub const Display = struct {
                     const split_h = @max(1, @as(u32, @intFromFloat(@as(f64, @floatFromInt(lh)) * s.proportion)));
                     if (split_h > 0 and ly + split_h - 1 < merged_screen.grid.height) {
                         const border_y = ly + split_h - 1;
-                        const is_active_border = isBorderActive(lx, border_y, lw, false, active_pane, bounds);
-                        const border_col = if (is_active_border) active_border_fg else border_fg;
 
                         var x: u32 = lx;
                         while (x < lx + lw) : (x += 1) {
                             if (x >= merged_screen.grid.width) break;
+                            const is_active = isBorderActiveAt(x, border_y, false, active_pane, bounds);
+                            const border_col = if (is_active) active_border_fg else border_fg;
                             var cell = &merged_screen.grid.getLineMut(border_y).cells.items[x];
                             if (cell.char == 0x2502) {
                                 cell.char = 0x253C; // '┼'
@@ -251,7 +251,7 @@ pub const Display = struct {
         }
     }
 
-    fn isBorderActive(bx: u32, by: u32, blen: u32, is_vertical: bool, active_pane: *Pane, bounds: []const PaneBounds) bool {
+    fn isBorderActiveAt(bx: u32, by: u32, is_vertical: bool, active_pane: *Pane, bounds: []const PaneBounds) bool {
         var active_bound: ?PaneBounds = null;
         for (bounds) |pb| {
             if (pb.pane == active_pane) {
@@ -263,11 +263,11 @@ pub const Display = struct {
 
         if (is_vertical) {
             const adj = (ab.x + ab.w == bx) or (ab.x == bx + 1);
-            const overlap = (ab.y < by + blen) and (ab.y + ab.h > by);
+            const overlap = by >= ab.y and by < ab.y + ab.h;
             return adj and overlap;
         } else {
             const adj = (ab.y + ab.h == by) or (ab.y == by + 1);
-            const overlap = (ab.x < bx + blen) and (ab.x + ab.w > bx);
+            const overlap = bx >= ab.x and bx < ab.x + ab.w;
             return adj and overlap;
         }
     }
