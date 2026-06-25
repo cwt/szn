@@ -105,7 +105,10 @@ extern "c" fn getpid() c_int;
             };
             try pty.setWinSize(&ws);
             // Notify the pane's process that its window size changed
-            _ = c.kill(pty.pid, c.SIG.WINCH);
+            const kill_rc = c.kill(pty.pid, c.SIG.WINCH);
+            if (kill_rc != 0) {
+                std.log.warn("SIGWINCH kill(pid={d}) failed: {any}", .{ pty.pid, std.c.errno(kill_rc) });
+            }
         }
     }
 

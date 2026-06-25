@@ -489,8 +489,11 @@ pub const Display = struct {
     }
 
     fn moveTo(self: Display, x: u32, y: u32) Error!void {
-        var buf: [32]u8 = undefined;
-        const seq = std.fmt.bufPrint(&buf, "\x1b[{d};{d}H", .{ y + 1, x + 1 }) catch unreachable;
+        var buf: [64]u8 = undefined;
+        const seq = std.fmt.bufPrint(&buf, "\x1b[{d};{d}H", .{ y + 1, x + 1 }) catch {
+            std.log.warn("CUP overflow: x={d}, y={d}", .{ x, y });
+            return error.OutOfMemory;
+        };
         try self.writeBytes(seq);
     }
 

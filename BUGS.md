@@ -2120,14 +2120,64 @@ When the child process sends a tmux DCS passthrough (`\x1bPtmux;[?1016$p...\x1b\
 
 ---
 
+### 171. `catch unreachable` on CUP bufPrint — 32-byte buffer can overflow for very large terminals
+**File:** `src/server/render.zig:493`
+**Severity:** CRITICAL
+**Status:** ✅ FIXED — widened buffer to 64 bytes, replaced `catch unreachable` with log + `error.OutOfMemory`.
+
+```zig
+var buf: [32]u8 = undefined;  // OLD: overflow for huge (x,y)
+const seq = std.fmt.bufPrint(&buf, "\x1b[{d};{d}H",
+    .{ y + 1, x + 1 }) catch unreachable;  // PANIC
+```
+
+### 172. `catch unreachable` on window index formatting — 16-byte buffer can overflow
+**File:** `src/server/server.zig:969`
+**Severity:** CRITICAL
+**Status:** ✅ FIXED — widened buffer to 32 bytes, replaced `catch unreachable` with log + `error.OutOfMemory`.
+
+```zig
+var idx_buf: [16]u8 = undefined;  // usize max is 20 chars
+const idx_len = (std.fmt.bufPrint(&idx_buf, "{}", .{idx}) catch unreachable).len;
+```
+
+### 173. `c.kill` SIGWINCH return silently discarded — child may miss resize
+**File:** `src/window.zig:108`
+**Severity:** MEDIUM
+**Status:** ✅ FIXED — check kill return value, log warning on failure.
+
+```zig
+_ = c.kill(pty.pid, c.SIG.WINCH);  // silently ignores failure
+```
+
+### 174. Double force-unwrap on `session.active_window.?.active_pane.?` in server daemon
+**File:** `src/main.zig:295`
+**Severity:** MEDIUM
+**Status:** ✅ FIXED — replaced with explicit `orelse` guards and log messages.
+
+```zig
+const pane = session.active_window.?.active_pane.?;  // PANIC if invariant broken
+```
+
+### 175. Detach packet write return silently discarded — client may not receive detach
+**File:** `src/server/server.zig:531`
+**Severity:** MEDIUM
+**Status:** ✅ FIXED — replaced `_ = c.write(...)` with retry loop matching the partial-write pattern.
+
+```zig
+_ = c.write(cfd, ser.ptr, ser.len);  // silently ignores failure
+```
+
+---
+
 ## Updated Summary
 
 | Severity | Count | Fixed | False Positive | Unresolved |
 |----------|-------|-------|----------------|------------|
-| Critical | 20 (18+2) | 17 | 3 | **0** |
+| Critical | 22 (18+4) | 19 | 3 | **0** |
 | High | 41 (39+2) | 40 | 1 | **0** |
-| Medium | 55 (52+3) | 53 | 2 | **0** |
+| Medium | 58 (52+6) | 56 | 2 | **0** |
 | Low | 54 (26+28) | 51 | 3 | **0** |
-| Total | 170 (163+7) | **161** | **9** | **0** |
+| Total | 175 (163+12) | **166** | **9** | **0** |
 
 

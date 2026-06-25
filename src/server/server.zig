@@ -528,7 +528,15 @@ pub const Server = struct {
                     const detach_pkt = protocol.Packet.make(.detach, "");
                     var buf: [128]u8 = undefined;
                     const ser = detach_pkt.serialize(&buf);
-                    _ = c.write(cfd, ser.ptr, ser.len);
+                    var remaining: []const u8 = ser;
+                    while (remaining.len > 0) {
+                        const n = c.write(cfd, remaining.ptr, remaining.len);
+                        if (n < 0) {
+                            if (std.c.errno(n) == .INTR) continue;
+                            break;
+                        }
+                        remaining = remaining[@intCast(n)..];
+                    }
                     self.display_client_fd = null;
                 } else {
                     self.loop.running = false;
@@ -965,8 +973,11 @@ pub const Server = struct {
                 const is_active = (win == session.active_window);
                 const suffix_len: u32 = if (is_active) 1 else 0;
 
-                var idx_buf: [16]u8 = undefined;
-                const idx_len = (std.fmt.bufPrint(&idx_buf, "{}", .{idx}) catch unreachable).len;
+                var idx_buf: [32]u8 = undefined;
+                const idx_len = (std.fmt.bufPrint(&idx_buf, "{}", .{idx}) catch {
+                    std.log.warn("window index overflow: idx={d}", .{idx});
+                    return error.OutOfMemory;
+                }).len;
                 const entry_len = 1 + @as(u32, @intCast(idx_len)) + 1 + @as(u32, @intCast(win.name.len)) + suffix_len;
 
                 const start_x = col;

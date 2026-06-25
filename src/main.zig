@@ -292,7 +292,14 @@ fn runServerDaemon(allocator: std.mem.Allocator) Error!void {
     };
 
     const session = try server.newSession("default", sx, sy - 1);
-    const pane = session.active_window.?.active_pane.?;
+    const window = session.active_window orelse {
+        std.log.err("newSession returned session with no active window", .{});
+        return error.OutOfMemory;
+    };
+    const pane = window.active_pane orelse {
+        std.log.err("newSession returned window with no active pane", .{});
+        return error.OutOfMemory;
+    };
 
     server.display_sx = sx;
     server.display_sy = sy;
