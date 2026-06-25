@@ -20,6 +20,7 @@ pub fn build(b: *std.Build) void {
         exe.lto = .thin;
         exe.use_lld = true;
     }
+    if (optimize != .Debug) exe.root_module.strip = true;
     b.installArtifact(exe);
 
     const run_cmd = b.addRunArtifact(exe);
