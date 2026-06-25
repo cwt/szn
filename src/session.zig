@@ -41,7 +41,10 @@ pub const Session = struct {
         initial_win.* = try Window.init(allocator, 0, name, width, height, &self.window_options);
         // Window.init sets pane.window to a stack-local pointer; fixup to the
         // heap-allocated window so options lookups (remain-on-exit etc.) work.
-        for (initial_win.panes.items) |p| p.window = initial_win;
+        for (initial_win.panes.items) |p| {
+            p.window = initial_win;
+            p.title_ctx = @ptrCast(initial_win);
+        }
         try self.windows.append(allocator, initial_win);
         self.active_window = initial_win;
     }

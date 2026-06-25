@@ -2064,14 +2064,52 @@ _ = execvp(argv_z[0].?, @ptrCast(argv_z.ptr));
 
 ---
 
+### 169. Use-after-free in `windowTitleCallback` — `title_ctx` points to stack Window after heap copy
+**File:** `src/session.zig:40–44`
+**Severity:** CRITICAL
+**Status:** ✅ FIXED — added `p.title_ctx = @ptrCast(initial_win)` fixup in Session.init.
+
+```zig
+// session.zig:40–44
+const initial_win = try allocator.create(Window);
+initial_win.* = try Window.init(allocator, 0, name, width, height, &self.window_options);
+// Window.init sets pane.title_ctx to &self (stack-local Window).
+// When the Window is copied to the heap, title_ctx still points to
+// the now-gone stack frame:
+for (initial_win.panes.items) |p| {
+    p.window = initial_win;       // only window pointer fixed
+    // p.title_ctx still points to stale stack!
+}
+```
+
+`Window.init` is called as a regular function returning a stack-local `Window`. Inside it, `registerPane` sets `pane.title_ctx = self` (the stack address). After `initial_win.* = try Window.init(...)` copies the struct to the heap, `pane.title_ctx` still holds the old stack pointer. When the next OSC 0/2 title sequence arrives, `windowTitleCallback` dereferences `ctx` as `*Window`, reading garbage memory — `EXC_ARM_DA_ALIGN` crash at address `0x3` (accessing allocator.vtable through a zeroed struct).
+
+**Crash report:** `szn-2026-06-25-234556.ips` — stack trace:
+```
+0   Allocator.rawAlloc                  (Allocator.zig:142)
+1   Allocator.allocBytesWithAlignment   (Allocator.zig:300)
+2   Allocator.alloc                     (Allocator.zig:198)
+3   Allocator.dupe                      (Allocator.zig:454)
+4   windowTitleCallback                 (window.zig:317)
+5   paneTitleCallback                   (window.zig:308)
+6   dispatchOsc                         (input.zig:804)
+7   advanceOsc                          (input.zig:314)
+8   advance                             (input.zig:152)
+9   feedPty                             (window.zig:118)
+10  handlePtyEvent                      (server.zig:275)
+11  run                                 (server.zig:190)
+```
+
+---
+
 ## Updated Summary
 
 | Severity | Count | Fixed | False Positive | Unresolved |
 |----------|-------|-------|----------------|------------|
-| Critical | 19 (18+1) | 16 | 3 | **0** |
+| Critical | 20 (18+2) | 17 | 3 | **0** |
 | High | 41 (39+2) | 40 | 1 | **0** |
 | Medium | 54 (52+2) | 52 | 2 | **0** |
 | Low | 54 (26+28) | 51 | 3 | **0** |
-| Total | 168 (163+5) | **159** | **9** | **0** |
+| Total | 169 (163+6) | **160** | **9** | **0** |
 
 
