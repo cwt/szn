@@ -92,6 +92,13 @@ fn mainInner(init: std.process.Init) Error!void {
         const is_new_cmd = std.mem.eql(u8, args.items[1], "new-session") or
             std.mem.eql(u8, args.items[1], "new");
 
+        var is_detached = false;
+        for (args.items[2..]) |arg| {
+            if (std.mem.eql(u8, arg, "-d") or std.mem.eql(u8, arg, "--detached")) {
+                is_detached = true;
+            }
+        }
+
         var client = blk: {
             if (is_new_cmd and !socket_mod.socketExists()) {
                 const pid = c.fork();
@@ -144,19 +151,25 @@ fn mainInner(init: std.process.Init) Error!void {
         defer client.deinit();
 
         var cmd_len: usize = 0;
+        var cmd_count: usize = 0;
         for (args.items[1..]) |arg| {
+            if (std.mem.eql(u8, arg, "-d") or std.mem.eql(u8, arg, "--detached")) continue;
             cmd_len += arg.len;
+            cmd_count += 1;
         }
-        cmd_len +|= args.items.len -| 2; // n-1 separators for n args
+        cmd_len +|= cmd_count -| 1; // n-1 separators for n args
         var cmd_buf = try allocator.alloc(u8, cmd_len);
         defer allocator.free(cmd_buf);
 
         var offset: usize = 0;
-        for (args.items[1..], 0..) |arg, idx| {
-            if (idx > 0) {
+        var first = true;
+        for (args.items[1..]) |arg| {
+            if (std.mem.eql(u8, arg, "-d") or std.mem.eql(u8, arg, "--detached")) continue;
+            if (!first) {
                 cmd_buf[offset] = ' ';
                 offset += 1;
             }
+            first = false;
             @memcpy(cmd_buf[offset..][0..arg.len], arg);
             offset += arg.len;
         }
@@ -171,7 +184,7 @@ fn mainInner(init: std.process.Init) Error!void {
         };
         switch (msg_type) {
             .ready => {
-                if (is_new_cmd) {
+                if (is_new_cmd and !is_detached) {
                     try runInteractiveClient(allocator);
                     std.process.exit(0);
                 }
