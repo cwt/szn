@@ -245,9 +245,9 @@ fn waitForSocket() Error!void {
         extern "c" fn usleep(usec: c_uint) c_int;
     }.usleep;
     var attempts: u32 = 0;
-    while (attempts < 100) : (attempts += 1) {
+    while (attempts < 1000) : (attempts += 1) {
         if (socket_mod.socketExists()) return;
-        _ = c_usleep(50000);
+        _ = c_usleep(5000);
     }
     return error.SocketNotFound;
 }
@@ -281,13 +281,6 @@ fn runServerDaemon(allocator: std.mem.Allocator) Error!void {
     const session = try server.newSession("default", sx, sy - 1);
     const pane = session.active_window.?.active_pane.?;
 
-    const shell = try server.resolveShell(allocator, session);
-    defer allocator.free(shell);
-    std.log.info("spawning shell: {s}", .{shell});
-    try pane.spawn(allocator, &[_][]const u8{shell}, null);
-    try server.watchPanePty(pane);
-    pane.initPty();
-
     server.display_sx = sx;
     server.display_sy = sy;
     try server.listen();
@@ -299,8 +292,23 @@ fn runServerDaemon(allocator: std.mem.Allocator) Error!void {
     };
     std.posix.sigaction(.CHLD, &chld_act, null);
 
+    const shell = try server.resolveShell(allocator, session);
+    defer allocator.free(shell);
+    std.log.info("spawning shell: {s}", .{shell});
+
+    // Wait up to ~16 ms for the parent to connect and send the new-session
+    // command before spawning the shell.  This way the parent gets the
+    // response quickly instead of waiting for the shell fork+exec.
+    for (0..16) |_| {
+        try server.run(1);
+    }
+
+    try pane.spawn(allocator, &[_][]const u8{shell}, null);
+    try server.watchPanePty(pane);
+    pane.initPty();
+
     while (server.loop.running) {
-        try server.run();
+        try server.run(100);
         server.renderToDisplayClient();
     }
 

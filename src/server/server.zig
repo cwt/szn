@@ -183,9 +183,9 @@ pub const Server = struct {
         }
     }
 
-    pub fn run(self: *Server) ServerError!void {
+    pub fn run(self: *Server, timeout_ms: i32) ServerError!void {
         reapZombies();
-        const events = try self.loop.pollOnce(self.allocator, 100);
+        const events = try self.loop.pollOnce(self.allocator, timeout_ms);
         for (events) |ev| {
             switch (self.handlePtyEvent(ev)) {
                 .destroyed => break,
