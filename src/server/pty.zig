@@ -147,7 +147,8 @@ pub const Pty = struct {
             _ = setenv("SZN", szn_env_z, 1);
             _ = setenv("SZN_PANE", szn_pane_z, 1);
 
-            _ = execvp(argv_z[0].?, @ptrCast(argv_z.ptr));
+            const argv0 = argv_z[0] orelse std.process.exit(1);
+            _ = execvp(argv0, @ptrCast(argv_z.ptr));
             std.process.exit(1);
         }
         self.pid = pid;

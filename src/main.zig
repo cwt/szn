@@ -30,6 +30,19 @@ export fn sigwinch_handler(sig: c.SIG) callconv(.c) void {
     sigwinchFlag.store(true, .seq_cst);
 }
 
+fn writeAll(fd: i32, buf: []const u8) Error!void {
+    var off: usize = 0;
+    while (off < buf.len) {
+        const n = c.write(fd, buf.ptr + off, buf.len - off);
+        if (n < 0) {
+            if (std.c.errno(n) == .INTR) continue;
+            return error.WriteFailed;
+        }
+        if (n == 0) return error.WriteFailed;
+        off += @as(usize, @intCast(n));
+    }
+}
+
 pub fn main(init: std.process.Init) void {
     mainInner(init) catch |err| {
         switch (err) {
@@ -335,7 +348,7 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
     const identify = protocol.Packet.make(.identify_term, "xterm-256color");
     var id_buf: [128]u8 = undefined;
     const id_ser = identify.serialize(&id_buf);
-    if (c.write(server_fd, id_ser.ptr, id_ser.len) < 0) return error.WriteFailed;
+    try writeAll(server_fd, id_ser);
 
     var resize_buf: [16]u8 = undefined;
     std.mem.writeInt(u32, resize_buf[0..4], sx, .little);
@@ -343,7 +356,7 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
     const resize_pkt = protocol.Packet.make(.resize, resize_buf[0..8]);
     var r_buf: [128]u8 = undefined;
     const r_ser = resize_pkt.serialize(&r_buf);
-    if (c.write(server_fd, r_ser.ptr, r_ser.len) < 0) return error.WriteFailed;
+    try writeAll(server_fd, r_ser);
 
     var act: std.posix.Sigaction = .{
         .handler = .{ .handler = sigwinch_handler },
@@ -389,7 +402,7 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
                     const rs_pkt = protocol.Packet.make(.resize, resize_buf[0..8]);
                     var rs_buf: [128]u8 = undefined;
                     const rs_ser = rs_pkt.serialize(&rs_buf);
-                    _ = c.write(server_fd, rs_ser.ptr, rs_ser.len);
+                    try writeAll(server_fd, rs_ser);
                 }
             }
         }
@@ -401,7 +414,7 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
                 const sd_pkt = protocol.Packet.make(.stdin_data, stdin_buf[0..@as(usize, @intCast(n))]);
                 var sd_buf: [4096 + 5]u8 = undefined;
                 const sd_ser = sd_pkt.serialize(&sd_buf);
-                _ = c.write(server_fd, sd_ser.ptr, sd_ser.len);
+                try writeAll(server_fd, sd_ser);
             } else if (n == -1) {
                 const err = std.c.errno(n);
                 if (err != .AGAIN and err != .INTR) {
@@ -411,7 +424,7 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
                 const detach_pkt = protocol.Packet.make(.detach, "");
                 var d_buf: [128]u8 = undefined;
                 const d_ser = detach_pkt.serialize(&d_buf);
-                _ = c.write(server_fd, d_ser.ptr, d_ser.len);
+                try writeAll(server_fd, d_ser);
                 running = false;
             }
         }
@@ -450,7 +463,7 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
                 switch (msg_type) {
                     .ready => {},
                     .output => {
-                        _ = c.write(stdout_fd, data.ptr, data.len);
+                        writeAll(stdout_fd, data) catch {};
                     },
                     .detach => {
                         running = false;

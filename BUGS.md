@@ -2020,7 +2020,7 @@ All `writeColourFg`, `writeColourBg`, `writeString`, `writeStr`, `renderContent`
 ### 166. `main.zig` — Output write to stdout ignores errors and partial writes
 **File:** `src/main.zig:453`
 **Severity:** HIGH
-**Status:** UNRESOLVED
+**Status:** ✅ FIXED — added `writeAll` helper with EINTR/partial-write retry loop; all `c.write` calls in `runInteractiveClient` switched to it.
 
 ```zig
 .output => {
@@ -2069,9 +2069,9 @@ _ = execvp(argv_z[0].?, @ptrCast(argv_z.ptr));
 | Severity | Count | Fixed | False Positive | Unresolved |
 |----------|-------|-------|----------------|------------|
 | Critical | 19 (18+1) | 16 | 3 | **0** |
-| High | 41 (39+2) | 39 | 1 | **1** |
+| High | 41 (39+2) | 40 | 1 | **0** |
 | Medium | 54 (52+2) | 51 | 2 | **1** |
 | Low | 54 (26+28) | 51 | 3 | **0** |
-| Total | 168 (163+5) | **157** | **9** | **2** |
+| Total | 168 (163+5) | **158** | **9** | **1** |
 
 
