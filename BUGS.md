@@ -2052,7 +2052,7 @@ If `combiningCodepoint()` returns a codepoint > 0x10FFFF (non-BMP surrogate or i
 ### 168. `server/pty.zig` — `execvp` assumes argv_z[0] is non-null
 **File:** `src/server/pty.zig:150`
 **Severity:** MEDIUM
-**Status:** UNRESOLVED
+**Status:** ✅ FIXED — replaced `argv_z[0].?` with `orelse std.process.exit(1)`.
 
 ```zig
 _ = execvp(argv_z[0].?, @ptrCast(argv_z.ptr));
@@ -2070,8 +2070,8 @@ _ = execvp(argv_z[0].?, @ptrCast(argv_z.ptr));
 |----------|-------|-------|----------------|------------|
 | Critical | 19 (18+1) | 16 | 3 | **0** |
 | High | 41 (39+2) | 40 | 1 | **0** |
-| Medium | 54 (52+2) | 51 | 2 | **1** |
+| Medium | 54 (52+2) | 52 | 2 | **0** |
 | Low | 54 (26+28) | 51 | 3 | **0** |
-| Total | 168 (163+5) | **158** | **9** | **1** |
+| Total | 168 (163+5) | **159** | **9** | **0** |
 
 
