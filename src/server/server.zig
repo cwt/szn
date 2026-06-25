@@ -631,6 +631,32 @@ pub const Server = struct {
         const p = pty orelse return;
         switch (k) {
             .char => |ch| {
+                // Handle Tab variants before the general char path, since
+                // kitty protocol encodes Tab as codepoint 9 with modifiers.
+                if (ch.code == 9) {
+                    if (ch.mod.shift and !ch.mod.ctrl and !ch.mod.alt) {
+                        p.writeInput("\x1b[Z") catch {};
+                        return;
+                    }
+                    if (ch.mod.alt) {
+                        p.writeInput("\x1b\x09") catch {};
+                        return;
+                    }
+                    p.writeInput("\t") catch {};
+                    return;
+                }
+                // Kitty private-use arrow codepoints (57344-57347)
+                if (ch.code >= 57344 and ch.code <= 57347) {
+                    const seq: []const u8 = switch (ch.code) {
+                        57344 => "\x1bOA",
+                        57345 => "\x1bOB",
+                        57347 => "\x1bOC",
+                        57346 => "\x1bOD",
+                        else => unreachable,
+                    };
+                    p.writeInput(seq) catch {};
+                    return;
+                }
                 if (ch.mod.ctrl) {
                     const ctrl_byte: u8 = @intCast(ch.code & 0x1F);
                     if (ch.mod.alt) {
@@ -644,16 +670,16 @@ pub const Server = struct {
                     }
                 } else if (ch.code >= 0x20 and ch.code <= 0x7E) {
                     p.writeInput(&[_]u8{@intCast(ch.code)}) catch {};
-                } else if (ch.code < 0x20) {
+                } else if (ch.code < 0x20 or ch.code == 0x7F) {
                     p.writeInput(&[_]u8{@intCast(ch.code)}) catch {};
                 }
             },
             .arrow => |a| {
                 const seq: []const u8 = switch (a.key) {
-                    .up => "\x1b[A",
-                    .down => "\x1b[B",
-                    .right => "\x1b[C",
-                    .left => "\x1b[D",
+                    .up => "\x1bOA",
+                    .down => "\x1bOB",
+                    .right => "\x1bOC",
+                    .left => "\x1bOD",
                 };
                 p.writeInput(seq) catch {};
             },

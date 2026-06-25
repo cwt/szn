@@ -466,7 +466,7 @@ test "kitty key disambiguate" {
     try testing.expect(rd.feed('9') == null);
     try testing.expect(rd.feed('7') == null);
     try testing.expect(rd.feed(';') == null);
-    try testing.expect(rd.feed('1') == null);
+    try testing.expect(rd.feed('2') == null);
     const ev = rd.feed('u').?;
     try testing.expect(ev == .key);
     try testing.expectEqual(@as(u21, 'a'), ev.key.char.code);
@@ -481,7 +481,7 @@ test "kitty key with event" {
     try testing.expect(rd.feed('9') == null);
     try testing.expect(rd.feed('7') == null);
     try testing.expect(rd.feed(';') == null);
-    try testing.expect(rd.feed('4') == null);
+    try testing.expect(rd.feed('5') == null);
     try testing.expect(rd.feed(';') == null);
     try testing.expect(rd.feed('1') == null);
     const ev = rd.feed('u').?;
@@ -499,7 +499,7 @@ test "kitty key disambiguate with event" {
     try testing.expect(rd.feed('9') == null);
     try testing.expect(rd.feed('7') == null);
     try testing.expect(rd.feed(';') == null);
-    try testing.expect(rd.feed('1') == null);
+    try testing.expect(rd.feed('2') == null);
     try testing.expect(rd.feed(';') == null);
     try testing.expect(rd.feed('2') == null);
     const ev = rd.feed('u').?;

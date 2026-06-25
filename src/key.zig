@@ -144,11 +144,13 @@ pub fn parseCsi(seq: []const u8) ParseError!Key {
 
             const k_mod: Modifier = if (it.next()) |mod_str| blk: {
                 const mp = std.fmt.parseInt(u8, mod_str, 10) catch return error.InvalidCsi;
+                // Kitty adds +1 as a base offset.  Shift=1, Alt=2, Ctrl=4, etc.
+                const adjusted = mp -| 1;
                 break :blk Modifier{
-                    .shift = mp & 1 != 0,
-                    .alt = mp & 2 != 0,
-                    .ctrl = mp & 4 != 0,
-                    .meta = mp & 8 != 0,
+                    .shift = adjusted & 1 != 0,
+                    .alt = adjusted & 2 != 0,
+                    .ctrl = adjusted & 4 != 0,
+                    .meta = adjusted & 8 != 0,
                 };
             } else Modifier{};
 
@@ -168,6 +170,10 @@ pub fn parseSs3(byte: u8) ParseError!Key {
         'S' => Key{ .function = .{ .key = .f4 } },
         'H' => Key{ .special = .{ .key = .home } },
         'F' => Key{ .special = .{ .key = .end } },
+        'A' => Key{ .arrow = .{ .key = .up } },
+        'B' => Key{ .arrow = .{ .key = .down } },
+        'C' => Key{ .arrow = .{ .key = .right } },
+        'D' => Key{ .arrow = .{ .key = .left } },
         else => error.UnknownKey,
     };
 }
@@ -551,28 +557,32 @@ test "format alt char includes M- prefix" {
 }
 
 test "parse kitty extended basic" {
-    const key = try parse("\x1b[97;4u");
+    // mod=5 -> adjusted=4 -> ctrl
+    const key = try parse("\x1b[97;5u");
     try testing.expectEqual(@as(u21, 'a'), key.char.code);
     try testing.expect(key.char.mod.ctrl);
 }
 
 test "parse kitty disambiguate" {
-    // > prefix: codepoint is the base key, modifiers in the bitmask
-    const key = try parse("\x1b[>97;1u");
+    // > prefix: codepoint is the base key, modifiers in the bitmask.
+    // mod=2 -> adjusted=1 -> shift
+    const key = try parse("\x1b[>97;2u");
     try testing.expectEqual(@as(u21, 'a'), key.char.code);
     try testing.expect(key.char.mod.shift);
 }
 
 test "parse kitty with event flags" {
     // = prefix: event field after modifiers (1=press, 2=repeat, 3=release)
-    const key = try parse("\x1b[=97;4;1u");
+    // mod=5 -> adjusted=4 -> ctrl
+    const key = try parse("\x1b[=97;5;1u");
     try testing.expectEqual(@as(u21, 'a'), key.char.code);
     try testing.expect(key.char.mod.ctrl);
 }
 
 test "parse kitty disambiguate with event" {
     // Both > and =: >code;mod;event u
-    const key = try parse("\x1b[=>97;1;2u");
+    // mod=2 -> adjusted=1 -> shift
+    const key = try parse("\x1b[=>97;2;2u");
     try testing.expectEqual(@as(u21, 'a'), key.char.code);
     try testing.expect(key.char.mod.shift);
 }
