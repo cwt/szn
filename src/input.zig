@@ -46,6 +46,8 @@ pub const InputParser = struct {
         dcs_final,
         dcs_sixel,      // accumulating sixel payload bytes
         dcs_sixel_esc,  // saw ESC inside sixel — waiting for \\ (ST)
+        dcs_discard,    // consuming non-sixel DCS body until ST
+        dcs_discard_esc, // saw ESC inside dcs_discard — waiting for \\ (ST)
         sos_pm_apc_string,
         sos_pm_apc_esc,  // saw ESC inside SOS/PM/APC — waiting for \\ (ST)
     };
@@ -157,6 +159,8 @@ pub const InputParser = struct {
             .dcs_final => self.advanceDcsFinal(byte),
             .dcs_sixel => try self.advanceDcsSixel(byte),
             .dcs_sixel_esc => try self.advanceDcsSixelEsc(byte),
+            .dcs_discard => self.advanceDcsDiscard(byte),
+            .dcs_discard_esc => self.advanceDcsDiscardEsc(byte),
             .sos_pm_apc_string => self.advanceSosPmApc(byte),
             .sos_pm_apc_esc => self.advanceSosPmApcEsc(byte),
         }
@@ -357,10 +361,12 @@ pub const InputParser = struct {
                 self.state = .dcs_sixel;
             },
             0x40...'p', 'r'...0x7E => {
-                // Non-sixel DCS final — discard
-                self.toGround();
+                // Non-sixel DCS final — discard body until ST
+                self.state = .dcs_discard;
             },
-            else => self.toGround(),
+            else => {
+                self.state = .dcs_discard;
+            },
         }
     }
 
@@ -384,10 +390,12 @@ pub const InputParser = struct {
                 self.state = .dcs_sixel;
             },
             0x40...'p', 'r'...0x7E => {
-                // Non-sixel DCS final — discard
-                self.toGround();
+                // Non-sixel DCS final — discard body until ST
+                self.state = .dcs_discard;
             },
-            else => self.toGround(),
+            else => {
+                self.state = .dcs_discard;
+            },
         }
     }
 
@@ -401,10 +409,12 @@ pub const InputParser = struct {
                 self.state = .dcs_sixel;
             },
             0x40...'p', 'r'...0x7E => {
-                // Non-sixel DCS final after intermediate — discard
-                self.toGround();
+                // Non-sixel DCS final after intermediate — discard body until ST
+                self.state = .dcs_discard;
             },
-            else => self.toGround(),
+            else => {
+                self.state = .dcs_discard;
+            },
         }
     }
 
@@ -444,6 +454,23 @@ pub const InputParser = struct {
                 try self.dcs_buf.append(self.screen.allocator, byte);
             }
             self.state = .dcs_sixel;
+        }
+    }
+
+    fn advanceDcsDiscard(self: *InputParser, byte: u8) void {
+        if (byte == 0x1B) {
+            self.state = .dcs_discard_esc;
+        } else if (byte == 0x9C) {
+            self.toGround();
+        }
+        // else: consume and discard
+    }
+
+    fn advanceDcsDiscardEsc(self: *InputParser, byte: u8) void {
+        if (byte == '\\') {
+            self.toGround();
+        } else {
+            self.state = .dcs_discard;
         }
     }
 

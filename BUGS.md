@@ -2100,6 +2100,24 @@ for (initial_win.panes.items) |p| {
 11  run                                 (server.zig:190)
 ```
 
+### 170. Non-sixel DCS (tmux passthrough) body leaks into screen grid as literal text
+**File:** `src/input.zig:363–411`
+**Severity:** MEDIUM
+**Status:** ✅ FIXED — non-sixel DCS now enters `dcs_discard` state that consumes all bytes until ST.
+
+```zig
+// advanceDcsEntry when seeing byte 0x40..0x7E (e.g. 't' in "\x1bPtmux;"):
+0x40...'p', 'r'...0x7E => {
+    // OLD: self.toGround(); — transitioned to ground, next bytes became text
+    // NEW: self.state = .dcs_discard; — consume until ST
+    self.state = .dcs_discard;
+},
+```
+
+When the child process sends a tmux DCS passthrough (`\x1bPtmux;[?1016$p...\x1b\\`), szn's parser treats the first non-sixel DCS final byte as the end of the sequence and returns to ground. The remaining body bytes (`mux;[?1016$p...`) are then processed as ground text — written into the screen grid cells. When szn exits, the client renders this text to the real terminal, producing a visible garbage line.
+
+**Fix:** Added `dcs_discard` and `dcs_discard_esc` states that consume all bytes until ST (`\x1b\\` or `0x9C`) without storing anything. Applied to `advanceDcsEntry`, `advanceDcsParam`, and `advanceDcsIntermediate` final-byte handlers.
+
 ---
 
 ## Updated Summary
@@ -2108,8 +2126,8 @@ for (initial_win.panes.items) |p| {
 |----------|-------|-------|----------------|------------|
 | Critical | 20 (18+2) | 17 | 3 | **0** |
 | High | 41 (39+2) | 40 | 1 | **0** |
-| Medium | 54 (52+2) | 52 | 2 | **0** |
+| Medium | 55 (52+3) | 53 | 2 | **0** |
 | Low | 54 (26+28) | 51 | 3 | **0** |
-| Total | 169 (163+6) | **160** | **9** | **0** |
+| Total | 170 (163+7) | **161** | **9** | **0** |
 
 
