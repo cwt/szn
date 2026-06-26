@@ -10,6 +10,7 @@ const InputParser = input_mod.InputParser;
 const layout = @import("layout.zig");
 
 const options_mod = @import("options.zig");
+const choose_mod = @import("choose.zig");
 
 pub const Error = screen.Error || pty_mod.Error || layout.LayoutError || options_mod.Error;
 
@@ -26,6 +27,7 @@ pub const Pane = struct {
     title_ctx: ?*anyopaque = null,
     cwd: ?[]const u8 = null,
     deinited: bool = false,
+    choose_mode: choose_mod.ChooseMode = .{},
 
     pub fn init(allocator: std.mem.Allocator, id: u32, width: u32, height: u32) Error!Pane {
         return Pane{
@@ -40,6 +42,7 @@ pub const Pane = struct {
     pub fn deinit(self: *Pane) void {
         if (self.deinited) return;
         self.deinited = true;
+        self.choose_mode.deinit(self.screen.grid.allocator);
         self.screen.deinit();
         if (self.pty) |*p| {
             p.deinit();

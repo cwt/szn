@@ -3,6 +3,7 @@ const testing = std.testing;
 const server_mod = @import("../server/server.zig");
 const Server = server_mod.Server;
 const Pane = @import("../window.zig").Pane;
+const ChooseItem = @import("../choose.zig").ChooseItem;
 
 pub const CmdResult = enum(u8) {
     ok,
@@ -410,13 +411,143 @@ fn cmdBreakPane(server: *Server, args: []const []const u8) CmdResult {
 }
 
 fn cmdPasteBuffer(server: *Server, args: []const []const u8) CmdResult {
+    const session = server.activeSession() orelse return .err;
+    const window = session.active_window orelse return .err;
+    const pane = window.active_pane orelse return .err;
+
+    var buf_name: ?[]const u8 = null;
+    var i: usize = 1;
+    while (i < args.len) : (i += 1) {
+        if (std.mem.eql(u8, args[i], "-b") and i + 1 < args.len) {
+            buf_name = args[i + 1];
+            i += 1;
+        }
+    }
+
+    if (server.buffers.get(buf_name)) |pb| {
+        pane.writeStr(pb) catch return .err;
+    }
+    return .ok;
+}
+
+fn cmdListBuffers(server: *Server, args: []const []const u8) CmdResult {
+    _ = args;
+    server.buffers.appendToList(server.allocator, &server.response_buf) catch return .err;
+    return .ok;
+}
+
+fn cmdDeleteBuffer(server: *Server, args: []const []const u8) CmdResult {
+    const name: []const u8 = if (args.len > 1) args[1] else blk: {
+        if (server.buffers.items.items.len > 0) {
+            break :blk server.buffers.items.items[0].name;
+        }
+        return .ok;
+    };
+    _ = server.buffers.delete(name);
+    return .ok;
+}
+
+fn cmdSaveBuffer(server: *Server, args: []const []const u8) CmdResult {
+    const path = if (args.len > 1) args[1] else return .err;
+    const path_z = server.allocator.dupeZ(u8, path) catch return .err;
+    defer server.allocator.free(path_z);
+    const data = server.buffers.get(null) orelse return .err;
+    const fd = std.c.open(path_z, std.c.O{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true }, @as(std.c.mode_t, 0o644));
+    if (fd < 0) return .err;
+    defer _ = std.c.close(fd);
+    var off: usize = 0;
+    while (off < data.len) {
+        const n = std.c.write(fd, data.ptr + off, data.len - off);
+        if (n < 0) break;
+        off += @as(usize, @intCast(n));
+    }
+    return if (off == data.len) .ok else .err;
+}
+
+fn cmdLoadBuffer(server: *Server, args: []const []const u8) CmdResult {
+    const path = if (args.len > 1) args[1] else return .err;
+    const path_z = server.allocator.dupeZ(u8, path) catch return .err;
+    defer server.allocator.free(path_z);
+    const fd = std.c.open(path_z, std.c.O{ .ACCMODE = .RDONLY }, @as(std.c.mode_t, 0));
+    if (fd < 0) return .err;
+    defer _ = std.c.close(fd);
+
+    var data: std.ArrayList(u8) = .empty;
+    defer data.deinit(server.allocator);
+    var chunk: [4096]u8 = undefined;
+    while (true) {
+        const n = std.c.read(fd, &chunk, chunk.len);
+        if (n < 0) return .err;
+        if (n == 0) break;
+        data.appendSlice(server.allocator, chunk[0..@as(usize, @intCast(n))]) catch return .err;
+    }
+
+    const name = server.buffers.generateName() catch return .err;
+    server.buffers.pushOwned(name, data.items) catch return .err;
+    data.items = &.{};
+    return .ok;
+}
+
+fn cmdChooseBuffer(server: *Server, args: []const []const u8) CmdResult {
     _ = args;
     const session = server.activeSession() orelse return .err;
     const window = session.active_window orelse return .err;
     const pane = window.active_pane orelse return .err;
-    if (server.paste_buffer) |pb| {
-        pane.writeStr(pb) catch return .err;
+
+    var items: std.ArrayListUnmanaged(ChooseItem) = .empty;
+    defer {
+        for (items.items) |item| {
+            server.allocator.free(item.name);
+            server.allocator.free(item.data);
+        }
+        items.deinit(server.allocator);
     }
+
+    for (server.buffers.items.items) |b| {
+        const n = server.allocator.dupe(u8, b.name) catch return .err;
+        errdefer server.allocator.free(n);
+        const d = server.allocator.dupe(u8, b.data) catch return .err;
+        errdefer server.allocator.free(d);
+        items.append(server.allocator, .{ .name = n, .data = d }) catch return .err;
+    }
+
+    pane.choose_mode.enter(server.allocator, items.items) catch return .err;
+    pane.choose_mode.renderIntoGrid(&pane.screen.grid);
+    pane.dirty = true;
+    return .ok;
+}
+
+fn cmdClockMode(server: *Server, args: []const []const u8) CmdResult {
+    _ = args;
+    const session = server.activeSession() orelse return .err;
+    const window = session.active_window orelse return .err;
+    const pane = window.active_pane orelse return .err;
+    pane.screen.clock_mode = true;
+    const clock = @import("../clock.zig");
+    clock.renderClock(&pane.screen.grid, pane.screen.grid.width, pane.screen.grid.height);
+    pane.dirty = true;
+    return .ok;
+}
+
+fn cmdDisplayMessage(server: *Server, args: []const []const u8) CmdResult {
+    if (args.len < 2) return .err;
+    var msg_len: usize = 0;
+    for (args[1..]) |arg| {
+        msg_len +|= arg.len +| 1;
+    }
+    const msg = server.allocator.alloc(u8, msg_len -| 1) catch return .err;
+    errdefer server.allocator.free(msg);
+    var off: usize = 0;
+    for (args[1..], 0..) |arg, i| {
+        if (i > 0) {
+            msg[off] = ' ';
+            off += 1;
+        }
+        @memcpy(msg[off..][0..arg.len], arg);
+        off += arg.len;
+    }
+    server.setMessage(msg) catch return .err;
+    server.allocator.free(msg);
     return .ok;
 }
 
@@ -1147,10 +1278,73 @@ pub const commands = struct {
         .name = "paste-buffer",
         .alias = "pasteb",
         .min_args = 0,
+        .max_args = 4,
+        .args_usage = "[-b buffer-name]",
+        .description = "Paste a buffer into the active pane",
+        .exec = cmdPasteBuffer,
+    };
+    pub const list_buffers = CmdEntry{
+        .name = "list-buffers",
+        .alias = "lsb",
+        .min_args = 0,
         .max_args = 0,
         .args_usage = "",
-        .description = "Paste the most recent copy buffer into the active pane",
-        .exec = cmdPasteBuffer,
+        .description = "List all paste buffers",
+        .exec = cmdListBuffers,
+    };
+    pub const delete_buffer = CmdEntry{
+        .name = "delete-buffer",
+        .alias = "deleteb",
+        .min_args = 0,
+        .max_args = 1,
+        .args_usage = "[buffer-name]",
+        .description = "Delete a paste buffer",
+        .exec = cmdDeleteBuffer,
+    };
+    pub const clock_mode = CmdEntry{
+        .name = "clock-mode",
+        .alias = null,
+        .min_args = 0,
+        .max_args = 0,
+        .args_usage = "",
+        .description = "Display a clock in the active pane",
+        .exec = cmdClockMode,
+    };
+    pub const choose_buffer = CmdEntry{
+        .name = "choose-buffer",
+        .alias = null,
+        .min_args = 0,
+        .max_args = 0,
+        .args_usage = "",
+        .description = "Choose a buffer to paste",
+        .exec = cmdChooseBuffer,
+    };
+    pub const display_message = CmdEntry{
+        .name = "display-message",
+        .alias = "display",
+        .min_args = 1,
+        .max_args = 32,
+        .args_usage = "message",
+        .description = "Display a message in the status line",
+        .exec = cmdDisplayMessage,
+    };
+    pub const save_buffer = CmdEntry{
+        .name = "save-buffer",
+        .alias = "saveb",
+        .min_args = 1,
+        .max_args = 1,
+        .args_usage = "path",
+        .description = "Save the most recent paste buffer to a file",
+        .exec = cmdSaveBuffer,
+    };
+    pub const load_buffer = CmdEntry{
+        .name = "load-buffer",
+        .alias = "loadb",
+        .min_args = 1,
+        .max_args = 1,
+        .args_usage = "path",
+        .description = "Load a file into the paste buffer",
+        .exec = cmdLoadBuffer,
     };
     pub const copy_mode = CmdEntry{
         .name = "copy-mode",
@@ -1237,6 +1431,13 @@ fn cmdTable() []const *const CmdEntry {
             &commands.join_pane,
             &commands.break_pane,
             &commands.paste_buffer,
+            &commands.choose_buffer,
+            &commands.clock_mode,
+            &commands.display_message,
+            &commands.list_buffers,
+            &commands.delete_buffer,
+            &commands.save_buffer,
+            &commands.load_buffer,
             &commands.copy_mode,
             &commands.find_window,
             &commands.show_messages,
@@ -1713,9 +1914,9 @@ test "last-window switches to non-active" {
     try testing.expectEqual(session.windows.items[0], session.active_window.?);
 }
 
-test "cmd table has 40 entries" {
+test "cmd table has 47 entries" {
     const table = cmdTable();
-    try testing.expectEqual(@as(usize, 40), table.len);
+    try testing.expectEqual(@as(usize, 47), table.len);
 }
 
 test "lookup all new commands" {
@@ -1724,6 +1925,9 @@ test "lookup all new commands" {
     try testing.expect(lookup("show-messages") != null);
     try testing.expect(lookup("find-window") != null);
     try testing.expect(lookup("paste-buffer") != null);
+    try testing.expect(lookup("choose-buffer") != null);
+    try testing.expect(lookup("clock-mode") != null);
+    try testing.expect(lookup("display-message") != null);
     try testing.expect(lookup("rename-session") != null);
     try testing.expect(lookup("rename-window") != null);
     try testing.expect(lookup("select-window") != null);
@@ -1750,6 +1954,10 @@ test "lookup all new commands" {
     try testing.expect(lookup("swap-pane") != null);
     try testing.expect(lookup("join-pane") != null);
     try testing.expect(lookup("break-pane") != null);
+    try testing.expect(lookup("list-buffers") != null);
+    try testing.expect(lookup("delete-buffer") != null);
+    try testing.expect(lookup("save-buffer") != null);
+    try testing.expect(lookup("load-buffer") != null);
 }
 
 test "lookup aliases" {
@@ -1780,6 +1988,11 @@ test "lookup aliases" {
     try testing.expectEqualStrings("find-window", lookup("findw").?.name);
     try testing.expectEqualStrings("show-messages", lookup("showmsgs").?.name);
     try testing.expectEqualStrings("list-keys", lookup("lsk").?.name);
+    try testing.expectEqualStrings("list-buffers", lookup("lsb").?.name);
+    try testing.expectEqualStrings("display-message", lookup("display").?.name);
+    try testing.expectEqualStrings("delete-buffer", lookup("deleteb").?.name);
+    try testing.expectEqualStrings("save-buffer", lookup("saveb").?.name);
+    try testing.expectEqualStrings("load-buffer", lookup("loadb").?.name);
 }
 
 test "config commands exec" {
@@ -1981,7 +2194,7 @@ test "paste-buffer exec" {
     const win = session.active_window.?;
     const pane = win.active_pane.?;
 
-    server.paste_buffer = try server.allocator.dupe(u8, "hello paste buffer");
+    try server.buffers.push("testbuf", "hello paste buffer");
 
     var c = try parse("paste-buffer", testing.allocator);
     defer c.deinit(testing.allocator);
@@ -1991,6 +2204,22 @@ test "paste-buffer exec" {
     try testing.expectEqual(@as(u21, 'h'), pane.screen.grid.getCell(0, 0).char);
     try testing.expectEqual(@as(u21, 'e'), pane.screen.grid.getCell(1, 0).char);
     try testing.expectEqual(@as(u21, 'l'), pane.screen.grid.getCell(2, 0).char);
+}
+
+test "display-message exec" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    try testing.expect(server.message == null);
+
+    var c = try parse("display-message hello world", testing.allocator);
+    defer c.deinit(testing.allocator);
+    const result = c.exec(&server);
+    try testing.expectEqual(CmdResult.ok, result);
+    try testing.expect(server.message != null);
+    try testing.expectEqualStrings("hello world", server.message.?);
+
+    server.clearMessage();
 }
 
 test "copy-mode exec" {

@@ -26,6 +26,7 @@ const pty_mod = @import("pty.zig");
 const cfg = @import("../cfg.zig");
 const options = @import("../options.zig");
 const Colour = @import("../colour.zig").Colour;
+const buffer_mod = @import("../buffer.zig");
 
 extern "c" fn fopen(filename: [*c]const u8, modes: [*c]const u8) ?*anyopaque;
 extern "c" fn fclose(stream: ?*anyopaque) c_int;
@@ -33,6 +34,7 @@ extern "c" fn fseek(stream: ?*anyopaque, offset: c_long, whence: c_int) c_int;
 extern "c" fn ftell(stream: ?*anyopaque) c_long;
 extern "c" fn fread(ptr: ?*anyopaque, size: usize, n: usize, stream: ?*anyopaque) usize;
 extern "c" fn access(pathname: [*c]const u8, mode: c_int) c_int;
+extern "c" fn gettimeofday(tv: *std.c.timeval, tz: ?*anyopaque) c_int;
 
 const passwd = if (@import("builtin").os.tag.isDarwin())
     extern struct {
@@ -79,11 +81,15 @@ pub const Server = struct {
     response_buf: std.ArrayList(u8),
     display_client_fd: ?i32 = null,
     render_buf: std.ArrayList(u8),
-    paste_buffer: ?[]const u8 = null,
+    buffers: buffer_mod.BufferList,
     log_messages: std.ArrayListUnmanaged([]const u8) = .empty,
     display_sx: u32 = 80,
     display_sy: u32 = 24,
     dirty: bool = true,
+    message: ?[]const u8 = null,
+    message_time: i64 = 0,
+    command_mode: bool = false,
+    command_buf: std.ArrayListUnmanaged(u8) = .empty,
 
     pub fn init(allocator: std.mem.Allocator) ServerError!Server {
         const key_binding = @import("../key_binding.zig");
@@ -113,7 +119,7 @@ pub const Server = struct {
             .global_window_options = global_window_options,
             .response_buf = .empty,
             .render_buf = render_buf,
-            .paste_buffer = null,
+            .buffers = buffer_mod.BufferList.init(allocator),
             .log_messages = .empty,
             .dirty = true,
         };
@@ -124,9 +130,9 @@ pub const Server = struct {
             self.allocator.free(m);
         }
         self.log_messages.deinit(self.allocator);
-        if (self.paste_buffer) |pb| {
-            self.allocator.free(pb);
-        }
+        if (self.message) |m| self.allocator.free(m);
+        self.command_buf.deinit(self.allocator);
+        self.buffers.deinit();
         self.render_buf.deinit(self.allocator);
         self.response_buf.deinit(self.allocator);
         self.loop.deinit(self.allocator);
@@ -163,6 +169,34 @@ pub const Server = struct {
     pub fn addLogMessage(self: *Server, msg: []const u8) ServerError!void {
         const duped = try self.allocator.dupe(u8, msg);
         try self.log_messages.append(self.allocator, duped);
+    }
+
+    fn currentMillis() i64 {
+        var tv: extern struct {
+            tv_sec: i64,
+            tv_usec: i64,
+        } = undefined;
+        _ = gettimeofday(@ptrCast(&tv), null);
+        return tv.tv_sec * 1000 + @divFloor(tv.tv_usec, 1000);
+    }
+
+    pub fn setMessage(self: *Server, msg: []const u8) !void {
+        if (self.message) |m| self.allocator.free(m);
+        self.message = try self.allocator.dupe(u8, msg);
+        self.message_time = currentMillis();
+    }
+
+    pub fn clearMessage(self: *Server) void {
+        if (self.message) |m| {
+            self.allocator.free(m);
+            self.message = null;
+        }
+    }
+
+    pub fn messageExpired(self: *Server, display_time: u32) bool {
+        if (self.message == null) return true;
+        const now = currentMillis();
+        return now - self.message_time >= display_time;
     }
 
     pub fn listen(self: *Server) ServerError!void {
@@ -553,7 +587,7 @@ pub const Server = struct {
                 pane.screen.copy_mode.?.enter(&pane.screen.grid);
             },
             .paste_buffer => {
-                if (self.paste_buffer) |pb| {
+                if (self.buffers.get(null)) |pb| {
                     try pane.writeStr(pb);
                 }
             },
@@ -619,6 +653,17 @@ pub const Server = struct {
                 const pty = if (pane.pty) |*p| p else null;
                 const prefix_key = self.dispatcher.prefix;
                 writeKeyToPty(pty, prefix_key);
+            },
+            .clock_mode => {
+                pane.screen.clock_mode = true;
+                const clock = @import("../clock.zig");
+                clock.renderClock(&pane.screen.grid, pane.screen.grid.width, pane.screen.grid.height);
+                pane.dirty = true;
+            },
+            .command_prompt => {
+                self.command_mode = true;
+                self.command_buf.clearRetainingCapacity();
+                self.dirty = true;
             },
             else => {},
         }
@@ -745,6 +790,88 @@ pub const Server = struct {
         while (i < buf.len) : (i += 1) {
             const byte = buf[i];
 
+            if (self.command_mode) {
+                if (self.input_reader.feed(byte)) |event| {
+                    switch (event) {
+                        .key => |k| {
+                            if (k == .char) {
+                                const code = k.char.code;
+                                if (code == '\r' or code == '\n') {
+                                    const cmd = self.command_buf.items;
+                                    if (cmd.len > 0) {
+                                        const dispatch = @import("dispatch.zig");
+                                        const result = dispatch.dispatchCommand(self.allocator, self, cmd);
+                                        if (result.response_type == .ready or result.response_type == .err) {
+                                            if (result.data.len > 0) self.setMessage(result.data) catch {};
+                                        }
+                                    }
+                                    self.command_mode = false;
+                                    self.command_buf.clearRetainingCapacity();
+                                    self.dirty = true;
+                                } else if (code == 0x1b) {
+                                    self.command_mode = false;
+                                    self.command_buf.clearRetainingCapacity();
+                                    self.dirty = true;
+                                } else if (code == 0x7f or code == 0x08) {
+                                    if (self.command_buf.items.len > 0) {
+                                        self.command_buf.items.len -= 1;
+                                    }
+                                    self.dirty = true;
+                                } else if (code >= 0x20 and code <= 0x7e) {
+                                    try self.command_buf.append(self.allocator, @intCast(code));
+                                    self.dirty = true;
+                                }
+                            }
+                        },
+                        else => {},
+                    }
+                }
+                continue;
+            }
+
+            if (pane.choose_mode.active) {
+                if (self.input_reader.feed(byte)) |event| {
+                    switch (event) {
+                        .key => |k| {
+                            const res = pane.choose_mode.handleKey(k, self.allocator) catch continue;
+                            switch (res) {
+                                .consumed => {
+                                    pane.choose_mode.renderIntoGrid(&pane.screen.grid);
+                                    pane.dirty = true;
+                                },
+                                .selected => {
+                                    const selected = pane.choose_mode.selectedItem();
+                                    pane.choose_mode.active = false;
+                                    pane.screen.grid = try @import("../grid.zig").Grid.init(self.allocator, pane.screen.grid.width, pane.screen.grid.height);
+                                    pane.dirty = true;
+                                    if (selected) |item| {
+                                        const buf_data = self.buffers.get(item.name);
+                                        if (buf_data) |data| {
+                                            if (pane.pty) |*chosen_pty| {
+                                                _ = chosen_pty.writeInput(data) catch {};
+                                            }
+                                        }
+                                    }
+                                },
+                                .cancelled => {
+                                    pane.choose_mode.active = false;
+                                    pane.screen.grid = try @import("../grid.zig").Grid.init(self.allocator, pane.screen.grid.width, pane.screen.grid.height);
+                                    pane.dirty = true;
+                                },
+                            }
+                        },
+                        else => {},
+                    }
+                }
+                continue;
+            }
+
+            if (pane.screen.clock_mode) {
+                pane.screen.clock_mode = false;
+                pane.dirty = true;
+                continue;
+            }
+
             if (pane.screen.copy_mode) |*cm| {
                 if (self.input_reader.feed(byte)) |event| {
                     switch (event) {
@@ -761,10 +888,12 @@ pub const Server = struct {
                                     }
 
                                     if (is_yank and cm.selection.active) {
-                                        if (self.paste_buffer) |pb| {
-                                            self.allocator.free(pb);
+                                        const data = cm.yankSelection(self.allocator, &pane.screen.grid) catch null;
+                                        if (data) |d| {
+                                            const name = try self.buffers.generateName();
+                                            errdefer self.allocator.free(name);
+                                            try self.buffers.pushOwned(name, d);
                                         }
-                                        self.paste_buffer = cm.yankSelection(self.allocator, &pane.screen.grid) catch null;
                                         pane.screen.copy_mode = null;
                                         pane.dirty = true;
                                     } else {
@@ -1293,6 +1422,13 @@ pub const Server = struct {
             }
         }
 
+        const display_time = if (session.options.get("display-time")) |dt| blk: {
+            break :blk if (dt == .number) @as(u32, @intCast(@max(dt.number, 0))) else 1000;
+        } else 1000;
+        if (self.messageExpired(display_time)) {
+            self.clearMessage();
+        }
+
         var any_dirty = self.dirty;
         if (!any_dirty) {
             for (window.panes.items) |p| {
@@ -1340,6 +1476,9 @@ pub const Server = struct {
                 .pane_border_fg = session.options.asColour("pane-border-fg") orelse Colour.default_(),
                 .pane_active_border_fg = session.options.asColour("pane-active-border-fg") orelse Colour.default_(),
             },
+            self.message,
+            self.command_mode,
+            self.command_buf.items,
         ) catch |err| {
             std.log.warn("render error: {any}", .{err});
             return;
@@ -1665,7 +1804,7 @@ test "prefix interception and key dispatching" {
     try testing.expect(active_pane.screen.copy_mode == null);
 
     // Test paste-buffer
-    server.paste_buffer = try server.allocator.dupe(u8, "pasted-content");
+    try server.buffers.push("paste0", "pasted-content");
     try server.processInput(&[_]u8{ 0x02, ']' }); // Ctrl-b + ]
 
     // Check that grid has the pasted content

@@ -263,6 +263,18 @@ test "command table completeness" {
     try testing.expect(lookup("lsp") != null);
     try testing.expect(lookup("lscm") != null);
     try testing.expect(lookup("detach") != null);
+    try testing.expect(lookup("choose-buffer") != null);
+    try testing.expect(lookup("clock-mode") != null);
+    try testing.expect(lookup("display-message") != null);
+    try testing.expect(lookup("display") != null);
+    try testing.expect(lookup("list-buffers") != null);
+    try testing.expect(lookup("lsb") != null);
+    try testing.expect(lookup("delete-buffer") != null);
+    try testing.expect(lookup("deleteb") != null);
+    try testing.expect(lookup("save-buffer") != null);
+    try testing.expect(lookup("saveb") != null);
+    try testing.expect(lookup("load-buffer") != null);
+    try testing.expect(lookup("loadb") != null);
 }
 
 test "error on invalid command" {

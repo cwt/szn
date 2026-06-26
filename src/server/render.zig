@@ -118,6 +118,9 @@ pub const Display = struct {
         active_window: ?*Window,
         layout_root: *const @import("../layout.zig").Node,
         theme: ThemeColours,
+        message: ?[]const u8,
+        command_mode: bool,
+        command_buf: []const u8,
     ) Error!void {
         try self.writeBytes("\x1b[?25l");
         try self.writeBytes("\x1b[?2026h");
@@ -189,7 +192,7 @@ pub const Display = struct {
 
         try self.renderContent(&merged_screen);
         try self.renderSixelImages(bounds);
-        try self.renderStatusBar(session_name, windows, active_window, theme.status_fg, theme.status_bg);
+        try self.renderStatusBar(session_name, windows, active_window, theme.status_fg, theme.status_bg, message, command_mode, command_buf);
 
         if (merged_screen.cursor.visible) {
             try self.moveTo(merged_screen.cursor.x, merged_screen.cursor.y);
@@ -442,41 +445,58 @@ pub const Display = struct {
         try self.writeBytes("\x1b[m");
     }
 
-    fn renderStatusBar(self: Display, session_name: []const u8, windows: []const *Window, active_window: ?*Window, fg: Colour, bg: Colour) Error!void {
+    fn renderStatusBar(self: Display, session_name: []const u8, windows: []const *Window, active_window: ?*Window, fg: Colour, bg: Colour, message: ?[]const u8, command_mode: bool, command_buf: []const u8) Error!void {
         try self.moveTo(0, self.sy -| 1);
         try self.writeColourFg(fg);
         try self.writeColourBg(bg);
 
         var col: u32 = 0;
 
-        try self.writeBytes(" [");
-        try self.writeBytes(session_name);
-        try self.writeBytes("]");
-        col +|= 3 + @as(u32, @intCast(session_name.len));
-
-        for (windows, 0..) |win, idx| {
-            const is_active = (win == active_window);
-            const suffix = if (is_active) "*" else "";
-
-            if (is_active) {
-                try self.writeBytes("\x1b[4m");
+        if (command_mode) {
+            const prompt = ":: ";
+            try self.writeBytes(prompt);
+            col += prompt.len;
+            const max_len = self.sx -| 1;
+            const display_len = @min(command_buf.len, max_len -| col);
+            if (display_len > 0) {
+                try self.writeBytes(command_buf[0..display_len]);
+                col += display_len;
             }
+        } else if (message) |msg| {
+            const max_len = self.sx -| 1;
+            const display_len = @min(msg.len, max_len);
+            try self.writeBytes(msg[0..display_len]);
+            col = display_len;
+        } else {
+            try self.writeBytes(" [");
+            try self.writeBytes(session_name);
+            try self.writeBytes("]");
+            col +|= 3 + @as(u32, @intCast(session_name.len));
 
-            var win_idx_buf: [32]u8 = undefined;
-            const win_idx_str = std.fmt.bufPrint(&win_idx_buf, " {d}:", .{idx}) catch " win:";
-            try self.writeBytes(win_idx_str);
-            col +|= @intCast(win_idx_str.len);
+            for (windows, 0..) |win, idx| {
+                const is_active = (win == active_window);
+                const suffix = if (is_active) "*" else "";
 
-            try self.writeBytes(win.name);
-            col +|= @intCast(win.name.len);
+                if (is_active) {
+                    try self.writeBytes("\x1b[4m");
+                }
 
-            if (suffix.len > 0) {
-                try self.writeBytes(suffix);
-                col +|= @intCast(suffix.len);
-            }
+                var win_idx_buf: [32]u8 = undefined;
+                const win_idx_str = std.fmt.bufPrint(&win_idx_buf, " {d}:", .{idx}) catch " win:";
+                try self.writeBytes(win_idx_str);
+                col +|= @intCast(win_idx_str.len);
 
-            if (is_active) {
-                try self.writeBytes("\x1b[24m");
+                try self.writeBytes(win.name);
+                col +|= @intCast(win.name.len);
+
+                if (suffix.len > 0) {
+                    try self.writeBytes(suffix);
+                    col +|= @intCast(suffix.len);
+                }
+
+                if (is_active) {
+                    try self.writeBytes("\x1b[24m");
+                }
             }
         }
 
@@ -611,7 +631,7 @@ test "renderStatusBar with long window name" {
 
     const windows = [_]*Window{&win1};
 
-    try display.renderStatusBar("my-session", &windows, &win1, Colour.default_(), Colour.default_());
+    try display.renderStatusBar("my-session", &windows, &win1, Colour.default_(), Colour.default_(), null, false, "");
 
     // Verify it renders the long window name successfully
     try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "very_long_window_name_that_previously_would_have_failed") != null);
@@ -654,7 +674,7 @@ test "renderAll cursor visibility hide" {
         .status_bg = Colour.default_(),
         .pane_border_fg = Colour.fromIndexed(8),
         .pane_active_border_fg = Colour.fromIndexed(2),
-    });
+    }, null, false, "");
 
     // Verify the cursor was NOT shown at the end
     const has_show_cursor = std.mem.indexOf(u8, capture_buf.items, "\x1b[?25h") != null;

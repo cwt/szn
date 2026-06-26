@@ -32,4 +32,7 @@ comptime {
     _ = @import("tty/fd_writer.zig");
     _ = @import("integration.zig");
     _ = @import("main.zig");
+    _ = @import("buffer.zig");
+    _ = @import("clock.zig");
+    _ = @import("choose.zig");
 }
