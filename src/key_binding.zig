@@ -41,6 +41,7 @@ pub const Action = enum(u8) {
     rotate_window,
     rename_window,
     command_prompt,
+    send_prefix,
 };
 
 pub const Binding = struct {
@@ -180,6 +181,7 @@ pub fn keysEqual(a: Key, b: Key) bool {
 
 pub fn loadDefaults(table: *KeyTable) Error!void {
     const defaults = [_]Binding{
+        .{ .key = Key{ .char = .{ .code = 'b', .mod = .{ .ctrl = true } } }, .action = .send_prefix },
         .{ .key = Key{ .char = .{ .code = 'c', .mod = .{} } }, .action = .new_window },
         .{ .key = Key{ .char = .{ .code = '%', .mod = .{} } }, .action = .split_horizontal },
         .{ .key = Key{ .char = .{ .code = '"', .mod = .{} } }, .action = .split_vertical },

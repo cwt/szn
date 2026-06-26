@@ -615,6 +615,11 @@ pub const Server = struct {
                 const target_h = current_h +| 1;
                 pane.resizeTerminal(current_w, target_h) catch {};
             },
+            .send_prefix => {
+                const pty = if (pane.pty) |*p| p else null;
+                const prefix_key = self.dispatcher.prefix;
+                writeKeyToPty(pty, prefix_key);
+            },
             else => {},
         }
 
@@ -1695,6 +1700,39 @@ test "prefix interception and key dispatching" {
     const old_height = original_second_pane.screen.grid.height;
     try server.executeAction(.resize_down);
     try testing.expectEqual(old_height + 1, original_second_pane.screen.grid.height);
+}
+
+test "send-prefix forwards C-b to inner process" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    const s = try server.newSession("test", 80, 24);
+    const window = s.active_window.?;
+    const pane = window.active_pane.?;
+    const pty = try @import("pty.zig").Pty.open();
+    const slave_fd = pty.slave;
+    pane.pty = pty;
+
+    // Put slave in raw mode so read() doesn't wait for newline.
+    {
+        var term: std.c.termios = undefined;
+        _ = std.c.tcgetattr(slave_fd, &term);
+        term.lflag.ICANON = false;
+        term.lflag.ECHO = false;
+        term.oflag.OPOST = false;
+        _ = std.c.tcsetattr(slave_fd, std.c.TCSA.FLUSH, &term);
+    }
+
+    // Feed C-b C-b — first enters prefix mode, second invokes send-prefix.
+    try server.processInput(&[_]u8{ 0x02, 0x02 });
+
+    // Read from slave: should see the prefix byte (0x02).
+    var buf: [4]u8 = undefined;
+    const n = std.posix.read(slave_fd, buf[0..]) catch |err| blk: {
+        if (err == error.WouldBlock) break :blk @as(usize, 0) else return err;
+    };
+    try testing.expectEqual(@as(usize, 1), n);
+    try testing.expectEqual(@as(u8, 0x02), buf[0]);
 }
 
 test "saturating arithmetic in resize actions — bug #94" {
