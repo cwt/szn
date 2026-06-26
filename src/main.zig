@@ -43,6 +43,10 @@ fn writeAll(fd: i32, buf: []const u8) Error!void {
     }
 }
 
+pub fn detectNested() bool {
+    return std.c.getenv("SZN") != null;
+}
+
 pub fn main(init: std.process.Init) void {
     mainInner(init) catch |err| {
         switch (err) {
@@ -59,6 +63,11 @@ pub fn main(init: std.process.Init) void {
 
 fn mainInner(init: std.process.Init) Error!void {
     const allocator = init.gpa;
+
+    if (detectNested()) {
+        std.debug.print("szn: you are already running szn; nested instances are not supported\n", .{});
+        std.process.exit(1);
+    }
 
     var args: std.ArrayListUnmanaged([]const u8) = .empty;
     defer args.deinit(allocator);
@@ -489,5 +498,29 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
     }
 }
 
+const testing = std.testing;
+
+extern "c" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
+extern "c" fn unsetenv(name: [*:0]const u8) c_int;
+
+test "detectNested returns true when SZN env is set" {
+    const prev = std.c.getenv("SZN");
+    if (prev) |_| {
+        try testing.expect(detectNested());
+    } else {
+        _ = setenv("SZN", "1-test", 1);
+        defer _ = unsetenv("SZN");
+        try testing.expect(detectNested());
+    }
+}
+
+test "detectNested returns false when SZN env is not set" {
+    const prev = std.c.getenv("SZN");
+    if (prev) |_| {
+        // Running inside szn — can't test false case, just mark as skipped
+        return error.SkipZigTest;
+    }
+    try testing.expect(!detectNested());
+}
 
 
