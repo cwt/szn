@@ -922,12 +922,15 @@ pub const Server = struct {
                                     pane.choose_mode.active = false;
 
                                     const grid_alloc = pane.screen.grid.allocator;
-                                    pane.screen.grid.deinit();
                                     if (pane.saved_grid) |sg| {
+                                        pane.screen.grid.deinit();
                                         pane.screen.grid = sg;
                                         pane.saved_grid = null;
                                     } else {
-                                        pane.screen.grid = try @import("../grid.zig").Grid.init(grid_alloc, pane.screen.grid.width, pane.screen.grid.height);
+                                        if (@import("../grid.zig").Grid.init(grid_alloc, pane.screen.grid.width, pane.screen.grid.height)) |fallback| {
+                                            pane.screen.grid.deinit();
+                                            pane.screen.grid = fallback;
+                                        } else |_| {}
                                     }
 
                                     pane.dirty = true;
@@ -954,12 +957,15 @@ pub const Server = struct {
                                     pane.choose_mode.active = false;
 
                                     const grid_alloc = pane.screen.grid.allocator;
-                                    pane.screen.grid.deinit();
                                     if (pane.saved_grid) |sg| {
+                                        pane.screen.grid.deinit();
                                         pane.screen.grid = sg;
                                         pane.saved_grid = null;
                                     } else {
-                                        pane.screen.grid = try @import("../grid.zig").Grid.init(grid_alloc, pane.screen.grid.width, pane.screen.grid.height);
+                                        if (@import("../grid.zig").Grid.init(grid_alloc, pane.screen.grid.width, pane.screen.grid.height)) |fallback| {
+                                            pane.screen.grid.deinit();
+                                            pane.screen.grid = fallback;
+                                        } else |_| {}
                                     }
 
                                     pane.dirty = true;
@@ -979,12 +985,15 @@ pub const Server = struct {
                 pane.screen.clock_mode = false;
 
                 const grid_alloc = pane.screen.grid.allocator;
-                pane.screen.grid.deinit();
                 if (pane.saved_grid) |sg| {
+                    pane.screen.grid.deinit();
                     pane.screen.grid = sg;
                     pane.saved_grid = null;
                 } else {
-                    pane.screen.grid = try @import("../grid.zig").Grid.init(grid_alloc, pane.screen.grid.width, pane.screen.grid.height);
+                    if (@import("../grid.zig").Grid.init(grid_alloc, pane.screen.grid.width, pane.screen.grid.height)) |fallback| {
+                        pane.screen.grid.deinit();
+                        pane.screen.grid = fallback;
+                    } else |_| {}
                 }
 
                 pane.dirty = true;
@@ -1523,15 +1532,17 @@ pub const Server = struct {
         if (pane.screen.clock_mode) {
             const now = @as(u64, @intCast(@max(time(null), 0)));
             if (now != pane.clock_time) {
-                pane.clock_time = now;
-                const grid_alloc = pane.screen.grid.allocator;
-                pane.screen.grid.deinit();
                 if (pane.saved_grid) |*sg| {
-                    pane.screen.grid = sg.clone(grid_alloc) catch pane.screen.grid;
+                    const grid_alloc = pane.screen.grid.allocator;
+                    if (sg.clone(grid_alloc)) |cloned| {
+                        pane.screen.grid.deinit();
+                        pane.screen.grid = cloned;
+                        pane.clock_time = now;
+                        const clock = @import("../clock.zig");
+                        clock.renderClock(&pane.screen.grid, pane.screen.grid.width, pane.screen.grid.height);
+                        pane.dirty = true;
+                    } else |_| {}
                 }
-                const clock = @import("../clock.zig");
-                clock.renderClock(&pane.screen.grid, pane.screen.grid.width, pane.screen.grid.height);
-                pane.dirty = true;
             }
         }
 

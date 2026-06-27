@@ -2174,10 +2174,32 @@ _ = c.write(cfd, ser.ptr, ser.len);  // silently ignores failure
 
 | Severity | Count | Fixed | False Positive | Unresolved |
 |----------|-------|-------|----------------|------------|
-| Critical | 22 (18+4) | 19 | 3 | **0** |
-| High | 41 (39+2) | 40 | 1 | **0** |
+| Critical | 23 (18+5) | 20 | 3 | **0** |
+| High | 42 (39+3) | 41 | 1 | **0** |
 | Medium | 58 (52+6) | 56 | 2 | **0** |
 | Low | 54 (26+28) | 51 | 3 | **0** |
-| Total | 175 (163+12) | **166** | **9** | **0** |
+| Total | 177 (163+14) | **168** | **9** | **0** |
+
+---
+
+## NEW BUGS (2026-06-27 audit of clock and tab completion changes)
+
+---
+
+### 176. Use-after-free / crash on OOM inside `server.zig` live clock ticking
+**File:** `src/server/server.zig:1520–1532`
+**Severity:** CRITICAL
+**Status:** ✅ FIXED — cloned `saved_grid` first, only deinitializing the active grid after cloning succeeds.
+
+If `sg.clone(grid_alloc)` fails with OOM, the catch handler fell back to using the already-deinitialized `pane.screen.grid` instead of returning early. Subsequent `renderClock` operations write to the freed memory cells, causing undefined behavior/crashes.
+
+---
+
+### 177. Memory leak on partial allocation failure inside `ChooseMode.enter()`
+**File:** `src/choose.zig:34–52`
+**Severity:** HIGH
+**Status:** ✅ FIXED — added `errdefer` to free already-allocated items and clear the items list on loop failure.
+
+If `dupe` or `append` fails mid-loop, any items previously appended in the current call are left stored in `self.items.items` without being cleaned up, leaking memory if the choose mode fails to initialize fully.
 
 

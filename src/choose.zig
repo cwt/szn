@@ -41,6 +41,16 @@ pub const ChooseMode = struct {
         self.cursor = 0;
         self.scroll = 0;
         self.target = .buffer;
+
+        errdefer {
+            for (self.items.items) |*item| {
+                allocator.free(item.name);
+                allocator.free(item.data);
+            }
+            self.items.clearRetainingCapacity();
+            self.active = false;
+        }
+
         for (items) |item| {
             const n = try allocator.dupe(u8, item.name);
             errdefer allocator.free(n);
