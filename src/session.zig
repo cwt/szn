@@ -36,6 +36,7 @@ pub const Session = struct {
         self.windows = .empty;
         self.active_window = null;
         self.last_window = null;
+        self.next_win_id = 1;
 
         const initial_win = try allocator.create(Window);
         initial_win.* = try Window.init(allocator, 0, name, width, height, &self.window_options);
