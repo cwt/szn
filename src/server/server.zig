@@ -818,6 +818,11 @@ pub const Server = struct {
                                 is_backspace = true;
                             }
 
+                            var is_tab = false;
+                            if (k == .special and k.special.key == .tab) {
+                                is_tab = true;
+                            }
+
                             if (is_enter) {
                                 const cmd = self.command_buf.items;
                                 if (cmd.len > 0) {
@@ -830,6 +835,54 @@ pub const Server = struct {
                                 self.command_mode = false;
                                 self.command_buf.clearRetainingCapacity();
                                 self.dirty = true;
+                            } else if (is_tab) {
+                                const prefix = self.command_buf.items;
+                                var matches: std.ArrayList(@import("../choose.zig").ChooseItem) = .empty;
+                                defer {
+                                    for (matches.items) |item| {
+                                        self.allocator.free(item.name);
+                                        self.allocator.free(item.data);
+                                    }
+                                    matches.deinit(self.allocator);
+                                }
+
+                                const table = @import("../cmd/cmd.zig").cmdTable();
+                                for (table) |entry| {
+                                    if (std.mem.startsWith(u8, entry.name, prefix)) {
+                                        const dup_name = self.allocator.dupe(u8, entry.name) catch continue;
+                                        errdefer self.allocator.free(dup_name);
+                                        const dup_data = self.allocator.dupe(u8, entry.name) catch {
+                                            self.allocator.free(dup_name);
+                                            continue;
+                                        };
+                                        matches.append(self.allocator, .{
+                                            .name = dup_name,
+                                            .data = dup_data,
+                                        }) catch {
+                                            self.allocator.free(dup_name);
+                                            self.allocator.free(dup_data);
+                                        };
+                                    }
+                                }
+
+                                if (matches.items.len == 1) {
+                                    self.command_buf.clearRetainingCapacity();
+                                    try self.command_buf.appendSlice(self.allocator, matches.items[0].name);
+                                    try self.command_buf.append(self.allocator, ' ');
+                                    self.dirty = true;
+                                } else if (matches.items.len > 1) {
+                                    if (pane.saved_grid) |*g| {
+                                        g.deinit();
+                                        pane.saved_grid = null;
+                                    }
+                                    pane.saved_grid = try pane.screen.grid.clone(pane.screen.grid.allocator);
+
+                                    self.command_mode = false;
+                                    try pane.choose_mode.enter(pane.screen.grid.allocator, matches.items);
+                                    pane.choose_mode.target = .command;
+                                    pane.choose_mode.renderIntoGrid(&pane.screen.grid);
+                                    pane.dirty = true;
+                                }
                             } else if (is_cancel) {
                                 self.command_mode = false;
                                 self.command_buf.clearRetainingCapacity();
@@ -865,38 +918,54 @@ pub const Server = struct {
                                 },
                                 .selected => {
                                     const selected = pane.choose_mode.selectedItem();
+                                    const is_cmd = (pane.choose_mode.target == .command);
                                     pane.choose_mode.active = false;
 
+                                    const grid_alloc = pane.screen.grid.allocator;
                                     pane.screen.grid.deinit();
                                     if (pane.saved_grid) |sg| {
                                         pane.screen.grid = sg;
                                         pane.saved_grid = null;
                                     } else {
-                                        pane.screen.grid = try @import("../grid.zig").Grid.init(self.allocator, pane.screen.grid.width, pane.screen.grid.height);
+                                        pane.screen.grid = try @import("../grid.zig").Grid.init(grid_alloc, pane.screen.grid.width, pane.screen.grid.height);
                                     }
 
                                     pane.dirty = true;
-                                    if (selected) |item| {
-                                        const buf_data = self.buffers.get(item.name);
-                                        if (buf_data) |data| {
-                                            if (pane.pty) |*chosen_pty| {
-                                                _ = chosen_pty.writeInput(data) catch {};
+                                    if (is_cmd) {
+                                        if (selected) |item| {
+                                            self.command_buf.clearRetainingCapacity();
+                                            try self.command_buf.appendSlice(self.allocator, item.name);
+                                            try self.command_buf.append(self.allocator, ' ');
+                                        }
+                                        self.command_mode = true;
+                                    } else {
+                                        if (selected) |item| {
+                                            const buf_data = self.buffers.get(item.name);
+                                            if (buf_data) |data| {
+                                                if (pane.pty) |*chosen_pty| {
+                                                    _ = chosen_pty.writeInput(data) catch {};
+                                                }
                                             }
                                         }
                                     }
                                 },
                                 .cancelled => {
+                                    const is_cmd = (pane.choose_mode.target == .command);
                                     pane.choose_mode.active = false;
 
+                                    const grid_alloc = pane.screen.grid.allocator;
                                     pane.screen.grid.deinit();
                                     if (pane.saved_grid) |sg| {
                                         pane.screen.grid = sg;
                                         pane.saved_grid = null;
                                     } else {
-                                        pane.screen.grid = try @import("../grid.zig").Grid.init(self.allocator, pane.screen.grid.width, pane.screen.grid.height);
+                                        pane.screen.grid = try @import("../grid.zig").Grid.init(grid_alloc, pane.screen.grid.width, pane.screen.grid.height);
                                     }
 
                                     pane.dirty = true;
+                                    if (is_cmd) {
+                                        self.command_mode = true;
+                                    }
                                 },
                             }
                         },
@@ -909,12 +978,13 @@ pub const Server = struct {
             if (pane.screen.clock_mode) {
                 pane.screen.clock_mode = false;
 
+                const grid_alloc = pane.screen.grid.allocator;
                 pane.screen.grid.deinit();
                 if (pane.saved_grid) |sg| {
                     pane.screen.grid = sg;
                     pane.saved_grid = null;
                 } else {
-                    pane.screen.grid = try @import("../grid.zig").Grid.init(self.allocator, pane.screen.grid.width, pane.screen.grid.height);
+                    pane.screen.grid = try @import("../grid.zig").Grid.init(grid_alloc, pane.screen.grid.width, pane.screen.grid.height);
                 }
 
                 pane.dirty = true;
@@ -1454,9 +1524,10 @@ pub const Server = struct {
             const now = @as(u64, @intCast(@max(time(null), 0)));
             if (now != pane.clock_time) {
                 pane.clock_time = now;
+                const grid_alloc = pane.screen.grid.allocator;
                 pane.screen.grid.deinit();
                 if (pane.saved_grid) |*sg| {
-                    pane.screen.grid = sg.clone(self.allocator) catch pane.screen.grid;
+                    pane.screen.grid = sg.clone(grid_alloc) catch pane.screen.grid;
                 }
                 const clock = @import("../clock.zig");
                 clock.renderClock(&pane.screen.grid, pane.screen.grid.width, pane.screen.grid.height);
@@ -2204,6 +2275,47 @@ test "command prompt keys validation" {
     try server.processInput("\r");
     try testing.expect(!server.command_mode);
     try testing.expectEqual(@as(usize, 0), server.command_buf.items.len);
+}
+
+test "command prompt tab completion" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    const s = try server.newSession("test-completion", 80, 24);
+    const win = s.active_window.?;
+    const pane = win.active_pane.?;
+    pane.pty = try @import("pty.zig").Pty.open();
+
+    // 1. Single match completion
+    server.command_mode = true;
+    try server.processInput("clock-mo");
+    try testing.expectEqualStrings("clock-mo", server.command_buf.items);
+
+    // Send Tab
+    try server.processInput("\x09");
+    try testing.expectEqualStrings("clock-mode ", server.command_buf.items);
+    try testing.expect(server.command_mode);
+
+    // 2. Multiple match completion
+    server.command_buf.clearRetainingCapacity();
+    try server.processInput("se");
+    try testing.expectEqualStrings("se", server.command_buf.items);
+
+    // Send Tab
+    try server.processInput("\x09");
+    // Should deactivate command mode temporarily and activate choose mode
+    try testing.expect(!server.command_mode);
+    try testing.expect(pane.choose_mode.active);
+    try testing.expectEqual(pane.choose_mode.target, .command);
+    try testing.expect(pane.choose_mode.items.items.len > 1);
+
+    // 3. Cancel completion selection
+    // Send 'q' to cancel choose mode
+    try server.processInput("q");
+    try testing.expect(!pane.choose_mode.active);
+    // Command mode should be active again
+    try testing.expect(server.command_mode);
+    try testing.expectEqualStrings("se", server.command_buf.items);
 }
 
 

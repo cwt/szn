@@ -6,6 +6,11 @@ const Grid = grid_mod.Grid;
 const key_mod = @import("key.zig");
 const Key = key_mod.Key;
 
+pub const ChooseTarget = enum {
+    buffer,
+    command,
+};
+
 pub const ChooseItem = struct {
     name: []const u8,
     data: []const u8,
@@ -16,6 +21,7 @@ pub const ChooseMode = struct {
     cursor: u32 = 0,
     scroll: u32 = 0,
     active: bool = false,
+    target: ChooseTarget = .buffer,
 
     pub fn deinit(self: *ChooseMode, allocator: std.mem.Allocator) void {
         for (self.items.items) |*item| {
@@ -34,6 +40,7 @@ pub const ChooseMode = struct {
         self.active = true;
         self.cursor = 0;
         self.scroll = 0;
+        self.target = .buffer;
         for (items) |item| {
             const n = try allocator.dupe(u8, item.name);
             errdefer allocator.free(n);
@@ -44,7 +51,7 @@ pub const ChooseMode = struct {
     }
 
     pub fn renderIntoGrid(self: *const ChooseMode, grid: *Grid) void {
-        const header = "-- buffers --";
+        const header = if (self.target == .command) "-- commands --" else "-- buffers --";
         const hdr_y = 0;
         const available = @min(grid.height -| 1, self.items.items.len);
         const start_y = hdr_y + 1;

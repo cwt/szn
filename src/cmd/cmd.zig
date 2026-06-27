@@ -515,9 +515,9 @@ fn cmdChooseBuffer(server: *Server, args: []const []const u8) CmdResult {
         g.deinit();
         pane.saved_grid = null;
     }
-    pane.saved_grid = pane.screen.grid.clone(server.allocator) catch return .err;
+    pane.saved_grid = pane.screen.grid.clone(pane.screen.grid.allocator) catch return .err;
 
-    pane.choose_mode.enter(server.allocator, items.items) catch return .err;
+    pane.choose_mode.enter(pane.screen.grid.allocator, items.items) catch return .err;
     pane.choose_mode.renderIntoGrid(&pane.screen.grid);
     pane.dirty = true;
     return .ok;
@@ -533,7 +533,7 @@ fn cmdClockMode(server: *Server, args: []const []const u8) CmdResult {
         g.deinit();
         pane.saved_grid = null;
     }
-    pane.saved_grid = pane.screen.grid.clone(server.allocator) catch return .err;
+    pane.saved_grid = pane.screen.grid.clone(pane.screen.grid.allocator) catch return .err;
 
     pane.screen.clock_mode = true;
     const clock = @import("../clock.zig");
@@ -1406,7 +1406,7 @@ pub const commands = struct {
     };
 };
 
-fn cmdTable() []const *const CmdEntry {
+pub fn cmdTable() []const *const CmdEntry {
     return comptime blk: {
         const entries = [_]*const CmdEntry{
             &commands.new_session,
