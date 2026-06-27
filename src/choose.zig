@@ -50,31 +50,40 @@ pub const ChooseMode = struct {
         }
     }
 
-    pub fn renderIntoGrid(self: *const ChooseMode, grid: *Grid) void {
+    pub fn renderIntoGrid(self: *ChooseMode, grid: *Grid) void {
         const header = if (self.target == .command) "-- commands --" else "-- buffers --";
         const hdr_y = 0;
-        const available = @min(grid.height -| 1, self.items.items.len);
         const start_y = hdr_y + 1;
+        const max_visible = grid.height -| 1;
+
+        if (max_visible > 0) {
+            if (self.cursor < self.scroll) {
+                self.scroll = self.cursor;
+            } else if (self.cursor >= self.scroll + max_visible) {
+                self.scroll = self.cursor - max_visible + 1;
+            }
+        }
 
         grid.clear();
         for (header, 0..) |ch, col| {
             grid.setCell(@intCast(col), hdr_y, .{ .char = ch, .attr = .{ .bold = true }, .fg = .default_(), .bg = .default_() });
         }
 
-        const visible_end = @min(start_y + available, self.items.items.len);
-        var row: u32 = 0;
-        while (row < visible_end) : (row += 1) {
-            const item = self.items.items[row];
-            const prefix = if (row == self.cursor) "> " else "  ";
+        const available = @min(max_visible, self.items.items.len -| self.scroll);
+        var i: u32 = 0;
+        while (i < available) : (i += 1) {
+            const item_idx = self.scroll + i;
+            const item = self.items.items[item_idx];
+            const prefix = if (item_idx == self.cursor) "> " else "  ";
             var col: u32 = 0;
             for (prefix, 0..) |ch, ci| {
-                const a: grid_mod.Attr = if (row == self.cursor) .{ .bold = true, .reverse = true } else .{};
-                grid.setCell(col + @as(u32, @intCast(ci)), start_y + row, .{ .char = ch, .attr = a, .fg = .default_(), .bg = .default_() });
+                const a: grid_mod.Attr = if (item_idx == self.cursor) .{ .bold = true, .reverse = true } else .{};
+                grid.setCell(col + @as(u32, @intCast(ci)), start_y + i, .{ .char = ch, .attr = a, .fg = .default_(), .bg = .default_() });
             }
             col += @intCast(prefix.len);
             for (item.name, 0..) |ch, ci| {
-                const a: grid_mod.Attr = if (row == self.cursor) .{ .reverse = true } else .{};
-                grid.setCell(col + @as(u32, @intCast(ci)), start_y + row, .{ .char = ch, .attr = a, .fg = .default_(), .bg = .default_() });
+                const a: grid_mod.Attr = if (item_idx == self.cursor) .{ .reverse = true } else .{};
+                grid.setCell(col + @as(u32, @intCast(ci)), start_y + i, .{ .char = ch, .attr = a, .fg = .default_(), .bg = .default_() });
             }
         }
     }
@@ -159,4 +168,50 @@ test "choose mode cancel" {
     const result = try cm.handleKey(Key{ .char = .{ .code = 'q', .mod = .{} } }, testing.allocator);
     try testing.expectEqual(@as(@TypeOf(result), .cancelled), result);
     try testing.expect(!cm.active);
+}
+
+test "choose mode scrolling" {
+    var cm = ChooseMode{};
+    defer cm.deinit(testing.allocator);
+
+    const items = [_]ChooseItem{
+        .{ .name = "a", .data = "1" },
+        .{ .name = "b", .data = "2" },
+        .{ .name = "c", .data = "3" },
+        .{ .name = "d", .data = "4" },
+        .{ .name = "e", .data = "5" },
+    };
+    try cm.enter(testing.allocator, &items);
+
+    var grid = try Grid.init(testing.allocator, 80, 3); // 3 rows -> 1 header + 2 visible items
+    defer grid.deinit();
+
+    // Render 1: cursor is at 0, scroll should be 0
+    cm.renderIntoGrid(&grid);
+    try testing.expectEqual(@as(u32, 0), cm.scroll);
+
+    // Go down to index 1 (visible)
+    _ = try cm.handleKey(Key{ .arrow = .{ .key = .down } }, testing.allocator);
+    cm.renderIntoGrid(&grid);
+    try testing.expectEqual(@as(u32, 0), cm.scroll);
+
+    // Go down to index 2 (scrolls viewport)
+    _ = try cm.handleKey(Key{ .arrow = .{ .key = .down } }, testing.allocator);
+    cm.renderIntoGrid(&grid);
+    try testing.expectEqual(@as(u32, 1), cm.scroll);
+
+    // Go down to index 3 (scrolls viewport)
+    _ = try cm.handleKey(Key{ .arrow = .{ .key = .down } }, testing.allocator);
+    cm.renderIntoGrid(&grid);
+    try testing.expectEqual(@as(u32, 2), cm.scroll);
+
+    // Go up to index 2 (within viewport, scroll remains same)
+    _ = try cm.handleKey(Key{ .arrow = .{ .key = .up } }, testing.allocator);
+    cm.renderIntoGrid(&grid);
+    try testing.expectEqual(@as(u32, 2), cm.scroll);
+
+    // Go up to index 1 (scrolls viewport up)
+    _ = try cm.handleKey(Key{ .arrow = .{ .key = .up } }, testing.allocator);
+    cm.renderIntoGrid(&grid);
+    try testing.expectEqual(@as(u32, 1), cm.scroll);
 }
