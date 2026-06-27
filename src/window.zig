@@ -28,6 +28,8 @@ pub const Pane = struct {
     cwd: ?[]const u8 = null,
     deinited: bool = false,
     choose_mode: choose_mod.ChooseMode = .{},
+    saved_grid: ?@import("grid.zig").Grid = null,
+    clock_time: u64 = 0,
 
     pub fn init(allocator: std.mem.Allocator, id: u32, width: u32, height: u32) Error!Pane {
         return Pane{
@@ -43,6 +45,7 @@ pub const Pane = struct {
         if (self.deinited) return;
         self.deinited = true;
         self.choose_mode.deinit(self.screen.grid.allocator);
+        if (self.saved_grid) |*g| g.deinit();
         self.screen.deinit();
         if (self.pty) |*p| {
             p.deinit();

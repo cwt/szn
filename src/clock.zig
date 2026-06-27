@@ -6,46 +6,35 @@ const Cell = grid_mod.Cell;
 
 extern "c" fn time(t: ?*i64) i64;
 
-const D0 = [_:0]u8{ ' ', ' ', ' ', ' ' };
-const D1 = [_:0]u8{ ' ', 0xe2, 0x96, 0x88, ' ' };
-const D2 = [_:0]u8{ ' ', 0xe2, 0x96, 0x88, ' ' };
-
-const digit_rows = blk: {
-    @setEvalBranchQuota(5000);
-    const raw = [_][5][]const u8{
-        .{ " ██ ", "█  █", "█  █", "█  █", " ██ " },
-        .{ "  █ ", " ██ ", "  █ ", "  █ ", " ███" },
-        .{ " ██ ", "█  █", "   █", "  █ ", "████" },
-        .{ " ██ ", "█  █", "  █ ", "█  █", " ██ " },
-        .{ "█  █", "█  █", "████", "   █", "   █" },
-        .{ "████", "█   ", "███ ", "   █", "███ " },
-        .{ " ██ ", "█   ", "████", "█  █", " ██ " },
-        .{ "████", "   █", "  █ ", " █  ", " █  " },
-        .{ " ██ ", "█  █", " ██ ", "█  █", " ██ " },
-        .{ " ██ ", "█  █", " ███", "   █", " ██ " },
-    };
-    var result: [10][5][4]u8 = undefined;
-    for (&result, 0..) |*d, di| {
-        for (d, 0..) |*row, ri| {
-            const s = raw[di][ri];
-            for (row, 0..) |*c, ci| {
-                c.* = if (ci < s.len) s[ci] else ' ';
-            }
-        }
-    }
-    break :blk result;
+const digit_rows = [10][5]u6{
+    // 0: "█████"
+    .{ 0b111110, 0b100010, 0b100010, 0b100010, 0b111110 },
+    // 1: "  █  "
+    .{ 0b001000, 0b001000, 0b001000, 0b001000, 0b001000 },
+    // 2: "█████"
+    .{ 0b111110, 0b000010, 0b111110, 0b100000, 0b111110 },
+    // 3: "█████"
+    .{ 0b111110, 0b000010, 0b111110, 0b000010, 0b111110 },
+    // 4: "█   █"
+    .{ 0b100010, 0b100010, 0b111110, 0b000010, 0b000010 },
+    // 5: "█████"
+    .{ 0b111110, 0b100000, 0b111110, 0b000010, 0b111110 },
+    // 6: "█████"
+    .{ 0b111110, 0b100000, 0b111110, 0b100010, 0b111110 },
+    // 7: "█████"
+    .{ 0b111110, 0b000010, 0b000010, 0b000010, 0b000010 },
+    // 8: "█████"
+    .{ 0b111110, 0b100010, 0b111110, 0b100010, 0b111110 },
+    // 9: "█████"
+    .{ 0b111110, 0b100010, 0b111110, 0b000010, 0b111110 },
 };
 
-const colon_rows = blk: {
-    const raw = [_][]const u8{ "   ", " █ ", "   ", " █ ", "   " };
-    var result: [5][4]u8 = undefined;
-    for (&result, 0..) |*row, ri| {
-        const s = raw[ri];
-        for (row, 0..) |*c, ci| {
-            c.* = if (ci < s.len) s[ci] else ' ';
-        }
-    }
-    break :blk result;
+const colon_rows = [5]u6{
+    0b000000,
+    0b001000,
+    0b000000,
+    0b001000,
+    0b000000,
 };
 
 pub fn renderClock(grid: *Grid, sx: u32, sy: u32) void {
@@ -63,7 +52,7 @@ pub fn renderClock(grid: *Grid, sx: u32, sy: u32) void {
     const d4 = @divFloor(sec, 10);
     const d5 = @mod(sec, 10);
 
-    const clock_w: u32 = 4 * 6 + 2 * 4; // 6 digits of 4 width + 2 colons of 4 width = 32
+    const clock_w: u32 = 6 * 8; // 8 components of 6 width = 48
     const clock_h: u32 = 5;
     const offset_x = (grid.width -| clock_w) / 2;
     const offset_y = (grid.height -| clock_h) / 2;
@@ -76,13 +65,18 @@ pub fn renderClock(grid: *Grid, sx: u32, sy: u32) void {
     while (row < clock_h) : (row += 1) {
         var col: u32 = 0;
         for (digit_indices) |idx| {
-            const chars = if (idx == 10) colon_rows[row] else digit_rows[idx][row];
-            for (chars) |ch| {
+            const bits = if (idx == 10) colon_rows[row] else digit_rows[idx][row];
+            var bit_idx: u8 = 0;
+            while (bit_idx < 6) : (bit_idx += 1) {
+                const shift = 5 - bit_idx;
+                const is_set = (bits & (@as(u6, 1) << @intCast(shift))) != 0;
+                const ch: u21 = if (is_set) 0x2588 else ' ';
+
                 if (col >= clock_w) break;
                 const gx = offset_x + col;
                 const gy = offset_y + row;
                 if (gx < grid.width and gy < grid.height) {
-                    grid.setCell(gx, gy, Cell.withChar(@as(u21, @intCast(ch))));
+                    grid.setCell(gx, gy, Cell.withChar(ch));
                 }
                 col += 1;
             }
@@ -91,10 +85,10 @@ pub fn renderClock(grid: *Grid, sx: u32, sy: u32) void {
 }
 
 test "renderClock fills grid cells" {
-    var grid = try Grid.init(testing.allocator, 40, 10);
+    var grid = try Grid.init(testing.allocator, 60, 10);
     defer grid.deinit();
 
-    renderClock(&grid, 40, 10);
+    renderClock(&grid, 60, 10);
 
     var found_non_empty = false;
     for (grid.lines.items) |line| {

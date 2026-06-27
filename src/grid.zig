@@ -113,6 +113,37 @@ pub const Grid = struct {
         self.history.deinit(self.allocator);
     }
 
+    pub fn clone(self: *const Grid, allocator: std.mem.Allocator) Error!Grid {
+        var copy = Grid{
+            .allocator = allocator,
+            .width = self.width,
+            .height = self.height,
+            .history_limit = self.history_limit,
+            .start_index = self.start_index,
+        };
+        try copy.lines.ensureTotalCapacity(allocator, self.lines.items.len);
+        errdefer {
+            for (copy.lines.items) |*l| l.deinit(allocator);
+            copy.lines.deinit(allocator);
+        }
+        for (self.lines.items) |line| {
+            var new_line = GridLine{ .dirty = line.dirty };
+            try new_line.cells.appendSlice(allocator, line.cells.items);
+            try copy.lines.append(allocator, new_line);
+        }
+        try copy.history.ensureTotalCapacity(allocator, self.history.items.len);
+        errdefer {
+            for (copy.history.items) |*l| l.deinit(allocator);
+            copy.history.deinit(allocator);
+        }
+        for (self.history.items) |line| {
+            var new_line = GridLine{ .dirty = line.dirty };
+            try new_line.cells.appendSlice(allocator, line.cells.items);
+            try copy.history.append(allocator, new_line);
+        }
+        return copy;
+    }
+
     pub fn resize(self: *Grid, new_height: u32) Error!void {
         if (new_height == 0) return;
         try self.normalize();
@@ -570,4 +601,32 @@ test "setSize resizes history lines — bug #92" {
     try grid.setSize(40, 5);
     try testing.expectEqual(@as(u32, 40), grid.width);
     try testing.expectEqual(@as(usize, 40), grid.history.items[0].cells.items.len);
+}
+
+test "Grid clone" {
+    var grid = try Grid.init(testing.allocator, 80, 5);
+    defer grid.deinit();
+
+    // Fill grid and scroll some lines into history
+    grid.writeChar(0, 0, 'A');
+    try grid.scrollUp();
+    grid.writeChar(0, 0, 'B');
+
+    try testing.expectEqual(@as(usize, 1), grid.history.items.len);
+    try testing.expectEqual(@as(u21, 'A'), grid.history.items[0].cells.items[0].char);
+    try testing.expectEqual(@as(u21, 'B'), grid.getCell(0, 0).char);
+
+    var copy = try grid.clone(testing.allocator);
+    defer copy.deinit();
+
+    try testing.expectEqual(@as(u32, 80), copy.width);
+    try testing.expectEqual(@as(u32, 5), copy.height);
+    try testing.expectEqual(@as(usize, 1), copy.history.items.len);
+    try testing.expectEqual(@as(u21, 'A'), copy.history.items[0].cells.items[0].char);
+    try testing.expectEqual(@as(u21, 'B'), copy.getCell(0, 0).char);
+
+    // Modify clone, verify original is untouched
+    copy.writeChar(0, 0, 'C');
+    try testing.expectEqual(@as(u21, 'C'), copy.getCell(0, 0).char);
+    try testing.expectEqual(@as(u21, 'B'), grid.getCell(0, 0).char);
 }

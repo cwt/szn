@@ -35,6 +35,7 @@ extern "c" fn ftell(stream: ?*anyopaque) c_long;
 extern "c" fn fread(ptr: ?*anyopaque, size: usize, n: usize, stream: ?*anyopaque) usize;
 extern "c" fn access(pathname: [*c]const u8, mode: c_int) c_int;
 extern "c" fn gettimeofday(tv: *std.c.timeval, tz: ?*anyopaque) c_int;
+extern "c" fn time(t: ?*i64) i64;
 
 const passwd = if (@import("builtin").os.tag.isDarwin())
     extern struct {
@@ -794,30 +795,53 @@ pub const Server = struct {
                 if (self.input_reader.feed(byte)) |event| {
                     switch (event) {
                         .key => |k| {
-                            if (k == .char) {
+                            var is_enter = false;
+                            if (k == .special and k.special.key == .enter) {
+                                is_enter = true;
+                            } else if (k == .char and (k.char.code == '\r' or k.char.code == '\n')) {
+                                is_enter = true;
+                            }
+
+                            var is_cancel = false;
+                            if (k == .special and k.special.key == .escape) {
+                                is_cancel = true;
+                            } else if (k == .char and k.char.code == 0x1b) {
+                                is_cancel = true;
+                            } else if (k == .char and k.char.code == 'C' and k.char.mod.ctrl) {
+                                is_cancel = true;
+                            }
+
+                            var is_backspace = false;
+                            if (k == .special and k.special.key == .backspace) {
+                                is_backspace = true;
+                            } else if (k == .char and k.char.code == 'H' and k.char.mod.ctrl) {
+                                is_backspace = true;
+                            }
+
+                            if (is_enter) {
+                                const cmd = self.command_buf.items;
+                                if (cmd.len > 0) {
+                                    const dispatch = @import("dispatch.zig");
+                                    const result = dispatch.dispatchCommand(self.allocator, self, cmd);
+                                    if (result.response_type == .ready or result.response_type == .err) {
+                                        if (result.data.len > 0) self.setMessage(result.data) catch {};
+                                    }
+                                }
+                                self.command_mode = false;
+                                self.command_buf.clearRetainingCapacity();
+                                self.dirty = true;
+                            } else if (is_cancel) {
+                                self.command_mode = false;
+                                self.command_buf.clearRetainingCapacity();
+                                self.dirty = true;
+                            } else if (is_backspace) {
+                                if (self.command_buf.items.len > 0) {
+                                    self.command_buf.items.len -= 1;
+                                }
+                                self.dirty = true;
+                            } else if (k == .char) {
                                 const code = k.char.code;
-                                if (code == '\r' or code == '\n') {
-                                    const cmd = self.command_buf.items;
-                                    if (cmd.len > 0) {
-                                        const dispatch = @import("dispatch.zig");
-                                        const result = dispatch.dispatchCommand(self.allocator, self, cmd);
-                                        if (result.response_type == .ready or result.response_type == .err) {
-                                            if (result.data.len > 0) self.setMessage(result.data) catch {};
-                                        }
-                                    }
-                                    self.command_mode = false;
-                                    self.command_buf.clearRetainingCapacity();
-                                    self.dirty = true;
-                                } else if (code == 0x1b) {
-                                    self.command_mode = false;
-                                    self.command_buf.clearRetainingCapacity();
-                                    self.dirty = true;
-                                } else if (code == 0x7f or code == 0x08) {
-                                    if (self.command_buf.items.len > 0) {
-                                        self.command_buf.items.len -= 1;
-                                    }
-                                    self.dirty = true;
-                                } else if (code >= 0x20 and code <= 0x7e) {
+                                if (code >= 0x20 and code <= 0x7e and !k.char.mod.ctrl and !k.char.mod.alt) {
                                     try self.command_buf.append(self.allocator, @intCast(code));
                                     self.dirty = true;
                                 }
@@ -842,7 +866,15 @@ pub const Server = struct {
                                 .selected => {
                                     const selected = pane.choose_mode.selectedItem();
                                     pane.choose_mode.active = false;
-                                    pane.screen.grid = try @import("../grid.zig").Grid.init(self.allocator, pane.screen.grid.width, pane.screen.grid.height);
+
+                                    pane.screen.grid.deinit();
+                                    if (pane.saved_grid) |sg| {
+                                        pane.screen.grid = sg;
+                                        pane.saved_grid = null;
+                                    } else {
+                                        pane.screen.grid = try @import("../grid.zig").Grid.init(self.allocator, pane.screen.grid.width, pane.screen.grid.height);
+                                    }
+
                                     pane.dirty = true;
                                     if (selected) |item| {
                                         const buf_data = self.buffers.get(item.name);
@@ -855,7 +887,15 @@ pub const Server = struct {
                                 },
                                 .cancelled => {
                                     pane.choose_mode.active = false;
-                                    pane.screen.grid = try @import("../grid.zig").Grid.init(self.allocator, pane.screen.grid.width, pane.screen.grid.height);
+
+                                    pane.screen.grid.deinit();
+                                    if (pane.saved_grid) |sg| {
+                                        pane.screen.grid = sg;
+                                        pane.saved_grid = null;
+                                    } else {
+                                        pane.screen.grid = try @import("../grid.zig").Grid.init(self.allocator, pane.screen.grid.width, pane.screen.grid.height);
+                                    }
+
                                     pane.dirty = true;
                                 },
                             }
@@ -868,6 +908,15 @@ pub const Server = struct {
 
             if (pane.screen.clock_mode) {
                 pane.screen.clock_mode = false;
+
+                pane.screen.grid.deinit();
+                if (pane.saved_grid) |sg| {
+                    pane.screen.grid = sg;
+                    pane.saved_grid = null;
+                } else {
+                    pane.screen.grid = try @import("../grid.zig").Grid.init(self.allocator, pane.screen.grid.width, pane.screen.grid.height);
+                }
+
                 pane.dirty = true;
                 continue;
             }
@@ -1401,6 +1450,20 @@ pub const Server = struct {
         const window = session.active_window orelse return;
         const pane = window.active_pane orelse return;
 
+        if (pane.screen.clock_mode) {
+            const now = @as(u64, @intCast(@max(time(null), 0)));
+            if (now != pane.clock_time) {
+                pane.clock_time = now;
+                pane.screen.grid.deinit();
+                if (pane.saved_grid) |*sg| {
+                    pane.screen.grid = sg.clone(self.allocator) catch pane.screen.grid;
+                }
+                const clock = @import("../clock.zig");
+                clock.renderClock(&pane.screen.grid, pane.screen.grid.width, pane.screen.grid.height);
+                pane.dirty = true;
+            }
+        }
+
         // Perform automatic window renaming
         for (session.windows.items) |win| {
             if (win.automatic_rename) {
@@ -1426,7 +1489,10 @@ pub const Server = struct {
             break :blk if (dt == .number) @as(u32, @intCast(@max(dt.number, 0))) else 1000;
         } else 1000;
         if (self.messageExpired(display_time)) {
-            self.clearMessage();
+            if (self.message != null) {
+                self.clearMessage();
+                self.dirty = true;
+            }
         }
 
         var any_dirty = self.dirty;
@@ -2090,4 +2156,54 @@ test "killSession preserves active session — bug #133" {
     try testing.expect(server.sessions.items.len == 1);
     try testing.expectEqualStrings("second", server.activeSession().?.name);
 }
+
+test "command prompt keys validation" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    _ = try server.newSession("test", 80, 24);
+
+    // Put server in command mode
+    server.command_mode = true;
+    server.command_buf.clearRetainingCapacity();
+
+    // Simulate typing "abc"
+    try server.processInput("a");
+    try server.processInput("b");
+    try server.processInput("c");
+    try testing.expectEqualStrings("abc", server.command_buf.items);
+
+    // Feed backspace (0x7f)
+    try server.processInput("\x7f");
+    try testing.expectEqualStrings("ab", server.command_buf.items);
+
+    // Feed Control-H (0x08)
+    try server.processInput("\x08");
+    try testing.expectEqualStrings("a", server.command_buf.items);
+
+    // Feed 'x' -> command becomes "ax"
+    try server.processInput("x");
+    try testing.expectEqualStrings("ax", server.command_buf.items);
+
+    // Feed Escape (0x1b) twice to cancel command mode
+    try server.processInput("\x1b");
+    try server.processInput("\x1b");
+    try testing.expect(!server.command_mode);
+    try testing.expectEqual(@as(usize, 0), server.command_buf.items.len);
+
+    // Try again and cancel with Ctrl-C (0x03)
+    server.command_mode = true;
+    try server.processInput("abc");
+    try server.processInput("\x03");
+    try testing.expect(!server.command_mode);
+    try testing.expectEqual(@as(usize, 0), server.command_buf.items.len);
+
+    // Try again and submit with Enter (\r)
+    server.command_mode = true;
+    try server.processInput("nonexistentcommand");
+    try server.processInput("\r");
+    try testing.expect(!server.command_mode);
+    try testing.expectEqual(@as(usize, 0), server.command_buf.items.len);
+}
+
 
