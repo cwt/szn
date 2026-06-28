@@ -229,14 +229,21 @@ pub const Layout = struct {
     }
 
     pub fn countLeaves(self: *const Layout) usize {
-        return self.countLeavesNode(self.root);
-    }
+        var stack: std.ArrayListUnmanaged(*const Node) = .empty;
+        defer stack.deinit(self.allocator);
+        stack.append(self.allocator, self.root) catch return 0;
 
-    fn countLeavesNode(self: *const Layout, node: *const Node) usize {
-        switch (node.*) {
-            .leaf => return 1,
-            .split => |s| return self.countLeavesNode(s.a) + self.countLeavesNode(s.b),
+        var count: usize = 0;
+        while (stack.pop()) |n| {
+            switch (n.*) {
+                .leaf => count += 1,
+                .split => |s| {
+                    stack.append(self.allocator, s.a) catch return 0;
+                    stack.append(self.allocator, s.b) catch return 0;
+                },
+            }
         }
+        return count;
     }
 };
 
@@ -398,4 +405,20 @@ test "splitPane handles Pane.init OOM without leaking new_pane — bug #91" {
 
     try testing.expectEqual(@as(usize, 2), layout.countLeaves());
     _ = pane2;
+}
+
+test "countLeaves handles deeply nested layout without stack overflow — bug #179" {
+    const pane1 = try createTestPane(testing.allocator, 0);
+    var layout = try Layout.init(testing.allocator, pane1, 80, 24);
+    defer layout.deinit();
+
+    const depth = 500;
+    var current = pane1;
+    var i: usize = 0;
+    while (i < depth) : (i += 1) {
+        current = try layout.splitPane(testing.allocator, current, .horizontal, 0.5);
+    }
+
+    // Should have depth + 1 leaves (the chain creates a comb layout)
+    try testing.expectEqual(@as(usize, depth + 1), layout.countLeaves());
 }

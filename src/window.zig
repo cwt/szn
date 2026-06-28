@@ -223,22 +223,34 @@ pub const Window = struct {
         try self.resizeNode(self.layout.root, new_width, new_height);
     }
 
-    fn resizeNode(self: *Window, node: *const @import("layout.zig").Node, lw: u32, lh: u32) Error!void {
-        switch (node.*) {
-            .leaf => |pane| {
-                try pane.resizeTerminal(lw, lh);
-            },
-            .split => |s| {
-                if (s.direction == .horizontal) {
-                    const split_w = @max(1, @as(u32, @intFromFloat(@as(f64, @floatFromInt(lw)) * s.proportion)));
-                    try self.resizeNode(s.a, split_w -| 1, lh);
-                    try self.resizeNode(s.b, lw -| split_w, lh);
-                } else {
-                    const split_h = @max(1, @as(u32, @intFromFloat(@as(f64, @floatFromInt(lh)) * s.proportion)));
-                    try self.resizeNode(s.a, lw, split_h -| 1);
-                    try self.resizeNode(s.b, lw, lh -| split_h);
-                }
-            },
+    fn resizeNode(self: *Window, root: *const @import("layout.zig").Node, root_lw: u32, root_lh: u32) Error!void {
+        const Frame = struct {
+            node: *const @import("layout.zig").Node,
+            lw: u32,
+            lh: u32,
+        };
+
+        var stack: std.ArrayListUnmanaged(Frame) = .empty;
+        defer stack.deinit(self.allocator);
+        try stack.append(self.allocator, Frame{ .node = root, .lw = root_lw, .lh = root_lh });
+
+        while (stack.pop()) |frame| {
+            switch (frame.node.*) {
+                .leaf => |pane| {
+                    try pane.resizeTerminal(frame.lw, frame.lh);
+                },
+                .split => |s| {
+                    if (s.direction == .horizontal) {
+                        const split_w = @max(1, @as(u32, @intFromFloat(@as(f64, @floatFromInt(frame.lw)) * s.proportion)));
+                        try stack.append(self.allocator, Frame{ .node = s.b, .lw = frame.lw -| split_w, .lh = frame.lh });
+                        try stack.append(self.allocator, Frame{ .node = s.a, .lw = split_w -| 1, .lh = frame.lh });
+                    } else {
+                        const split_h = @max(1, @as(u32, @intFromFloat(@as(f64, @floatFromInt(frame.lh)) * s.proportion)));
+                        try stack.append(self.allocator, Frame{ .node = s.b, .lw = frame.lw, .lh = frame.lh -| split_h });
+                        try stack.append(self.allocator, Frame{ .node = s.a, .lw = frame.lw, .lh = split_h -| 1 });
+                    }
+                },
+            }
         }
     }
 

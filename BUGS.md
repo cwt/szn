@@ -2232,7 +2232,7 @@ After `killSession` → `session.deinit()` → `arena.deinit()`, the pane's memo
 ### 179. Recursive `resizeNode` / `countLeavesNode` may overflow stack on deeply nested layouts
 **File:** `src/window.zig:226–243`, `src/layout.zig:235–240`
 **Severity:** MEDIUM
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — both functions converted from recursive to iterative using explicit heap-allocated stacks via `std.ArrayListUnmanaged`. Unit test verifies countLeaves handles 500-deep nested splits without overflowing.
 
 ```zig
 // window.zig:226
