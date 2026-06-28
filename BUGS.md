@@ -2265,7 +2265,7 @@ Both `resizeNode` and `countLeavesNode` recurse through the layout tree. With ~1
 ### 180. `handleMouseFocus` `@intCast` from `usize` to `u32` can panic with oversized session name
 **File:** `src/server/server.zig:1231`
 **Severity:** LOW
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — added `@min(len, maxInt(u32))` guard before `@intCast` and changed `+` to `+|` (saturating add) for both `session.name.len` and `win.name.len` casts. Unit test added with 300-char session name.
 
 ```zig
 const prefix_len = 3 + @as(u32, @intCast(session.name.len));

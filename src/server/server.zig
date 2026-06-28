@@ -1233,7 +1233,7 @@ pub const Server = struct {
 
         if (y == session.height) {
             var col: u32 = 0;
-            const prefix_len = 3 + @as(u32, @intCast(session.name.len));
+            const prefix_len = 3 +| @as(u32, @intCast(@min(session.name.len, std.math.maxInt(u32))));
             col += prefix_len;
 
             for (session.windows.items, 0..) |win, idx| {
@@ -1245,7 +1245,7 @@ pub const Server = struct {
                     std.log.warn("window index overflow: idx={d}", .{idx});
                     return error.OutOfMemory;
                 }).len;
-                const entry_len = 1 + @as(u32, @intCast(idx_len)) + 1 + @as(u32, @intCast(win.name.len)) + suffix_len;
+                const entry_len = 1 +| @as(u32, @intCast(@min(idx_len, std.math.maxInt(u32)))) +| 1 +| @as(u32, @intCast(@min(win.name.len, std.math.maxInt(u32)))) +| suffix_len;
 
                 const start_x = col;
                 const end_x = col + entry_len;
@@ -2220,6 +2220,19 @@ test "handlePtyEvent ignores event with stale pane pointer" {
 
     const result = server.handlePtyEvent(ev);
     try testing.expect(result == .handled);
+}
+
+test "handleMouseFocus handles long session name without panic — bug #180" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    var long_name: [300]u8 = undefined;
+    @memset(&long_name, 'a');
+    const s = try server.newSession(&long_name, 80, 24);
+
+    // Call handleMouseFocus at the status bar row. This exercises the
+    // @intCast(session.name.len) path. Should not panic regardless of name length.
+    try server.handleMouseFocus(0, s.height);
 }
 
 test "processInput esc_buf capacity limit" {
