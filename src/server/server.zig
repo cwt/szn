@@ -661,9 +661,18 @@ pub const Server = struct {
                 writeKeyToPty(pty, prefix_key);
             },
             .clock_mode => {
+                if (pane.saved_grid) |*g| {
+                    g.deinit();
+                    pane.saved_grid = null;
+                }
+                pane.saved_grid = pane.screen.grid.clone(pane.screen.grid.allocator) catch {
+                    pane.screen.clock_mode = false;
+                    return;
+                };
                 pane.screen.clock_mode = true;
+                pane.screen.clock_utc = false;
                 const clock = @import("../clock.zig");
-                clock.renderClock(&pane.screen.grid, pane.screen.grid.width, pane.screen.grid.height);
+                clock.renderClock(&pane.screen.grid, pane.screen.grid.width, pane.screen.grid.height, false);
                 pane.dirty = true;
             },
             .command_prompt => {
@@ -1544,7 +1553,7 @@ pub const Server = struct {
                         pane.screen.grid = cloned;
                         pane.clock_time = now;
                         const clock = @import("../clock.zig");
-                        clock.renderClock(&pane.screen.grid, pane.screen.grid.width, pane.screen.grid.height);
+                        clock.renderClock(&pane.screen.grid, pane.screen.grid.width, pane.screen.grid.height, pane.screen.clock_utc);
                         pane.dirty = true;
                     } else |_| {}
                 }

@@ -5,6 +5,20 @@ const Grid = grid_mod.Grid;
 const Cell = grid_mod.Cell;
 
 extern "c" fn time(t: ?*i64) i64;
+extern "c" fn localtime_r(timep: ?*const i64, result: *Tm) ?*Tm;
+
+const Tm = extern struct {
+    tm_sec: c_int,
+    tm_min: c_int,
+    tm_hour: c_int,
+    tm_mday: c_int,
+    tm_mon: c_int,
+    tm_year: c_int,
+    tm_wday: c_int,
+    tm_yday: c_int,
+    tm_isdst: c_int,
+    // OS-dependent extras follow, but we don't need them
+};
 
 const digit_rows = [10][5]u6{
     // 0: "█████"
@@ -37,13 +51,31 @@ const colon_rows = [5]u6{
     0b000000,
 };
 
-pub fn renderClock(grid: *Grid, sx: u32, sy: u32) void {
+pub fn renderClock(grid: *Grid, sx: u32, sy: u32, utc: bool) void {
     _ = sx;
 
-    const now_secs = @as(u64, @intCast(time(null)));
-    const hour = @mod(@divFloor(now_secs, 3600), 24);
-    const min = @mod(@divFloor(now_secs, 60), 60);
-    const sec = @mod(now_secs, 60);
+    const now_secs = time(null);
+    var hour: u32 = undefined;
+    var min: u32 = undefined;
+    var sec: u32 = undefined;
+
+    if (utc) {
+        const u = @as(u64, @intCast(now_secs));
+        hour = @as(u32, @intCast(@mod(@divFloor(u, 3600), 24)));
+        min = @as(u32, @intCast(@mod(@divFloor(u, 60), 60)));
+        sec = @as(u32, @intCast(@mod(u, 60)));
+    } else {
+        var tm: Tm = undefined;
+        if (localtime_r(&now_secs, &tm)) |ltm| {
+            hour = @intCast(ltm.tm_hour);
+            min = @intCast(ltm.tm_min);
+            sec = @intCast(ltm.tm_sec);
+        } else {
+            hour = 0;
+            min = 0;
+            sec = 0;
+        }
+    }
 
     const d0 = @divFloor(hour, 10);
     const d1 = @mod(hour, 10);
@@ -84,11 +116,29 @@ pub fn renderClock(grid: *Grid, sx: u32, sy: u32) void {
     }
 }
 
-test "renderClock fills grid cells" {
+test "renderClock fills grid cells (UTC)" {
     var grid = try Grid.init(testing.allocator, 60, 10);
     defer grid.deinit();
 
-    renderClock(&grid, 60, 10);
+    renderClock(&grid, 60, 10, true);
+
+    var found_non_empty = false;
+    for (grid.lines.items) |line| {
+        for (line.cells.items) |cell| {
+            if (cell.char != ' ' and cell.char != 0) {
+                found_non_empty = true;
+                break;
+            }
+        }
+    }
+    try testing.expect(found_non_empty);
+}
+
+test "renderClock fills grid cells (local time)" {
+    var grid = try Grid.init(testing.allocator, 60, 10);
+    defer grid.deinit();
+
+    renderClock(&grid, 60, 10, false);
 
     var found_non_empty = false;
     for (grid.lines.items) |line| {

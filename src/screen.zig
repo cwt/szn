@@ -78,6 +78,7 @@ pub const Screen = struct {
     dirty: bool = true,
     copy_mode: ?@import("mode_copy.zig").CopyMode = null,
     clock_mode: bool = false,
+    clock_utc: bool = false,
     tab_stop: u32 = 8,
     /// Sixel images received from child processes, kept for re-emission.
     sixel_images: std.ArrayListUnmanaged(SixelImage) = .empty,

@@ -524,7 +524,6 @@ fn cmdChooseBuffer(server: *Server, args: []const []const u8) CmdResult {
 }
 
 fn cmdClockMode(server: *Server, args: []const []const u8) CmdResult {
-    _ = args;
     const session = server.activeSession() orelse return .err;
     const window = session.active_window orelse return .err;
     const pane = window.active_pane orelse return .err;
@@ -535,9 +534,14 @@ fn cmdClockMode(server: *Server, args: []const []const u8) CmdResult {
     }
     pane.saved_grid = pane.screen.grid.clone(pane.screen.grid.allocator) catch return .err;
 
+    var utc = false;
+    if (args.len > 1 and std.mem.eql(u8, args[1], "-u")) {
+        utc = true;
+    }
     pane.screen.clock_mode = true;
+    pane.screen.clock_utc = utc;
     const clock = @import("../clock.zig");
-    clock.renderClock(&pane.screen.grid, pane.screen.grid.width, pane.screen.grid.height);
+    clock.renderClock(&pane.screen.grid, pane.screen.grid.width, pane.screen.grid.height, utc);
     pane.dirty = true;
     return .ok;
 }
@@ -1318,9 +1322,9 @@ pub const commands = struct {
         .name = "clock-mode",
         .alias = null,
         .min_args = 0,
-        .max_args = 0,
-        .args_usage = "",
-        .description = "Display a clock in the active pane",
+        .max_args = 1,
+        .args_usage = "[-u]",
+        .description = "Display a clock in the active pane (-u for UTC)",
         .exec = cmdClockMode,
     };
     pub const choose_buffer = CmdEntry{
