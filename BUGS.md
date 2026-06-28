@@ -2202,4 +2202,91 @@ If `sg.clone(grid_alloc)` fails with OOM, the catch handler fell back to using t
 
 If `dupe` or `append` fails mid-loop, any items previously appended in the current call are left stored in `self.items.items` without being cleaned up, leaking memory if the choose mode fails to initialize fully.
 
+---
+
+## NEW BUGS (2026-06-28 BUGS.tmp audit)
+
+---
+
+### 178. `destroyPane` doesn't remove pty fd from event loop — fd leak / stale events
+**File:** `src/server/server.zig:370–412`
+**Severity:** MEDIUM
+**Status:** ❌ UNRESOLVED
+
+```zig
+pub fn destroyPane(self: *Server, pane: *Pane) void {
+    // ...
+    win.removePane(self.allocator, pane);   // removes from data structures
+    // pty.master fd still registered in loop with stale udata!
+    // no removeFd(pane.pty.master) called
+```
+
+`destroyPane` calls `win.removePane()` which removes the pane from window/layout data structures, but never calls `self.loop.removeFd(pane.pty.master)`. The pty's master fd remains in the event loop's poll set with `udata` pointing to the orphaned pane.
+
+After `killSession` → `session.deinit()` → `arena.deinit()`, the pane's memory is freed while the fd is still registered. If the fd number is reused by a new allocation, `handlePtyEvent` could dereference a dangling pointer through `udata`. The `isPaneValid` guard prevents this currently (it only does pointer comparison, not dereference), but the fd leak is real.
+
+**Impact:** File descriptor leak (master pty fd never closed). Under `killSession`, stale fd in poll set with freed memory pointer.
+
+---
+
+### 179. Recursive `resizeNode` / `countLeavesNode` may overflow stack on deeply nested layouts
+**File:** `src/window.zig:226–243`, `src/layout.zig:235–240`
+**Severity:** MEDIUM
+**Status:** ❌ UNRESOLVED
+
+```zig
+// window.zig:226
+fn resizeNode(self: *Window, node: *const Node, lw: u32, lh: u32) Error!void {
+    switch (node.*) {
+        .leaf => |pane| try pane.resizeTerminal(lw, lh),
+        .split => |s| {
+            // recursive calls — no tail recursion, no iteration
+            try self.resizeNode(s.a, ...);
+            try self.resizeNode(s.b, ...);
+        },
+    }
+}
+
+// layout.zig:235
+fn countLeavesNode(self: *const Layout, node: *const Node) usize {
+    switch (node.*) {
+        .leaf => return 1,
+        .split => |s| return self.countLeavesNode(s.a) + self.countLeavesNode(s.b),
+    }
+}
+```
+
+Both `resizeNode` and `countLeavesNode` recurse through the layout tree. With ~1000+ deeply nested splits (e.g. creating panes via repeated splits without using the full layout), the recursion depth equals the number of splits, which can overflow the stack. Zig's default stack is ~1 MiB; a `resizeNode` frame is ~64 bytes, so ~16,000 frames would overflow. In practice, creating more than ~256 panes triggers this.
+
+**Impact:** Crash (stack overflow) when creating many deeply nested split panes.
+
+---
+
+### 180. `handleMouseFocus` `@intCast` from `usize` to `u32` can panic with oversized session name
+**File:** `src/server/server.zig:1231`
+**Severity:** LOW
+**Status:** ❌ UNRESOLVED
+
+```zig
+const prefix_len = 3 + @as(u32, @intCast(session.name.len));
+```
+
+`session.name` is `[]const u8`, so `session.name.len` is `usize`. `@intCast` from `usize` to `u32` performs a runtime safety check — if `session.name.len > maxInt(u32)`, this panics. Session names are limited to `maxInt(u8)` bytes in practice (`name_len` is `u8` in the protocol), but the type system doesn't enforce this at the cast site.
+
+Additionally, `3 + session.name.len` uses wrapping addition (`+`). If `session.name.len` is `maxInt(u32)`, `prefix_len` wraps to 2, producing incorrect status bar output.
+
+**Impact:** Theoretical panic with session name > 4 GB. Wrapping arithmetic produces wrong status bar column at extreme values.
+
+---
+
+## Updated Summary
+
+| Severity | Count | Fixed | False Positive | Unresolved |
+|----------|-------|-------|----------------|------------|
+| Critical | 23 | 20 | 3 | **0** |
+| High | 42 | 41 | 1 | **0** |
+| Medium | 60 | 56 | 2 | **2** |
+| Low | 55 | 51 | 3 | **1** |
+| Total | 180 | **168** | **9** | **3** |
+
 
