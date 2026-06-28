@@ -1011,7 +1011,6 @@ pub const Server = struct {
                 }
 
                 pane.dirty = true;
-                continue;
             }
 
             if (pane.screen.copy_mode) |*cm| {
@@ -2161,6 +2160,44 @@ test "mouse SGR left-click forwarded when program enables 1006+1000" {
     // local_x=9, local_y=4 → SGR coords (10, 5).
     try testing.expect(n > 0);
     try testing.expectEqualStrings("\x1b[<0;10;5M\n", buf[0..n]);
+}
+
+test "clock mode mouse click exits clock and consumes SGR sequence" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    const s = try server.newSession("test", 80, 24);
+    const window = s.active_window.?;
+    const pane = window.active_pane.?;
+    pane.pty = try @import("pty.zig").Pty.open();
+
+    const fd = pane.pty.?.slave;
+    const c_fcntl = struct {
+        extern "c" fn fcntl(fd: c_int, cmd: c_int, ...) c_int;
+    }.fcntl;
+    const F_GETFL = 3;
+    const F_SETFL = 4;
+    const O_NONBLOCK = comptime switch (@import("builtin").os.tag) {
+        .linux => @as(c_int, 0o4000),
+        else => @as(c_int, 0x0004),
+    };
+    const flags = c_fcntl(fd, F_GETFL, @as(c_int, 0));
+    _ = c_fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+
+    try s.options.set("mouse", .{ .flag = true });
+
+    pane.screen.clock_mode = true;
+    pane.saved_grid = try pane.screen.grid.clone(pane.screen.grid.allocator);
+
+    try server.processInput("\x1b[<0;10;5M");
+
+    try testing.expect(!pane.screen.clock_mode);
+
+    var buf: [128]u8 = undefined;
+    const n = std.posix.read(fd, &buf) catch |err| blk: {
+        if (err == error.WouldBlock) break :blk @as(usize, 0) else return err;
+    };
+    try testing.expectEqual(@as(usize, 0), n);
 }
 
 test "destroyPane cleans up pane, window, and session correctly" {
