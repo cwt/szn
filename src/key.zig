@@ -67,7 +67,10 @@ pub fn parseCsi(seq: []const u8) ParseError!Key {
 
     // Extract modifier parameter if present (e.g., `1;5A` -> param=5, final='A')
     const semicolon = std.mem.indexOfScalar(u8, seq, ';');
-    const final = if (semicolon) |pos| if (pos + 1 < seq.len) seq[seq.len - 1] else 0 else seq[seq.len - 1];
+    if (semicolon) |pos| {
+        if (pos >= seq.len - 1) return error.InvalidCsi;
+    }
+    const final = seq[seq.len - 1];
     const mod_param: ?u8 = if (semicolon) |pos| blk: {
         const param_str = seq[pos + 1 .. seq.len - 1];
         if (param_str.len == 0) break :blk null;
@@ -668,5 +671,10 @@ test "parse kitty rejects codepoint > Unicode max — bug #115" {
     try testing.expectError(error.InvalidCsi, parse("\x1b[4194304u")); // 0x400000
     try testing.expectError(error.InvalidCsi, parse("\x1b[1114112u")); // 0x110000
 }
+
+test "parseCsi semicolon panic" {
+    try testing.expectError(error.InvalidCsi, parseCsi("1;"));
+}
+
 
 

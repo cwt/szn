@@ -390,10 +390,10 @@ pub const Server = struct {
                 self.loop.removeFd(pty.master);
             }
 
-            win.removePane(self.allocator, pane);
-
-            if (win.panes.items.len == 0) {
+            if (win.panes.items.len <= 1) {
                 session.killWindow(self.allocator, win);
+            } else {
+                win.removePane(self.allocator, pane);
             }
 
             if (session.windows.items.len == 0) {
@@ -2214,6 +2214,24 @@ test "destroyPane cleans up pane, window, and session correctly" {
     // This should have cascaded and killed the window, then the session
     try testing.expectEqual(@as(usize, 0), server.sessions.items.len);
 }
+
+test "destroyPane deinitializes the last pane of a window" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    // Create a session with two windows so the session remains alive
+    const s = try server.newSession("test", 80, 24);
+    const w1 = s.active_window.?;
+    const pane1 = w1.active_pane.?;
+    _ = try s.newWindow(testing.allocator, "another");
+
+    // Destroy the only pane of the first window
+    server.destroyPane(pane1);
+
+    // Pane should be deinitialized
+    try testing.expect(pane1.deinited);
+}
+
 
 test "destroyPane removes pty fd from event loop — bug #178" {
     var server = try Server.init(testing.allocator);
