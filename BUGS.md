@@ -2281,12 +2281,36 @@ Additionally, `3 + session.name.len` uses wrapping addition (`+`). If `session.n
 
 ## Updated Summary
 
+## NEW BUGS (2026-06-28 — dangling title_ctx in newWindow crash)
+
+---
+
+### 181. Use-after-free in `Session.newWindow` — `title_ctx` points to stack Window after heap copy
+**File:** `src/session.zig:82`
+**Severity:** CRITICAL
+**Status:** ✅ FIXED — added `p.title_ctx = @ptrCast(new_win)` alongside the existing `p.window = new_win` fixup.
+
+```zig
+for (new_win.panes.items) |p| p.window = new_win;
+```
+
+Bug #169 found and fixed the same pattern in `Session.init` (lines 46–47), but `Session.newWindow` was never updated. When a new window is created via Ctrl-b + c:
+
+1. `Window.init` calls `registerPane(self)` which sets `pane.title_ctx = self` — but `self` is the stack-local Window being constructed.
+2. `new_win.* = try Window.init(...)` memcpy's the struct to the heap.
+3. The for-loop fixup only updates `p.window = new_win`, leaving `p.title_ctx` pointing to the now-recycled stack frame.
+4. When the spawned shell sends its first OSC title sequence (shell init always sends one), `windowTitleCallback` dereferences the stale `title_ctx` → **SIGSEGV use-after-free**.
+
+**Crash report:** `szn-2026-06-28-171818.ips` — thread 0 data abort at `0x2F63642F73726564` (freed stack memory reused for unrelated string data). The `asi` field shows `"crashed on child side of fork pre-exec"` because the daemon itself is a forked child (never exec'd).
+
+**Trigger:** Ctrl-b + c to create a new window, then type `ssh hostname` in that window. The crash happens before the SSH prompt appears.
+
 | Severity | Count | Fixed | False Positive | Unresolved |
 |----------|-------|-------|----------------|------------|
-| Critical | 23 | 20 | 3 | **0** |
+| Critical | 24 | 21 | 3 | **0** |
 | High | 42 | 41 | 1 | **0** |
 | Medium | 60 | 58 | 2 | **0** |
 | Low | 55 | 52 | 3 | **0** |
-| Total | 180 | **171** | **9** | **0** |
+| Total | 181 | **172** | **9** | **0** |
 
 
