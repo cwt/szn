@@ -2211,7 +2211,7 @@ If `dupe` or `append` fails mid-loop, any items previously appended in the curre
 ### 178. `destroyPane` doesn't remove pty fd from event loop — fd leak / stale events
 **File:** `src/server/server.zig:370–412`
 **Severity:** MEDIUM
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — added `self.loop.removeFd(pty.master)` call in `destroyPane` before the pane is removed from the window. Unit test verifies fd is removed from loop after destroyPane.
 
 ```zig
 pub fn destroyPane(self: *Server, pane: *Pane) void {

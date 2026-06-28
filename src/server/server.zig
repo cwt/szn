@@ -385,6 +385,11 @@ pub const Server = struct {
 
         if (found_session) |session| {
             const win = found_window.?;
+
+            if (pane.pty) |*pty| {
+                self.loop.removeFd(pty.master);
+            }
+
             win.removePane(self.allocator, pane);
 
             if (win.panes.items.len == 0) {
@@ -2162,6 +2167,42 @@ test "destroyPane cleans up pane, window, and session correctly" {
 
     // This should have cascaded and killed the window, then the session
     try testing.expectEqual(@as(usize, 0), server.sessions.items.len);
+}
+
+test "destroyPane removes pty fd from event loop — bug #178" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    const s = try server.newSession("test", 80, 24);
+    const window = s.active_window.?;
+    const pane = window.active_pane.?;
+
+    // Give the pane a real pty and register it in the event loop
+    const pty = try pty_mod.Pty.open();
+    pane.pty = pty;
+    try server.watchPanePty(pane);
+
+    // Verify the fd is registered
+    const fd = pty.master;
+    {
+        var found = false;
+        for (server.loop.fds.items) |f| {
+            if (f.fd == fd) found = true;
+        }
+        try testing.expect(found);
+    }
+
+    // Destroy the pane — should also remove the fd
+    server.destroyPane(pane);
+
+    // Verify the fd was removed from the loop
+    {
+        var found = false;
+        for (server.loop.fds.items) |f| {
+            if (f.fd == fd) found = true;
+        }
+        try testing.expect(!found);
+    }
 }
 
 test "handlePtyEvent ignores event with stale pane pointer" {
