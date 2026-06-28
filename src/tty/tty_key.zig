@@ -571,5 +571,3 @@ test "CSI buffer overflow resets to ground and allows recovery — bug #84" {
     // A subsequent valid sequence should still work
     try testing.expect(rd.feed('a') != null);
 }
-
-

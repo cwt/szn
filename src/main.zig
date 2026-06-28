@@ -522,5 +522,3 @@ test "detectNested returns false when SZN env is not set" {
     }
     try testing.expect(!detectNested());
 }
-
-

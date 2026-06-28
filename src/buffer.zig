@@ -64,7 +64,7 @@ pub const BufferList = struct {
         while (idx < 10000) : (idx += 1) {
             const n = std.fmt.bufPrint(&name_buf, "buffer{}", .{idx}) catch
                 std.fmt.bufPrint(&name_buf, "buf{}", .{idx}) catch
-                    "buffer";
+                "buffer";
             var found = false;
             for (self.items.items) |b| {
                 if (std.mem.eql(u8, b.name, n)) {

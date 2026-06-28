@@ -3,7 +3,7 @@ const c = std.c;
 const protocol = @import("../server/protocol.zig");
 const connect = @import("connect.zig");
 
-pub const Error = protocol.Error || connect.Error || error{ConnectionClosed, ReadFailed, WriteFailed, InvalidPacket, TermTooLong, PacketTooLarge};
+pub const Error = protocol.Error || connect.Error || error{ ConnectionClosed, ReadFailed, WriteFailed, InvalidPacket, TermTooLong, PacketTooLarge };
 
 pub const MAX_PACKET_SIZE = 1024 * 1024; // 1 MiB max to prevent DoS
 

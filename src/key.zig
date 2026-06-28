@@ -10,11 +10,25 @@ pub const Modifier = packed struct(u8) {
 };
 
 pub const Function = enum(u8) {
-    f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12,
+    f1,
+    f2,
+    f3,
+    f4,
+    f5,
+    f6,
+    f7,
+    f8,
+    f9,
+    f10,
+    f11,
+    f12,
 };
 
 pub const Arrow = enum(u8) {
-    up, down, left, right,
+    up,
+    down,
+    left,
+    right,
 };
 
 pub const Special = enum(u8) {
@@ -231,15 +245,21 @@ pub fn format(key: Key, buf: []u8) []const u8 {
             const mod = c.mod;
             if (mod.ctrl) {
                 if (pos + 2 > buf.len) break :blk "[?]";
-                buf[pos] = 'C'; buf[pos + 1] = '-'; pos += 2;
+                buf[pos] = 'C';
+                buf[pos + 1] = '-';
+                pos += 2;
             }
-            if (mod.alt)  {
+            if (mod.alt) {
                 if (pos + 2 > buf.len) break :blk "[?]";
-                buf[pos] = 'M'; buf[pos + 1] = '-'; pos += 2;
+                buf[pos] = 'M';
+                buf[pos + 1] = '-';
+                pos += 2;
             }
             if (mod.shift) {
                 if (pos + 2 > buf.len) break :blk "[?]";
-                buf[pos] = 'S'; buf[pos + 1] = '-'; pos += 2;
+                buf[pos] = 'S';
+                buf[pos + 1] = '-';
+                pos += 2;
             }
             if (mod.meta) {
                 if (pos + 5 > buf.len) break :blk "[?]";
@@ -333,15 +353,21 @@ fn prependModifiers(mod: Modifier, name: []const u8, buf: []u8) []const u8 {
     var pos: usize = 0;
     if (mod.ctrl) {
         if (pos + 2 > buf.len) return "[?]";
-        buf[pos] = 'C'; buf[pos + 1] = '-'; pos += 2;
+        buf[pos] = 'C';
+        buf[pos + 1] = '-';
+        pos += 2;
     }
-    if (mod.alt)  {
+    if (mod.alt) {
         if (pos + 2 > buf.len) return "[?]";
-        buf[pos] = 'M'; buf[pos + 1] = '-'; pos += 2;
+        buf[pos] = 'M';
+        buf[pos + 1] = '-';
+        pos += 2;
     }
     if (mod.shift) {
         if (pos + 2 > buf.len) return "[?]";
-        buf[pos] = 'S'; buf[pos + 1] = '-'; pos += 2;
+        buf[pos] = 'S';
+        buf[pos + 1] = '-';
+        pos += 2;
     }
     if (mod.meta) {
         if (pos + 5 > buf.len) return "[?]";
@@ -356,10 +382,10 @@ fn prependModifiers(mod: Modifier, name: []const u8, buf: []u8) []const u8 {
 
 pub fn parseKeyName(name: []const u8) !Key {
     if (name.len == 0) return error.UnknownKey;
-    
+
     var remaining = name;
     var mod = Modifier{};
-    
+
     // Parse modifiers
     while (remaining.len > 2) {
         if (remaining.len > 5 and std.mem.eql(u8, remaining[0..5], "Meta-")) {
@@ -377,9 +403,9 @@ pub fn parseKeyName(name: []const u8) !Key {
             break;
         }
     }
-    
+
     if (remaining.len == 0) return error.UnknownKey;
-    
+
     // Check for named keys
     if (std.mem.eql(u8, remaining, "Space")) return Key{ .char = .{ .code = ' ', .mod = mod } };
     if (std.mem.eql(u8, remaining, "BSpace")) return Key{ .special = .{ .key = .backspace, .mod = mod } };
@@ -392,12 +418,12 @@ pub fn parseKeyName(name: []const u8) !Key {
     if (std.mem.eql(u8, remaining, "PageDown")) return Key{ .special = .{ .key = .page_down, .mod = mod } };
     if (std.mem.eql(u8, remaining, "Insert")) return Key{ .special = .{ .key = .insert, .mod = mod } };
     if (std.mem.eql(u8, remaining, "Delete")) return Key{ .special = .{ .key = .delete_, .mod = mod } };
-    
+
     if (std.mem.eql(u8, remaining, "Up")) return Key{ .arrow = .{ .key = .up, .mod = mod } };
     if (std.mem.eql(u8, remaining, "Down")) return Key{ .arrow = .{ .key = .down, .mod = mod } };
     if (std.mem.eql(u8, remaining, "Left")) return Key{ .arrow = .{ .key = .left, .mod = mod } };
     if (std.mem.eql(u8, remaining, "Right")) return Key{ .arrow = .{ .key = .right, .mod = mod } };
-    
+
     if (std.mem.eql(u8, remaining, "F1")) return Key{ .function = .{ .key = .f1, .mod = mod } };
     if (std.mem.eql(u8, remaining, "F2")) return Key{ .function = .{ .key = .f2, .mod = mod } };
     if (std.mem.eql(u8, remaining, "F3")) return Key{ .function = .{ .key = .f3, .mod = mod } };
@@ -410,11 +436,11 @@ pub fn parseKeyName(name: []const u8) !Key {
     if (std.mem.eql(u8, remaining, "F10")) return Key{ .function = .{ .key = .f10, .mod = mod } };
     if (std.mem.eql(u8, remaining, "F11")) return Key{ .function = .{ .key = .f11, .mod = mod } };
     if (std.mem.eql(u8, remaining, "F12")) return Key{ .function = .{ .key = .f12, .mod = mod } };
-    
+
     if (remaining.len == 1) {
         return Key{ .char = .{ .code = remaining[0], .mod = mod } };
     }
-    
+
     return error.UnknownKey;
 }
 
@@ -654,7 +680,7 @@ test "format and parse meta key modifier" {
 
 test "format output buffer overflow" {
     var buf: [3]u8 = undefined;
-    
+
     // Key requires more than 3 bytes (C-M-a)
     const key = Key{ .char = .{ .code = 'a', .mod = .{ .ctrl = true, .alt = true } } };
     const s = format(key, &buf);
@@ -675,6 +701,3 @@ test "parse kitty rejects codepoint > Unicode max — bug #115" {
 test "parseCsi semicolon panic" {
     try testing.expectError(error.InvalidCsi, parseCsi("1;"));
 }
-
-
-

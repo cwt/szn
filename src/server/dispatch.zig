@@ -8,7 +8,7 @@ const Packet = protocol.Packet;
 const MessageType = protocol.MessageType;
 const message_reader = @import("message_reader.zig");
 
-pub const Error = protocol.Error || error{WriteFailed, ConnectionClosed};
+pub const Error = protocol.Error || error{ WriteFailed, ConnectionClosed };
 
 pub const DispatchResult = struct {
     response_type: MessageType,

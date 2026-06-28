@@ -58,7 +58,7 @@ pub const Pane = struct {
         self.dirty = true;
     }
 
-extern "c" fn getpid() c_int;
+    extern "c" fn getpid() c_int;
 
     pub fn spawn(self: *Pane, allocator: std.mem.Allocator, argv: ?[]const []const u8, cwd: ?[]const u8) Error!void {
         var pty = try Pty.open();
@@ -464,7 +464,6 @@ test "pane double deinit is safe" {
     var pane = try Pane.init(testing.allocator, 1, 80, 24);
     const argv = [_][]const u8{"true"};
     try pane.spawn(testing.allocator, &argv, null);
-    pane.deinit();  // first deinit: closes pty, sets pty = null
-    pane.deinit();  // second deinit: pty is null, skips pty.deinit()
+    pane.deinit(); // first deinit: closes pty, sets pty = null
+    pane.deinit(); // second deinit: pty is null, skips pty.deinit()
 }
-

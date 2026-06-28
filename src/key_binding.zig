@@ -552,4 +552,3 @@ test "val >= 0 always true for u8 — bug #140" {
     try testing.expectEqual(Action.select_window_0, mapCommandToAction("select-window -t 0"));
     try testing.expectEqual(Action.select_window_9, mapCommandToAction("select-window -t 9"));
 }
-

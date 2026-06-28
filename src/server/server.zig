@@ -213,7 +213,7 @@ pub const Server = struct {
             while (true) {
                 const pid = c.waitpid(-1, &status, 1);
                 if (pid <= 0) break;
-                std.log.info("reapZombies reaped pid {d} with status {d}", .{pid, status});
+                std.log.info("reapZombies reaped pid {d} with status {d}", .{ pid, status });
             }
         }
     }
@@ -325,7 +325,7 @@ pub const Server = struct {
             var status: c_int = 0;
             const shell_alive = if (pane.pty) |pty| blk: {
                 const rc = c.waitpid(pty.pid, &status, 1); // WNOHANG
-                std.log.info("HUP waitpid(pid={d}) returned {d}, status={d}", .{pty.pid, rc, status});
+                std.log.info("HUP waitpid(pid={d}) returned {d}, status={d}", .{ pty.pid, rc, status });
                 break :blk rc == 0;
             } else false;
             _ = pane.feedPty() catch {};
@@ -1125,10 +1125,8 @@ pub const Server = struct {
                                         active_pane.screen.mode.mouse_button or
                                         active_pane.screen.mode.mouse_sgr;
                                     std.log.debug("MOUSE EVENT: button={any}, x={d}, y={d}, wants_mouse={}, standard={}, button_mode={}, sgr={}", .{
-                                        m.button, m.x, m.y, wants_mouse,
-                                        active_pane.screen.mode.mouse_standard,
-                                        active_pane.screen.mode.mouse_button,
-                                        active_pane.screen.mode.mouse_sgr,
+                                        m.button,                               m.x,                                  m.y,                               wants_mouse,
+                                        active_pane.screen.mode.mouse_standard, active_pane.screen.mode.mouse_button, active_pane.screen.mode.mouse_sgr,
                                     });
                                     if (wants_mouse) {
                                         handled = true;
@@ -2232,7 +2230,6 @@ test "destroyPane deinitializes the last pane of a window" {
     try testing.expect(pane1.deinited);
 }
 
-
 test "destroyPane removes pty fd from event loop — bug #178" {
     var server = try Server.init(testing.allocator);
     defer server.deinit();
@@ -2446,5 +2443,3 @@ test "command prompt tab completion" {
     try testing.expect(server.command_mode);
     try testing.expectEqualStrings("se", server.command_buf.items);
 }
-
-

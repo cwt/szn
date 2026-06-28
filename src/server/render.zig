@@ -353,15 +353,15 @@ pub const Display = struct {
                         break :blk all[0 .. all.len - 1];
                     };
                     const attrCodes = [_][]const u8{
-                        "1",   // bold
-                        "2",   // dim
-                        "3",   // italic
-                        "4",   // underline
-                        "5",   // blink
-                        "7",   // reverse
-                        "8",   // concealed
-                        "9",   // strikethrough
-                        "53",  // overline
+                        "1", // bold
+                        "2", // dim
+                        "3", // italic
+                        "4", // underline
+                        "5", // blink
+                        "7", // reverse
+                        "8", // concealed
+                        "9", // strikethrough
+                        "53", // overline
                         "4:2", // double_underline
                         "4:3", // curly_underline
                     };
@@ -665,7 +665,7 @@ test "renderAll cursor visibility hide" {
     }};
 
     const windows = [_]*Window{&win};
-    
+
     const Node = @import("../layout.zig").Node;
     const node = Node{ .leaf = pane };
 
@@ -701,10 +701,10 @@ test "renderSixelImages emits DCS at correct absolute position" {
     // Inject a synthetic sixel image at pane cell (5, 3) with known DCS bytes.
     const raw_dcs = try allocator.dupe(u8, "\x1bPqA\x1b\\");
     const img = @import("../screen.zig").SixelImage{
-        .data  = raw_dcs,
-        .col   = 5,
-        .row   = 3,
-        .px_width  = 0,
+        .data = raw_dcs,
+        .col = 5,
+        .row = 3,
+        .px_width = 0,
         .px_height = 6,
     };
     try pane.screen.sixel_images.append(allocator, img);

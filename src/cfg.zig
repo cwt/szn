@@ -7,7 +7,7 @@ const OptionValue = options_mod.OptionValue;
 const key = @import("key.zig");
 const Key = key.Key;
 
-pub const Error = options_mod.Error || colour.ParseError || error{InvalidCsi, UnknownKey, MissingValue, InvalidBind, MissingQuotes};
+pub const Error = options_mod.Error || colour.ParseError || error{ InvalidCsi, UnknownKey, MissingValue, InvalidBind, MissingQuotes };
 
 pub const Directive = union(enum) {
     set: SetOpt,

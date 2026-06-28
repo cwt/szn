@@ -1240,7 +1240,7 @@ test "useAltScreen saves and restores cursor" {
 
     // Enter alt screen
     try screen.useAltScreen(true);
-    
+
     // Alt screen cursor should be reset to default (0, 0)
     try testing.expectEqual(@as(u32, 0), screen.cursor.x);
     try testing.expectEqual(@as(u32, 0), screen.cursor.y);

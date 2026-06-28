@@ -44,12 +44,12 @@ pub const InputParser = struct {
         dcs_param,
         dcs_intermediate,
         dcs_final,
-        dcs_sixel,      // accumulating sixel payload bytes
-        dcs_sixel_esc,  // saw ESC inside sixel — waiting for \\ (ST)
-        dcs_discard,    // consuming non-sixel DCS body until ST
+        dcs_sixel, // accumulating sixel payload bytes
+        dcs_sixel_esc, // saw ESC inside sixel — waiting for \\ (ST)
+        dcs_discard, // consuming non-sixel DCS body until ST
         dcs_discard_esc, // saw ESC inside dcs_discard — waiting for \\ (ST)
         sos_pm_apc_string,
-        sos_pm_apc_esc,  // saw ESC inside SOS/PM/APC — waiting for \\ (ST)
+        sos_pm_apc_esc, // saw ESC inside SOS/PM/APC — waiting for \\ (ST)
     };
 
     pub fn init(screen: *Screen) InputParser {
@@ -1397,7 +1397,6 @@ test "SGR subparameter double/curly underline" {
     try testing.expect(!screen.grid.getCell(2, 0).attr.curly_underline);
 }
 
-
 test "SGR reset fg default" {
     var screen = try Screen.init(testing.allocator, 10, 3);
     defer screen.deinit();
@@ -1978,7 +1977,6 @@ test "DECRQM responds with mode status" {
     try testing.expectEqualStrings("\x1b[?2027;0$y", got);
 }
 
-
 test "kitty keyboard protocol and extkeys" {
     var p = try makePipePty();
     defer _ = c_sys.close(p.read_fd);
@@ -2016,8 +2014,6 @@ test "kitty keyboard protocol and extkeys" {
     try testing.expectEqual(@as(u32, 1), screen.kitty_kbd_flags);
     try testing.expectEqual(@as(u8, 0), screen.kitty_kbd_stack_len);
 }
-
-
 
 test "XTSMGRAPHICS (CSI ? 2 ; 1 S) reports sixel supported" {
     var p = try makePipePty();
