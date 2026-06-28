@@ -79,7 +79,10 @@ pub const Session = struct {
         self.next_win_id += 1;
         const new_win = try a.create(Window);
         new_win.* = try Window.init(a, @intCast(win_id), name, self.width, self.height, &self.window_options);
-        for (new_win.panes.items) |p| p.window = new_win;
+        for (new_win.panes.items) |p| {
+            p.window = new_win;
+            p.title_ctx = @ptrCast(new_win);
+        }
         try self.windows.append(a, new_win);
         if (self.active_window) |prev| {
             self.last_window = prev;
