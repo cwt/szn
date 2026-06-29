@@ -2309,9 +2309,9 @@ Bug #169 found and fixed the same pattern in `Session.init` (lines 46–47), but
 |----------|-------|-------|----------------|------------|
 | Critical | 24 | 21 | 3 | **0** |
 | High | 43 | 42 | 1 | **0** |
-| Medium | 61 | 58 | 2 | **1** |
+| Medium | 61 | 59 | 2 | **0** |
 | Low | 57 | 52 | 3 | **2** |
-| Total | 185 | **173** | **9** | **3** |
+| Total | 185 | **174** | **9** | **2** |
 
 ---
 
@@ -2344,29 +2344,15 @@ When the 16 MiB cap is reached, incoming bytes are silently dropped but the pars
 ---
 
 ### 183. Escape key cannot cancel choose mode — InputReader never emits `.special.escape` for bare `0x1B`
-**File:** `src/tty/tty_key.zig:63–66` + `src/choose.zig:101–138`
+**File:** `src/tty/tty_key.zig:94–106`, `src/server/server.zig:923`
 **Severity:** MEDIUM
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED
 
-```zig
-// tty_key.zig:63-66
-fn feedGround(rd: *InputReader, byte: u8) ?Event {
-    ...
-    if (byte == 0x1b) {
-        rd.state = .esc;     // transitions to .esc, returns null — no event emitted
-        return null;
-    }
-```
+Two complementary changes:
 
-When the user presses Escape, the terminal sends byte `0x1B`. The InputReader transitions from `.ground` to `.esc` state and returns `null` — no `Key` event is ever generated. The reader stays in `.esc` state waiting for a continuation byte. A lone ESC never reaches `ChooseMode.handleKey`.
+1. **`feedEsc(0x1B)`** — When a second `0x1B` arrives while the reader is in `.esc` state, return `Event{ .key = .{ .special = .{ .key = .escape } } }` instead of treating it as Alt+0x1B.  Double-ESC in choose mode now cancels.  Unit test added: `"esc esc = escape key"`.
 
-The handleKey function at `choose.zig:104` *does* check `k.special.key == .escape`, but the event is never produced by the InputReader.
-
-With the kitty extended keyboard protocol, Escape is sent as `CSI 27 u` (codepoint 27), which `key.zig:143–160` parses as `Key{ .char = .{ .code = 27 } }` — not a `.special.escape`. handleKey doesn't match this either.
-
-**Impact:** Users cannot use Escape to cancel choose mode. Only `q` works. Users who expect standard tmux behaviour (Escape to cancel) are stuck.
-
-**Fix:** Either (a) emit a `.special.escape` event when `0x1B` is seen in ground and the next byte doesn't continue a CSI/SS3 sequence (requires timeout or lookahead), or (b) have `processInput` or the choose-mode handler flush the `.esc` state and emit an Escape event when reader is stuck in `.esc` and another mechanism (e.g. a timer or next ground byte) fires. Alternatively, the kitty parser should map codepoint 27 to `.special.escape`.
+2. **`processInput` choose-mode path** — If the InputReader is stuck in `.esc` state (from a previous bare `0x1B`) and the current byte is not `[` or `O` (i.e. not a legitimate CSI/SS3 continuation), flush the reader back to `.ground` and emit a synthetic Escape event.  This handles the single-ESC case even when no second `0x1B` follows — e.g. ESC arriving alone in one buffer and the next byte in another.
 
 ---
 

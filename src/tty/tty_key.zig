@@ -101,6 +101,10 @@ pub const InputReader = struct {
             rd.state = .ss3;
             return null;
         }
+        if (byte == 0x1B) {
+            rd.state = .ground;
+            return Event{ .key = .{ .special = .{ .key = .escape } } };
+        }
         rd.state = .ground;
         return Event{ .key = .{ .char = .{ .code = byte, .mod = .{ .alt = true } } } };
     }
@@ -342,6 +346,13 @@ test "alt char" {
     try testing.expect(ev == .key);
     try testing.expectEqual(@as(u21, 'a'), ev.key.char.code);
     try testing.expect(ev.key.char.mod.alt);
+}
+
+test "esc esc = escape key" {
+    var rd = InputReader{};
+    try testing.expect(rd.feed(0x1b) == null);
+    const ev = rd.feed(0x1b).?;
+    try testing.expectEqual(Event{ .key = .{ .special = .{ .key = .escape } } }, ev);
 }
 
 test "arrow up" {

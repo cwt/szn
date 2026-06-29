@@ -921,6 +921,33 @@ pub const Server = struct {
             }
 
             if (pane.choose_mode.active) {
+                if (self.input_reader.state == .esc and byte != '[' and byte != 'O') {
+                    self.input_reader.state = .ground;
+                    const escaped = pane.choose_mode.handleKey(.{ .special = .{ .key = .escape } }, self.allocator) catch continue;
+                    if (escaped == .cancelled) {
+                        const is_cmd = (pane.choose_mode.target == .command);
+                        pane.choose_mode.active = false;
+
+                        const grid_alloc = pane.screen.grid.allocator;
+                        if (pane.saved_grid) |sg| {
+                            pane.screen.grid.deinit();
+                            pane.screen.grid = sg;
+                            pane.saved_grid = null;
+                        } else {
+                            if (@import("../grid.zig").Grid.init(grid_alloc, pane.screen.grid.width, pane.screen.grid.height)) |fallback| {
+                                pane.screen.grid.deinit();
+                                pane.screen.grid = fallback;
+                            } else |_| {}
+                        }
+
+                        pane.dirty = true;
+                        if (is_cmd) {
+                            self.command_mode = true;
+                        }
+                    }
+                    continue;
+                }
+
                 if (self.input_reader.feed(byte)) |event| {
                     switch (event) {
                         .key => |k| {
