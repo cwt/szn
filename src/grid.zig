@@ -378,6 +378,7 @@ pub const Grid = struct {
 
         var i: usize = 0;
         while (i < cells.len) {
+            const line_start = i;
             var line_cells: std.ArrayListUnmanaged(Cell) = .empty;
             defer line_cells.deinit(allocator);
             var line_width: u32 = 0;
@@ -388,6 +389,34 @@ pub const Grid = struct {
                 const cw = clusterWidth(cells[i..cluster_end]);
                 if (line_width > 0 and line_width + cw > new_width) {
                     did_break = true;
+                    // Look-ahead heuristic: if breaking would leave a single Thai consonant
+                    // at the start of the next line, followed immediately by a leading vowel,
+                    // backtrack to the start of the word (the leading vowel of the current syllable).
+                    if (cluster_end == i + 1 and thai.isThai(cells[i].char) and !thai.isThaiLeadingVowel(cells[i].char)) {
+                        const next_idx = cluster_end;
+                        if (next_idx < cells.len and thai.isThaiLeadingVowel(cells[next_idx].char)) {
+                            var j = i;
+                            var found_vowel_idx: ?usize = null;
+                            var first_thai_idx = i;
+                            while (j > line_start) {
+                                j -= 1;
+                                const cp = cells[j].char;
+                                if (!thai.isThai(cp)) {
+                                    break;
+                                }
+                                first_thai_idx = j;
+                                if (thai.isThaiLeadingVowel(cp)) {
+                                    found_vowel_idx = j;
+                                    break;
+                                }
+                            }
+                            const break_idx = found_vowel_idx orelse first_thai_idx;
+                            if (break_idx > line_start) {
+                                i = break_idx;
+                                line_cells.shrinkRetainingCapacity(break_idx - line_start);
+                            }
+                        }
+                    }
                     break;
                 }
                 try line_cells.appendSlice(allocator, cells[i..cluster_end]);
@@ -417,6 +446,39 @@ pub const Grid = struct {
 
         try self.normalize();
 
+        const total = self.history.items.len + self.lines.items.len;
+
+        // Find the last non-empty line to avoid treating trailing empty lines as content.
+        var last_non_empty: usize = 0;
+        var found_non_empty = false;
+        var j = total;
+        while (j > 0) {
+            j -= 1;
+            const line = if (j < self.history.items.len)
+                &self.history.items[j]
+            else
+                &self.lines.items[j - self.history.items.len];
+
+            if (line.wrapped) {
+                last_non_empty = j;
+                found_non_empty = true;
+                break;
+            }
+            var has_content = false;
+            for (line.cells.items) |c| {
+                if (c.char != ' ' or c.is_padding or c.comb1 != 0 or c.comb2 != 0) {
+                    has_content = true;
+                    break;
+                }
+            }
+            if (has_content) {
+                last_non_empty = j;
+                found_non_empty = true;
+                break;
+            }
+        }
+        const process_limit = if (found_non_empty) last_non_empty + 1 else 0;
+
         // ── Flatten all lines into logical lines ──
         var flat_buf: std.ArrayListUnmanaged(Cell) = .empty;
         defer flat_buf.deinit(self.allocator);
@@ -428,9 +490,8 @@ pub const Grid = struct {
         }
 
         const allocator = self.allocator;
-        const total = self.history.items.len + self.lines.items.len;
         var idx: usize = 0;
-        while (idx < total) {
+        while (idx < process_limit) {
             flat_buf.clearRetainingCapacity();
             var line_idx = idx;
             while (line_idx < total) : (line_idx += 1) {
@@ -799,16 +860,13 @@ test "setSize reflows content" {
     try testing.expectEqual(@as(u32, 40), grid.width);
 
     // Content is reflowed: all lines (history + visible) are rewrapped.
-    // History A,B,C should remain in history; visible D,E should remain on screen.
-    try testing.expectEqual(@as(u21, 'D'), grid.getCell(0, 0).char);
-    try testing.expectEqual(@as(u21, 'E'), grid.getCell(0, 1).char);
-    try testing.expectEqual(@as(u21, ' '), grid.getCell(0, 2).char);
-    try testing.expectEqual(@as(u21, ' '), grid.getCell(0, 3).char);
-    try testing.expectEqual(@as(u21, ' '), grid.getCell(0, 4).char);
-    try testing.expectEqual(@as(usize, 3), grid.history.items.len);
-    try testing.expectEqual(@as(u21, 'A'), grid.history.items[0].cells.items[0].char);
-    try testing.expectEqual(@as(u21, 'B'), grid.history.items[1].cells.items[0].char);
-    try testing.expectEqual(@as(u21, 'C'), grid.history.items[2].cells.items[0].char);
+    // History A,B,C come first, then visible D,E
+    try testing.expectEqual(@as(u21, 'A'), grid.getCell(0, 0).char);
+    try testing.expectEqual(@as(u21, 'B'), grid.getCell(0, 1).char);
+    try testing.expectEqual(@as(u21, 'C'), grid.getCell(0, 2).char);
+    try testing.expectEqual(@as(u21, 'D'), grid.getCell(0, 3).char);
+    try testing.expectEqual(@as(u21, 'E'), grid.getCell(0, 4).char);
+    try testing.expectEqual(@as(usize, 0), grid.history.items.len);
 }
 
 test "Grid clone" {
@@ -997,5 +1055,63 @@ test "setSize reflow preserves empty lines" {
 
     // Verify the grid size invariant is preserved
     try testing.expectEqual(@as(usize, 5), grid.lines.items.len);
+}
+
+test "setSize reflow Thai look-ahead breaking" {
+    var grid = try Grid.init(testing.allocator, 10, 24);
+    defer grid.deinit();
+
+    // Write "ดูเที่ยวไป"
+    // ด (0x0E14) + ู (0x0E39, combining mark in ด)
+    // เ (0x0E40) + ท (0x0E17) + ี (0x0E35, comb) + ่ (0x0E48, comb) + ย (0x0E22) + ว (0x0E23)
+    // ไ (0x0E44) + ป (0x0E1B)
+    grid.writeChar(0, 0, 0x0E14); // ด
+    grid.lines.items[0].cells.items[0].comb1 = 0x0E39; // ู
+    grid.writeChar(1, 0, 0x0E40); // เ
+    grid.writeChar(2, 0, 0x0E17); // ท
+    grid.lines.items[0].cells.items[2].comb1 = 0x0E35; // ี
+    grid.lines.items[0].cells.items[2].comb2 = 0x0E48; // ่
+    grid.writeChar(3, 0, 0x0E22); // ย
+    grid.writeChar(4, 0, 0x0E23); // ว
+    grid.writeChar(5, 0, 0x0E44); // ไ
+    grid.writeChar(6, 0, 0x0E1B); // ป
+
+    // Simulates soft-wrap of the line
+    grid.lines.items[0].wrapped = true;
+
+    // Resize to width 5
+    // Without look-ahead, it would fit "ดูเที่ยว" (width 5) and put "ไป" on next line.
+    // This is a clean break! No look-ahead backtrack is needed because
+    // "เที่ยว" is complete, and "ไป" starts with leading vowel "ไ" which is a clean syllable start.
+    try grid.setSize(5, 24);
+    try testing.expectEqual(0x0E14, grid.getCell(0, 0).char); // ด
+    try testing.expectEqual(0x0E40, grid.getCell(1, 0).char); // เ
+    try testing.expectEqual(0x0E23, grid.getCell(4, 0).char); // ว
+    try testing.expectEqual(0x0E44, grid.getCell(0, 1).char); // ไ
+    try testing.expectEqual(0x0E1B, grid.getCell(1, 1).char); // ป
+
+    // Reset grid
+    try grid.setSize(10, 24);
+    grid.lines.items[0].wrapped = true;
+
+    // Now resize to width 4:
+    // "ดูเที่ย" would be 4 cells (ดุ=1, เที่ย=3). But "ว" (consonant) would be left to wrap to the next line.
+    // Since "ว" is U+0E23 (base) and is followed by "ไ" (leading vowel), look-ahead should trigger.
+    // It should backtrack to before "เ" (index 1), leaving only "ดุ" on the first line.
+    // "เที่ยวไป" starts on the second line: "เที่ยว" (width 4) fits exactly on the second line, and "ไป" wraps to the third line.
+    try grid.setSize(4, 24);
+
+    try testing.expectEqual(0x0E14, grid.getCell(0, 0).char); // ด
+    try testing.expectEqual(@as(u21, ' '), grid.getCell(1, 0).char); // space (empty/padded)
+
+    // Line 1 should be "เที่ยว"
+    try testing.expectEqual(0x0E40, grid.getCell(0, 1).char); // เ
+    try testing.expectEqual(0x0E17, grid.getCell(1, 1).char); // ท
+    try testing.expectEqual(0x0E22, grid.getCell(2, 1).char); // ย
+    try testing.expectEqual(0x0E23, grid.getCell(3, 1).char); // ว
+
+    // Line 2 should be "ไป"
+    try testing.expectEqual(0x0E44, grid.getCell(0, 2).char); // ไ
+    try testing.expectEqual(0x0E1B, grid.getCell(1, 2).char); // ป
 }
 
