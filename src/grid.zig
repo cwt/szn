@@ -501,14 +501,12 @@ pub const Grid = struct {
                     &self.lines.items[line_idx - self.history.items.len];
 
                 var cells_to_add = line.cells.items;
-                // Trim trailing empties from the last line of a logical line
-                if (!line.wrapped) {
-                    while (cells_to_add.len > 0) {
-                        const last = cells_to_add[cells_to_add.len - 1];
-                        if (last.char == ' ' and !last.is_padding and last.comb1 == 0 and last.comb2 == 0) {
-                            cells_to_add = cells_to_add[0 .. cells_to_add.len - 1];
-                        } else break;
-                    }
+                // Trim trailing empties from all lines to remove padding
+                while (cells_to_add.len > 0) {
+                    const last = cells_to_add[cells_to_add.len - 1];
+                    if (last.char == ' ' and !last.is_padding and last.comb1 == 0 and last.comb2 == 0) {
+                        cells_to_add = cells_to_add[0 .. cells_to_add.len - 1];
+                    } else break;
                 }
                 try flat_buf.appendSlice(allocator, cells_to_add);
                 if (!line.wrapped) {
