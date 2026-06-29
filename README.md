@@ -57,6 +57,7 @@ All core development phases (Phases 0 to 11) are fully implemented and complete.
 - 33+ MVP commands matching standard tmux behavior (including pane resizing, layout splits, and copying/pasting).
 - Standard VT100 wrap-pending and Background Color Erase (BCE) support for accurate rendering.
 - Full multi-pane layouts, interactive copy mode, status bars, and config parsing (`.szn.conf`).
+- **Advanced Text Reflow** — automatically rewraps text on pane resizing, respecting CJK characters, combining marks, and Thai cluster integrity (including an $O(1)$ syllable backtracking algorithm). See [TEXT_REFLOW.md](TEXT_REFLOW.md) for full design details.
 - **649 unit and integration tests passing.**
 
 ### Performance
