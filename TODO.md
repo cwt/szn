@@ -5,20 +5,20 @@
 Reflow rewraps text when the terminal pane is resized, so long lines adjust
 to the new width instead of being truncated.
 
-### Phase 1: Track soft-wrap lines (easy)
+### Phase 1: Track soft-wrap lines (done)
 
-- [ ] Add `wrapped: bool` to `GridLine` in `src/grid.zig`
+- [x] Add `wrapped: bool` to `GridLine` in `src/grid.zig`
   - `true` = this line is a continuation from the previous line (auto-wrap)
   - `false` = this line starts fresh (user pressed Enter / `\n`)
-- [ ] Hook into `Screen.writeChar` in `src/screen.zig`
+- [x] Hook into `Screen.writeChar` in `src/screen.zig`
   - When auto-wrapping (cursor hits right edge, line_wrap on): mark the
     **new** line as `wrapped = true`
   - When processing `\n`: ensure the next line written has `wrapped = false`
   - When the user backspaces from column 0 to the previous line end:
     clear `wrapped` on the line being vacated
-- [ ] Hook into history: `scrollUp` should preserve `wrapped` flag on the
+- [x] Hook into history: `scrollUp` should preserve `wrapped` flag on the
   line going into history
-- [ ] Regression test: `\n` at col 0 of already-empty line should not toggle wrapped
+- [x] Regression test: `\n` at col 0 of already-empty line should not toggle wrapped
 
 ### Phase 2: Thai cluster detection (done — `src/thai.zig`)
 
@@ -53,12 +53,12 @@ Implemented in `src/thai.zig`:
     cell (not as separate cells), so they don't affect the span
   - Returns start + 1 if start is not a valid cluster start
 
-### Phase 3: Reflow algorithm — width shrink (hard)
+### Phase 3: Reflow algorithm — width shrink (done)
 
 When `grid.setSize` is called with a narrower width, visible lines must
 be reflowed: text that wrapped at e.g. col 80 now wraps at col 60.
 
-- [ ] Implement `reflowShrink(grid, new_width)`
+- [x] Implement `reflowShrink(grid, new_width)`
   - Walk visible lines top to bottom
   - For each line, determine the "logical line" by following `wrapped` flags:
     collect consecutive lines where line[N+1].wrapped = true
@@ -71,13 +71,13 @@ be reflowed: text that wrapped at e.g. col 80 now wraps at col 60.
     - Preserve per-cell colour/attr/SGR state through the rewrap
   - Write the new shorter-but-more-numerous lines back into `grid.lines`
   - Spill excess lines into history if the new visible area can't fit them all
-- [ ] Also process `grid.history` lines
+- [x] Also process `grid.history` lines
 
-### Phase 4: Reflow algorithm — width grow (medium)
+### Phase 4: Reflow algorithm — width grow (done)
 
 When width grows, adjacent wrapped lines can join back together.
 
-- [ ] Implement `reflowGrow(grid, new_width)`
+- [x] Implement `reflowGrow(grid, new_width)`
   - Walk lines bottom to top (reverse, to pull content up)
   - When `line.wrapped == true`: try to merge cells from line into the
     end of the previous line if there's room at `new_width`
@@ -86,31 +86,31 @@ When width grows, adjacent wrapped lines can join back together.
     from history or the line below
   - Same cluster/CJK integrity rules as shrink
 
-### Phase 5: Edge cases (tedious)
+### Phase 5: Edge cases (done)
 
-- [ ] **Scroll regions**: lines inside an active scroll region should not pull/push
+- [x] **Scroll regions**: lines inside an active scroll region should not pull/push
       cells from outside the region during reflow
-- [ ] **Alternate screen**: alt_grid also needs reflow; but alt screen
+- [x] **Alternate screen**: alt_grid also needs reflow; but alt screen
       programs (vim, less) typically redraw on SIGWINCH anyway, so maybe
       skip reflow for alt grid and just truncate
-- [ ] **Cursor repositioning programs**: apps like dialog, tui progress bars,
+- [x] **Cursor repositioning programs**: apps like dialog, tui progress bars,
       columnar output get corrupted by reflow. Consider a heuristic:
       if a line was written by cursor-motion (not sequential flow), don't reflow it.
       One approach: track `last_write_mode` per line (sequential vs random-access).
-- [ ] **Tab recalculation**: when width changes, tabs at fixed positions (every 8)
+- [x] **Tab recalculation**: when width changes, tabs at fixed positions (every 8)
       shift. Reflow should re-expand tabs to the new grid positions.
-- [ ] **Performance**: O(n*m) could be slow with 2000+ history lines.
+- [x] **Performance**: O(n*m) could be slow with 2000+ history lines.
       Cap reflow to visible area + N history lines (configurable).
       Batch dirty-marking to avoid per-cell flag updates.
-- [ ] **Double-width line**: CJK wide chars at the last column—wrapping must
+- [x] **Double-width line**: CJK wide chars at the last column—wrapping must
       move the whole 2-cell char to the next line, not split it.
 
-### Phase 6: Thai line-breaking rules (medium)
+### Phase 6: Thai line-breaking rules (done)
 
 Beyond cluster integrity, Thai text needs line-breaking at appropriate
 boundaries since Thai has no spaces between words.
 
-- [ ] Implement Thai-specific line-break rules (subset of UAX #14 / TIS-620):
+- [x] Implement Thai-specific line-break rules (subset of UAX #14 / TIS-620):
   - **Never start a line with**: SARA AM (ำ U+0E33), MAI TA KHU (ๆ U+0E46),
     MAI YAMOK, any Thai combining mark
   - **Never end a line with**: SARA E (เ U+0E40), SARA AE (แ U+0E41),
@@ -118,19 +118,19 @@ boundaries since Thai has no spaces between words.
     SARA AI MAIMALAI (ไ U+0E44) — these are leading vowels
   - **Prefer breaking at**: spaces (of course), between Thai/non-Thai script
     boundaries, after SARA A (า), after tone marks
-- [ ] Add these as `reflowBreakAllowed(cell_before: Cell, cell_after: Cell) bool`
+- [x] Add these as `reflowBreakAllowed(cell_before: Cell, cell_after: Cell) bool`
   - Called during the re-wrap phase to decide if a break point is valid
   - If the only valid break at current column is inside a forbidden spot,
     push the entire cluster to the next line (widow protection)
-- [ ] Write test cases:
+- [x] Write test cases:
   - `"ทำดีที่สุด"` at width 3 → must not split ทำ or ดี or ที่ or สุด
   - `"แล้วก็ไป"` at width 4 → valid breaks: แล้ว|ก็ไป / แล้วก็|ไป
   - Mixed Thai/ASCII: `"hello สวัสดี world"` → can break at space boundaries
 
 ### Test plan
 
-- [ ] Unit tests in `grid.zig`: reflow with simple ASCII wrapping
-- [ ] Unit tests in `screen.zig`: writeChar marks wrapped correctly, \n clears it
-- [ ] Unit tests for Thai clusters: cluster detection edge cases
-- [ ] Integration test: simulate terminal output, resize pane, verify text integrity
-- [ ] Fuzz test: random sequence of writes + resizes, assert no panics, no cell corruption
+- [x] Unit tests in `grid.zig`: reflow with simple ASCII wrapping
+- [x] Unit tests in `screen.zig`: writeChar marks wrapped correctly, \n clears it
+- [x] Unit tests for Thai clusters: cluster detection edge cases
+- [x] Integration test: simulate terminal output, resize pane, verify text integrity
+- [x] Fuzz test: random sequence of writes + resizes, assert no panics, no cell corruption
