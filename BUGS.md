@@ -2308,9 +2308,113 @@ Bug #169 found and fixed the same pattern in `Session.init` (lines 46–47), but
 | Severity | Count | Fixed | False Positive | Unresolved |
 |----------|-------|-------|----------------|------------|
 | Critical | 24 | 21 | 3 | **0** |
-| High | 42 | 41 | 1 | **0** |
-| Medium | 60 | 58 | 2 | **0** |
-| Low | 55 | 52 | 3 | **0** |
-| Total | 181 | **172** | **9** | **0** |
+| High | 43 | 41 | 1 | **1** |
+| Medium | 61 | 58 | 2 | **1** |
+| Low | 57 | 52 | 3 | **2** |
+| Total | 185 | **172** | **9** | **4** |
+
+---
+
+## NEW BUGS (2026-06-29 — sixel DoS, Escape in choose-mode, HUP window)
+
+---
+
+### 182. Sixel parser permanently stuck after 16 MiB buffer cap — DoS from missing `.dcs_discard` transition
+**File:** `src/input.zig:440–457`
+**Severity:** HIGH
+**Status:** ❌ UNRESOLVED
+
+```zig
+fn advanceDcsSixel(self: *InputParser, byte: u8) !void {
+    ...
+    // Cap raw sixel data at 16 MiB to prevent runaway memory use.
+    if (self.dcs_buf.items.len < 16 * 1024 * 1024) {
+        try self.dcs_buf.append(self.screen.allocator, byte);
+    }
+    // After cap: byte silently dropped, parser stays in .dcs_sixel
+}
+```
+
+When the 16 MiB cap is reached, incoming bytes are silently dropped but the parser remains in `.dcs_sixel` state. No transition to `.dcs_discard` occurs. All subsequent non-sixel data is consumed as sixel bytes and dropped. The only escape is an ST terminator (`0x1B \` or `0x9C`).
+
+**Impact:** A malicious or misbehaving client that sends a sixel stream with no ST terminator permanently locks the input parser. All keystrokes and terminal output after the cap is hit are silently consumed/dropped.
+
+**Fix:** When the cap is reached, transition to `.dcs_discard` so subsequent bytes are consumed silently until ST arrives. The discarded body bytes are gone forever, but the parser recovers.
+
+---
+
+### 183. Escape key cannot cancel choose mode — InputReader never emits `.special.escape` for bare `0x1B`
+**File:** `src/tty/tty_key.zig:63–66` + `src/choose.zig:101–138`
+**Severity:** MEDIUM
+**Status:** ❌ UNRESOLVED
+
+```zig
+// tty_key.zig:63-66
+fn feedGround(rd: *InputReader, byte: u8) ?Event {
+    ...
+    if (byte == 0x1b) {
+        rd.state = .esc;     // transitions to .esc, returns null — no event emitted
+        return null;
+    }
+```
+
+When the user presses Escape, the terminal sends byte `0x1B`. The InputReader transitions from `.ground` to `.esc` state and returns `null` — no `Key` event is ever generated. The reader stays in `.esc` state waiting for a continuation byte. A lone ESC never reaches `ChooseMode.handleKey`.
+
+The handleKey function at `choose.zig:104` *does* check `k.special.key == .escape`, but the event is never produced by the InputReader.
+
+With the kitty extended keyboard protocol, Escape is sent as `CSI 27 u` (codepoint 27), which `key.zig:143–160` parses as `Key{ .char = .{ .code = 27 } }` — not a `.special.escape`. handleKey doesn't match this either.
+
+**Impact:** Users cannot use Escape to cancel choose mode. Only `q` works. Users who expect standard tmux behaviour (Escape to cancel) are stuck.
+
+**Fix:** Either (a) emit a `.special.escape` event when `0x1B` is seen in ground and the next byte doesn't continue a CSI/SS3 sequence (requires timeout or lookahead), or (b) have `processInput` or the choose-mode handler flush the `.esc` state and emit an Escape event when reader is stuck in `.esc` and another mechanism (e.g. a timer or next ground byte) fires. Alternatively, the kitty parser should map codepoint 27 to `.special.escape`.
+
+---
+
+### 184. HUP re-registration window — data may arrive on pty fd while no poll handler is registered
+**File:** `src/server/server.zig:319–341`
+**Severity:** LOW
+**Status:** ❌ UNRESOLVED
+
+```zig
+} else if (has_hup) {
+    self.loop.removeFd(ev.fd);
+    ...
+    const shell_alive = ... waitpid(...);
+    ...
+    if (!shell_alive) {
+        exited = true;
+    } else {
+        _ = c_usleep(5000);              // 5ms window
+        self.watchPanePty(pane) catch {}; // re-registers fd
+    }
+```
+
+When a HUP arrives and the shell is still alive (e.g. vim/htop just exited, shell holds the slave open), the fd is removed from the poll loop, then re-registered after a 5ms `usleep`. During this window, the pty's kernel buffer can accumulate data from the shell process, but no poll handler is registered to read it. In practice the kernel buffer (typically 4 KB) can absorb this, but a burst of output could exceed the buffer and cause the shell's write to block.
+
+Additionally, if `watchPanePty` encounters an error (caught by `catch {}`), the fd is never re-registered, effectively orphaned. The pane's output is permanently lost.
+
+**Impact:** Narrow data-loss window (≤5ms). Practically benign due to kernel buffering, but a design fragility — if `watchPanePty` ever fails silently, the pane is orphaned with no recovery path.
+
+**Fix:** Read any pending data from the pty inside the HUP handler before removing the fd, or defer `removeFd` until after `watchPanePty` succeeds (re-order the operations). Log the error if `watchPanePty` fails so the operator can diagnose orphaned panes.
+
+---
+
+### 185. `renderStatusBar` doesn't truncate long window names — writes past terminal width
+**File:** `src/server/render.zig:498–499`
+**Severity:** LOW
+**Status:** ❌ UNRESOLVED
+
+```zig
+try self.writeBytes(win.name);
+col +|= @intCast(win.name.len);
+```
+
+`renderStatusBar` writes window names directly to the TTY without checking remaining width. The `col` counter is tracked but never compared against `max_len` before each window name write. If the accumulated content (session name + all window names + indices) exceeds `self.sx - 1`, the terminal wraps the line, producing a garbled status bar.
+
+The padding loop at lines 512–514 (`while (col < max_len)`) becomes dead code once `col` overflows, but the damage is already done — content was already emitted.
+
+**Impact:** Purely cosmetic. Users with many windows or long window names (e.g. full file paths as window titles) get a wrapped/truncated status bar. No memory safety issue since `writeBytes` goes to a TTY fd.
+
+**Fix:** Either truncate each window name to `max_len -| col -| suffix_len` before writing (`writeBytes(win.name[0..@min(win.name.len, remaining)])`), or skip remaining windows once `col >= max_len`.
 
 
