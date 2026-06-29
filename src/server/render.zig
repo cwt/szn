@@ -465,14 +465,14 @@ pub const Display = struct {
             const prompt = ":: ";
             try self.writeBytes(prompt);
             col += prompt.len;
-            const max_len = self.sx -| 1;
+            const max_len = self.sx;
             const display_len = @min(command_buf.len, max_len -| col);
             if (display_len > 0) {
                 try self.writeBytes(command_buf[0..display_len]);
                 col += display_len;
             }
         } else if (message) |msg| {
-            const max_len = self.sx -| 1;
+            const max_len = self.sx;
             const display_len = @min(msg.len, max_len);
             try self.writeBytes(msg[0..display_len]);
             col = display_len;
@@ -495,7 +495,7 @@ pub const Display = struct {
                 try self.writeBytes(win_idx_str);
                 col +|= @intCast(win_idx_str.len);
 
-                const remaining = (self.sx -| 1) -| col;
+                const remaining = (self.sx) -| col;
                 const suffix_len: u32 = if (is_active) 1 else 0;
                 const name_len = @min(win.name.len, remaining -| suffix_len);
                 try self.writeBytes(win.name[0..name_len]);
@@ -512,7 +512,7 @@ pub const Display = struct {
             }
         }
 
-        const max_len = self.sx -| 1;
+        const max_len = self.sx;
         while (col < max_len) : (col += 1) {
             try self.writeBytes(" ");
         }
@@ -668,10 +668,10 @@ test "renderStatusBar truncates long name to fit terminal width — bug #185" {
 
     try display.renderStatusBar("ses", &windows, &win1, Colour.default_(), Colour.default_(), null, false, "", false);
 
-    // Status bar should be exactly sx - 1 = 29 visible chars plus ESC sequences.
+    // Status bar should be exactly sx = 30 visible chars plus ESC sequences.
     // The long name must be truncated so the total emitted content does not
     // exceed 29 visible columns.
-    const max_visible: usize = display.sx - 1;
+    const max_visible: usize = display.sx;
     var visible_cols: u32 = 0;
     var in_esc = false;
     for (capture_buf.items) |ch| {
