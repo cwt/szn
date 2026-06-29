@@ -33,7 +33,7 @@ pub const Cell = packed struct(u128) {
 
     pub fn empty() Cell {
         return .{
-            .char = ' ',
+            .char = 0,
             .attr = .{},
             .fg = Colour.default_(),
             .bg = Colour.default_(),
@@ -316,7 +316,7 @@ pub const Grid = struct {
     pub fn isEmpty(self: *const Grid) bool {
         for (self.lines.items) |*line| {
             for (line.cells.items) |cell| {
-                if (cell.char != ' ') return false;
+                if (cell.char != 0) return false;
             }
         }
         return true;
@@ -466,7 +466,7 @@ pub const Grid = struct {
             }
             var has_content = false;
             for (line.cells.items) |c| {
-                if (c.char != ' ' or c.is_padding or c.comb1 != 0 or c.comb2 != 0) {
+                if (c.char != 0 or c.is_padding or c.comb1 != 0 or c.comb2 != 0) {
                     has_content = true;
                     break;
                 }
@@ -501,10 +501,10 @@ pub const Grid = struct {
                     &self.lines.items[line_idx - self.history.items.len];
 
                 var cells_to_add = line.cells.items;
-                // Trim trailing empties from all lines to remove padding
+                // Trim trailing unwritten cells from all lines to remove padding
                 while (cells_to_add.len > 0) {
                     const last = cells_to_add[cells_to_add.len - 1];
-                    if (last.char == ' ' and !last.is_padding and last.comb1 == 0 and last.comb2 == 0) {
+                    if (last.char == 0) {
                         cells_to_add = cells_to_add[0 .. cells_to_add.len - 1];
                     } else break;
                 }
@@ -516,10 +516,10 @@ pub const Grid = struct {
             }
             idx = line_idx;
 
-            // Final trim of trailing empties
+            // Final trim of trailing unwritten cells
             while (flat_buf.items.len > 0) {
                 const last = flat_buf.items[flat_buf.items.len - 1];
-                if (last.char == ' ' and !last.is_padding and last.comb1 == 0 and last.comb2 == 0) {
+                if (last.char == 0) {
                     _ = flat_buf.pop();
                 } else break;
             }
@@ -628,15 +628,15 @@ test "read empty cell returns space" {
     defer grid.deinit();
 
     const cell = grid.getCell(40, 12);
-    try testing.expectEqual(@as(u21, ' '), cell.char);
+    try testing.expectEqual(@as(u21, 0), cell.char);
 }
 
 test "out of bounds get returns empty" {
     var grid = try Grid.init(testing.allocator, 80, 24);
     defer grid.deinit();
 
-    try testing.expectEqual(@as(u21, ' '), grid.getCell(999, 0).char);
-    try testing.expectEqual(@as(u21, ' '), grid.getCell(0, 999).char);
+    try testing.expectEqual(@as(u21, 0), grid.getCell(999, 0).char);
+    try testing.expectEqual(@as(u21, 0), grid.getCell(0, 999).char);
 }
 
 test "out of bounds set is no-op" {
@@ -699,7 +699,7 @@ test "clear line" {
     try testing.expectEqual(@as(u21, 'X'), grid.getCell(10, 5).char);
 
     grid.clearLine(5);
-    try testing.expectEqual(@as(u21, ' '), grid.getCell(10, 5).char);
+    try testing.expectEqual(@as(u21, 0), grid.getCell(10, 5).char);
 }
 
 test "clear area" {
@@ -715,8 +715,8 @@ test "clear area" {
     grid.clearArea(2, 2, 7, 7);
 
     try testing.expectEqual(@as(u21, '#'), grid.getCell(1, 1).char);
-    try testing.expectEqual(@as(u21, ' '), grid.getCell(2, 2).char);
-    try testing.expectEqual(@as(u21, ' '), grid.getCell(7, 7).char);
+    try testing.expectEqual(@as(u21, 0), grid.getCell(2, 2).char);
+    try testing.expectEqual(@as(u21, 0), grid.getCell(7, 7).char);
     try testing.expectEqual(@as(u21, '#'), grid.getCell(8, 8).char);
 }
 
@@ -1046,10 +1046,10 @@ test "setSize reflow preserves empty lines" {
 
     // Verify empty lines are preserved between paragraphs and at the end
     try testing.expectEqual(@as(u21, 'A'), grid.getCell(0, 0).char);
-    try testing.expectEqual(@as(u21, ' '), grid.getCell(0, 1).char);
+    try testing.expectEqual(@as(u21, 0), grid.getCell(0, 1).char);
     try testing.expectEqual(@as(u21, 'B'), grid.getCell(0, 2).char);
-    try testing.expectEqual(@as(u21, ' '), grid.getCell(0, 3).char);
-    try testing.expectEqual(@as(u21, ' '), grid.getCell(0, 4).char);
+    try testing.expectEqual(@as(u21, 0), grid.getCell(0, 3).char);
+    try testing.expectEqual(@as(u21, 0), grid.getCell(0, 4).char);
 
     // Verify the grid size invariant is preserved
     try testing.expectEqual(@as(usize, 5), grid.lines.items.len);
@@ -1100,7 +1100,7 @@ test "setSize reflow Thai look-ahead breaking" {
     try grid.setSize(4, 24);
 
     try testing.expectEqual(0x0E14, grid.getCell(0, 0).char); // ด
-    try testing.expectEqual(@as(u21, ' '), grid.getCell(1, 0).char); // space (empty/padded)
+    try testing.expectEqual(@as(u21, 0), grid.getCell(1, 0).char); // space (empty/padded)
 
     // Line 1 should be "เที่ยว"
     try testing.expectEqual(0x0E40, grid.getCell(0, 1).char); // เ

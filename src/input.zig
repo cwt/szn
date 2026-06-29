@@ -987,7 +987,7 @@ test "EL erase line" {
     try parser.feed("\x1b[K");
     try testing.expectEqual(@as(u21, 'A'), screen.grid.getCell(0, 0).char);
     try testing.expectEqual(@as(u21, 'B'), screen.grid.getCell(1, 0).char);
-    try testing.expectEqual(@as(u21, ' '), screen.grid.getCell(2, 0).char);
+    try testing.expectEqual(@as(u21, 0), screen.grid.getCell(2, 0).char);
 }
 
 test "ED erase display" {
@@ -998,7 +998,7 @@ test "ED erase display" {
     screen.cursor.x = 0;
     screen.cursor.y = 0;
     try parser.feed("\x1b[J");
-    try testing.expectEqual(@as(u21, ' '), screen.grid.getCell(0, 0).char);
+    try testing.expectEqual(@as(u21, 0), screen.grid.getCell(0, 0).char);
 }
 
 test "IL insert lines" {
@@ -1008,8 +1008,8 @@ test "IL insert lines" {
     try screen.writeStr("line1\r\nline2\r\nline3");
     screen.cursor.y = 1;
     try parser.feed("\x1b[2L");
-    try testing.expectEqual(@as(u21, ' '), screen.grid.getCell(0, 1).char);
-    try testing.expectEqual(@as(u21, ' '), screen.grid.getCell(0, 2).char);
+    try testing.expectEqual(@as(u21, 0), screen.grid.getCell(0, 1).char);
+    try testing.expectEqual(@as(u21, 0), screen.grid.getCell(0, 2).char);
     try testing.expectEqual(@as(u21, 'l'), screen.grid.getCell(0, 3).char);
 }
 
@@ -1020,7 +1020,7 @@ test "DL delete lines" {
     try screen.writeStr("line1\r\nline2\r\nline3");
     screen.cursor.y = 1;
     try parser.feed("\x1b[M");
-    try testing.expectEqual(@as(u21, ' '), screen.grid.getCell(0, 4).char);
+    try testing.expectEqual(@as(u21, 0), screen.grid.getCell(0, 4).char);
     try testing.expectEqual(@as(u21, 'l'), screen.grid.getCell(0, 1).char);
 }
 
@@ -1046,7 +1046,7 @@ test "ICH insert chars" {
     try parser.feed("\x1b[@");
     try testing.expectEqual(@as(u21, 'A'), screen.grid.getCell(0, 0).char);
     try testing.expectEqual(@as(u21, 'B'), screen.grid.getCell(1, 0).char);
-    try testing.expectEqual(@as(u21, ' '), screen.grid.getCell(2, 0).char);
+    try testing.expectEqual(@as(u21, 0), screen.grid.getCell(2, 0).char);
     try testing.expectEqual(@as(u21, 'D'), screen.grid.getCell(3, 0).char);
 }
 
@@ -1181,8 +1181,8 @@ test "ECH erase chars" {
     screen.cursor.x = 1;
     try parser.feed("\x1b[2X");
     try testing.expectEqual(@as(u21, 'A'), screen.grid.getCell(0, 0).char);
-    try testing.expectEqual(@as(u21, ' '), screen.grid.getCell(1, 0).char);
-    try testing.expectEqual(@as(u21, ' '), screen.grid.getCell(2, 0).char);
+    try testing.expectEqual(@as(u21, 0), screen.grid.getCell(1, 0).char);
+    try testing.expectEqual(@as(u21, 0), screen.grid.getCell(2, 0).char);
     try testing.expectEqual(@as(u21, 'D'), screen.grid.getCell(3, 0).char);
 }
 
@@ -2128,7 +2128,7 @@ test "partial UTF-8 aborted by ESC — bug #114" {
     try testing.expectEqual(@as(u32, 9), screen.cursor.y);
 
     // No stray '?' (failed UTF-8 replacement) should have been written.
-    try testing.expectEqual(@as(u21, ' '), screen.grid.getCell(5, 10).char);
+    try testing.expectEqual(@as(u21, 0), screen.grid.getCell(5, 10).char);
 }
 
 test "SOS/PM/APC with ESC backslash ST terminator — bug #131" {

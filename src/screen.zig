@@ -153,7 +153,7 @@ pub const Screen = struct {
 
     pub fn eraseCell(self: *const Screen) Cell {
         return .{
-            .char = ' ',
+            .char = 0,
             .attr = .{},
             .fg = Colour.default_(),
             .bg = self.cur_cell.bg,
@@ -984,7 +984,7 @@ test "clear line" {
 
     try screen.writeStr("hello");
     screen.clearLine(0);
-    try testing.expectEqual(@as(u21, ' '), screen.grid.getCell(0, 0).char);
+    try testing.expectEqual(@as(u21, 0), screen.grid.getCell(0, 0).char);
     try testing.expect(screen.dirty);
 }
 
@@ -1048,7 +1048,7 @@ test "control chars are ignored" {
 
     try screen.writeChar(0x01);
     try testing.expectEqual(@as(u32, 0), screen.cursor.x);
-    try testing.expectEqual(@as(u21, ' '), screen.grid.getCell(0, 0).char);
+    try testing.expectEqual(@as(u21, 0), screen.grid.getCell(0, 0).char);
 }
 
 test "cursorUp clamped to top" {
@@ -1088,9 +1088,9 @@ test "eraseLine mode 1 clears from start to cursor" {
     try screen.writeStr("ABCDE");
     screen.cursor.x = 2;
     screen.eraseLine(1);
-    try testing.expectEqual(@as(u21, ' '), screen.grid.getCell(0, 0).char);
-    try testing.expectEqual(@as(u21, ' '), screen.grid.getCell(1, 0).char);
-    try testing.expectEqual(@as(u21, ' '), screen.grid.getCell(2, 0).char);
+    try testing.expectEqual(@as(u21, 0), screen.grid.getCell(0, 0).char);
+    try testing.expectEqual(@as(u21, 0), screen.grid.getCell(1, 0).char);
+    try testing.expectEqual(@as(u21, 0), screen.grid.getCell(2, 0).char);
     try testing.expectEqual(@as(u21, 'D'), screen.grid.getCell(3, 0).char);
 }
 
@@ -1329,7 +1329,7 @@ test "scrollUp and scrollDown respect scroll region" {
     // line 3 cleared (all spaces)
     try testing.expectEqual(@as(u21, '2'), screen.grid.getCell(0, 1).char);
     try testing.expectEqual(@as(u21, '3'), screen.grid.getCell(0, 2).char);
-    try testing.expectEqual(@as(u21, ' '), screen.grid.getCell(0, 3).char);
+    try testing.expectEqual(@as(u21, 0), screen.grid.getCell(0, 3).char);
 
     // Scroll down by 1 line inside region
     try screen.scrollDown(1);
@@ -1342,7 +1342,7 @@ test "scrollUp and scrollDown respect scroll region" {
     // line 1 cleared
     // line 2 gets old line 1 ("222...")
     // line 3 gets old line 2 ("333...")
-    try testing.expectEqual(@as(u21, ' '), screen.grid.getCell(0, 1).char);
+    try testing.expectEqual(@as(u21, 0), screen.grid.getCell(0, 1).char);
     try testing.expectEqual(@as(u21, '2'), screen.grid.getCell(0, 2).char);
     try testing.expectEqual(@as(u21, '3'), screen.grid.getCell(0, 3).char);
 }
@@ -1394,7 +1394,7 @@ test "writeChar: combining char at column 0 is ignored" {
     try screen.writeChar(0x0E48); // combining mark at x=0
     // Cursor should not move, no cell written
     try testing.expectEqual(@as(u32, 0), screen.cursor.x);
-    try testing.expectEqual(@as(u21, ' '), screen.grid.getCell(0, 0).char);
+    try testing.expectEqual(@as(u21, 0), screen.grid.getCell(0, 0).char);
 }
 
 test "writeChar: wide character writes padding cell" {
