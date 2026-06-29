@@ -317,6 +317,8 @@ pub const Server = struct {
                 exited = true;
             };
         } else if (has_hup) {
+            // Read any pending data before the fd leaves the poll set.
+            _ = pane.feedPty() catch {};
             self.loop.removeFd(ev.fd);
             // On Linux the kernel can report POLLHUP when the foreground
             // process group goes empty (e.g. vim/htop just exited) while the
@@ -328,7 +330,6 @@ pub const Server = struct {
                 std.log.info("HUP waitpid(pid={d}) returned {d}, status={d}", .{ pty.pid, rc, status });
                 break :blk rc == 0;
             } else false;
-            _ = pane.feedPty() catch {};
             if (!shell_alive) {
                 std.log.info("pty process exited (HUP)", .{});
                 exited = true;
@@ -337,6 +338,7 @@ pub const Server = struct {
                     extern "c" fn usleep(usec: c_uint) c_int;
                 }.usleep;
                 _ = c_usleep(5000);
+                _ = pane.feedPty() catch {};
                 self.watchPanePty(pane) catch {};
             }
         } else if (has_err) {

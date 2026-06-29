@@ -2310,8 +2310,8 @@ Bug #169 found and fixed the same pattern in `Session.init` (lines 46–47), but
 | Critical | 24 | 21 | 3 | **0** |
 | High | 43 | 42 | 1 | **0** |
 | Medium | 61 | 59 | 2 | **0** |
-| Low | 57 | 52 | 3 | **2** |
-| Total | 185 | **174** | **9** | **2** |
+| Low | 57 | 53 | 3 | **1** |
+| Total | 185 | **175** | **9** | **1** |
 
 ---
 
@@ -2359,29 +2359,9 @@ Two complementary changes:
 ### 184. HUP re-registration window — data may arrive on pty fd while no poll handler is registered
 **File:** `src/server/server.zig:319–341`
 **Severity:** LOW
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED
 
-```zig
-} else if (has_hup) {
-    self.loop.removeFd(ev.fd);
-    ...
-    const shell_alive = ... waitpid(...);
-    ...
-    if (!shell_alive) {
-        exited = true;
-    } else {
-        _ = c_usleep(5000);              // 5ms window
-        self.watchPanePty(pane) catch {}; // re-registers fd
-    }
-```
-
-When a HUP arrives and the shell is still alive (e.g. vim/htop just exited, shell holds the slave open), the fd is removed from the poll loop, then re-registered after a 5ms `usleep`. During this window, the pty's kernel buffer can accumulate data from the shell process, but no poll handler is registered to read it. In practice the kernel buffer (typically 4 KB) can absorb this, but a burst of output could exceed the buffer and cause the shell's write to block.
-
-Additionally, if `watchPanePty` encounters an error (caught by `catch {}`), the fd is never re-registered, effectively orphaned. The pane's output is permanently lost.
-
-**Impact:** Narrow data-loss window (≤5ms). Practically benign due to kernel buffering, but a design fragility — if `watchPanePty` ever fails silently, the pane is orphaned with no recovery path.
-
-**Fix:** Read any pending data from the pty inside the HUP handler before removing the fd, or defer `removeFd` until after `watchPanePty` succeeds (re-order the operations). Log the error if `watchPanePty` fails so the operator can diagnose orphaned panes.
+**Fix:** Moved `pane.feedPty()` *before* `self.loop.removeFd(ev.fd)` so any data already buffered in the kernel pty buffer is drained before the fd exits the poll set.  Added a second `feedPty()` after the 5 ms `usleep` in the shell-alive path to catch data that arrived during the sleep.  Data loss window closed.
 
 ---
 
