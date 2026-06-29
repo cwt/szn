@@ -366,6 +366,16 @@ pub const Grid = struct {
             lines.deinit(allocator);
         }
 
+        if (cells.len == 0) {
+            var line_cells: std.ArrayListUnmanaged(Cell) = .empty;
+            try line_cells.resize(allocator, new_width);
+            @memset(line_cells.items, Cell.empty());
+            var gl = GridLine{ .dirty = true, .wrapped = false };
+            gl.cells = line_cells;
+            try lines.append(allocator, gl);
+            return lines.toOwnedSlice(allocator);
+        }
+
         var i: usize = 0;
         while (i < cells.len) {
             var line_cells: std.ArrayListUnmanaged(Cell) = .empty;
@@ -454,7 +464,6 @@ pub const Grid = struct {
                     _ = flat_buf.pop();
                 } else break;
             }
-            if (flat_buf.items.len == 0) continue;
 
             const copy = try allocator.dupe(Cell, flat_buf.items);
             try logical_flat.append(allocator, copy);
@@ -500,6 +509,17 @@ pub const Grid = struct {
         if (total_len <= height) {
             self.lines = new_lines;
             new_lines = .empty;
+            // Pad self.lines with empty lines to match self.height
+            while (self.lines.items.len < height) {
+                var line_cells: std.ArrayListUnmanaged(Cell) = .empty;
+                try line_cells.resize(allocator, new_width);
+                @memset(line_cells.items, Cell.empty());
+                try self.lines.append(allocator, GridLine{
+                    .cells = line_cells,
+                    .dirty = true,
+                    .wrapped = false,
+                });
+            }
         } else {
             const h_count = total_len - height;
 
@@ -779,13 +799,16 @@ test "setSize reflows content" {
     try testing.expectEqual(@as(u32, 40), grid.width);
 
     // Content is reflowed: all lines (history + visible) are rewrapped.
-    // History A,B,C come first, then visible D,E
-    try testing.expectEqual(@as(u21, 'A'), grid.getCell(0, 0).char);
-    try testing.expectEqual(@as(u21, 'B'), grid.getCell(0, 1).char);
-    try testing.expectEqual(@as(u21, 'C'), grid.getCell(0, 2).char);
-    try testing.expectEqual(@as(u21, 'D'), grid.getCell(0, 3).char);
-    try testing.expectEqual(@as(u21, 'E'), grid.getCell(0, 4).char);
-    try testing.expectEqual(@as(usize, 0), grid.history.items.len);
+    // History A,B,C should remain in history; visible D,E should remain on screen.
+    try testing.expectEqual(@as(u21, 'D'), grid.getCell(0, 0).char);
+    try testing.expectEqual(@as(u21, 'E'), grid.getCell(0, 1).char);
+    try testing.expectEqual(@as(u21, ' '), grid.getCell(0, 2).char);
+    try testing.expectEqual(@as(u21, ' '), grid.getCell(0, 3).char);
+    try testing.expectEqual(@as(u21, ' '), grid.getCell(0, 4).char);
+    try testing.expectEqual(@as(usize, 3), grid.history.items.len);
+    try testing.expectEqual(@as(u21, 'A'), grid.history.items[0].cells.items[0].char);
+    try testing.expectEqual(@as(u21, 'B'), grid.history.items[1].cells.items[0].char);
+    try testing.expectEqual(@as(u21, 'C'), grid.history.items[2].cells.items[0].char);
 }
 
 test "Grid clone" {
@@ -950,3 +973,29 @@ test "setSize reflow wider with multiple logical lines preserves wrapped flags" 
     try testing.expectEqual(@as(u21, '3'), grid.getCell(0, 4).char);
     try testing.expect(!grid.lines.items[4].wrapped);
 }
+
+test "setSize reflow preserves empty lines" {
+    var grid = try Grid.init(testing.allocator, 10, 5);
+    defer grid.deinit();
+
+    // Line 0: text
+    grid.writeChar(0, 0, 'A');
+    // Line 1: empty
+    // Line 2: text
+    grid.writeChar(0, 2, 'B');
+    // Line 3: empty
+    // Line 4: empty
+
+    try grid.setSize(20, 5);
+
+    // Verify empty lines are preserved between paragraphs and at the end
+    try testing.expectEqual(@as(u21, 'A'), grid.getCell(0, 0).char);
+    try testing.expectEqual(@as(u21, ' '), grid.getCell(0, 1).char);
+    try testing.expectEqual(@as(u21, 'B'), grid.getCell(0, 2).char);
+    try testing.expectEqual(@as(u21, ' '), grid.getCell(0, 3).char);
+    try testing.expectEqual(@as(u21, ' '), grid.getCell(0, 4).char);
+
+    // Verify the grid size invariant is preserved
+    try testing.expectEqual(@as(usize, 5), grid.lines.items.len);
+}
+
