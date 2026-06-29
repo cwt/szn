@@ -214,6 +214,8 @@ pub const Screen = struct {
             } else {
                 self.cursor.y += 1;
             }
+            // A newline starts a fresh (non-wrapped) line
+            self.grid.getLineMut(self.cursor.y).wrapped = false;
             self.dirty = true;
             return;
         }
@@ -270,6 +272,7 @@ pub const Screen = struct {
 
         if (width == 2) {
             if (self.mode.line_wrap and self.cursor.x + 2 > self.grid.width) {
+                self.grid.getLineMut(self.cursor.y).wrapped = true;
                 self.cursor.x = 0;
                 if (self.cursor.y + 1 >= self.grid.height) {
                     try self.grid.scrollUp();
@@ -307,6 +310,7 @@ pub const Screen = struct {
 
         if (self.mode.line_wrap) {
             if (self.cursor.x >= self.grid.width) {
+                self.grid.getLineMut(self.cursor.y).wrapped = true;
                 self.cursor.x = 0;
                 if (self.cursor.y + 1 >= self.grid.height) {
                     try self.grid.scrollUp();
@@ -905,6 +909,47 @@ test "line wrapping" {
     try testing.expectEqual(@as(u21, '1'), screen.grid.getCell(0, 0).char);
     try testing.expectEqual(@as(u21, 'A'), screen.grid.getCell(9, 0).char);
     try testing.expectEqual(@as(u21, 'B'), screen.grid.getCell(0, 1).char);
+}
+
+test "auto-wrap marks source line as wrapped" {
+    var screen = try Screen.init(testing.allocator, 5, 10);
+    defer screen.deinit();
+
+    try screen.writeStr("ABCDE");
+    try testing.expect(!screen.grid.getLine(0).wrapped);
+
+    try screen.writeChar('F');
+    try testing.expect(screen.grid.getLine(0).wrapped);
+    try testing.expect(!screen.grid.getLine(1).wrapped);
+}
+
+test "auto-wrap wide char marks source line as wrapped" {
+    var screen = try Screen.init(testing.allocator, 10, 10);
+    defer screen.deinit();
+
+    try screen.writeStr("123456789");
+    try testing.expectEqual(@as(u32, 9), screen.cursor.x);
+    try testing.expect(!screen.grid.getLine(0).wrapped);
+
+    try screen.writeChar(0x4E2D);
+    try testing.expect(screen.grid.getLine(0).wrapped);
+    try testing.expect(!screen.grid.getLine(1).wrapped);
+}
+
+test "auto-wrap followed by newline does not propagate wrapped flag" {
+    var screen = try Screen.init(testing.allocator, 5, 10);
+    defer screen.deinit();
+
+    // Write 6 characters (causes wrap to line 1)
+    try screen.writeStr("ABCDEF");
+    try testing.expect(screen.grid.getLine(0).wrapped);
+    try testing.expect(!screen.grid.getLine(1).wrapped);
+
+    // Send a newline (should terminate the logical line)
+    try screen.writeChar('\n');
+    try testing.expect(screen.grid.getLine(0).wrapped);
+    try testing.expect(!screen.grid.getLine(1).wrapped);
+    try testing.expect(!screen.grid.getLine(2).wrapped);
 }
 
 test "scrolling when full" {

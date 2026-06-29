@@ -1,6 +1,8 @@
 const std = @import("std");
 const testing = std.testing;
 const colour = @import("colour.zig");
+const char_width = @import("char_width.zig");
+const thai = @import("thai.zig");
 const Colour = colour.Colour;
 
 pub const Error = error{OutOfMemory};
@@ -52,6 +54,9 @@ pub const Cell = packed struct(u128) {
 pub const GridLine = struct {
     cells: std.ArrayListUnmanaged(Cell) = .empty,
     dirty: bool = true,
+    /// True when this line is a soft-wrap continuation from the previous line.
+    /// Used by reflow to reconstruct logical lines.
+    wrapped: bool = false,
 
     pub fn deinit(self: *GridLine, allocator: std.mem.Allocator) void {
         self.cells.deinit(allocator);
@@ -127,7 +132,7 @@ pub const Grid = struct {
             copy.lines.deinit(allocator);
         }
         for (self.lines.items) |line| {
-            var new_line = GridLine{ .dirty = line.dirty };
+            var new_line = GridLine{ .dirty = line.dirty, .wrapped = line.wrapped };
             try new_line.cells.appendSlice(allocator, line.cells.items);
             try copy.lines.append(allocator, new_line);
         }
@@ -137,7 +142,7 @@ pub const Grid = struct {
             copy.history.deinit(allocator);
         }
         for (self.history.items) |line| {
-            var new_line = GridLine{ .dirty = line.dirty };
+            var new_line = GridLine{ .dirty = line.dirty, .wrapped = line.wrapped };
             try new_line.cells.appendSlice(allocator, line.cells.items);
             try copy.history.append(allocator, new_line);
         }
@@ -161,25 +166,8 @@ pub const Grid = struct {
     }
 
     pub fn setSize(self: *Grid, new_width: u32, new_height: u32) Error!void {
-        try self.normalize();
-        self.width = new_width;
-        for (self.lines.items) |*line| {
-            const old_len = line.cells.items.len;
-            if (old_len > new_width) {
-                line.cells.shrinkRetainingCapacity(new_width);
-            } else if (old_len < new_width) {
-                try line.cells.resize(self.allocator, new_width);
-                @memset(line.cells.items[old_len..], Cell.empty());
-            }
-        }
-        for (self.history.items) |*line| {
-            const old_len = line.cells.items.len;
-            if (old_len > new_width) {
-                line.cells.shrinkRetainingCapacity(new_width);
-            } else if (old_len < new_width) {
-                try line.cells.resize(self.allocator, new_width);
-                @memset(line.cells.items[old_len..], Cell.empty());
-            }
+        if (new_width != self.width) {
+            try self.reflow(new_width);
         }
         try self.resize(new_height);
     }
@@ -235,6 +223,7 @@ pub const Grid = struct {
         if (y >= self.height) return;
         var line = self.getLineMut(y);
         @memset(line.cells.items, Cell.empty());
+        line.wrapped = false;
         line.dirty = true;
     }
 
@@ -247,6 +236,7 @@ pub const Grid = struct {
         }
         self.getLineMut(y).* = temp;
         @memset(self.getLineMut(y).cells.items, Cell.empty());
+        self.getLineMut(y).wrapped = false;
         self.getLineMut(y).dirty = true;
     }
 
@@ -259,6 +249,7 @@ pub const Grid = struct {
         }
         self.getLineMut(self.height - 1).* = temp;
         @memset(self.getLineMut(self.height - 1).cells.items, Cell.empty());
+        self.getLineMut(self.height - 1).wrapped = false;
         self.getLineMut(self.height - 1).dirty = true;
     }
 
@@ -341,6 +332,193 @@ pub const Grid = struct {
     pub fn clearDirty(self: *Grid) void {
         for (self.lines.items) |*line| {
             line.dirty = false;
+        }
+    }
+
+    /// Returns the index after the last cell in the visual cluster at `start`.
+    /// Handles Thai clusters (leading vowel + base + following vowel + attaching),
+    /// CJK wide char + padding pairs, and regular single cells.
+    fn findClusterEnd(cells: []const Cell, start: usize) usize {
+        const cp = cells[start].char;
+        if (cp == ' ' and cells[start].is_padding) return start + 1;
+        if (thai.isThai(cp)) return thai.findThaiClusterEnd(cells, start);
+        if (char_width.charWidth(cp) == 2) return @min(start + 2, cells.len);
+        return start + 1;
+    }
+
+    /// Returns the display width of a cluster spanning `cells[0..end)`.
+    fn clusterWidth(cells: []const Cell) u32 {
+        var w: u32 = 0;
+        for (cells) |c| {
+            if (c.is_padding) continue;
+            w += if (c.char == ' ') 1 else char_width.charWidth(c.char);
+        }
+        return w;
+    }
+
+    /// Rewrap a flat cell sequence (one logical line) to `new_width`.
+    /// Returns owned slice of GridLine. Lines that wrap to the next physical
+    /// line have wrapped=true; the last line of each rewrapped group is false.
+    fn rewrap(cells: []const Cell, new_width: u32, allocator: std.mem.Allocator) ![]GridLine {
+        var lines: std.ArrayListUnmanaged(GridLine) = .empty;
+        errdefer {
+            for (lines.items) |*l| l.deinit(allocator);
+            lines.deinit(allocator);
+        }
+
+        var i: usize = 0;
+        while (i < cells.len) {
+            var line_cells: std.ArrayListUnmanaged(Cell) = .empty;
+            defer line_cells.deinit(allocator);
+            var line_width: u32 = 0;
+            var did_break = false;
+
+            while (i < cells.len) {
+                const cluster_end = findClusterEnd(cells, i);
+                const cw = clusterWidth(cells[i..cluster_end]);
+                if (line_width > 0 and line_width + cw > new_width) {
+                    did_break = true;
+                    break;
+                }
+                try line_cells.appendSlice(allocator, cells[i..cluster_end]);
+                line_width += cw;
+                i = cluster_end;
+            }
+
+            // Pad to new_width
+            while (line_cells.items.len < new_width) {
+                try line_cells.append(allocator, Cell.empty());
+            }
+
+            var gl = GridLine{ .dirty = true, .wrapped = did_break };
+            try gl.cells.appendSlice(allocator, line_cells.items);
+            try lines.append(allocator, gl);
+        }
+
+        return lines.toOwnedSlice(allocator);
+    }
+
+    /// Reflow the grid content to `new_width`, respecting Thai cluster, CJK
+    /// wide-char, and soft-wrap boundaries. All content (visible + history)
+    /// is reflowed.
+    pub fn reflow(self: *Grid, new_width: u32) !void {
+        if (new_width == self.width) return;
+        if (new_width == 0) return;
+
+        try self.normalize();
+
+        // ── Flatten all lines into logical lines ──
+        var flat_buf: std.ArrayListUnmanaged(Cell) = .empty;
+        defer flat_buf.deinit(self.allocator);
+
+        var logical_flat: std.ArrayListUnmanaged([]Cell) = .empty;
+        defer {
+            for (logical_flat.items) |s| self.allocator.free(s);
+            logical_flat.deinit(self.allocator);
+        }
+
+        const allocator = self.allocator;
+        const total = self.history.items.len + self.lines.items.len;
+        var idx: usize = 0;
+        while (idx < total) {
+            flat_buf.clearRetainingCapacity();
+            var line_idx = idx;
+            while (line_idx < total) : (line_idx += 1) {
+                const line = if (line_idx < self.history.items.len)
+                    &self.history.items[line_idx]
+                else
+                    &self.lines.items[line_idx - self.history.items.len];
+
+                var cells_to_add = line.cells.items;
+                // Trim trailing empties from the last line of a logical line
+                if (!line.wrapped) {
+                    while (cells_to_add.len > 0) {
+                        const last = cells_to_add[cells_to_add.len - 1];
+                        if (last.char == ' ' and !last.is_padding and last.comb1 == 0 and last.comb2 == 0) {
+                            cells_to_add = cells_to_add[0 .. cells_to_add.len - 1];
+                        } else break;
+                    }
+                }
+                try flat_buf.appendSlice(allocator, cells_to_add);
+                if (!line.wrapped) {
+                    line_idx += 1;
+                    break;
+                }
+            }
+            idx = line_idx;
+
+            // Final trim of trailing empties
+            while (flat_buf.items.len > 0) {
+                const last = flat_buf.items[flat_buf.items.len - 1];
+                if (last.char == ' ' and !last.is_padding and last.comb1 == 0 and last.comb2 == 0) {
+                    _ = flat_buf.pop();
+                } else break;
+            }
+            if (flat_buf.items.len == 0) continue;
+
+            const copy = try allocator.dupe(Cell, flat_buf.items);
+            try logical_flat.append(allocator, copy);
+        }
+
+        // ── Save and replace old lines ──
+        var old_lines = self.lines;
+        var old_history = self.history;
+        self.lines = .empty;
+        self.history = .empty;
+
+        // ── Rewrap each logical line and build new line set ──
+        var new_lines: std.ArrayListUnmanaged(GridLine) = .empty;
+        errdefer {
+            for (new_lines.items) |*l| l.deinit(allocator);
+            new_lines.deinit(allocator);
+        }
+
+        for (logical_flat.items) |flat| {
+            const rewrapped = try rewrap(flat, new_width, allocator);
+            // Cells inside rewrapped are owned by the returned GridLines.
+            // We copy the GridLine structs into new_lines — the Cell data
+            // pointers are shared, which is fine because we free only the
+            // outer []GridLine array, not each GridLine's cells.
+            try new_lines.ensureUnusedCapacity(allocator, rewrapped.len);
+            for (rewrapped) |rl| {
+                new_lines.appendAssumeCapacity(rl);
+            }
+            allocator.free(rewrapped);
+        }
+
+        // ── Deinit old lines ──
+        for (old_lines.items) |*l| l.deinit(allocator);
+        old_lines.deinit(allocator);
+        for (old_history.items) |*l| l.deinit(allocator);
+        old_history.deinit(allocator);
+
+        // ── Split result into visible + history ──
+        self.width = new_width;
+
+        const total_len = new_lines.items.len;
+        const height = self.height;
+        if (total_len <= height) {
+            self.lines = new_lines;
+            new_lines = .empty;
+        } else {
+            const h_count = total_len - height;
+
+            // Allocate visible portion (last `height` lines)
+            self.lines.items = try allocator.dupe(GridLine, new_lines.items[h_count..]);
+            self.lines.capacity = @intCast(height);
+            errdefer self.lines.deinit(allocator);
+
+            // Allocate history portion (first `h_count` lines)
+            self.history.items = try allocator.dupe(GridLine, new_lines.items[0..h_count]);
+            self.history.capacity = @intCast(h_count);
+            errdefer self.history.deinit(allocator);
+
+            // Free new_lines backing array.
+            // ArrayListUnmanaged.deinit only frees the []GridLine array, NOT
+            // each GridLine's cell data. Cell data is now owned by
+            // self.lines / self.history via the shallow dupe above.
+            new_lines.deinit(allocator);
+            new_lines = .empty;
         }
     }
 };
@@ -585,22 +763,29 @@ test "write string across grid" {
     }
 }
 
-test "setSize resizes history lines — bug #92" {
+test "setSize reflows content" {
     var grid = try Grid.init(testing.allocator, 80, 5);
     defer grid.deinit();
 
-    // Fill grid and scroll some lines into history
     for (0..5) |i| {
         grid.writeChar(0, @intCast(i), @intCast('A' + i));
     }
     for (0..3) |_| try grid.scrollUp();
-    try testing.expectEqual(@as(usize, 3), grid.history.items.len);
-    try testing.expectEqual(@as(usize, 80), grid.history.items[0].cells.items.len);
 
-    // Resize width to 40 — history lines should be resized too
+    try testing.expectEqual(@as(usize, 3), grid.history.items.len);
+
+    // Resize width to 40 — content should be reflowed, not truncated
     try grid.setSize(40, 5);
     try testing.expectEqual(@as(u32, 40), grid.width);
-    try testing.expectEqual(@as(usize, 40), grid.history.items[0].cells.items.len);
+
+    // Content is reflowed: all lines (history + visible) are rewrapped.
+    // History A,B,C come first, then visible D,E
+    try testing.expectEqual(@as(u21, 'A'), grid.getCell(0, 0).char);
+    try testing.expectEqual(@as(u21, 'B'), grid.getCell(0, 1).char);
+    try testing.expectEqual(@as(u21, 'C'), grid.getCell(0, 2).char);
+    try testing.expectEqual(@as(u21, 'D'), grid.getCell(0, 3).char);
+    try testing.expectEqual(@as(u21, 'E'), grid.getCell(0, 4).char);
+    try testing.expectEqual(@as(usize, 0), grid.history.items.len);
 }
 
 test "Grid clone" {
@@ -629,4 +814,139 @@ test "Grid clone" {
     copy.writeChar(0, 0, 'C');
     try testing.expectEqual(@as(u21, 'C'), copy.getCell(0, 0).char);
     try testing.expectEqual(@as(u21, 'B'), grid.getCell(0, 0).char);
+}
+
+test "setSize reflow narrow-to-wide unwraps content" {
+    var grid = try Grid.init(testing.allocator, 10, 24);
+    defer grid.deinit();
+
+    // Write text at width=10, simulating screen wrapping.
+    var x: u32 = 0;
+    var y: u32 = 0;
+    for ("ABCDEFGHIJKLMNOPQRSTUVWXYZ\n") |ch| {
+        if (ch == '\n') {
+            y += 1;
+            x = 0;
+            continue;
+        }
+        grid.writeChar(x, y, ch);
+        x += 1;
+        if (x >= grid.width) {
+            grid.lines.items[y].wrapped = true;
+            y += 1;
+            x = 0;
+        }
+    }
+    // Second logical line
+    for ("123456789012345\n") |ch| {
+        if (ch == '\n') {
+            y += 1;
+            x = 0;
+            continue;
+        }
+        grid.writeChar(x, y, ch);
+        x += 1;
+        if (x >= grid.width) {
+            grid.lines.items[y].wrapped = true;
+            y += 1;
+            x = 0;
+        }
+    }
+
+    // At width=10: 4 physical lines (2 logical, each wrapping once)
+    try testing.expectEqual(@as(u21, 'A'), grid.getCell(0, 0).char);
+    try testing.expectEqual(@as(u21, 'K'), grid.getCell(0, 1).char);
+    try testing.expectEqual(@as(u21, '1'), grid.getCell(0, 3).char);
+
+    // Widen to 80
+    try grid.setSize(80, 24);
+    try testing.expectEqual(@as(u32, 80), grid.width);
+
+    // Each logical line now fits on one physical line
+    try testing.expectEqual(@as(u21, 'A'), grid.getCell(0, 0).char);
+    try testing.expectEqual(@as(u21, 'Z'), grid.getCell(25, 0).char);
+    try testing.expectEqual(@as(u21, '1'), grid.getCell(0, 1).char);
+    try testing.expectEqual(@as(u21, '5'), grid.getCell(14, 1).char);
+
+    // Each fits on one line — neither should be wrapped
+    try testing.expect(!grid.lines.items[0].wrapped);
+    try testing.expect(!grid.lines.items[1].wrapped);
+}
+
+test "setSize reflow wider preserves wrapped flags on multi-line logical groups" {
+    var grid = try Grid.init(testing.allocator, 5, 24);
+    defer grid.deinit();
+
+    var x: u32 = 0;
+    var y: u32 = 0;
+    for ("ABCDEFGHIJKLMNOPQRSTUVWXYZ\n") |ch| {
+        if (ch == '\n') {
+            y += 1;
+            x = 0;
+            continue;
+        }
+        grid.writeChar(x, y, ch);
+        x += 1;
+        if (x >= grid.width) {
+            grid.lines.items[y].wrapped = true;
+            y += 1;
+            x = 0;
+        }
+    }
+
+    // At width=5: 6 physical lines, 1 logical line
+    // Widen to 15: 2 physical lines
+    try grid.setSize(15, 24);
+
+    // Line 0 (first 15 chars): should wrap to line 1
+    try testing.expectEqual(@as(u21, 'A'), grid.getCell(0, 0).char);
+    try testing.expectEqual(@as(u21, 'O'), grid.getCell(14, 0).char);
+    try testing.expect(grid.lines.items[0].wrapped);
+
+    // Line 1 (remaining 11 chars): end of logical line
+    try testing.expectEqual(@as(u21, 'P'), grid.getCell(0, 1).char);
+    try testing.expectEqual(@as(u21, 'Z'), grid.getCell(10, 1).char);
+    try testing.expect(!grid.lines.items[1].wrapped);
+}
+
+test "setSize reflow wider with multiple logical lines preserves wrapped flags" {
+    var grid = try Grid.init(testing.allocator, 5, 24);
+    defer grid.deinit();
+
+    var x: u32 = 0;
+    var y: u32 = 0;
+    for ("ABCDEFGHIJKLMNOPQRSTUVWXYZ\n12345678901234567890\n") |ch| {
+        if (ch == '\n') {
+            y += 1;
+            x = 0;
+            continue;
+        }
+        grid.writeChar(x, y, ch);
+        x += 1;
+        if (x >= grid.width) {
+            grid.lines.items[y].wrapped = true;
+            y += 1;
+            x = 0;
+        }
+    }
+
+    // At width=5: 10 physical lines, 2 logical lines
+    // Widen to 12: each logical wraps to 3 physical lines
+    try grid.setSize(12, 24);
+
+    // First logical line: ABCDEFGHIJKLMNOPQRSTUVWXYZ (26 chars)
+    // At width=12: ABCDEFGHIJKL (wrapped), MNOPQRSTUVWX (wrapped), YZ (not)
+    try testing.expectEqual(@as(u21, 'A'), grid.getCell(0, 0).char);
+    try testing.expect(grid.lines.items[0].wrapped);
+    try testing.expectEqual(@as(u21, 'M'), grid.getCell(0, 1).char);
+    try testing.expect(grid.lines.items[1].wrapped);
+    try testing.expectEqual(@as(u21, 'Y'), grid.getCell(0, 2).char);
+    try testing.expect(!grid.lines.items[2].wrapped);
+
+    // Second logical line: 12345678901234567890 (20 chars)
+    // At width=12: 123456789012 (wrapped), 34567890 (not wrapped, fits)
+    try testing.expectEqual(@as(u21, '1'), grid.getCell(0, 3).char);
+    try testing.expect(grid.lines.items[3].wrapped);
+    try testing.expectEqual(@as(u21, '3'), grid.getCell(0, 4).char);
+    try testing.expect(!grid.lines.items[4].wrapped);
 }

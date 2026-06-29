@@ -20,27 +20,38 @@ to the new width instead of being truncated.
   line going into history
 - [ ] Regression test: `\n` at col 0 of already-empty line should not toggle wrapped
 
-### Phase 2: Thai cluster detection (easy)
+### Phase 2: Thai cluster detection (done — `src/thai.zig`)
 
 Thai script (U+0E00–U+0E7F) has base consonants and combining marks.
 Clusters must not be split across lines.
 
-- [ ] Add `isThaiCombining(cp: u21) bool` to `char_width.zig`
-  - Marks with General Category `Mn` in Thai range:
+Implemented in `src/thai.zig`:
+
+- [x] `isThai(cp: u21) bool` — range check U+0E00–U+0E7F
+- [x] `isThaiCombining(cp: u21) bool`
+  - Marks with General Category `Mn` in Thai range (16 marks):
     SARA U (◌ุ U+0E38), SARA UU (◌ู), PHINTHU (◌ฺ U+0E3A),
-    MAI HAN-AKAT (◌ั), SARA I (◌ิ), SARA II (◌ี),
-    SARA UE (◌ึ), SARA UEE (◌ื), SARA E (เ◌), SARA AE (แ◌),
-    SARA O (โ◌), SARA AI MAIMUAN (ใ◌), SARA AI MAIMALAI (ไ◌),
+    MAI HAN-AKAT (◌ั U+0E31), SARA I (◌ิ), SARA II (◌ี),
+    SARA UE (◌ึ), SARA UEE (◌ื),
     MAITAIKHU (◌็), MAI EK (◌่), MAI THO (◌้),
     MAI TRI (◌๊), MAI CHATTAWA (◌๋), THANTHAKHAT (◌์),
-    NIKHAHIT (◌ํ), YAMAKKAN (◌๎), FONGMAN (◌๏),
-    SARA AM (กำ U+0E33) — special: decomposes but visually one unit
-  - Also `isThaiBase(cp: u21) bool` for consonants, vowels, tone marks
-    with width 1
-- [ ] Add `findThaiClusterEnd(line: []Cell, start: usize) usize`
-  - From `start` (a Thai base character), walk forward consuming combining marks
-  - Return index after the last combining mark of this cluster
-  - Returns `start + 1` if no marks follow
+    NIKHAHIT (◌ํ), YAMAKKAN (◌๎)
+  - **Not** combining: FONGMAN (U+0E4F, Po punctuation), SARA AM (U+0E33, Lo vowel)
+  - SARA E/AE/O/AI MAIMUAN/AI MAIMALAI (U+0E40–U+0E44) were incorrectly listed
+    as combining in the original spec — they are **leading vowels** (width 1,
+    appear before the base)
+- [x] `isThaiLeadingVowel(cp: u21) bool` — U+0E40–U+0E44 (added; not in original TODO)
+- [x] `isThaiFollowingVowel(cp: u21) bool` — U+0E30, U+0E32, U+0E33, U+0E45
+  (+ U+0E45 LAKKHANGYAO (ๅ) — vowel length marker, acts like SARA AA)
+- [x] `isThaiRightAttaching(cp: u21) bool` — U+0E2F PAIYANNOI (ฯ),
+  U+0E46 MAI YAMOK ( ๆ); these occupy their own cell but are consumed
+  into the preceding cluster so reflow never splits them off
+- [x] `isThaiBase(cp: u21) bool` — Thai, width 1, not combining/leading/following/attaching
+- [x] `findThaiClusterEnd(line: []Cell, start: usize) usize`
+  - Walks: `[leading vowel]`? → `base` → `[following vowel]`? → `[right-attaching marks]*`
+  - Combining marks are stored in `comb1`/`comb2` of the base/following-vowel
+    cell (not as separate cells), so they don't affect the span
+  - Returns start + 1 if start is not a valid cluster start
 
 ### Phase 3: Reflow algorithm — width shrink (hard)
 
