@@ -121,6 +121,7 @@ pub const Display = struct {
         message: ?[]const u8,
         command_mode: bool,
         command_buf: []const u8,
+        pane_in_copy_mode: bool,
     ) Error!void {
         try self.writeBytes("\x1b[?25l");
         try self.writeBytes("\x1b[?2026h");
@@ -167,7 +168,8 @@ pub const Display = struct {
             }
         }
 
-        try drawLayoutBorders(layout_root, 0, 0, merged_w, merged_h, &merged_screen, active_pane, bounds, theme.pane_border_fg, theme.pane_active_border_fg);
+        const mode_border_fg = if (pane_in_copy_mode) Colour.fromIndexed(11) else theme.pane_active_border_fg;
+        try drawLayoutBorders(layout_root, 0, 0, merged_w, merged_h, &merged_screen, active_pane, bounds, theme.pane_border_fg, mode_border_fg);
 
         var active_bounds: ?PaneBounds = null;
         for (bounds) |pb| {
@@ -192,7 +194,7 @@ pub const Display = struct {
 
         try self.renderContent(&merged_screen);
         try self.renderSixelImages(bounds);
-        try self.renderStatusBar(session_name, windows, active_window, theme.status_fg, theme.status_bg, message, command_mode, command_buf);
+        try self.renderStatusBar(session_name, windows, active_window, theme.status_fg, theme.status_bg, message, command_mode, command_buf, pane_in_copy_mode);
 
         if (merged_screen.cursor.visible) {
             try self.moveTo(merged_screen.cursor.x, merged_screen.cursor.y);
@@ -445,12 +447,19 @@ pub const Display = struct {
         try self.writeBytes("\x1b[m");
     }
 
-    fn renderStatusBar(self: Display, session_name: []const u8, windows: []const *Window, active_window: ?*Window, fg: Colour, bg: Colour, message: ?[]const u8, command_mode: bool, command_buf: []const u8) Error!void {
+    fn renderStatusBar(self: Display, session_name: []const u8, windows: []const *Window, active_window: ?*Window, fg: Colour, bg: Colour, message: ?[]const u8, command_mode: bool, command_buf: []const u8, in_copy_mode: bool) Error!void {
         try self.moveTo(0, self.sy -| 1);
-        try self.writeColourFg(fg);
-        try self.writeColourBg(bg);
+
+        try self.writeColourFg(if (in_copy_mode) Colour.fromIndexed(0) else fg);
+        try self.writeColourBg(if (in_copy_mode) Colour.fromIndexed(11) else bg);
 
         var col: u32 = 0;
+
+        if (in_copy_mode and !command_mode and message == null) {
+            const indicator = "[copy-mode] ";
+            try self.writeBytes(indicator);
+            col +|= @as(u32, @intCast(indicator.len));
+        }
 
         if (command_mode) {
             const prompt = ":: ";
@@ -631,7 +640,7 @@ test "renderStatusBar with long window name" {
 
     const windows = [_]*Window{&win1};
 
-    try display.renderStatusBar("my-session", &windows, &win1, Colour.default_(), Colour.default_(), null, false, "");
+    try display.renderStatusBar("my-session", &windows, &win1, Colour.default_(), Colour.default_(), null, false, "", false);
 
     // Verify it renders the long window name successfully
     try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "very_long_window_name_that_previously_would_have_failed") != null);
@@ -674,7 +683,7 @@ test "renderAll cursor visibility hide" {
         .status_bg = Colour.default_(),
         .pane_border_fg = Colour.fromIndexed(8),
         .pane_active_border_fg = Colour.fromIndexed(2),
-    }, null, false, "");
+    }, null, false, "", false);
 
     // Verify the cursor was NOT shown at the end
     const has_show_cursor = std.mem.indexOf(u8, capture_buf.items, "\x1b[?25h") != null;

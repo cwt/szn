@@ -1621,6 +1621,7 @@ pub const Server = struct {
             return;
         };
 
+        const pane_in_copy_mode = pane.screen.copy_mode != null;
         display.renderAll(
             self.allocator,
             bounds.items,
@@ -1638,6 +1639,7 @@ pub const Server = struct {
             self.message,
             self.command_mode,
             self.command_buf.items,
+            pane_in_copy_mode,
         ) catch |err| {
             std.log.warn("render error: {any}", .{err});
             return;
