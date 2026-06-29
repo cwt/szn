@@ -495,8 +495,11 @@ pub const Display = struct {
                 try self.writeBytes(win_idx_str);
                 col +|= @intCast(win_idx_str.len);
 
-                try self.writeBytes(win.name);
-                col +|= @intCast(win.name.len);
+                const remaining = (self.sx -| 1) -| col;
+                const suffix_len: u32 = if (is_active) 1 else 0;
+                const name_len = @min(win.name.len, remaining -| suffix_len);
+                try self.writeBytes(win.name[0..name_len]);
+                col +|= name_len;
 
                 if (suffix.len > 0) {
                     try self.writeBytes(suffix);
@@ -642,8 +645,41 @@ test "renderStatusBar with long window name" {
 
     try display.renderStatusBar("my-session", &windows, &win1, Colour.default_(), Colour.default_(), null, false, "", false);
 
-    // Verify it renders the long window name successfully
     try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "very_long_window_name_that_previously_would_have_failed") != null);
+}
+
+test "renderStatusBar truncates long name to fit terminal width — bug #185" {
+    const allocator = std.testing.allocator;
+    var capture_buf: std.ArrayList(u8) = .empty;
+    defer capture_buf.deinit(allocator);
+
+    const display = Display{
+        .fd = -1,
+        .sx = 30,
+        .sy = 24,
+        .capture = &capture_buf,
+        .capture_allocator = allocator,
+    };
+
+    var win1 = try Window.init(allocator, 1, "abcdefghijklmnopqrstuvwxyz0123456789", 80, 24, null);
+    defer win1.deinit(allocator);
+
+    const windows = [_]*Window{&win1};
+
+    try display.renderStatusBar("ses", &windows, &win1, Colour.default_(), Colour.default_(), null, false, "", false);
+
+    // Status bar should be exactly sx - 1 = 29 visible chars plus ESC sequences.
+    // The long name must be truncated so the total emitted content does not
+    // exceed 29 visible columns.
+    const max_visible: usize = display.sx - 1;
+    var visible_cols: u32 = 0;
+    var in_esc = false;
+    for (capture_buf.items) |ch| {
+        if (ch == 0x1b) { in_esc = true; continue; }
+        if (in_esc) { if (ch == 'm' or ch == 'H') in_esc = false; continue; }
+        visible_cols += 1;
+    }
+    try testing.expect(visible_cols <= max_visible);
 }
 
 test "renderAll cursor visibility hide" {

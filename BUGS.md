@@ -2310,8 +2310,8 @@ Bug #169 found and fixed the same pattern in `Session.init` (lines 46–47), but
 | Critical | 24 | 21 | 3 | **0** |
 | High | 43 | 42 | 1 | **0** |
 | Medium | 61 | 59 | 2 | **0** |
-| Low | 57 | 53 | 3 | **1** |
-| Total | 185 | **175** | **9** | **1** |
+| Low | 57 | 54 | 3 | **0** |
+| Total | 185 | **176** | **9** | **0** |
 
 ---
 
@@ -2368,19 +2368,8 @@ Two complementary changes:
 ### 185. `renderStatusBar` doesn't truncate long window names — writes past terminal width
 **File:** `src/server/render.zig:498–499`
 **Severity:** LOW
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED
 
-```zig
-try self.writeBytes(win.name);
-col +|= @intCast(win.name.len);
-```
-
-`renderStatusBar` writes window names directly to the TTY without checking remaining width. The `col` counter is tracked but never compared against `max_len` before each window name write. If the accumulated content (session name + all window names + indices) exceeds `self.sx - 1`, the terminal wraps the line, producing a garbled status bar.
-
-The padding loop at lines 512–514 (`while (col < max_len)`) becomes dead code once `col` overflows, but the damage is already done — content was already emitted.
-
-**Impact:** Purely cosmetic. Users with many windows or long window names (e.g. full file paths as window titles) get a wrapped/truncated status bar. No memory safety issue since `writeBytes` goes to a TTY fd.
-
-**Fix:** Either truncate each window name to `max_len -| col -| suffix_len` before writing (`writeBytes(win.name[0..@min(win.name.len, remaining)])`), or skip remaining windows once `col >= max_len`.
+**Fix:** Truncate each window name to `(sx - 1) -| col -| suffix_len` before writing, so content never exceeds the terminal width.
 
 
