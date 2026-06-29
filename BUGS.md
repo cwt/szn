@@ -2308,10 +2308,10 @@ Bug #169 found and fixed the same pattern in `Session.init` (lines 46–47), but
 | Severity | Count | Fixed | False Positive | Unresolved |
 |----------|-------|-------|----------------|------------|
 | Critical | 24 | 21 | 3 | **0** |
-| High | 43 | 41 | 1 | **1** |
+| High | 43 | 42 | 1 | **0** |
 | Medium | 61 | 58 | 2 | **1** |
 | Low | 57 | 52 | 3 | **2** |
-| Total | 185 | **172** | **9** | **4** |
+| Total | 185 | **173** | **9** | **3** |
 
 ---
 
@@ -2322,7 +2322,7 @@ Bug #169 found and fixed the same pattern in `Session.init` (lines 46–47), but
 ### 182. Sixel parser permanently stuck after 16 MiB buffer cap — DoS from missing `.dcs_discard` transition
 **File:** `src/input.zig:440–457`
 **Severity:** HIGH
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED
 
 ```zig
 fn advanceDcsSixel(self: *InputParser, byte: u8) !void {
@@ -2339,7 +2339,7 @@ When the 16 MiB cap is reached, incoming bytes are silently dropped but the pars
 
 **Impact:** A malicious or misbehaving client that sends a sixel stream with no ST terminator permanently locks the input parser. All keystrokes and terminal output after the cap is hit are silently consumed/dropped.
 
-**Fix:** When the cap is reached, transition to `.dcs_discard` so subsequent bytes are consumed silently until ST arrives. The discarded body bytes are gone forever, but the parser recovers.
+**Fix:** When the cap is reached, transition to `.dcs_discard` so subsequent bytes are consumed silently until ST arrives. The discarded body bytes are gone forever, but the parser recovers. Unit test added: `sixel 16 MiB cap transitions to discard and recovers on ST`.
 
 ---
 
