@@ -1112,4 +1112,3 @@ test "setSize reflow Thai look-ahead breaking" {
     try testing.expectEqual(0x0E44, grid.getCell(0, 2).char); // ไ
     try testing.expectEqual(0x0E1B, grid.getCell(1, 2).char); // ป
 }
-

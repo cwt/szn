@@ -77,13 +77,13 @@ pub const Layout = struct {
         var child_h2 = parent_h;
 
         if (direction == .horizontal) {
-            const usable_w = parent_w -| 1;
-            child_w1 = @max(1, @as(u32, @intFromFloat(@as(f64, @floatFromInt(usable_w)) * proportion)));
-            child_w2 = @max(1, usable_w -| child_w1);
+            const split_w = @max(1, @as(u32, @intFromFloat(@as(f64, @floatFromInt(parent_w)) * proportion)));
+            child_w1 = split_w -| 1;
+            child_w2 = parent_w -| split_w;
         } else {
-            const usable_h = parent_h -| 1;
-            child_h1 = @max(1, @as(u32, @intFromFloat(@as(f64, @floatFromInt(usable_h)) * proportion)));
-            child_h2 = @max(1, usable_h -| child_h1);
+            const split_h = @max(1, @as(u32, @intFromFloat(@as(f64, @floatFromInt(parent_h)) * proportion)));
+            child_h1 = split_h -| 1;
+            child_h2 = parent_h -| split_h;
         }
 
         const new_pane = try a.create(Pane);
