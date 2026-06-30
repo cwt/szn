@@ -157,6 +157,7 @@ pub const Server = struct {
         self.dispatcher.deinit();
         self.global_options.deinit();
         self.global_window_options.deinit();
+        @import("../thai.zig").deinitLibThai();
     }
 
     pub fn shutdownServer(self: *Server) void {
@@ -681,6 +682,9 @@ pub const Server = struct {
                 self.command_mode = true;
                 self.command_buf.clearRetainingCapacity();
                 self.dirty = true;
+            },
+            .reflow_pane => {
+                pane.forceReflow() catch {};
             },
             else => {},
         }

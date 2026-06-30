@@ -422,3 +422,148 @@ test "cellHasMaiHanAkat" {
     c.comb2 = char_width.combiningIndex(0x0E31);
     try testing.expect(cellHasMaiHanAkat(c));
 }
+
+pub const ThBrk = opaque {};
+
+pub const LibThai = struct {
+    dynlib: std.DynLib,
+    th_brk_new: *const fn (?[*]const u8) callconv(.c) ?*ThBrk,
+    th_brk_delete: *const fn (?*ThBrk) callconv(.c) void,
+    th_brk_wc_find_breaks: *const fn (?*ThBrk, [*]const u32, [*]c_int, usize) callconv(.c) c_int,
+    brk: ?*ThBrk,
+};
+
+var libthai_instance: ?LibThai = null;
+var libthai_tried = false;
+
+fn initLibThai() void {
+    const paths = [_][]const u8{
+        "/opt/homebrew/lib/libthai.dylib",
+        "/usr/local/lib/libthai.dylib",
+        "/usr/lib/libthai.dylib",
+        "/usr/lib/libthai.so",
+        "/usr/lib/x86_64-linux-gnu/libthai.so",
+        "/usr/lib/aarch64-linux-gnu/libthai.so",
+        "libthai.so",
+        "libthai.dylib",
+    };
+    for (paths) |path| {
+        var dl = std.DynLib.open(path) catch continue;
+        const th_brk_new = dl.lookup(*const fn (?[*]const u8) callconv(.c) ?*ThBrk, "th_brk_new") orelse {
+            dl.close();
+            continue;
+        };
+        const th_brk_delete = dl.lookup(*const fn (?*ThBrk) callconv(.c) void, "th_brk_delete") orelse {
+            dl.close();
+            continue;
+        };
+        const th_brk_wc_find_breaks = dl.lookup(*const fn (?*ThBrk, [*]const u32, [*]c_int, usize) callconv(.c) c_int, "th_brk_wc_find_breaks") orelse {
+            dl.close();
+            continue;
+        };
+
+        const brk = th_brk_new(null);
+        libthai_instance = LibThai{
+            .dynlib = dl,
+            .th_brk_new = th_brk_new,
+            .th_brk_delete = th_brk_delete,
+            .th_brk_wc_find_breaks = th_brk_wc_find_breaks,
+            .brk = brk,
+        };
+        break;
+    }
+}
+
+pub fn getLibThai() ?*const LibThai {
+    if (!libthai_tried) {
+        libthai_tried = true;
+        initLibThai();
+    }
+    if (libthai_instance) |*inst| return inst;
+    return null;
+}
+
+pub fn deinitLibThai() void {
+    if (libthai_instance) |*inst| {
+        if (inst.brk) |b| inst.th_brk_delete(b);
+        inst.dynlib.close();
+        libthai_instance = null;
+    }
+}
+
+pub fn findWordBreaks(allocator: std.mem.Allocator, cells: []const Cell) ![]usize {
+    const libthai = getLibThai() orelse return &[_]usize{};
+
+    var codepoints: std.ArrayListUnmanaged(u32) = .empty;
+    defer codepoints.deinit(allocator);
+    var cell_indices: std.ArrayListUnmanaged(usize) = .empty;
+    defer cell_indices.deinit(allocator);
+
+    for (cells, 0..) |c, i| {
+        if (c.char != 0 and !c.is_padding) {
+            try codepoints.append(allocator, c.char);
+            try cell_indices.append(allocator, i);
+            if (c.comb1 != 0) {
+                try codepoints.append(allocator, char_width.combiningCodepoint(c.comb1));
+                try cell_indices.append(allocator, i);
+            }
+            if (c.comb2 != 0) {
+                try codepoints.append(allocator, char_width.combiningCodepoint(c.comb2));
+                try cell_indices.append(allocator, i);
+            }
+        }
+    }
+
+    if (codepoints.items.len == 0) return &[_]usize{};
+
+    const breaks_buf = try allocator.alloc(c_int, codepoints.items.len + 1);
+    defer allocator.free(breaks_buf);
+
+    const num_breaks = libthai.th_brk_wc_find_breaks(
+        libthai.brk,
+        codepoints.items.ptr,
+        breaks_buf.ptr,
+        breaks_buf.len,
+    );
+
+    if (num_breaks <= 0) return &[_]usize{};
+
+    var result: std.ArrayListUnmanaged(usize) = .empty;
+    errdefer result.deinit(allocator);
+
+    var i: usize = 0;
+    while (i < @as(usize, @intCast(num_breaks))) : (i += 1) {
+        const p = @as(usize, @intCast(breaks_buf[i]));
+        if (p == codepoints.items.len) {
+            try result.append(allocator, cells.len);
+        } else if (p < cell_indices.items.len) {
+            try result.append(allocator, cell_indices.items[p]);
+        }
+    }
+
+    return result.toOwnedSlice(allocator);
+}
+
+test "findWordBreaks using libthai if available" {
+    if (getLibThai() == null) return;
+    defer deinitLibThai();
+
+    // "ภาษาไทย"
+    var cells = [_]Cell{
+        Cell.withChar(0x0E20), // ภ
+        Cell.withChar(0x0E32), // า
+        Cell.withChar(0x0E29), // ษ
+        Cell.withChar(0x0E32), // า
+        Cell.withChar(0x0E44), // ไ
+        Cell.withChar(0x0E17), // ท
+        Cell.withChar(0x0E22), // ย
+    };
+
+    const breaks = try findWordBreaks(testing.allocator, &cells);
+    defer testing.allocator.free(breaks);
+
+    // Should break into: ภาษา (end at index 4), ไทย (end at index 7)
+    try testing.expect(breaks.len >= 2);
+    try testing.expectEqual(@as(usize, 4), breaks[0]);
+    try testing.expectEqual(@as(usize, 7), breaks[1]);
+}

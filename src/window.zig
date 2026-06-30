@@ -118,6 +118,11 @@ pub const Pane = struct {
         }
     }
 
+    pub fn forceReflow(self: *Pane) Error!void {
+        try self.screen.forceReflow();
+        self.dirty = true;
+    }
+
     pub fn feedPty(self: *Pane) Error!void {
         const pty = &(self.pty orelse return);
         var buf: [4096]u8 = undefined;

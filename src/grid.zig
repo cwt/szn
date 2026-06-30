@@ -390,6 +390,9 @@ pub const Grid = struct {
             lines.deinit(allocator);
         }
 
+        const word_breaks = try thai.findWordBreaks(allocator, cells);
+        defer allocator.free(word_breaks);
+
         if (cells.len == 0) {
             var line_cells: std.ArrayListUnmanaged(Cell) = .empty;
             try line_cells.resize(allocator, new_width);
@@ -423,6 +426,37 @@ pub const Grid = struct {
                 const cw = clusterWidth(cells[i..cluster_end]);
                 if (line_width > 0 and line_width + cw > new_width) {
                     did_break = true;
+
+                    // If libthai returned word boundaries, use them to break at a valid boundary.
+                    var found_wb: ?usize = null;
+                    if (word_breaks.len > 0) {
+                        for (word_breaks) |wb| {
+                            if (wb > line_start and wb <= i) {
+                                // Only wrap if this boundary borders a Thai character or space adjacent to a Thai word
+                                const is_thai_boundary = blk: {
+                                    if (thai.isThai(cells[wb - 1].char) or (wb < cells.len and thai.isThai(cells[wb].char))) {
+                                        break :blk true;
+                                    }
+                                    if (cells[wb - 1].char == ' ' and wb >= 2 and thai.isThai(cells[wb - 2].char)) {
+                                        break :blk true;
+                                    }
+                                    if (wb < cells.len and cells[wb].char == ' ' and wb + 1 < cells.len and thai.isThai(cells[wb + 1].char)) {
+                                        break :blk true;
+                                    }
+                                    break :blk false;
+                                };
+                                if (is_thai_boundary) {
+                                    found_wb = wb;
+                                }
+                            }
+                        }
+                    }
+
+                    if (found_wb) |wb| {
+                        i = wb;
+                        line_cells.shrinkRetainingCapacity(wb - line_start);
+                        break;
+                    }
 
                     // MAI HAN AKAT rule: if the last added cluster contains MAI HAN AKAT,
                     // we cannot break the line right after it. Backtrack to before that cluster.
@@ -554,7 +588,29 @@ pub const Grid = struct {
         out_cursor_x: ?*u32,
         out_cursor_y: ?*u32,
     ) !void {
-        if (new_width == self.width) return;
+        try self.reflowCursorInternal(new_width, cursor_x, cursor_y, out_cursor_x, out_cursor_y, false);
+    }
+
+    pub fn forceReflowCursor(
+        self: *Grid,
+        cursor_x: ?u32,
+        cursor_y: ?u32,
+        out_cursor_x: ?*u32,
+        out_cursor_y: ?*u32,
+    ) !void {
+        try self.reflowCursorInternal(self.width, cursor_x, cursor_y, out_cursor_x, out_cursor_y, true);
+    }
+
+    fn reflowCursorInternal(
+        self: *Grid,
+        new_width: u32,
+        cursor_x: ?u32,
+        cursor_y: ?u32,
+        out_cursor_x: ?*u32,
+        out_cursor_y: ?*u32,
+        force: bool,
+    ) !void {
+        if (!force and new_width == self.width) return;
         if (new_width == 0) return;
 
         try self.normalize();
@@ -1476,4 +1532,84 @@ test "setSize reflow long number wrapping at comma" {
     try testing.expectEqual(@as(u21, '6'), grid.getCell(1, 1).char);
     try testing.expectEqual(@as(u21, '7'), grid.getCell(2, 1).char);
     try testing.expectEqual(@as(u21, '.'), grid.getCell(3, 1).char);
+}
+
+test "forceReflow at current width" {
+    var grid = try Grid.init(testing.allocator, 11, 5);
+    defer grid.deinit();
+
+    // Write "Value is 534"
+    // Set up standard split:
+    // Line 0: "Value is 53", wrapped = true
+    // Line 1: "4", wrapped = false
+    const text = "Value is 53";
+    for (text, 0..) |c, idx| {
+        grid.writeChar(@intCast(idx), 0, c);
+    }
+    grid.lines.items[0].wrapped = true;
+    grid.writeChar(0, 1, '4');
+
+    // Force reflow at current width (11)
+    try grid.forceReflowCursor(null, null, null, null);
+
+    // After reflow, since "534" is a short number (length 3),
+    // it should be wrapped entirely to line 1 to avoid split:
+    // Line 0 should be "Value is ", padded
+    try testing.expectEqual(@as(u21, 's'), grid.getCell(7, 0).char);
+    try testing.expectEqual(@as(u21, ' '), grid.getCell(8, 0).char);
+    try testing.expectEqual(@as(u21, 0), grid.getCell(9, 0).char);
+
+    // Line 1 should be "534"
+    try testing.expectEqual(@as(u21, '5'), grid.getCell(0, 1).char);
+    try testing.expectEqual(@as(u21, '3'), grid.getCell(1, 1).char);
+    try testing.expectEqual(@as(u21, '4'), grid.getCell(2, 1).char);
+}
+
+test "setSize reflow Thai word breaking via libthai" {
+    if (thai.getLibThai() == null) return;
+    defer thai.deinitLibThai();
+
+    var grid = try Grid.init(testing.allocator, 20, 5);
+    defer grid.deinit();
+
+    // Write "ภาษาไทยง่ายนิดเดียว"
+    grid.writeChar(0, 0, 0x0E20); // ภ
+    grid.writeChar(1, 0, 0x0E32); // า
+    grid.writeChar(2, 0, 0x0E29); // ษ
+    grid.writeChar(3, 0, 0x0E32); // า
+    grid.writeChar(4, 0, 0x0E44); // ไ
+    grid.writeChar(5, 0, 0x0E17); // ท
+    grid.writeChar(6, 0, 0x0E22); // ย
+    grid.writeChar(7, 0, 0x0E07); // ง
+    grid.lines.items[0].cells.items[7].comb1 = char_width.combiningIndex(0x0E48); // ่
+    grid.writeChar(8, 0, 0x0E32); // า
+    grid.writeChar(9, 0, 0x0E22); // ย
+    grid.writeChar(10, 0, 0x0E19); // น
+    grid.lines.items[0].cells.items[10].comb1 = char_width.combiningIndex(0x0E34); // ิ
+    grid.writeChar(11, 0, 0x0E14); // ด
+    grid.writeChar(12, 0, 0x0E40); // เ
+    grid.writeChar(13, 0, 0x0E14); // ด
+    grid.lines.items[0].cells.items[13].comb1 = char_width.combiningIndex(0x0E35); // ี
+    grid.writeChar(14, 0, 0x0E22); // ย
+    grid.writeChar(15, 0, 0x0E27); // ว
+
+    grid.lines.items[0].wrapped = true;
+
+    try grid.setSize(8, 5);
+
+    // Line 0: ภาษาไทย (7 cells)
+    try testing.expectEqual(@as(u21, 0x0E20), grid.getCell(0, 0).char); // ภ
+    try testing.expectEqual(@as(u21, 0x0E22), grid.getCell(6, 0).char); // ย
+    try testing.expectEqual(@as(u21, 0), grid.getCell(7, 0).char); // padding
+
+    // Line 1: ง่าย (3 cells)
+    try testing.expectEqual(@as(u21, 0x0E07), grid.getCell(0, 1).char); // ง
+    try testing.expectEqual(@as(u21, 0x0E22), grid.getCell(2, 1).char); // ย
+    try testing.expectEqual(@as(u21, 0), grid.getCell(3, 1).char); // padding
+
+    // Line 2: นิดเดียว (6 cells)
+    try testing.expectEqual(@as(u21, 0x0E19), grid.getCell(0, 2).char); // น
+    try testing.expectEqual(@as(u21, 0x0E14), grid.getCell(1, 2).char); // ด
+    try testing.expectEqual(@as(u21, 0x0E40), grid.getCell(2, 2).char); // เ
+    try testing.expectEqual(@as(u21, 0x0E27), grid.getCell(5, 2).char); // ว
 }

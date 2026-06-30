@@ -173,6 +173,19 @@ pub const Screen = struct {
         self.cursor.y = @min(cy, height -| 1);
     }
 
+    pub fn forceReflow(self: *Screen) Error!void {
+        var cx = self.cursor.x;
+        var cy = self.cursor.y;
+        try self.grid.forceReflowCursor(self.cursor.x, self.cursor.y, &cx, &cy);
+        if (self.alt_grid) |*g| {
+            var alt_cx = self.cursor.x;
+            var alt_cy = self.cursor.y;
+            try g.forceReflowCursor(self.cursor.x, self.cursor.y, &alt_cx, &alt_cy);
+        }
+        self.cursor.x = @min(cx, self.grid.width -| 1);
+        self.cursor.y = @min(cy, self.grid.height -| 1);
+    }
+
     fn scrollUpInRegion(self: *Screen) Error!void {
         const top = if (self.scroll_region) |r| r[0] else 0;
         const bottom = if (self.scroll_region) |r| r[1] else self.grid.height - 1;

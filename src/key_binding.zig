@@ -42,6 +42,7 @@ pub const Action = enum(u8) {
     rename_window,
     command_prompt,
     send_prefix,
+    reflow_pane,
 };
 
 pub const Binding = struct {
@@ -210,6 +211,7 @@ pub fn loadDefaults(table: *KeyTable) Error!void {
         .{ .key = Key{ .char = .{ .code = ',', .mod = .{} } }, .action = .rename_window },
         .{ .key = Key{ .char = .{ .code = ':', .mod = .{} } }, .action = .command_prompt },
         .{ .key = Key{ .char = .{ .code = 'o', .mod = .{} } }, .action = .rotate_window },
+        .{ .key = Key{ .char = .{ .code = 'r', .mod = .{} } }, .action = .reflow_pane },
     };
 
     for (defaults) |b| {

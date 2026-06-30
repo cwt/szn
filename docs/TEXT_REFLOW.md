@@ -119,3 +119,17 @@ In addition to linguistic script clustering, `szn` prevents breaking numbers acr
 * **Combining Marks**: Combining diacritical and tone marks are kept with their base consonant cells.
 * **Empty Lines & Paragraph Spacing**: Blank lines between paragraphs (e.g., double newlines) are preserved during reflow.
 * **Lossless Drag Resize**: By distinguishing padding cells (`char = 0`) from typed spaces (`char = ' '`), users can drag-shrink and drag-grow the pane repeatedly without any text degradation.
+
+---
+
+## 8. Forcing Reflow Manually
+
+To optimize performance and maintain compatibility with interactive fullscreen applications (which expect standard character-by-character VT100-style wrapping limits at the right margin), `szn` only executes the full text reflow algorithm automatically during window or pane resize events.
+
+To apply smart wrapping rules retrospectively to stream output (e.g., after displaying a text document with `cat`), users can manually trigger a forced reflow of the current active pane at its current width.
+
+### Key Binding
+* **`Prefix` + `r`** (`Ctrl-b` + `r`) triggers a forced reflow of the active pane.
+
+### Command Mode
+* **`reflow-pane`** (alias **`reflowp`**) forces a reflow on the active pane.

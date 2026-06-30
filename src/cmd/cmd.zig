@@ -990,6 +990,16 @@ fn cmdResizePane(server: *Server, args: []const []const u8) CmdResult {
     return .ok;
 }
 
+fn cmdReflowPane(server: *Server, args: []const []const u8) CmdResult {
+    _ = args;
+    const session = server.activeSession() orelse return .err;
+    const window = session.active_window orelse return .err;
+    const pane = window.active_pane orelse return .err;
+
+    pane.forceReflow() catch return .err;
+    return .ok;
+}
+
 fn cmdBindKey(server: *Server, args: []const []const u8) CmdResult {
     if (args.len < 3) return .err;
     var is_root = false;
@@ -1228,6 +1238,12 @@ pub const commands = struct {
         .description = "Resize the active pane",
         .exec = cmdResizePane,
     };
+    pub const reflow_pane = CmdEntry{
+        .name = "reflow-pane",
+        .alias = "reflowp",
+        .description = "Force reflow of the active pane's content",
+        .exec = cmdReflowPane,
+    };
     pub const bind_key = CmdEntry{
         .name = "bind-key",
         .alias = "bind",
@@ -1442,6 +1458,7 @@ pub fn cmdTable() []const *const CmdEntry {
             &commands.unbind_key,
             &commands.source_file,
             &commands.resize_pane,
+            &commands.reflow_pane,
             &commands.attach_session,
             &commands.switch_client,
             &commands.swap_pane,
@@ -1931,9 +1948,9 @@ test "last-window switches to non-active" {
     try testing.expectEqual(session.windows.items[0], session.active_window.?);
 }
 
-test "cmd table has 47 entries" {
+test "cmd table has 48 entries" {
     const table = cmdTable();
-    try testing.expectEqual(@as(usize, 47), table.len);
+    try testing.expectEqual(@as(usize, 48), table.len);
 }
 
 test "lookup all new commands" {
@@ -1964,6 +1981,7 @@ test "lookup all new commands" {
     try testing.expect(lookup("unbind-key") != null);
     try testing.expect(lookup("source-file") != null);
     try testing.expect(lookup("resize-pane") != null);
+    try testing.expect(lookup("reflow-pane") != null);
     try testing.expect(lookup("attach-session") != null);
     try testing.expect(lookup("switch-client") != null);
     try testing.expect(lookup("move-window") != null);
