@@ -441,6 +441,8 @@ fn initLibThai() void {
         "/opt/homebrew/lib/libthai.dylib",
         "/usr/local/lib/libthai.dylib",
         "/usr/lib/libthai.dylib",
+        "/usr/local/lib64/libthai.so",
+        "/usr/lib64/libthai.so",
         "/usr/lib/libthai.so",
         "/usr/lib/x86_64-linux-gnu/libthai.so",
         "/usr/lib/aarch64-linux-gnu/libthai.so",
