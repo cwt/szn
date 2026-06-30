@@ -1531,8 +1531,8 @@ pub const Server = struct {
                     if (pkt.data.len >= 8) {
                         const new_w = std.mem.readInt(u32, pkt.data[0..4], .little);
                         const new_h = std.mem.readInt(u32, pkt.data[4..8], .little);
-                        self.display_sx = @max(new_w, 80);
-                        self.display_sy = @max(new_h, 24);
+                        self.display_sx = @max(new_w, 2);
+                        self.display_sy = @max(new_h, 2);
                         if (self.activeSession()) |s| {
                             s.resize(self.display_sx, self.display_sy - 1) catch {};
                         }
