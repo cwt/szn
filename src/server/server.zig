@@ -1326,13 +1326,19 @@ pub const Server = struct {
             },
             .split => |s| {
                 if (s.direction == .horizontal) {
-                    const split_w = @max(1, @as(u32, @intFromFloat(@as(f64, @floatFromInt(lw)) * s.proportion)));
-                    try self.collectPaneBounds(s.a, lx, ly, split_w -| 1, lh, result);
-                    try self.collectPaneBounds(s.b, lx + split_w, ly, lw -| split_w, lh, result);
+                    const available_w = lw -| 1;
+                    const split_w = @as(u32, @intFromFloat(@as(f64, @floatFromInt(available_w)) * s.proportion));
+                    const w1 = @max(1, split_w);
+                    const w2 = @max(1, available_w -| w1);
+                    try self.collectPaneBounds(s.a, lx, ly, w1, lh, result);
+                    try self.collectPaneBounds(s.b, lx + w1 + 1, ly, w2, lh, result);
                 } else {
-                    const split_h = @max(1, @as(u32, @intFromFloat(@as(f64, @floatFromInt(lh)) * s.proportion)));
-                    try self.collectPaneBounds(s.a, lx, ly, lw, split_h -| 1, result);
-                    try self.collectPaneBounds(s.b, lx, ly + split_h, lw, lh -| split_h, result);
+                    const available_h = lh -| 1;
+                    const split_h = @as(u32, @intFromFloat(@as(f64, @floatFromInt(available_h)) * s.proportion));
+                    const h1 = @max(1, split_h);
+                    const h2 = @max(1, available_h -| h1);
+                    try self.collectPaneBounds(s.a, lx, ly, lw, h1, result);
+                    try self.collectPaneBounds(s.b, lx, ly + h1 + 1, lw, h2, result);
                 }
             },
         }

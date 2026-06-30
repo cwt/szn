@@ -241,13 +241,19 @@ pub const Window = struct {
                 },
                 .split => |s| {
                     if (s.direction == .horizontal) {
-                        const split_w = @max(1, @as(u32, @intFromFloat(@as(f64, @floatFromInt(frame.lw)) * s.proportion)));
-                        try stack.append(self.allocator, Frame{ .node = s.b, .lw = frame.lw -| split_w, .lh = frame.lh });
-                        try stack.append(self.allocator, Frame{ .node = s.a, .lw = split_w -| 1, .lh = frame.lh });
+                        const available_w = frame.lw -| 1;
+                        const split_w = @as(u32, @intFromFloat(@as(f64, @floatFromInt(available_w)) * s.proportion));
+                        const lw1 = @max(1, split_w);
+                        const lw2 = @max(1, available_w -| lw1);
+                        try stack.append(self.allocator, Frame{ .node = s.b, .lw = lw2, .lh = frame.lh });
+                        try stack.append(self.allocator, Frame{ .node = s.a, .lw = lw1, .lh = frame.lh });
                     } else {
-                        const split_h = @max(1, @as(u32, @intFromFloat(@as(f64, @floatFromInt(frame.lh)) * s.proportion)));
-                        try stack.append(self.allocator, Frame{ .node = s.b, .lw = frame.lw, .lh = frame.lh -| split_h });
-                        try stack.append(self.allocator, Frame{ .node = s.a, .lw = frame.lw, .lh = split_h -| 1 });
+                        const available_h = frame.lh -| 1;
+                        const split_h = @as(u32, @intFromFloat(@as(f64, @floatFromInt(available_h)) * s.proportion));
+                        const lh1 = @max(1, split_h);
+                        const lh2 = @max(1, available_h -| lh1);
+                        try stack.append(self.allocator, Frame{ .node = s.b, .lw = frame.lw, .lh = lh2 });
+                        try stack.append(self.allocator, Frame{ .node = s.a, .lw = frame.lw, .lh = lh1 });
                     }
                 },
             }

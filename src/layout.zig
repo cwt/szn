@@ -77,13 +77,15 @@ pub const Layout = struct {
         var child_h2 = parent_h;
 
         if (direction == .horizontal) {
-            const split_w = @max(1, @as(u32, @intFromFloat(@as(f64, @floatFromInt(parent_w)) * proportion)));
-            child_w1 = split_w -| 1;
-            child_w2 = parent_w -| split_w;
+            const available_w = parent_w -| 1;
+            const split_w = @as(u32, @intFromFloat(@as(f64, @floatFromInt(available_w)) * proportion));
+            child_w1 = @max(1, split_w);
+            child_w2 = @max(1, available_w -| child_w1);
         } else {
-            const split_h = @max(1, @as(u32, @intFromFloat(@as(f64, @floatFromInt(parent_h)) * proportion)));
-            child_h1 = split_h -| 1;
-            child_h2 = parent_h -| split_h;
+            const available_h = parent_h -| 1;
+            const split_h = @as(u32, @intFromFloat(@as(f64, @floatFromInt(available_h)) * proportion));
+            child_h1 = @max(1, split_h);
+            child_h2 = @max(1, available_h -| child_h1);
         }
 
         const new_pane = try a.create(Pane);
@@ -421,4 +423,21 @@ test "countLeaves handles deeply nested layout without stack overflow — bug #1
 
     // Should have depth + 1 leaves (the chain creates a comb layout)
     try testing.expectEqual(@as(usize, depth + 1), layout.countLeaves());
+}
+
+test "split pane horizontal sizes are equal" {
+    const pane1 = try createTestPane(testing.allocator, 0);
+    try pane1.resizeTerminal(61, 24);
+
+    // Initial parent of width 61, height 24
+    var layout = try Layout.init(testing.allocator, pane1, 61, 24);
+    defer layout.deinit();
+
+    // Split horizontally (side-by-side) with 0.5 proportion.
+    // Width 61 - 1 border = 60 available width.
+    // Each child pane should get exactly 30 columns.
+    const pane2 = try layout.splitPane(testing.allocator, pane1, .horizontal, 0.5);
+
+    try testing.expectEqual(@as(u32, 30), pane1.screen.grid.width);
+    try testing.expectEqual(@as(u32, 30), pane2.screen.grid.width);
 }
