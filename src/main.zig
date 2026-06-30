@@ -357,8 +357,8 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
         c.ioctl(stdin_fd, c.T.IOCGWINSZ, &ws) == 0 or
         c.ioctl(std.posix.STDERR_FILENO, c.T.IOCGWINSZ, &ws) == 0)
     {
-        sx = @max(ws.col, 80);
-        sy = @max(ws.row, 24);
+        sx = @max(ws.col, 2);
+        sy = @max(ws.row, 2);
     }
 
     const identify = protocol.Packet.make(.identify_term, "xterm-256color");
@@ -411,8 +411,8 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
             if (c.ioctl(stdout_fd, c.T.IOCGWINSZ, &new_ws) == 0) {
                 if (new_ws.col != ws.col or new_ws.row != ws.row) {
                     ws = new_ws;
-                    sx = @max(ws.col, 80);
-                    sy = @max(ws.row, 24);
+                    sx = @max(ws.col, 2);
+                    sy = @max(ws.row, 2);
                     std.mem.writeInt(u32, resize_buf[0..4], sx, .little);
                     std.mem.writeInt(u32, resize_buf[4..8], sy, .little);
                     const rs_pkt = protocol.Packet.make(.resize, resize_buf[0..8]);
