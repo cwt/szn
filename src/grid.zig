@@ -370,6 +370,10 @@ pub const Grid = struct {
         return w;
     }
 
+    fn isNumberChar(cp: u21) bool {
+        return (cp >= '0' and cp <= '9') or cp == ',' or cp == '.';
+    }
+
     /// Rewrap a flat cell sequence (one logical line) to `new_width`.
     /// Returns owned slice of GridLine. Lines that wrap to the next physical
     /// line have wrapped=true; the last line of each rewrapped group is false.
@@ -435,6 +439,46 @@ pub const Grid = struct {
                         i = last_cluster_start;
                         line_cells.shrinkRetainingCapacity(last_cluster_start - line_start);
                         break;
+                    }
+
+                    // Number breaking rule:
+                    // If we are breaking inside a number (digits, commas, periods),
+                    // check the length of the number.
+                    if (isNumberChar(cells[i - 1].char) and isNumberChar(cells[i].char)) {
+                        var start_idx = i - 1;
+                        while (start_idx > line_start and isNumberChar(cells[start_idx - 1].char)) {
+                            start_idx -= 1;
+                        }
+                        var end_idx = i;
+                        while (end_idx < cells.len and isNumberChar(cells[end_idx].char)) {
+                            end_idx += 1;
+                        }
+                        const num_len = end_idx - start_idx;
+                        if (num_len <= 6) {
+                            if (start_idx > line_start) {
+                                i = start_idx;
+                                line_cells.shrinkRetainingCapacity(start_idx - line_start);
+                                break;
+                            }
+                        } else {
+                            // Long number: search for the last comma on the current line
+                            var comma_idx: ?usize = null;
+                            var scan_idx = i;
+                            while (scan_idx > start_idx) {
+                                scan_idx -= 1;
+                                if (cells[scan_idx].char == ',') {
+                                    comma_idx = scan_idx;
+                                    break;
+                                }
+                            }
+                            if (comma_idx) |ci| {
+                                if (ci + 1 > line_start) {
+                                    i = ci + 1;
+                                    line_cells.shrinkRetainingCapacity(ci + 1 - line_start);
+                                    break;
+                                }
+                            }
+                        }
                     }
 
                     // Look-ahead heuristic: if breaking would leave a single Thai consonant
@@ -1378,4 +1422,58 @@ test "reflow cursor tracking" {
 
     try testing.expectEqual(@as(u32, 4), new_cx);
     try testing.expectEqual(@as(u32, 2), new_cy);
+}
+
+test "setSize reflow number wrapping" {
+    var grid = try Grid.init(testing.allocator, 25, 5);
+    defer grid.deinit();
+
+    // Write "Value is 534 million"
+    // "Value is 5" is 11 chars.
+    // If we resize to width 11, it should wrap before "534".
+    const text = "Value is 534 million";
+    for (text, 0..) |c, idx| {
+        grid.writeChar(@intCast(idx), 0, c);
+    }
+    grid.lines.items[0].wrapped = true;
+
+    try grid.setSize(11, 5);
+
+    // Line 0 should end with space, not '5'
+    try testing.expectEqual(@as(u21, 's'), grid.getCell(7, 0).char);
+    try testing.expectEqual(@as(u21, ' '), grid.getCell(8, 0).char);
+    try testing.expectEqual(@as(u21, 0), grid.getCell(9, 0).char); // padded
+    try testing.expectEqual(@as(u21, 0), grid.getCell(10, 0).char); // padded
+
+    // Line 1 should start with "534"
+    try testing.expectEqual(@as(u21, '5'), grid.getCell(0, 1).char);
+    try testing.expectEqual(@as(u21, '3'), grid.getCell(1, 1).char);
+    try testing.expectEqual(@as(u21, '4'), grid.getCell(2, 1).char);
+}
+
+test "setSize reflow long number wrapping at comma" {
+    var grid = try Grid.init(testing.allocator, 25, 5);
+    defer grid.deinit();
+
+    // "Value: 1,234,567.88"
+    // "Value: 1,234,5" is 15 chars.
+    // If we resize to width 15, it should wrap after the last comma: "Value: 1,234,"
+    const text = "Value: 1,234,567.88";
+    for (text, 0..) |c, idx| {
+        grid.writeChar(@intCast(idx), 0, c);
+    }
+    grid.lines.items[0].wrapped = true;
+
+    try grid.setSize(15, 5);
+
+    // Line 0 should be "Value: 1,234,"
+    try testing.expectEqual(@as(u21, ','), grid.getCell(12, 0).char);
+    try testing.expectEqual(@as(u21, 0), grid.getCell(13, 0).char); // padded
+    try testing.expectEqual(@as(u21, 0), grid.getCell(14, 0).char); // padded
+
+    // Line 1 should be "567.88"
+    try testing.expectEqual(@as(u21, '5'), grid.getCell(0, 1).char);
+    try testing.expectEqual(@as(u21, '6'), grid.getCell(1, 1).char);
+    try testing.expectEqual(@as(u21, '7'), grid.getCell(2, 1).char);
+    try testing.expectEqual(@as(u21, '.'), grid.getCell(3, 1).char);
 }

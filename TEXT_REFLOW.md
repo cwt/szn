@@ -95,7 +95,25 @@ Instead of separate grow and shrink logic, `szn` runs a unified, lossless, three
 
 ---
 
-## 6. Key Edge Cases Solved
+## 6. Number Wrap & Comma-Breaking Heuristics
+
+In addition to linguistic script clustering, `szn` prevents breaking numbers across line boundaries in awkward positions:
+
+### The Short Number Wrapping Rule
+* **The Problem**: Breaking a short number (e.g., splitting "534" into "5" on one line and "34" on the next line) looks terrible and disrupts reading.
+* **The Heuristic**: When a line break falls inside a sequence of number characters (digits, commas, or periods):
+  1. The algorithm scans left and right to determine the total length of the continuous number token.
+  2. If the total length of the number is **6 characters or less**, `szn` backtracks the line break to the start of the number, wrapping the entire number to the next line.
+
+### Comma-Breaking for Long Numbers
+* **The Problem**: For very long numbers (e.g., large financial or scientific values like `1,234,567.88`), keeping the entire number on a single line could leave large empty gaps. However, breaking it at arbitrary points (like right before a decimal point) looks incorrect.
+* **The Heuristic**: If the number exceeds **6 characters**, `szn` looks for the last comma (`,`) that fits on the current line:
+  1. If a comma is found, the wrap boundary backtracks to break right **after the comma** (e.g., breaking `1,234,567.88` into `1,234,` on the first line and `567.88` on the second).
+  2. If no comma is available on the current line, or if the break would fall inside a decimal fraction, standard character-wise wrapping is applied.
+
+---
+
+## 7. Key Edge Cases Solved
 
 * **CJK Double-Width Characters**: CJK cells and their trailing padding cells (`is_padding = true`) are wrapped together to prevent halves from splitting onto separate lines.
 * **Combining Marks**: Combining diacritical and tone marks are kept with their base consonant cells.
