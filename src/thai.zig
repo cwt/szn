@@ -50,12 +50,13 @@ pub fn isThaiLeadingVowel(cp: u21) bool {
 ///
 /// These appear after the base consonant:
 ///   U+0E30  SARA A        ◌ะ
+///   U+0E31  MAI HAN AKAT  ◌ั
 ///   U+0E32  SARA AA       ◌า
 ///   U+0E33  SARA AM       ◌ำ  (precomposed: base + NIKHAHIT)
 ///   U+0E45  LAKKHANGYAO   ๅ   (vowel length marker, extends SARA AA)
 pub fn isThaiFollowingVowel(cp: u21) bool {
     return switch (cp) {
-        0x0E30, 0x0E32, 0x0E33, 0x0E45 => true,
+        0x0E30, 0x0E31, 0x0E32, 0x0E33, 0x0E45 => true,
         else => false,
     };
 }
@@ -88,6 +89,19 @@ pub fn isThaiBase(cp: u21) bool {
         !isThaiFollowingVowel(cp) and
         !isThaiRightAttaching(cp) and
         char_width.charWidth(cp) == 1;
+}
+
+/// Returns true if the cell contains MAI HAN AKAT (U+0E31) either as its main
+/// character or as a combining mark in comb1/comb2.
+pub fn cellHasMaiHanAkat(cell: Cell) bool {
+    if (cell.char == 0x0E31) return true;
+    if (cell.comb1 != 0) {
+        if (cell.comb1 == 0x0E31 or char_width.combiningCodepoint(cell.comb1) == 0x0E31) return true;
+    }
+    if (cell.comb2 != 0) {
+        if (cell.comb2 == 0x0E31 or char_width.combiningCodepoint(cell.comb2) == 0x0E31) return true;
+    }
+    return false;
 }
 
 /// Find the end of a Thai visual cluster starting at position `start`.
@@ -126,8 +140,13 @@ pub fn findThaiClusterEnd(line: []const Cell, start: usize) usize {
         return start + 1;
     }
 
-    // Advance past the base
-    pos += 1;
+    // Check for Ro Han (รร) following the base consonant
+    if (pos + 2 < line.len and line[pos + 1].char == 0x0E23 and line[pos + 2].char == 0x0E23) {
+        pos += 3;
+    } else {
+        // Advance past the base
+        pos += 1;
+    }
     if (pos >= line.len) return pos;
 
     // Check for an optional following vowel
@@ -192,12 +211,12 @@ test "isThaiLeadingVowel: all five" {
     try testing.expect(!isThaiLeadingVowel(0x0E45));
 }
 
-test "isThaiFollowingVowel: all four" {
+test "isThaiFollowingVowel: all five" {
     try testing.expect(isThaiFollowingVowel(0x0E30)); // SARA A
+    try testing.expect(isThaiFollowingVowel(0x0E31)); // MAI HAN AKAT
     try testing.expect(isThaiFollowingVowel(0x0E32)); // SARA AA
     try testing.expect(isThaiFollowingVowel(0x0E33)); // SARA AM
     try testing.expect(isThaiFollowingVowel(0x0E45)); // LAKKHANGYAO
-    try testing.expect(!isThaiFollowingVowel(0x0E31));
     try testing.expect(!isThaiFollowingVowel(0x0E01));
 }
 
@@ -266,6 +285,23 @@ test "findThaiClusterEnd: base + following vowel" {
         Cell.withChar(0x0E32), // SARA AA
     };
     try testing.expectEqual(@as(usize, 2), findThaiClusterEnd(&line, 0));
+}
+
+test "findThaiClusterEnd: base + MAI HAN AKAT (as following vowel)" {
+    var line = [_]Cell{
+        Cell.withChar(0x0E01), // KO KAI
+        Cell.withChar(0x0E31), // MAI HAN AKAT
+    };
+    try testing.expectEqual(@as(usize, 2), findThaiClusterEnd(&line, 0));
+}
+
+test "findThaiClusterEnd: base + Ro Han (รร)" {
+    var line = [_]Cell{
+        Cell.withChar(0x0E01), // KO KAI
+        Cell.withChar(0x0E23), // RO RUA
+        Cell.withChar(0x0E23), // RO RUA
+    };
+    try testing.expectEqual(@as(usize, 3), findThaiClusterEnd(&line, 0));
 }
 
 test "findThaiClusterEnd: leading vowel + base + following vowel" {
@@ -371,4 +407,18 @@ test "findThaiClusterEnd: right-attaching mark at start returns start+1" {
         Cell.withChar(0x0E01), // KO KAI
     };
     try testing.expectEqual(@as(usize, 1), findThaiClusterEnd(&line, 0));
+}
+
+test "cellHasMaiHanAkat" {
+    var c = Cell.empty();
+    try testing.expect(!cellHasMaiHanAkat(c));
+    c.char = 0x0E31;
+    try testing.expect(cellHasMaiHanAkat(c));
+    c.char = 'ส';
+    try testing.expect(!cellHasMaiHanAkat(c));
+    c.comb1 = char_width.combiningIndex(0x0E31);
+    try testing.expect(cellHasMaiHanAkat(c));
+    c.comb1 = 0;
+    c.comb2 = char_width.combiningIndex(0x0E31);
+    try testing.expect(cellHasMaiHanAkat(c));
 }

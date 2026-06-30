@@ -384,11 +384,31 @@ pub const Grid = struct {
             var line_width: u32 = 0;
             var did_break = false;
 
+            var last_cluster_start: usize = i;
+
             while (i < cells.len) {
                 const cluster_end = findClusterEnd(cells, i);
                 const cw = clusterWidth(cells[i..cluster_end]);
                 if (line_width > 0 and line_width + cw > new_width) {
                     did_break = true;
+
+                    // MAI HAN AKAT rule: if the last added cluster contains MAI HAN AKAT,
+                    // we cannot break the line right after it. Backtrack to before that cluster.
+                    var has_mai_han_akat = false;
+                    var k = last_cluster_start;
+                    while (k < i) : (k += 1) {
+                        if (thai.cellHasMaiHanAkat(cells[k])) {
+                            has_mai_han_akat = true;
+                            break;
+                        }
+                    }
+
+                    if (has_mai_han_akat and last_cluster_start > line_start) {
+                        i = last_cluster_start;
+                        line_cells.shrinkRetainingCapacity(last_cluster_start - line_start);
+                        break;
+                    }
+
                     // Look-ahead heuristic: if breaking would leave a single Thai consonant
                     // at the start of the next line, followed immediately by a leading vowel,
                     // backtrack to the start of the word (the leading vowel of the current syllable).
@@ -419,6 +439,7 @@ pub const Grid = struct {
                     }
                     break;
                 }
+                last_cluster_start = i;
                 try line_cells.appendSlice(allocator, cells[i..cluster_end]);
                 line_width += cw;
                 i = cluster_end;
@@ -1111,4 +1132,83 @@ test "setSize reflow Thai look-ahead breaking" {
     // Line 2 should be "ไป"
     try testing.expectEqual(0x0E44, grid.getCell(0, 2).char); // ไ
     try testing.expectEqual(0x0E1B, grid.getCell(1, 2).char); // ป
+}
+
+test "setSize reflow Thai MAI HAN AKAT breaking" {
+    var grid = try Grid.init(testing.allocator, 10, 24);
+    defer grid.deinit();
+
+    // Write "สวัสดี"
+    // ส (0x0E2A)
+    // ว (0x0E27) + ั (0x0E31, comb)
+    // ส (0x0E2A)
+    // ด (0x0E14) + ี (0x0E35, comb)
+    grid.writeChar(0, 0, 0x0E2A); // ส
+    grid.writeChar(1, 0, 0x0E27); // ว
+    grid.lines.items[0].cells.items[1].comb1 = char_width.combiningIndex(0x0E31); // ั
+    grid.writeChar(2, 0, 0x0E2A); // ส
+    grid.writeChar(3, 0, 0x0E14); // ด
+    grid.lines.items[0].cells.items[3].comb1 = char_width.combiningIndex(0x0E35); // ี
+
+    // Simulates soft-wrap of the line
+    grid.lines.items[0].wrapped = true;
+
+    // Resize to width 2
+    // Without MAI HAN AKAT rule, it would fit "สว" (with ั) on line 0, and put "สดี" on line 1.
+    // With the rule, it backtracks before "ว" + "ั", so line 0 only has "ส".
+    // Line 1 gets "วัส" (which fits in width 2).
+    // Line 2 gets "ดี".
+    try grid.setSize(2, 24);
+
+    // Line 0: ส
+    try testing.expectEqual(0x0E2A, grid.getCell(0, 0).char); // ส
+    try testing.expectEqual(@as(u21, 0), grid.getCell(1, 0).char); // empty
+
+    // Line 1: วัส
+    try testing.expectEqual(0x0E27, grid.getCell(0, 1).char); // ว
+    // Check comb mark on ว is still ั
+    try testing.expectEqual(char_width.combiningIndex(0x0E31), grid.getCell(0, 1).comb1);
+    try testing.expectEqual(0x0E2A, grid.getCell(1, 1).char); // ส
+
+    // Line 2: ดี
+    try testing.expectEqual(0x0E14, grid.getCell(0, 2).char); // ด
+    try testing.expectEqual(char_width.combiningIndex(0x0E35), grid.getCell(0, 2).comb1);
+}
+
+test "setSize reflow Thai Ro Han (รร) breaking" {
+    var grid = try Grid.init(testing.allocator, 10, 24);
+    defer grid.deinit();
+
+    // Write "บรรทุก"
+    // บ (0x0E1A)
+    // ร (0x0E23)
+    // ร (0x0E23)
+    // ท (0x0E17) + ุ (0x0E38, comb)
+    // ก (0x0E01)
+    grid.writeChar(0, 0, 0x0E1A); // บ
+    grid.writeChar(1, 0, 0x0E23); // ร
+    grid.writeChar(2, 0, 0x0E23); // ร
+    grid.writeChar(3, 0, 0x0E17); // ท
+    grid.lines.items[0].cells.items[3].comb1 = char_width.combiningIndex(0x0E38); // ุ
+    grid.writeChar(4, 0, 0x0E01); // ก
+
+    // Simulates soft-wrap of the line
+    grid.lines.items[0].wrapped = true;
+
+    // Resize to width 3
+    // Without Ro Han rule, it could break after "บ" or "บร", splitting the "บรร" syllable.
+    // With Ro Han rule, "บ" + "ร" + "ร" is a single cluster of width 3.
+    // Line 0 gets "บรร".
+    // Line 1 gets "ทุก".
+    try grid.setSize(3, 24);
+
+    // Line 0: บรร
+    try testing.expectEqual(0x0E1A, grid.getCell(0, 0).char); // บ
+    try testing.expectEqual(0x0E23, grid.getCell(1, 0).char); // ร
+    try testing.expectEqual(0x0E23, grid.getCell(2, 0).char); // ร
+
+    // Line 1: ทุก
+    try testing.expectEqual(0x0E17, grid.getCell(0, 1).char); // ท
+    try testing.expectEqual(char_width.combiningIndex(0x0E38), grid.getCell(0, 1).comb1); // ุ
+    try testing.expectEqual(0x0E01, grid.getCell(1, 1).char); // ก
 }

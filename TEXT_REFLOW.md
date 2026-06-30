@@ -40,12 +40,14 @@ Splitting a Thai cluster across line boundaries makes the text unreadable and co
 A single Thai character cell is defined as a base consonant that may contain up to two combining marks (stored inside `comb1` and `comb2` of the [Cell](file:///Users/cwt/Projects/szn/src/grid.zig#L25) struct). A cluster spans across a sequence of cells matching this syntax:
 
 ```
-[Leading Vowel]? ➔ Base Consonant ➔ [Following Vowel]? ➔ [Right-Attaching Marks]*
+[Leading Vowel]? ➔ Base Consonant [รร]? ➔ [Following Vowel]? ➔ [Right-Attaching Marks]*
 ```
 
 1. **Leading Vowels** (U+0E40–U+0E44): เ, แ, โ, ใ, ไ (Width 1, placed before the base).
-2. **Base Consonant** (U+0E01–U+0E2E): Width 1.
-3. **Following Vowels** (U+0E30, U+0E32, U+0E33, U+0E45): Width 1.
+2. **Base Consonant** (U+0E01–U+0E2E): Width 1. Can optionally be followed by **Ro Han (รร)** (two consecutive U+0E23 characters), which function as a vowel sound and are consumed as part of the base consonant's cluster to prevent split lines.
+3. **Following Vowels** (U+0E30, U+0E31, U+0E32, U+0E33, U+0E45):
+   * U+0E30 SARA A, U+0E32 SARA AA, U+0E33 SARA AM, U+0E45 LAKKHANGYAO: Width 1.
+   * U+0E31 MAI HAN AKAT: Width 0 (combining mark functionally acting as a following vowel to ensure correct cluster integrity).
 4. **Right-Attaching Marks** (U+0E2F PAIYANNOI ฯ, U+0E46 MAI YAMOK ๆ): Width 1.
 5. **Combining Marks** (SARA U ◌ุ, MAI EK ◌่, SARA I ◌ิ, etc.): Stored directly inside the cell attributes of the base or following vowel, occupying 0 additional cells.
 
