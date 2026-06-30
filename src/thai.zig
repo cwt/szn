@@ -464,7 +464,10 @@ fn initLibThai() void {
             continue;
         };
 
-        const brk = th_brk_new(null);
+        const brk = th_brk_new(null) orelse {
+            dl.close();
+            continue;
+        };
         libthai_instance = LibThai{
             .dynlib = dl,
             .th_brk_new = th_brk_new,
