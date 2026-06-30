@@ -219,10 +219,13 @@ pub const Display = struct {
             .leaf => {},
             .split => |s| {
                 if (s.direction == .horizontal) {
-                    const split_w = @max(1, @as(u32, @intFromFloat(@as(f64, @floatFromInt(lw)) * s.proportion)));
-                    if (split_w > 0 and lx + split_w - 1 < merged_screen.grid.width) {
-                        const border_x = lx + split_w - 1;
+                    const available_w = lw -| 1;
+                    const split_w = @as(u32, @intFromFloat(@as(f64, @floatFromInt(available_w)) * s.proportion));
+                    const w1 = @max(1, split_w);
+                    const w2 = @max(1, available_w -| w1);
+                    const border_x = lx + w1;
 
+                    if (border_x < merged_screen.grid.width) {
                         var y: u32 = ly;
                         while (y < ly + lh) : (y += 1) {
                             if (y >= merged_screen.grid.height) break;
@@ -237,13 +240,16 @@ pub const Display = struct {
                             cell.fg = border_col;
                         }
                     }
-                    try drawLayoutBorders(s.a, lx, ly, split_w -| 1, lh, merged_screen, active_pane, bounds, border_fg, active_border_fg);
-                    try drawLayoutBorders(s.b, lx + split_w, ly, lw -| split_w, lh, merged_screen, active_pane, bounds, border_fg, active_border_fg);
+                    try drawLayoutBorders(s.a, lx, ly, w1, lh, merged_screen, active_pane, bounds, border_fg, active_border_fg);
+                    try drawLayoutBorders(s.b, lx + w1 + 1, ly, w2, lh, merged_screen, active_pane, bounds, border_fg, active_border_fg);
                 } else {
-                    const split_h = @max(1, @as(u32, @intFromFloat(@as(f64, @floatFromInt(lh)) * s.proportion)));
-                    if (split_h > 0 and ly + split_h - 1 < merged_screen.grid.height) {
-                        const border_y = ly + split_h - 1;
+                    const available_h = lh -| 1;
+                    const split_h = @as(u32, @intFromFloat(@as(f64, @floatFromInt(available_h)) * s.proportion));
+                    const h1 = @max(1, split_h);
+                    const h2 = @max(1, available_h -| h1);
+                    const border_y = ly + h1;
 
+                    if (border_y < merged_screen.grid.height) {
                         var x: u32 = lx;
                         while (x < lx + lw) : (x += 1) {
                             if (x >= merged_screen.grid.width) break;
@@ -258,8 +264,8 @@ pub const Display = struct {
                             cell.fg = border_col;
                         }
                     }
-                    try drawLayoutBorders(s.a, lx, ly, lw, split_h -| 1, merged_screen, active_pane, bounds, border_fg, active_border_fg);
-                    try drawLayoutBorders(s.b, lx, ly + split_h, lw, lh -| split_h, merged_screen, active_pane, bounds, border_fg, active_border_fg);
+                    try drawLayoutBorders(s.a, lx, ly, lw, h1, merged_screen, active_pane, bounds, border_fg, active_border_fg);
+                    try drawLayoutBorders(s.b, lx, ly + h1 + 1, lw, h2, merged_screen, active_pane, bounds, border_fg, active_border_fg);
                 }
             },
         }
