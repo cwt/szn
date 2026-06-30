@@ -427,54 +427,6 @@ pub const Grid = struct {
                 if (line_width > 0 and line_width + cw > new_width) {
                     did_break = true;
 
-                    // If libthai returned word boundaries, use them to break at a valid boundary.
-                    var found_wb: ?usize = null;
-                    if (word_breaks.len > 0) {
-                        for (word_breaks) |wb| {
-                            if (wb > line_start and wb <= i) {
-                                // Only wrap if this boundary borders a Thai character or space adjacent to a Thai word
-                                const is_thai_boundary = blk: {
-                                    if (thai.isThai(cells[wb - 1].char) or (wb < cells.len and thai.isThai(cells[wb].char))) {
-                                        break :blk true;
-                                    }
-                                    if (cells[wb - 1].char == ' ' and wb >= 2 and thai.isThai(cells[wb - 2].char)) {
-                                        break :blk true;
-                                    }
-                                    if (wb < cells.len and cells[wb].char == ' ' and wb + 1 < cells.len and thai.isThai(cells[wb + 1].char)) {
-                                        break :blk true;
-                                    }
-                                    break :blk false;
-                                };
-                                if (is_thai_boundary) {
-                                    found_wb = wb;
-                                }
-                            }
-                        }
-                    }
-
-                    if (found_wb) |wb| {
-                        i = wb;
-                        line_cells.shrinkRetainingCapacity(wb - line_start);
-                        break;
-                    }
-
-                    // MAI HAN AKAT rule: if the last added cluster contains MAI HAN AKAT,
-                    // we cannot break the line right after it. Backtrack to before that cluster.
-                    var has_mai_han_akat = false;
-                    var k = last_cluster_start;
-                    while (k < i) : (k += 1) {
-                        if (thai.cellHasMaiHanAkat(cells[k])) {
-                            has_mai_han_akat = true;
-                            break;
-                        }
-                    }
-
-                    if (has_mai_han_akat and last_cluster_start > line_start) {
-                        i = last_cluster_start;
-                        line_cells.shrinkRetainingCapacity(last_cluster_start - line_start);
-                        break;
-                    }
-
                     // Number breaking rule:
                     // If we are breaking inside a number (digits, commas, periods),
                     // check the length of the number.
@@ -513,6 +465,85 @@ pub const Grid = struct {
                                 }
                             }
                         }
+                    }
+
+                    // If libthai returned word boundaries, use them to break at a valid boundary.
+                    var found_wb: ?usize = null;
+                    if (word_breaks.len > 0) {
+                        for (word_breaks) |wb| {
+                            if (wb > line_start and wb <= i) {
+                                // Only wrap if this boundary borders a Thai character or space adjacent to a Thai word
+                                const is_thai_boundary = blk: {
+                                    if (thai.isThai(cells[wb - 1].char) or (wb < cells.len and thai.isThai(cells[wb].char))) {
+                                        break :blk true;
+                                    }
+                                    if (cells[wb - 1].char == ' ' and wb >= 2 and thai.isThai(cells[wb - 2].char)) {
+                                        break :blk true;
+                                    }
+                                    if (wb < cells.len and cells[wb].char == ' ' and wb + 1 < cells.len and thai.isThai(cells[wb + 1].char)) {
+                                        break :blk true;
+                                    }
+                                    break :blk false;
+                                };
+                                if (is_thai_boundary) {
+                                    found_wb = wb;
+                                }
+                            }
+                        }
+                    }
+
+                    // A space character bordering a Thai character is also a valid word boundary.
+                    var space_wb: ?usize = null;
+                    if (cells[i].char == ' ' and !cells[i].is_padding) {
+                        if (i > 0 and thai.isThai(cells[i - 1].char)) {
+                            space_wb = i;
+                        }
+                    } else {
+                        var j = i;
+                        while (j > line_start) {
+                            j -= 1;
+                            if (cells[j].char == ' ' and !cells[j].is_padding) {
+                                const borders_thai = blk: {
+                                    if (j > 0 and thai.isThai(cells[j - 1].char)) break :blk true;
+                                    if (j + 1 < cells.len and thai.isThai(cells[j + 1].char)) break :blk true;
+                                    break :blk false;
+                                };
+                                if (borders_thai) {
+                                    space_wb = j + 1;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    if (space_wb) |wb| {
+                        if (wb <= line_start + 1) {
+                            space_wb = null;
+                        }
+                    }
+
+                    const final_wb = @max(found_wb orelse 0, space_wb orelse 0);
+                    if (final_wb > 0) {
+                        i = final_wb;
+                        line_cells.shrinkRetainingCapacity(final_wb - line_start);
+                        break;
+                    }
+
+                    // MAI HAN AKAT rule: if the last added cluster contains MAI HAN AKAT,
+                    // we cannot break the line right after it. Backtrack to before that cluster.
+                    var has_mai_han_akat = false;
+                    var k = last_cluster_start;
+                    while (k < i) : (k += 1) {
+                        if (thai.cellHasMaiHanAkat(cells[k])) {
+                            has_mai_han_akat = true;
+                            break;
+                        }
+                    }
+
+                    if (has_mai_han_akat and last_cluster_start > line_start) {
+                        i = last_cluster_start;
+                        line_cells.shrinkRetainingCapacity(last_cluster_start - line_start);
+                        break;
                     }
 
                     // Look-ahead heuristic: if breaking would leave a single Thai consonant
@@ -1613,3 +1644,43 @@ test "setSize reflow Thai word breaking via libthai" {
     try testing.expectEqual(@as(u21, 0x0E40), grid.getCell(2, 2).char); // เ
     try testing.expectEqual(@as(u21, 0x0E27), grid.getCell(5, 2).char); // ว
 }
+
+test "setSize reflow Thai word trailing space bug" {
+    if (thai.getLibThai() == null) return;
+    defer thai.deinitLibThai();
+
+    var grid = try Grid.init(testing.allocator, 100, 5);
+    defer grid.deinit();
+
+    const str = "โฆษกกระทรวงการต่างประเทศรัสเซีย อ้างผ่าน";
+    var col: u32 = 0;
+    var utf8 = std.unicode.Utf8View.init(str) catch unreachable;
+    var iter = utf8.iterator();
+    while (iter.nextCodepoint()) |cp| {
+        if (char_width.combiningIndex(cp) != 0) {
+            if (col > 0) {
+                const idx = (grid.start_index) % grid.height;
+                const cell = &grid.lines.items[idx].cells.items[col - 1];
+                if (cell.comb1 == 0) {
+                    cell.comb1 = char_width.combiningIndex(cp);
+                } else if (cell.comb2 == 0) {
+                    cell.comb2 = char_width.combiningIndex(cp);
+                }
+            }
+        } else {
+            grid.writeChar(col, 0, cp);
+            col += 1;
+        }
+    }
+
+    grid.lines.items[0].wrapped = true;
+
+    try grid.setSize(28, 5);
+
+    // Line 0 should end with "รัสเซีย"
+    // Cell 23 should be ร
+    try testing.expectEqual(@as(u21, 0x0E23), grid.getCell(23, 0).char); // ร
+    // Cell 27 should be ย
+    try testing.expectEqual(@as(u21, 0x0E22), grid.getCell(27, 0).char); // ย
+}
+

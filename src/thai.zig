@@ -494,6 +494,7 @@ pub fn deinitLibThai() void {
         inst.dynlib.close();
         libthai_instance = null;
     }
+    libthai_tried = false;
 }
 
 pub fn findWordBreaks(allocator: std.mem.Allocator, cells: []const Cell) ![]usize {
