@@ -161,12 +161,16 @@ pub const Screen = struct {
     }
 
     pub fn resize(self: *Screen, width: u32, height: u32) Error!void {
-        try self.grid.setSize(width, height);
+        var cx = self.cursor.x;
+        var cy = self.cursor.y;
+        try self.grid.setSizeCursor(width, height, self.cursor.x, self.cursor.y, &cx, &cy);
         if (self.alt_grid) |*g| {
-            try g.setSize(width, height);
+            var alt_cx = self.cursor.x;
+            var alt_cy = self.cursor.y;
+            try g.setSizeCursor(width, height, self.cursor.x, self.cursor.y, &alt_cx, &alt_cy);
         }
-        self.cursor.x = @min(self.cursor.x, width -| 1);
-        self.cursor.y = @min(self.cursor.y, height -| 1);
+        self.cursor.x = @min(cx, width -| 1);
+        self.cursor.y = @min(cy, height -| 1);
     }
 
     fn scrollUpInRegion(self: *Screen) Error!void {

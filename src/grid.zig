@@ -63,6 +63,8 @@ pub const GridLine = struct {
     }
 };
 
+pub const CursorPos = struct { line_idx: usize, col_idx: usize };
+
 pub const Grid = struct {
     allocator: std.mem.Allocator,
     width: u32,
@@ -166,8 +168,20 @@ pub const Grid = struct {
     }
 
     pub fn setSize(self: *Grid, new_width: u32, new_height: u32) Error!void {
+        try self.setSizeCursor(new_width, new_height, null, null, null, null);
+    }
+
+    pub fn setSizeCursor(
+        self: *Grid,
+        new_width: u32,
+        new_height: u32,
+        cursor_x: ?u32,
+        cursor_y: ?u32,
+        out_cursor_x: ?*u32,
+        out_cursor_y: ?*u32,
+    ) Error!void {
         if (new_width != self.width) {
-            try self.reflow(new_width);
+            try self.reflowCursor(new_width, cursor_x, cursor_y, out_cursor_x, out_cursor_y);
         }
         try self.resize(new_height);
     }
@@ -359,7 +373,13 @@ pub const Grid = struct {
     /// Rewrap a flat cell sequence (one logical line) to `new_width`.
     /// Returns owned slice of GridLine. Lines that wrap to the next physical
     /// line have wrapped=true; the last line of each rewrapped group is false.
-    fn rewrap(cells: []const Cell, new_width: u32, allocator: std.mem.Allocator) ![]GridLine {
+    fn rewrap(
+        cells: []const Cell,
+        new_width: u32,
+        allocator: std.mem.Allocator,
+        cursor_offset: ?usize,
+        out_cursor_pos: ?*CursorPos,
+    ) ![]GridLine {
         var lines: std.ArrayListUnmanaged(GridLine) = .empty;
         errdefer {
             for (lines.items) |*l| l.deinit(allocator);
@@ -373,6 +393,14 @@ pub const Grid = struct {
             var gl = GridLine{ .dirty = true, .wrapped = false };
             gl.cells = line_cells;
             try lines.append(allocator, gl);
+            if (cursor_offset) |co| {
+                if (co == 0) {
+                    if (out_cursor_pos) |ocp| {
+                        ocp.line_idx = 0;
+                        ocp.col_idx = 0;
+                    }
+                }
+            }
             return lines.toOwnedSlice(allocator);
         }
 
@@ -445,6 +473,15 @@ pub const Grid = struct {
                 i = cluster_end;
             }
 
+            if (cursor_offset) |co| {
+                if (co >= line_start and (co < i or (co == i and i == cells.len))) {
+                    if (out_cursor_pos) |ocp| {
+                        ocp.line_idx = lines.items.len;
+                        ocp.col_idx = co - line_start;
+                    }
+                }
+            }
+
             // Pad to new_width
             while (line_cells.items.len < new_width) {
                 try line_cells.append(allocator, Cell.empty());
@@ -462,6 +499,17 @@ pub const Grid = struct {
     /// wide-char, and soft-wrap boundaries. All content (visible + history)
     /// is reflowed.
     pub fn reflow(self: *Grid, new_width: u32) !void {
+        try self.reflowCursor(new_width, null, null, null, null);
+    }
+
+    pub fn reflowCursor(
+        self: *Grid,
+        new_width: u32,
+        cursor_x: ?u32,
+        cursor_y: ?u32,
+        out_cursor_x: ?*u32,
+        out_cursor_y: ?*u32,
+    ) !void {
         if (new_width == self.width) return;
         if (new_width == 0) return;
 
@@ -498,7 +546,15 @@ pub const Grid = struct {
                 break;
             }
         }
-        const process_limit = if (found_non_empty) last_non_empty + 1 else 0;
+        var process_limit = if (found_non_empty) last_non_empty + 1 else 0;
+        if (cursor_y) |cy| {
+            const cursor_logical_y = cy + self.history.items.len;
+            if (cursor_logical_y < total) {
+                if (process_limit < cursor_logical_y + 1) {
+                    process_limit = cursor_logical_y + 1;
+                }
+            }
+        }
 
         // ── Flatten all lines into logical lines ──
         var flat_buf: std.ArrayListUnmanaged(Cell) = .empty;
@@ -512,9 +568,18 @@ pub const Grid = struct {
 
         const allocator = self.allocator;
         var idx: usize = 0;
+        var cursor_logical_line: ?usize = null;
+        var cursor_offset_in_logical: ?usize = null;
+
         while (idx < process_limit) {
+            const current_logical_idx = logical_flat.items.len;
             flat_buf.clearRetainingCapacity();
             var line_idx = idx;
+
+            var is_cursor_logical_line = false;
+            var cursor_offset_in_this_logical: usize = 0;
+            var current_offset: usize = 0;
+
             while (line_idx < total) : (line_idx += 1) {
                 const line = if (line_idx < self.history.items.len)
                     &self.history.items[line_idx]
@@ -529,7 +594,14 @@ pub const Grid = struct {
                         cells_to_add = cells_to_add[0 .. cells_to_add.len - 1];
                     } else break;
                 }
+
+                if (cursor_y != null and line_idx == cursor_y.? + self.history.items.len) {
+                    is_cursor_logical_line = true;
+                    cursor_offset_in_this_logical = current_offset + @min(cursor_x.?, cells_to_add.len);
+                }
+
                 try flat_buf.appendSlice(allocator, cells_to_add);
+                current_offset += cells_to_add.len;
                 if (!line.wrapped) {
                     line_idx += 1;
                     break;
@@ -543,6 +615,11 @@ pub const Grid = struct {
                 if (last.char == 0) {
                     _ = flat_buf.pop();
                 } else break;
+            }
+
+            if (is_cursor_logical_line) {
+                cursor_logical_line = current_logical_idx;
+                cursor_offset_in_logical = cursor_offset_in_this_logical;
             }
 
             const copy = try allocator.dupe(Cell, flat_buf.items);
@@ -562,12 +639,26 @@ pub const Grid = struct {
             new_lines.deinit(allocator);
         }
 
-        for (logical_flat.items) |flat| {
-            const rewrapped = try rewrap(flat, new_width, allocator);
-            // Cells inside rewrapped are owned by the returned GridLines.
-            // We copy the GridLine structs into new_lines — the Cell data
-            // pointers are shared, which is fine because we free only the
-            // outer []GridLine array, not each GridLine's cells.
+        var new_cursor_logical_line: ?usize = null;
+        var new_cursor_offset_on_line: ?usize = null;
+
+        for (logical_flat.items, 0..) |flat, logical_line_idx| {
+            var rewrap_cursor_pos = CursorPos{ .line_idx = 0, .col_idx = 0 };
+            const has_cursor = (cursor_logical_line != null and cursor_logical_line.? == logical_line_idx);
+
+            const rewrapped = try rewrap(
+                flat,
+                new_width,
+                allocator,
+                if (has_cursor) cursor_offset_in_logical else null,
+                if (has_cursor) &rewrap_cursor_pos else null,
+            );
+
+            if (has_cursor) {
+                new_cursor_logical_line = new_lines.items.len + rewrap_cursor_pos.line_idx;
+                new_cursor_offset_on_line = rewrap_cursor_pos.col_idx;
+            }
+
             try new_lines.ensureUnusedCapacity(allocator, rewrapped.len);
             for (rewrapped) |rl| {
                 new_lines.appendAssumeCapacity(rl);
@@ -613,12 +704,26 @@ pub const Grid = struct {
             self.history.capacity = @intCast(h_count);
             errdefer self.history.deinit(allocator);
 
-            // Free new_lines backing array.
-            // ArrayListUnmanaged.deinit only frees the []GridLine array, NOT
-            // each GridLine's cell data. Cell data is now owned by
-            // self.lines / self.history via the shallow dupe above.
+            // Free new_lines backing array
             new_lines.deinit(allocator);
             new_lines = .empty;
+        }
+
+        if (cursor_x != null and cursor_y != null) {
+            if (new_cursor_logical_line) |ncll| {
+                const h_count = if (total_len > height) total_len - height else 0;
+                if (ncll >= h_count) {
+                    if (out_cursor_y) |ocy| ocy.* = @intCast(ncll - h_count);
+                    if (out_cursor_x) |ocx| ocx.* = @intCast(new_cursor_offset_on_line orelse 0);
+                } else {
+                    // Cursor scrolled into history, clamp to top of visible screen
+                    if (out_cursor_y) |ocy| ocy.* = 0;
+                    if (out_cursor_x) |ocx| ocx.* = 0;
+                }
+            } else {
+                if (out_cursor_y) |ocy| ocy.* = @min(cursor_y.?, height -| 1);
+                if (out_cursor_x) |ocx| ocx.* = @min(cursor_x.?, new_width -| 1);
+            }
         }
     }
 };
@@ -1211,4 +1316,66 @@ test "setSize reflow Thai Ro Han (รร) breaking" {
     try testing.expectEqual(0x0E17, grid.getCell(0, 1).char); // ท
     try testing.expectEqual(char_width.combiningIndex(0x0E38), grid.getCell(0, 1).comb1); // ุ
     try testing.expectEqual(0x0E01, grid.getCell(1, 1).char); // ก
+}
+
+test "reflow cursor tracking" {
+    var grid = try Grid.init(testing.allocator, 10, 5);
+    defer grid.deinit();
+
+    // Write a paragraph that will wrap: "hello world hello world"
+    // Line 0: "hello worl", wrapped = true
+    // Line 1: "d hello wo", wrapped = true
+    // Line 2: "rld", wrapped = false
+    grid.lines.items[0].cells.items[0].char = 'h';
+    grid.lines.items[0].cells.items[1].char = 'e';
+    grid.lines.items[0].cells.items[2].char = 'l';
+    grid.lines.items[0].cells.items[3].char = 'l';
+    grid.lines.items[0].cells.items[4].char = 'o';
+    grid.lines.items[0].cells.items[5].char = ' ';
+    grid.lines.items[0].cells.items[6].char = 'w';
+    grid.lines.items[0].cells.items[7].char = 'o';
+    grid.lines.items[0].cells.items[8].char = 'r';
+    grid.lines.items[0].cells.items[9].char = 'l';
+    grid.lines.items[0].wrapped = true;
+
+    grid.lines.items[1].cells.items[0].char = 'd';
+    grid.lines.items[1].cells.items[1].char = ' ';
+    grid.lines.items[1].cells.items[2].char = 'h';
+    grid.lines.items[1].cells.items[3].char = 'e';
+    grid.lines.items[1].cells.items[4].char = 'l';
+    grid.lines.items[1].cells.items[5].char = 'l';
+    grid.lines.items[1].cells.items[6].char = 'o';
+    grid.lines.items[1].cells.items[7].char = ' ';
+    grid.lines.items[1].cells.items[8].char = 'w';
+    grid.lines.items[1].cells.items[9].char = 'o';
+    grid.lines.items[1].wrapped = true;
+
+    grid.lines.items[2].cells.items[0].char = 'r';
+    grid.lines.items[2].cells.items[1].char = 'l';
+    grid.lines.items[2].cells.items[2].char = 'd';
+    grid.lines.items[2].wrapped = false;
+
+    // Place the cursor at Line 1, Col 4 (char 'l' in "hello").
+    // This is offset 10 ("hello worl") + 4 = 14 in the logical line.
+    const orig_cx: u32 = 4;
+    const orig_cy: u32 = 1;
+
+    // Now resize to width 5.
+    // Logical line is "hello world hello world" (length 23).
+    // Rewrapping to width 5:
+    // Line 0: "hello" (length 5, starts at 0, ends at 5)
+    // Line 1: " worl" (length 5, starts at 5, ends at 10)
+    // Line 2: "d hel" (length 5, starts at 10, ends at 15)
+    // Line 3: "lo wo" (length 5, starts at 15, ends at 20)
+    // Line 4: "rld"   (length 3, starts at 20, ends at 23)
+    // Cursor offset is 14.
+    // Offset 14 falls in Line 2 ("d hel", starts at 10, ends at 15).
+    // Column index is 14 - 10 = 4.
+    // So new cursor should be at Line 2, Col 4.
+    var new_cx: u32 = 0;
+    var new_cy: u32 = 0;
+    try grid.setSizeCursor(5, 5, orig_cx, orig_cy, &new_cx, &new_cy);
+
+    try testing.expectEqual(@as(u32, 4), new_cx);
+    try testing.expectEqual(@as(u32, 2), new_cy);
 }
