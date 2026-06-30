@@ -70,7 +70,7 @@ szn is designed to be lean:
 
 A hyperfine-based benchmark suite is included at [`bench.sh`](bench.sh) for tracking these metrics.
 
-Check out [PROGRESS.md](PROGRESS.md) for the full migration and feature breakdown. Development docs live under [`docs/development/`](docs/development/), and release notes under [`docs/releases/`](docs/releases/).
+Check out [PROGRESS.md](docs/development/PROGRESS.md) for the full migration and feature breakdown. Development docs live under [`docs/development/`](docs/development/), and release notes under [`docs/releases/`](docs/releases/).
 
 ## Building & Installation
 
