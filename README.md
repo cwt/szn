@@ -54,11 +54,11 @@ the two. Less code, fewer surprises, and nothing left over from 1978.
 All core development phases (Phases 0 to 11) are fully implemented and complete. We have a robust, functional Zig terminal multiplexer featuring:
 - High-performance grid engine with arena-allocated session/pane lifecycles.
 - Client-server IPC over Unix sockets.
-- 33+ MVP commands matching standard tmux behavior (including pane resizing, layout splits, and copying/pasting).
+- 47 commands matching standard tmux behavior (including pane resizing, layout splits, paste buffers, clock-mode, and command-prompt).
 - Standard VT100 wrap-pending and Background Color Erase (BCE) support for accurate rendering.
 - Full multi-pane layouts, interactive copy mode, status bars, and config parsing (`.szn.conf`).
-- **Advanced Text Reflow** — automatically rewraps text on pane resizing, respecting CJK characters, combining marks, and Thai cluster integrity (including an $O(1)$ syllable backtracking algorithm). See [TEXT_REFLOW.md](TEXT_REFLOW.md) for full design details.
-- **649 unit and integration tests passing.**
+- **Advanced Text Reflow** — automatically rewraps text on pane resizing, respecting CJK characters, combining marks, and Thai cluster integrity (including an $O(1)$ syllable backtracking algorithm). See [docs/TEXT_REFLOW.md](docs/TEXT_REFLOW.md) for full design details.
+- **722 unit and integration tests passing.**
 
 ### Performance
 
@@ -66,11 +66,11 @@ szn is designed to be lean:
 
 - **Startup:** ~7.5ms from launch to prompt (competitive with tmux's ~8.1ms).
 - **Memory:** ~2 MB RSS idle — roughly half of tmux's ~4 MB.
-- **Binary size:** 604 KB stripped (x86-64 Linux), 488 KB on macOS.
+- **Binary size:** 674 KB stripped (x86-64 Linux), 537 KB on macOS.
 
 A hyperfine-based benchmark suite is included at [`bench.sh`](bench.sh) for tracking these metrics.
 
-Check out [PROGRESS.md](PROGRESS.md) for the full migration and feature breakdown.
+Check out [PROGRESS.md](PROGRESS.md) for the full migration and feature breakdown. Development docs live under [`docs/development/`](docs/development/), and release notes under [`docs/releases/`](docs/releases/).
 
 ## Building & Installation
 

@@ -43,8 +43,9 @@ Target Zig 0.16.0 (latest stable). Use `std.zig` style.
 
 ### Code Organization
 - One type per file, matching the type name (e.g. `Session` → `session.zig`).
-- Subsystems in directories: `tty/`, `server/`, `client/`, `cmd/`, `grid/`, `input/`.
-- `main.zig` at the root.
+- Subsystems in directories: `src/tty/`, `src/server/`, `src/client/`, `src/cmd/`.
+- Core modules at `src/` root: `grid.zig`, `input.zig`, `screen.zig`, `session.zig`, `window.zig`, etc.
+- `src/main.zig` entry point.
 
 ## Design Principles
 
@@ -59,16 +60,9 @@ Target Zig 0.16.0 (latest stable). Use `std.zig` style.
 5. **Don't abstract the terminal.** Hardcode modern behaviour. If a feature
    isn't universal on xterm-256color+ terminals, it doesn't ship.
 
-## Reference Implementation
+## Documentation
 
-The `tmux/` directory contains the original C source. Use it to verify behaviour:
-
-```bash
-# Compare escape sequence handling
-grep -rn "ESC\[" tmux/input.c
-
-# Check option definitions
-grep "\.name" tmux/options-table.c
-```
-
-Never copy C patterns into Zig. Translate intent, not syntax.
+- `docs/TEXT_REFLOW.md` — text reflow design and algorithms
+- `docs/development/` — migration plan, bug tracker, dev lessons
+- `PROGRESS.md` — implementation status tracker
+- `README.md` — project overview and usage
