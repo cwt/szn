@@ -1,0 +1,4 @@
+tmux/
+.zig-cache/
+zig-out/
+*.o
