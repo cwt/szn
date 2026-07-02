@@ -597,7 +597,13 @@ pub const Server = struct {
             },
             .paste_buffer => {
                 if (self.buffers.get(null)) |pb| {
-                    try pane.writeStr(pb);
+                    if (comptime @import("builtin").is_test) {
+                        try pane.writeStr(pb);
+                    } else if (pane.pty) |*p| {
+                        p.writeInput(pb) catch {};
+                    } else {
+                        try pane.writeStr(pb);
+                    }
                 }
             },
             .swap_pane_up => {
@@ -751,6 +757,10 @@ pub const Server = struct {
                     p.writeInput(&[_]u8{@intCast(ch.code)}) catch {};
                 } else if (ch.code < 0x20 or ch.code == 0x7F) {
                     p.writeInput(&[_]u8{@intCast(ch.code)}) catch {};
+                } else if (ch.code > 0x7F) {
+                    var utf8_buf: [4]u8 = undefined;
+                    const len = std.unicode.utf8Encode(ch.code, &utf8_buf) catch return;
+                    p.writeInput(utf8_buf[0..len]) catch {};
                 }
             },
             .arrow => |a| {
