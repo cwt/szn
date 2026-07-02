@@ -592,8 +592,7 @@ pub const Server = struct {
                 }
             },
             .copy_mode => {
-                pane.screen.copy_mode = @import("../mode_copy.zig").CopyMode.init(.vi);
-                pane.screen.copy_mode.?.enter(&pane.screen.grid);
+                pane.enterCopyMode() catch {};
             },
             .paste_buffer => {
                 if (self.buffers.get(null)) |pb| {
@@ -1208,8 +1207,7 @@ pub const Server = struct {
                                     } else {
                                         handled = true;
                                         if (m.button == .scroll_up) {
-                                            active_pane.screen.copy_mode = @import("../mode_copy.zig").CopyMode.init(.vi);
-                                            active_pane.screen.copy_mode.?.enter(&active_pane.screen.grid);
+                                            active_pane.enterCopyMode() catch {};
                                             active_pane.screen.copy_mode.?.scroll_offset = @min(3, @as(u32, @intCast(active_pane.screen.grid.history.items.len)));
                                             active_pane.dirty = true;
                                         }

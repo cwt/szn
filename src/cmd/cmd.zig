@@ -573,9 +573,7 @@ fn cmdCopyMode(server: *Server, args: []const []const u8) CmdResult {
     const session = server.activeSession() orelse return .err;
     const window = session.active_window orelse return .err;
     const pane = window.active_pane orelse return .err;
-    pane.screen.copy_mode = @import("../mode_copy.zig").CopyMode.init(.vi);
-    pane.screen.copy_mode.?.enter(&pane.screen.grid);
-    pane.dirty = true;
+    pane.enterCopyMode() catch return .err;
     return .ok;
 }
 

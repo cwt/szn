@@ -173,6 +173,13 @@ pub const Pane = struct {
         }
     }
 
+    pub fn enterCopyMode(self: *Pane) !void {
+        try self.forceReflow();
+        self.screen.copy_mode = @import("mode_copy.zig").CopyMode.init(.vi);
+        self.screen.copy_mode.?.enter(&self.screen.grid);
+        self.dirty = true;
+    }
+
     pub fn drainPty(self: *Pane) void {
         const pty = self.pty orelse return;
         var pfd: [1]std.posix.pollfd = .{.{
