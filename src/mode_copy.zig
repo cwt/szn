@@ -1,6 +1,7 @@
 const std = @import("std");
 const testing = std.testing;
 const grid_mod = @import("grid.zig");
+const char_width = @import("char_width.zig");
 const Grid = grid_mod.Grid;
 const Cell = grid_mod.Cell;
 const key_mod = @import("key.zig");
@@ -248,6 +249,7 @@ pub const CopyMode = struct {
             var x = line_start;
             while (x <= line_end) : (x += 1) {
                 const cell = self.getCellAtOffset(grid, x, screen_y, self.selection.start_scroll_offset);
+                if (cell.is_padding) continue;
                 if (cell.char != 0 and cell.char != ' ') {
                     var buf: [4]u8 = undefined;
                     const len = std.unicode.utf8Encode(cell.char, &buf) catch {
@@ -255,6 +257,27 @@ pub const CopyMode = struct {
                         continue;
                     };
                     try line_buf.appendSlice(allocator, buf[0..len]);
+
+                    if (cell.comb1 != 0) {
+                        const cp = char_width.combiningCodepoint(cell.comb1);
+                        if (cp != 0) {
+                            var comb_buf: [4]u8 = undefined;
+                            const clen = std.unicode.utf8Encode(cp, &comb_buf) catch 0;
+                            if (clen > 0) {
+                                try line_buf.appendSlice(allocator, comb_buf[0..clen]);
+                            }
+                        }
+                    }
+                    if (cell.comb2 != 0) {
+                        const cp = char_width.combiningCodepoint(cell.comb2);
+                        if (cp != 0) {
+                            var comb_buf: [4]u8 = undefined;
+                            const clen = std.unicode.utf8Encode(cp, &comb_buf) catch 0;
+                            if (clen > 0) {
+                                try line_buf.appendSlice(allocator, comb_buf[0..clen]);
+                            }
+                        }
+                    }
                 } else {
                     try line_buf.append(allocator, ' ');
                 }
@@ -834,6 +857,30 @@ test "yank selection wrapped lines merges lines and trims right spaces" {
     const result = try cm.yankSelection(testing.allocator, &g);
     defer testing.allocator.free(result);
     try testing.expectEqualStrings("hello world", result);
+}
+
+test "yank selection includes combining characters" {
+    var cm = CopyMode.init(.vi);
+    var g = try Grid.init(testing.allocator, 10, 3);
+    defer g.deinit();
+
+    // Write base char 'อ' (0x0E2D)
+    g.writeChar(0, 0, 0x0E2D);
+    // Write combining sara i 'ิ' (0x0E34) in comb1
+    g.lines.items[0].cells.items[0].comb1 = char_width.combiningIndex(0x0E34);
+
+    cm.selection = .{
+        .start_x = 0,
+        .start_y = 0,
+        .end_x = 0,
+        .end_y = 0,
+        .active = true,
+    };
+
+    const result = try cm.yankSelection(testing.allocator, &g);
+    defer testing.allocator.free(result);
+    // Expected UTF-8: "อิ" (0x0E2D followed by 0x0E34)
+    try testing.expectEqualStrings("\xe0\xb8\xad\xe0\xb8\xb4", result);
 }
 
 test "yank empty selection" {
