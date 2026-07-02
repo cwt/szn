@@ -47,19 +47,41 @@ pub const Layout = struct {
         self.allocator.destroy(self.root);
     }
 
-    fn deinitNode(self: *Layout, node: *Node) void {
-        switch (node.*) {
-            .leaf => |pane| {
-                pane.deinit();
-                self.allocator.destroy(pane);
-            },
-            .split => |s| {
-                self.deinitNode(s.a);
-                self.deinitNode(s.b);
-                self.allocator.destroy(s.a);
-                self.allocator.destroy(s.b);
-                self.allocator.destroy(s);
-            },
+    fn deinitNode(self: *Layout, root: *Node) void {
+        const curr = root;
+        while (true) {
+            switch (curr.*) {
+                .leaf => |pane| {
+                    pane.deinit();
+                    self.allocator.destroy(pane);
+                    break;
+                },
+                .split => |s| {
+                    if (s.a.* == .split) {
+                        // Rotate right to push splits to the right and bring leaf towards left
+                        const left_node = s.a;
+                        const left_split = left_node.split;
+
+                        s.a = left_split.b;
+                        left_split.b = left_node;
+                        left_node.* = Node{ .split = s };
+                        curr.* = Node{ .split = left_split };
+                    } else {
+                        // Left child is a leaf, destroy it
+                        const leaf_node = s.a;
+                        const pane = leaf_node.leaf;
+                        pane.deinit();
+                        self.allocator.destroy(pane);
+                        self.allocator.destroy(leaf_node);
+
+                        // Replace curr with its right child
+                        const right_node = s.b;
+                        curr.* = right_node.*;
+                        self.allocator.destroy(right_node);
+                        self.allocator.destroy(s);
+                    }
+                },
+            }
         }
     }
 
@@ -156,9 +178,13 @@ pub const Layout = struct {
     }
 
     fn findFirstLeaf(self: *Layout, node: *const Node) *Pane {
-        switch (node.*) {
-            .leaf => |p| return p,
-            .split => |s| return self.findFirstLeaf(s.a),
+        _ = self;
+        var curr = node;
+        while (true) {
+            switch (curr.*) {
+                .leaf => |p| return p,
+                .split => |s| curr = s.a,
+            }
         }
     }
 
@@ -440,4 +466,20 @@ test "split pane horizontal sizes are equal" {
 
     try testing.expectEqual(@as(u32, 30), pane1.screen.grid.width);
     try testing.expectEqual(@as(u32, 30), pane2.screen.grid.width);
+}
+
+test "deinit handles massive nested layout without stack overflow" {
+    const pane1 = try createTestPane(testing.allocator, 0);
+    var layout = try Layout.init(testing.allocator, pane1, 80, 24);
+    // Defer the deinit which calls deinitNode
+    defer layout.deinit();
+
+    const depth = 5000;
+    var current = pane1;
+    var i: usize = 0;
+    while (i < depth) : (i += 1) {
+        current = try layout.splitPane(testing.allocator, current, .horizontal, 0.5);
+    }
+
+    try testing.expectEqual(@as(usize, depth + 1), layout.countLeaves());
 }
