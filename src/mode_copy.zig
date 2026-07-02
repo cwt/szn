@@ -206,6 +206,25 @@ pub const CopyMode = struct {
         return grid.getCell(x, @as(u32, @intCast(combined_idx - hist_len)));
     }
 
+    fn isLineWrapped(self: *const CopyMode, grid: *const Grid, screen_y: u32, scroll_offset: u32) bool {
+        _ = self;
+        const hist_len = grid.history.items.len;
+        const scroll = @as(usize, @intCast(scroll_offset));
+        if (scroll > hist_len) return false;
+
+        const combined_idx = (hist_len - scroll) + @as(usize, @intCast(screen_y));
+
+        if (combined_idx < hist_len) {
+            return grid.history.items[combined_idx].wrapped;
+        }
+
+        const visible_y = combined_idx - hist_len;
+        if (visible_y < grid.lines.items.len) {
+            return grid.lines.items[visible_y].wrapped;
+        }
+        return false;
+    }
+
     pub fn yankSelection(self: *const CopyMode, allocator: std.mem.Allocator, grid: *const Grid) Error![]const u8 {
         if (!self.selection.active) return try allocator.dupe(u8, "");
 
@@ -223,23 +242,36 @@ pub const CopyMode = struct {
             const line_start = if (screen_y == sy) sx else 0;
             const line_end = if (screen_y == ey) @min(ex, grid.width -| 1) else grid.width -| 1;
 
+            var line_buf: std.ArrayListUnmanaged(u8) = .empty;
+            defer line_buf.deinit(allocator);
+
             var x = line_start;
             while (x <= line_end) : (x += 1) {
                 const cell = self.getCellAtOffset(grid, x, screen_y, self.selection.start_scroll_offset);
                 if (cell.char != 0 and cell.char != ' ') {
                     var buf: [4]u8 = undefined;
                     const len = std.unicode.utf8Encode(cell.char, &buf) catch {
-                        try result.append(allocator, '?');
+                        try line_buf.append(allocator, '?');
                         continue;
                     };
-                    try result.appendSlice(allocator, buf[0..len]);
+                    try line_buf.appendSlice(allocator, buf[0..len]);
                 } else {
-                    try result.append(allocator, ' ');
+                    try line_buf.append(allocator, ' ');
                 }
             }
 
+            const wrapped = self.isLineWrapped(grid, screen_y, self.selection.start_scroll_offset);
+            var line_slice: []const u8 = line_buf.items;
+            if (wrapped) {
+                line_slice = std.mem.trimEnd(u8, line_slice, " ");
+            }
+
+            try result.appendSlice(allocator, line_slice);
+
             if (screen_y < ey) {
-                try result.append(allocator, '\n');
+                if (!wrapped) {
+                    try result.append(allocator, '\n');
+                }
             }
         }
 
@@ -768,6 +800,40 @@ test "yank selection single line" {
     const result = try cm.yankSelection(testing.allocator, &g);
     defer testing.allocator.free(result);
     try testing.expectEqualStrings("Hi", result);
+}
+
+test "yank selection wrapped lines merges lines and trims right spaces" {
+    var cm = CopyMode.init(.vi);
+    var g = try Grid.init(testing.allocator, 10, 3);
+    defer g.deinit();
+
+    // Line 0 (wrapped): "hello worl"
+    g.writeChar(0, 0, 'h');
+    g.writeChar(1, 0, 'e');
+    g.writeChar(2, 0, 'l');
+    g.writeChar(3, 0, 'l');
+    g.writeChar(4, 0, 'o');
+    g.writeChar(5, 0, ' ');
+    g.writeChar(6, 0, 'w');
+    g.writeChar(7, 0, 'o');
+    g.writeChar(8, 0, 'r');
+    g.writeChar(9, 0, 'l');
+    g.lines.items[0].wrapped = true;
+
+    // Line 1 (not wrapped): "d"
+    g.writeChar(0, 1, 'd');
+
+    cm.selection = .{
+        .start_x = 0,
+        .start_y = 0,
+        .end_x = 0,
+        .end_y = 1,
+        .active = true,
+    };
+
+    const result = try cm.yankSelection(testing.allocator, &g);
+    defer testing.allocator.free(result);
+    try testing.expectEqualStrings("hello world", result);
 }
 
 test "yank empty selection" {
