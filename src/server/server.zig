@@ -597,13 +597,7 @@ pub const Server = struct {
             },
             .paste_buffer => {
                 if (self.buffers.get(null)) |pb| {
-                    if (comptime @import("builtin").is_test) {
-                        try pane.writeStr(pb);
-                    } else if (pane.pty) |*p| {
-                        p.writeInput(pb) catch {};
-                    } else {
-                        try pane.writeStr(pb);
-                    }
+                    pane.writeInput(pb) catch {};
                 }
             },
             .swap_pane_up => {
@@ -665,9 +659,8 @@ pub const Server = struct {
                 pane.resizeTerminal(current_w, target_h) catch {};
             },
             .send_prefix => {
-                const pty = if (pane.pty) |*p| p else null;
                 const prefix_key = self.dispatcher.prefix;
-                writeKeyToPty(pty, prefix_key);
+                writeKeyToPty(pane, prefix_key);
             },
             .clock_mode => {
                 if (pane.saved_grid) |*g| {
@@ -711,23 +704,22 @@ pub const Server = struct {
         }
         try self.processInput(buf[0..@as(usize, @intCast(n))]);
     }
-
-    fn writeKeyToPty(pty: ?*@import("pty.zig").Pty, k: @import("../key.zig").Key) void {
-        const p = pty orelse return;
+    fn writeKeyToPty(pane_opt: ?*Pane, k: @import("../key.zig").Key) void {
+        const pane = pane_opt orelse return;
         switch (k) {
             .char => |ch| {
                 // Handle Tab variants before the general char path, since
                 // kitty protocol encodes Tab as codepoint 9 with modifiers.
                 if (ch.code == 9) {
                     if (ch.mod.shift and !ch.mod.ctrl and !ch.mod.alt) {
-                        p.writeInput("\x1b[Z") catch {};
+                        pane.writeInput("\x1b[Z") catch {};
                         return;
                     }
                     if (ch.mod.alt) {
-                        p.writeInput("\x1b\x09") catch {};
+                        pane.writeInput("\x1b\x09") catch {};
                         return;
                     }
-                    p.writeInput("\t") catch {};
+                    pane.writeInput("\t") catch {};
                     return;
                 }
                 // Kitty private-use arrow codepoints (57344-57347)
@@ -739,28 +731,28 @@ pub const Server = struct {
                         57346 => "\x1bOD",
                         else => unreachable,
                     };
-                    p.writeInput(seq) catch {};
+                    pane.writeInput(seq) catch {};
                     return;
                 }
                 if (ch.mod.ctrl) {
                     const ctrl_byte: u8 = @intCast(ch.code & 0x1F);
                     if (ch.mod.alt) {
-                        p.writeInput(&[_]u8{ 0x1b, ctrl_byte }) catch {};
+                        pane.writeInput(&[_]u8{ 0x1b, ctrl_byte }) catch {};
                     } else {
-                        p.writeInput(&[_]u8{ctrl_byte}) catch {};
+                        pane.writeInput(&[_]u8{ctrl_byte}) catch {};
                     }
                 } else if (ch.mod.alt) {
                     if (ch.code <= 0x7F) {
-                        p.writeInput(&[_]u8{ 0x1b, @intCast(ch.code) }) catch {};
+                        pane.writeInput(&[_]u8{ 0x1b, @intCast(ch.code) }) catch {};
                     }
                 } else if (ch.code >= 0x20 and ch.code <= 0x7E) {
-                    p.writeInput(&[_]u8{@intCast(ch.code)}) catch {};
+                    pane.writeInput(&[_]u8{@intCast(ch.code)}) catch {};
                 } else if (ch.code < 0x20 or ch.code == 0x7F) {
-                    p.writeInput(&[_]u8{@intCast(ch.code)}) catch {};
+                    pane.writeInput(&[_]u8{@intCast(ch.code)}) catch {};
                 } else if (ch.code > 0x7F) {
                     var utf8_buf: [4]u8 = undefined;
                     const len = std.unicode.utf8Encode(ch.code, &utf8_buf) catch return;
-                    p.writeInput(utf8_buf[0..len]) catch {};
+                    pane.writeInput(utf8_buf[0..len]) catch {};
                 }
             },
             .arrow => |a| {
@@ -770,21 +762,21 @@ pub const Server = struct {
                     .right => "\x1bOC",
                     .left => "\x1bOD",
                 };
-                p.writeInput(seq) catch {};
+                pane.writeInput(seq) catch {};
             },
             .special => |s| {
                 switch (s.key) {
-                    .enter => p.writeInput("\r") catch {},
-                    .tab => p.writeInput("\t") catch {},
-                    .backspace => p.writeInput("\x7f") catch {},
-                    .escape => p.writeInput("\x1b") catch {},
-                    .home => p.writeInput("\x1b[H") catch {},
-                    .end => p.writeInput("\x1b[F") catch {},
-                    .page_up => p.writeInput("\x1b[5~") catch {},
-                    .page_down => p.writeInput("\x1b[6~") catch {},
-                    .insert => p.writeInput("\x1b[2~") catch {},
-                    .delete_ => p.writeInput("\x1b[3~") catch {},
-                    .btab => p.writeInput("\x1b[Z") catch {},
+                    .enter => pane.writeInput("\r") catch {},
+                    .tab => pane.writeInput("\t") catch {},
+                    .backspace => pane.writeInput("\x7f") catch {},
+                    .escape => pane.writeInput("\x1b") catch {},
+                    .home => pane.writeInput("\x1b[H") catch {},
+                    .end => pane.writeInput("\x1b[F") catch {},
+                    .page_up => pane.writeInput("\x1b[5~") catch {},
+                    .page_down => pane.writeInput("\x1b[6~") catch {},
+                    .insert => pane.writeInput("\x1b[2~") catch {},
+                    .delete_ => pane.writeInput("\x1b[3~") catch {},
+                    .btab => pane.writeInput("\x1b[Z") catch {},
                 }
             },
             .function => |f| {
@@ -802,7 +794,7 @@ pub const Server = struct {
                     .f11 => "\x1b[23~",
                     .f12 => "\x1b[24~",
                 };
-                p.writeInput(seq) catch {};
+                pane.writeInput(seq) catch {};
             },
             else => {},
         }
@@ -812,7 +804,6 @@ pub const Server = struct {
         const session = self.activeSession() orelse return;
         const window = session.active_window orelse return;
         const pane = window.active_pane orelse return;
-        const pty = if (pane.pty) |*p| p else null;
 
         var i: usize = 0;
         var esc_buf: std.ArrayList(u8) = .empty;
@@ -1232,18 +1223,18 @@ pub const Server = struct {
 
                         if (!handled) {
                             switch (event) {
-                                .key => |k| writeKeyToPty(pty, k),
-                                else => if (pty) |p| p.writeInput(esc_buf.items) catch {},
+                                .key => |k| writeKeyToPty(pane, k),
+                                else => pane.writeInput(esc_buf.items) catch {},
                             }
                         }
                         esc_buf.clearRetainingCapacity();
                     } else if (self.input_reader.state == .ground) {
-                        if (pty) |p| p.writeInput(esc_buf.items) catch {};
+                        pane.writeInput(esc_buf.items) catch {};
                         esc_buf.clearRetainingCapacity();
                     }
                 } else {
                     if (self.dispatcher.prefix_state == .normal) {
-                        if (pty) |p| p.writeInput(&[_]u8{byte}) catch {};
+                        pane.writeInput(&[_]u8{byte}) catch {};
                     } else {
                         if (self.input_reader.feed(byte)) |event| {
                             self.dispatcher.prefix_state = .normal;

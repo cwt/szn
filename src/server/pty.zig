@@ -96,6 +96,16 @@ pub const Pty = struct {
         if (openpty(&master, &slave, null, null, null) < 0) return error.PtyOpenFailed;
         setCloexec(master);
         setCloexec(slave);
+
+        const F_GETFL = 3;
+        const F_SETFL = 4;
+        const O_NONBLOCK = comptime switch (@import("builtin").os.tag) {
+            .linux => @as(c_int, 0o4000),
+            else => @as(c_int, 0x0004),
+        };
+        const flags = fcntl(master, F_GETFL, @as(c_int, 0));
+        _ = fcntl(master, F_SETFL, flags | O_NONBLOCK);
+
         return Pty{ .master = master, .slave = slave, .pid = -1 };
     }
 
@@ -213,7 +223,11 @@ pub const Pty = struct {
 
     pub fn readOutput(self: *Pty, buf: []u8) Error!usize {
         const n = read(self.master, buf.ptr, buf.len);
-        if (n < 0) return error.ReadFailed;
+        if (n < 0) {
+            const err = std.c.errno(n);
+            if (err == .AGAIN) return 0;
+            return error.ReadFailed;
+        }
         if (n == 0) return error.ProcessExited;
         return @as(usize, @intCast(n));
     }

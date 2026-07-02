@@ -134,6 +134,45 @@ pub const Pane = struct {
         self.dirty = true;
     }
 
+    pub fn writeInput(self: *Pane, data: []const u8) Error!void {
+        if (comptime @import("builtin").is_test) {
+            try self.writeStr(data);
+            if (self.pty) |*pty| {
+                const c_write = struct {
+                    extern "c" fn write(fd: c_int, buf: [*]const u8, nbyte: usize) isize;
+                }.write;
+                _ = c_write(pty.master, data.ptr, data.len);
+            }
+            return;
+        }
+
+        const pty = &(self.pty orelse return);
+        const c_write = struct {
+            extern "c" fn write(fd: c_int, buf: [*]const u8, nbyte: usize) isize;
+        }.write;
+        const c_usleep = struct {
+            extern "c" fn usleep(usec: c_uint) c_int;
+        }.usleep;
+
+        var off: usize = 0;
+        while (off < data.len) {
+            const n = c_write(pty.master, data.ptr + off, data.len - off);
+            if (n < 0) {
+                const err = std.c.errno(n);
+                if (err == .INTR) continue;
+                if (err == .AGAIN) {
+                    // PTY stdin buffer is full. Drain stdout to unblock the child process!
+                    try self.feedPty();
+                    _ = c_usleep(1000); // 1ms sleep
+                    continue;
+                }
+                return error.WriteFailed;
+            }
+            if (n == 0) return error.WriteFailed;
+            off += @as(usize, @intCast(n));
+        }
+    }
+
     pub fn drainPty(self: *Pane) void {
         const pty = self.pty orelse return;
         var pfd: [1]std.posix.pollfd = .{.{

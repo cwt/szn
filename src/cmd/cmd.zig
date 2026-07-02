@@ -116,13 +116,7 @@ fn cmdSendKeys(server: *Server, args: []const []const u8) CmdResult {
     const pane = window.active_pane orelse return .err;
     var i: u32 = 1;
     while (i < args.len) : (i += 1) {
-        if (comptime @import("builtin").is_test) {
-            pane.writeStr(args[i]) catch return .err;
-        } else if (pane.pty) |*p| {
-            p.writeInput(args[i]) catch return .err;
-        } else {
-            pane.writeStr(args[i]) catch return .err;
-        }
+        pane.writeInput(args[i]) catch return .err;
     }
     return .ok;
 }
@@ -431,13 +425,7 @@ fn cmdPasteBuffer(server: *Server, args: []const []const u8) CmdResult {
     }
 
     if (server.buffers.get(buf_name)) |pb| {
-        if (comptime @import("builtin").is_test) {
-            pane.writeStr(pb) catch return .err;
-        } else if (pane.pty) |*p| {
-            p.writeInput(pb) catch return .err;
-        } else {
-            pane.writeStr(pb) catch return .err;
-        }
+        pane.writeInput(pb) catch return .err;
     }
     return .ok;
 }
