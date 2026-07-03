@@ -1247,6 +1247,7 @@ pub const Server = struct {
                                                 if (m.mod.shift) btn |= 4;
                                                 if (m.mod.alt) btn |= 8;
                                                 if (m.mod.ctrl) btn |= 16;
+                                                if (m.drag) btn |= 32;
 
                                                 if (active_pane.pty) |*ap_pty| {
                                                     if (active_pane.screen.mode.mouse_sgr) {
@@ -2872,4 +2873,47 @@ test "OSC 52 clipboard forwarding and buffer copy" {
     try testing.expect(read_res > 0);
     const received = temp_buf[0..@intCast(read_res)];
     try testing.expectEqualStrings("\x1b]52;c;aGVsbG8=\x07", received);
+}
+
+test "mouse drag event forwarding" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    const s = try server.newSession("test-mouse-drag", 80, 24);
+    const win = s.active_window.?;
+    const pane = win.active_pane.?;
+    
+    try server.global_options.set("mouse", .{ .flag = true });
+
+    pane.pty = try @import("pty.zig").Pty.open();
+    defer {
+        if (pane.pty) |*pty| {
+            pty.deinit();
+            pane.pty = null;
+        }
+    }
+
+    pane.screen.mode.mouse_sgr = true;
+
+    // Simulate left mouse button drag event at (15, 8). 
+    // Button code for drag is 32. 
+    // SGR mouse encoding for drag: \x1b[<32;16;9M (15+1=16, 8+1=9)
+    try server.processInput("\x1b[<32;16;9M");
+
+    const c_fcntl = struct {
+        extern "c" fn fcntl(fd: i32, cmd: i32, ...) i32;
+    }.fcntl;
+    const O_NONBLOCK = comptime switch (@import("builtin").os.tag) {
+        .macos, .ios, .watchos, .tvos => 0x0004,
+        .freebsd, .netbsd, .openbsd, .dragonfly => 0x0004,
+        else => 0x0800, // Linux
+    };
+    const flags = c_fcntl(pane.pty.?.master, 3, @as(i32, 0));
+    _ = c_fcntl(pane.pty.?.master, 4, flags | O_NONBLOCK);
+
+    var temp_buf: [128]u8 = undefined;
+    const read_res = std.c.read(pane.pty.?.master, &temp_buf, temp_buf.len);
+    try testing.expect(read_res > 0);
+    const received = temp_buf[0..@intCast(read_res)];
+    try testing.expect(std.mem.indexOf(u8, received, "[<32;16;9M") != null);
 }

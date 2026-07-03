@@ -20,6 +20,7 @@ pub const MouseEvent = struct {
     x: u32,
     y: u32,
     mod: Modifier = .{},
+    drag: bool = false,
 };
 
 const State = enum {
@@ -268,11 +269,13 @@ pub fn parseSgrMouse(params: []const u8, release: bool) ?Event {
         else => .left,
     };
 
+    const drag = (btn & 0x20) != 0;
     return Event{ .mouse = .{
         .button = button,
         .x = col,
         .y = row,
         .mod = mod,
+        .drag = drag,
     } };
 }
 
