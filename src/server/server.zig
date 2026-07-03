@@ -1554,7 +1554,7 @@ pub const Server = struct {
                 },
                 .identify_term => {
                     var exists = false;
-                    for (self.display_clients.items) |dc| {
+                    for (self.display_clients.items) |*dc| {
                         if (dc.fd == fd) {
                             exists = true;
                             break;
@@ -1647,7 +1647,7 @@ pub const Server = struct {
         }
         var min_sx: u32 = 999999;
         var min_sy: u32 = 999999;
-        for (self.display_clients.items) |dc| {
+        for (self.display_clients.items) |*dc| {
             if (dc.sx < min_sx) min_sx = dc.sx;
             if (dc.sy < min_sy) min_sy = dc.sy;
         }
