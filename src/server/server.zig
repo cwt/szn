@@ -1565,7 +1565,7 @@ pub const Server = struct {
 
     fn paneClipboardCallback(ctx: ?*anyopaque, target: []const u8, base64: []const u8) void {
         const self: *Server = @ptrCast(@alignCast(ctx orelse return));
-        
+
         // 1. Forward raw OSC 52 to all display clients wrapped in an output packet
         const raw_buf = std.fmt.allocPrint(self.allocator, "\x1b]52;{s};{s}\x07", .{ target, base64 }) catch return;
         defer self.allocator.free(raw_buf);
@@ -2785,7 +2785,7 @@ test "mouse click and drag selection" {
     const s = try server.newSession("test-mouse-selection", 80, 24);
     const win = s.active_window.?;
     const pane = win.active_pane.?;
-    
+
     try server.global_options.set("mouse", .{ .flag = true });
 
     // Initially, copy mode is NOT active
@@ -2805,7 +2805,7 @@ test "mouse click and drag selection" {
     try testing.expectEqual(@as(u32, 5), cm.selection.start_y);
 
     // Simulate dragging mouse to (20, 5) (left button drag)
-    // Drag button code in SGR is often parsed as left button (0). 
+    // Drag button code in SGR is often parsed as left button (0).
     // SGR mouse encoding for left button drag at (20, 5) is: \x1b[<0;21;6M (20+1=21, 5+1=6)
     try server.processInput("\x1b[<0;21;6M");
 
@@ -2821,7 +2821,7 @@ test "mouse click and drag selection" {
     }
 
     // Simulate releasing the left button at (20, 5)
-    // SGR mouse release is sent with final character 'm'. 
+    // SGR mouse release is sent with final character 'm'.
     // SGR mouse encoding for release is: \x1b[<3;21;6m
     try server.processInput("\x1b[<3;21;6m");
 
@@ -2841,7 +2841,7 @@ test "OSC 52 clipboard forwarding and buffer copy" {
     const s = try server.newSession("test-osc52", 80, 24);
     const win = s.active_window.?;
     const pane = win.active_pane.?;
-    
+
     var fds: [2]i32 = undefined;
     if (std.c.socketpair(std.posix.AF.LOCAL, std.posix.SOCK.STREAM, 0, &fds) != 0) {
         return error.SocketPairFailed;
@@ -2899,8 +2899,8 @@ test "mouse drag event forwarding" {
     const s = try server.newSession("test-mouse-drag", 80, 24);
     const win = s.active_window.?;
     const pane = win.active_pane.?;
-    
-    try server.global_options.set("mouse", .{ .flag = true });
+
+    try s.options.set("mouse", .{ .flag = true });
 
     pane.pty = try @import("pty.zig").Pty.open();
     defer {
@@ -2912,25 +2912,24 @@ test "mouse drag event forwarding" {
 
     pane.screen.mode.mouse_sgr = true;
 
-    // Simulate left mouse button drag event at (15, 8). 
-    // Button code for drag is 32. 
-    // SGR mouse encoding for drag: \x1b[<32;16;9M (15+1=16, 8+1=9)
-    try server.processInput("\x1b[<32;16;9M");
-
+    const fd = pane.pty.?.slave;
     const c_fcntl = struct {
-        extern "c" fn fcntl(fd: i32, cmd: i32, ...) i32;
+        extern "c" fn fcntl(fd: c_int, cmd: c_int, ...) c_int;
     }.fcntl;
-    const O_NONBLOCK = comptime switch (@import("builtin").os.tag) {
-        .macos, .ios, .watchos, .tvos => 0x0004,
-        .freebsd, .netbsd, .openbsd, .dragonfly => 0x0004,
-        else => 0x0800, // Linux
-    };
-    const flags = c_fcntl(pane.pty.?.master, 3, @as(i32, 0));
-    _ = c_fcntl(pane.pty.?.master, 4, flags | O_NONBLOCK);
+    const F_GETFL = 3;
+    const F_SETFL = 4;
+    const O_NONBLOCK = 0x0004;
+    const flags = c_fcntl(fd, F_GETFL, @as(c_int, 0));
+    _ = c_fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+
+    try server.processInput("\x1b[<32;16;9M");
+    try server.processInput("\n");
 
     var temp_buf: [128]u8 = undefined;
-    const read_res = std.c.read(pane.pty.?.master, &temp_buf, temp_buf.len);
-    try testing.expect(read_res > 0);
-    const received = temp_buf[0..@intCast(read_res)];
+    const n = std.posix.read(fd, &temp_buf) catch |err| blk: {
+        if (err == error.WouldBlock) break :blk @as(usize, 0) else return err;
+    };
+    try testing.expect(n > 0);
+    const received = temp_buf[0..n];
     try testing.expect(std.mem.indexOf(u8, received, "[<32;16;9M") != null);
 }
