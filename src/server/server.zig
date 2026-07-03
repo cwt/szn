@@ -1133,7 +1133,36 @@ pub const Server = struct {
                             const mouse_opt = session.options.asFlag("mouse") orelse false;
                             if (mouse_opt) {
                                 if (m.button == .left) {
+                                    const old_active_pane = window.active_pane;
                                     self.handleMouseFocus(m.x, m.y) catch {};
+                                    const current_active_pane = window.active_pane orelse return;
+                                    if (current_active_pane == old_active_pane) {
+                                        if (self.findPaneBounds(window.layout.root, current_active_pane, 0, 0, window.layout.width, window.layout.height)) |pb| {
+                                            if (m.x >= pb.x and m.x < pb.x + pb.w and m.y >= pb.y and m.y < pb.y + pb.h) {
+                                                const local_x = m.x - pb.x;
+                                                const local_y = m.y - pb.y;
+                                                cm.cursor_x = @min(local_x, current_active_pane.screen.grid.width -| 1);
+                                                cm.cursor_y = @min(local_y, current_active_pane.screen.grid.height -| 1);
+                                                if (!cm.selection.active) {
+                                                    cm.startSelection();
+                                                } else {
+                                                    cm.updateSelection();
+                                                }
+                                                current_active_pane.dirty = true;
+                                            }
+                                        }
+                                    }
+                                } else if (m.button == .release) {
+                                    if (cm.selection.active) {
+                                        const data = cm.yankSelection(self.allocator, &pane.screen.grid) catch null;
+                                        if (data) |d| {
+                                            const name = try self.buffers.generateName();
+                                            errdefer self.allocator.free(name);
+                                            try self.buffers.pushOwned(name, d);
+                                        }
+                                        pane.screen.copy_mode = null;
+                                        pane.dirty = true;
+                                    }
                                 } else if (m.button == .scroll_up) {
                                     cm.scroll_offset = @min(cm.scroll_offset + 3, @as(u32, @intCast(pane.screen.grid.history.items.len)));
                                     pane.dirty = true;
@@ -1248,6 +1277,25 @@ pub const Server = struct {
                                             active_pane.enterCopyMode() catch {};
                                             active_pane.screen.copy_mode.?.scroll_offset = @min(3, @as(u32, @intCast(active_pane.screen.grid.history.items.len)));
                                             active_pane.dirty = true;
+                                        } else if (m.button == .left) {
+                                            const old_active_pane = window.active_pane;
+                                            self.handleMouseFocus(m.x, m.y) catch {};
+                                            const current_active_pane = window.active_pane orelse return;
+                                            if (current_active_pane == old_active_pane) {
+                                                if (self.findPaneBounds(window.layout.root, current_active_pane, 0, 0, window.layout.width, window.layout.height)) |pb| {
+                                                    if (m.x >= pb.x and m.x < pb.x + pb.w and m.y >= pb.y and m.y < pb.y + pb.h) {
+                                                        const local_x = m.x - pb.x;
+                                                        const local_y = m.y - pb.y;
+                                                        current_active_pane.enterCopyMode() catch {};
+                                                        if (current_active_pane.screen.copy_mode) |*cm| {
+                                                            cm.cursor_x = @min(local_x, current_active_pane.screen.grid.width -| 1);
+                                                            cm.cursor_y = @min(local_y, current_active_pane.screen.grid.height -| 1);
+                                                            cm.startSelection();
+                                                        }
+                                                        current_active_pane.dirty = true;
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                 } else {
@@ -2666,4 +2714,60 @@ test "multiple display clients attached simultaneously" {
     const read_res = std.c.read(client_a, &temp_buf, temp_buf.len);
     try testing.expect(read_res < 0);
     try testing.expect(std.c.errno(read_res) == .AGAIN);
+}
+
+test "mouse click and drag selection" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    const s = try server.newSession("test-mouse-selection", 80, 24);
+    const win = s.active_window.?;
+    const pane = win.active_pane.?;
+    
+    try server.global_options.set("mouse", .{ .flag = true });
+
+    // Initially, copy mode is NOT active
+    try testing.expect(pane.screen.copy_mode == null);
+
+    // Simulate mouse click down (left button) at (10, 5) which is inside pane boundaries (0,0 to 80,23)
+    // SGR mouse encoding for left button down at (10, 5) is: \x1b[<0;11;6M (since 1-based, 10+1=11, 5+1=6)
+    try server.processInput("\x1b[<0;11;6M");
+
+    // Copy mode should now be active!
+    try testing.expect(pane.screen.copy_mode != null);
+    const cm = &pane.screen.copy_mode.?;
+    try testing.expect(cm.selection.active);
+    try testing.expectEqual(@as(u32, 10), cm.cursor_x);
+    try testing.expectEqual(@as(u32, 5), cm.cursor_y);
+    try testing.expectEqual(@as(u32, 10), cm.selection.start_x);
+    try testing.expectEqual(@as(u32, 5), cm.selection.start_y);
+
+    // Simulate dragging mouse to (20, 5) (left button drag)
+    // Drag button code in SGR is often parsed as left button (0). 
+    // SGR mouse encoding for left button drag at (20, 5) is: \x1b[<0;21;6M (20+1=21, 5+1=6)
+    try server.processInput("\x1b[<0;21;6M");
+
+    // Selection endpoint should be updated to (20, 5)
+    try testing.expectEqual(@as(u32, 20), cm.cursor_x);
+    try testing.expectEqual(@as(u32, 5), cm.cursor_y);
+    try testing.expectEqual(@as(u32, 20), cm.selection.end_x);
+    try testing.expectEqual(@as(u32, 5), cm.selection.end_y);
+
+    // Populate cell values so we have something to yank
+    for (10..21) |x| {
+        pane.screen.grid.getLine(5).cells.items[x].char = 'x';
+    }
+
+    // Simulate releasing the left button at (20, 5)
+    // SGR mouse release is sent with final character 'm'. 
+    // SGR mouse encoding for release is: \x1b[<3;21;6m
+    try server.processInput("\x1b[<3;21;6m");
+
+    // Copy mode should be deactivated upon release!
+    try testing.expect(pane.screen.copy_mode == null);
+
+    // The yanked content should be in the paste buffer!
+    const pb = server.buffers.get(null);
+    try testing.expect(pb != null);
+    try testing.expectEqualStrings("xxxxxxxxxxx", pb.?);
 }
