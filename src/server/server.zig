@@ -68,6 +68,17 @@ pub const DisplayClient = struct {
     fd: i32,
     sx: u32 = 80,
     sy: u32 = 24,
+    last_cells: std.ArrayListUnmanaged(@import("../grid.zig").Cell) = .empty,
+    last_sx: u32 = 0,
+    last_sy: u32 = 0,
+    merged_screen: ?@import("../screen.zig").Screen = null,
+
+    pub fn deinit(self: *DisplayClient, allocator: std.mem.Allocator) void {
+        self.last_cells.deinit(allocator);
+        if (self.merged_screen) |*ms| {
+            ms.deinit();
+        }
+    }
 };
 
 pub const Server = struct {
@@ -153,6 +164,9 @@ pub const Server = struct {
             _ = c.close(fd);
         }
         self.client_fds.deinit(self.allocator);
+        for (self.display_clients.items) |*dc| {
+            dc.deinit(self.allocator);
+        }
         self.display_clients.deinit(self.allocator);
         if (self.listener_fd) |fd| {
             socket_mod.closeSocket(fd);
@@ -178,7 +192,12 @@ pub const Server = struct {
 
     pub fn addLogMessage(self: *Server, msg: []const u8) ServerError!void {
         const duped = try self.allocator.dupe(u8, msg);
+        errdefer self.allocator.free(duped);
         try self.log_messages.append(self.allocator, duped);
+        if (self.log_messages.items.len > 1000) {
+            const old = self.log_messages.orderedRemove(0);
+            self.allocator.free(old);
+        }
     }
 
     fn currentMillis() i64 {
@@ -589,8 +608,9 @@ pub const Server = struct {
                         }
                         remaining = remaining[@intCast(written_bytes)..];
                     }
-                    for (self.display_clients.items, 0..) |dc, idx| {
+                    for (self.display_clients.items, 0..) |*dc, idx| {
                         if (dc.fd == cfd) {
+                            dc.deinit(self.allocator);
                             _ = self.display_clients.swapRemove(idx);
                             break;
                         }
@@ -1579,8 +1599,9 @@ pub const Server = struct {
                     }
                 },
                 .detach => {
-                    for (self.display_clients.items, 0..) |dc, idx| {
+                    for (self.display_clients.items, 0..) |*dc, idx| {
                         if (dc.fd == fd) {
+                            dc.deinit(self.allocator);
                             _ = self.display_clients.swapRemove(idx);
                             break;
                         }
@@ -1607,8 +1628,9 @@ pub const Server = struct {
             self.allocator.destroy(entry.value);
         }
         _ = c.close(fd);
-        for (self.display_clients.items, 0..) |dc, idx| {
+        for (self.display_clients.items, 0..) |*dc, idx| {
             if (dc.fd == fd) {
+                dc.deinit(self.allocator);
                 _ = self.display_clients.swapRemove(idx);
                 break;
             }
@@ -1705,7 +1727,7 @@ pub const Server = struct {
             p.dirty = false;
         }
 
-        for (self.display_clients.items) |dc| {
+        for (self.display_clients.items) |*dc| {
             self.render_buf.clearRetainingCapacity();
 
             var display = Display{
@@ -1714,6 +1736,10 @@ pub const Server = struct {
                 .sy = dc.sy,
                 .capture = &self.render_buf,
                 .capture_allocator = self.allocator,
+                .last_cells = &dc.last_cells,
+                .last_sx = &dc.last_sx,
+                .last_sy = &dc.last_sy,
+                .merged_screen = &dc.merged_screen,
             };
 
             var bounds: std.ArrayList(render.PaneBounds) = .empty;

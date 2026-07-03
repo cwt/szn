@@ -24,6 +24,7 @@ pub const Loop = struct {
     fds: std.ArrayListUnmanaged(FdEntry) = .empty,
     running: bool = true,
     event_buf: std.ArrayListUnmanaged(PollEvent) = .empty,
+    pollfds: std.ArrayListUnmanaged(std.posix.pollfd) = .empty,
 
     pub fn init() Loop {
         return Loop{};
@@ -32,6 +33,7 @@ pub const Loop = struct {
     pub fn deinit(self: *Loop, allocator: std.mem.Allocator) void {
         self.fds.deinit(allocator);
         self.event_buf.deinit(allocator);
+        self.pollfds.deinit(allocator);
     }
 
     pub fn addFd(self: *Loop, allocator: std.mem.Allocator, fd: i32, events: i16, udata: ?*anyopaque) Error!void {
@@ -61,24 +63,23 @@ pub const Loop = struct {
         if (self.fds.items.len == 0) return &[0]PollEvent{};
 
         const pollfd_count = self.fds.items.len;
-        const pollfds = try allocator.alloc(std.posix.pollfd, pollfd_count);
-        defer allocator.free(pollfds);
+        try self.pollfds.resize(allocator, pollfd_count);
 
         for (self.fds.items, 0..) |f, i| {
-            pollfds[i] = std.posix.pollfd{
+            self.pollfds.items[i] = std.posix.pollfd{
                 .fd = f.fd,
                 .events = f.events,
                 .revents = 0,
             };
         }
 
-        const ready = try std.posix.poll(pollfds[0..pollfd_count], timeout);
+        const ready = try std.posix.poll(self.pollfds.items[0..pollfd_count], timeout);
         if (ready == 0) return &[0]PollEvent{};
 
         self.event_buf.clearRetainingCapacity();
         try self.event_buf.ensureTotalCapacity(allocator, pollfd_count);
 
-        for (pollfds[0..pollfd_count], 0..) |pfd, i| {
+        for (self.pollfds.items[0..pollfd_count], 0..) |pfd, i| {
             if (pfd.revents != 0) {
                 self.event_buf.appendAssumeCapacity(.{
                     .fd = pfd.fd,

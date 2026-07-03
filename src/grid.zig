@@ -102,14 +102,8 @@ pub const Grid = struct {
     }
 
     pub fn normalize(self: *Grid) !void {
-        if (self.start_index == 0) return;
-        var temp_lines = try self.allocator.alloc(GridLine, self.height);
-        defer self.allocator.free(temp_lines);
-        var i: u32 = 0;
-        while (i < self.height) : (i += 1) {
-            temp_lines[i] = self.getLine(i).*;
-        }
-        @memcpy(self.lines.items[0..self.height], temp_lines);
+        if (self.start_index == 0 or self.height == 0) return;
+        std.mem.rotate(GridLine, self.lines.items[0..self.height], self.start_index);
         self.start_index = 0;
     }
 
@@ -216,8 +210,19 @@ pub const Grid = struct {
         errdefer old_line.deinit(self.allocator);
         try self.history.append(self.allocator, old_line);
         if (self.history.items.len > self.history_limit) {
-            var old = self.history.orderedRemove(0);
-            old.deinit(self.allocator);
+            if (self.history_limit > 64) {
+                if (self.history.items.len > self.history_limit + 64) {
+                    const num_to_remove = self.history.items.len - self.history_limit;
+                    for (self.history.items[0..num_to_remove]) |*old| {
+                        old.deinit(self.allocator);
+                    }
+                    std.mem.copyForwards(GridLine, self.history.items[0 .. self.history.items.len - num_to_remove], self.history.items[num_to_remove..]);
+                    self.history.items.len -= num_to_remove;
+                }
+            } else {
+                var old = self.history.orderedRemove(0);
+                old.deinit(self.allocator);
+            }
         }
 
         self.start_index = (self.start_index + 1) % self.height;
@@ -688,14 +693,12 @@ pub const Grid = struct {
         }
 
         // ── Flatten all lines into logical lines ──
-        var flat_buf: std.ArrayListUnmanaged(Cell) = .empty;
-        defer flat_buf.deinit(self.allocator);
+        var flat_cells: std.ArrayListUnmanaged(Cell) = .empty;
+        defer flat_cells.deinit(self.allocator);
 
-        var logical_flat: std.ArrayListUnmanaged([]Cell) = .empty;
-        defer {
-            for (logical_flat.items) |s| self.allocator.free(s);
-            logical_flat.deinit(self.allocator);
-        }
+        const Span = struct { start: usize, len: usize };
+        var logical_spans: std.ArrayListUnmanaged(Span) = .empty;
+        defer logical_spans.deinit(self.allocator);
 
         const allocator = self.allocator;
         var idx: usize = 0;
@@ -703,8 +706,7 @@ pub const Grid = struct {
         var cursor_offset_in_logical: ?usize = null;
 
         while (idx < process_limit) {
-            const current_logical_idx = logical_flat.items.len;
-            flat_buf.clearRetainingCapacity();
+            const start_idx = flat_cells.items.len;
             var line_idx = idx;
 
             var is_cursor_logical_line = false;
@@ -731,7 +733,7 @@ pub const Grid = struct {
                     cursor_offset_in_this_logical = current_offset + @min(cursor_x.?, cells_to_add.len);
                 }
 
-                try flat_buf.appendSlice(allocator, cells_to_add);
+                try flat_cells.appendSlice(allocator, cells_to_add);
                 current_offset += cells_to_add.len;
                 if (!line.wrapped) {
                     line_idx += 1;
@@ -741,20 +743,23 @@ pub const Grid = struct {
             idx = line_idx;
 
             // Final trim of trailing unwritten cells
-            while (flat_buf.items.len > 0) {
-                const last = flat_buf.items[flat_buf.items.len - 1];
+            while (flat_cells.items.len > start_idx) {
+                const last = flat_cells.items[flat_cells.items.len - 1];
                 if (last.char == 0) {
-                    _ = flat_buf.pop();
+                    _ = flat_cells.pop();
                 } else break;
             }
 
+            const current_logical_idx = logical_spans.items.len;
             if (is_cursor_logical_line) {
                 cursor_logical_line = current_logical_idx;
                 cursor_offset_in_logical = cursor_offset_in_this_logical;
             }
 
-            const copy = try allocator.dupe(Cell, flat_buf.items);
-            try logical_flat.append(allocator, copy);
+            try logical_spans.append(allocator, Span{
+                .start = start_idx,
+                .len = flat_cells.items.len - start_idx,
+            });
         }
 
         // ── Save and replace old lines ──
@@ -773,9 +778,11 @@ pub const Grid = struct {
         var new_cursor_logical_line: ?usize = null;
         var new_cursor_offset_on_line: ?usize = null;
 
-        for (logical_flat.items, 0..) |flat, logical_line_idx| {
+        for (logical_spans.items, 0..) |span, logical_line_idx| {
             var rewrap_cursor_pos = CursorPos{ .line_idx = 0, .col_idx = 0 };
             const has_cursor = (cursor_logical_line != null and cursor_logical_line.? == logical_line_idx);
+
+            const flat = flat_cells.items[span.start .. span.start + span.len];
 
             const rewrapped = try rewrap(
                 flat,

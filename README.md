@@ -58,7 +58,7 @@ All core development phases (Phases 0 to 11) are fully implemented and complete.
 - Standard VT100 wrap-pending and Background Color Erase (BCE) support for accurate rendering.
 - Full multi-pane layouts, interactive copy mode, status bars, and config parsing (`.szn.conf`).
 - **Advanced Text Reflow** — automatically rewraps text on pane resizing, respecting CJK characters, combining marks, and Thai cluster integrity (including an $O(1)$ syllable backtracking algorithm). See [docs/TEXT_REFLOW.md](docs/TEXT_REFLOW.md) for full design details.
-- **722 unit and integration tests passing.**
+- **730 unit and integration tests passing.**
 
 ### Performance
 

@@ -498,6 +498,15 @@ pub fn deinitLibThai() void {
 }
 
 pub fn findWordBreaks(allocator: std.mem.Allocator, cells: []const Cell) ![]usize {
+    var has_thai = false;
+    for (cells) |c| {
+        if (isThai(c.char)) {
+            has_thai = true;
+            break;
+        }
+    }
+    if (!has_thai) return &[_]usize{};
+
     const libthai = getLibThai() orelse return &[_]usize{};
 
     var codepoints: std.ArrayListUnmanaged(u32) = .empty;

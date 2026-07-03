@@ -33,6 +33,10 @@ pub const Display = struct {
     sy: u32,
     capture: ?*std.ArrayList(u8) = null,
     capture_allocator: ?std.mem.Allocator = null,
+    last_cells: ?*std.ArrayListUnmanaged(Cell) = null,
+    last_sx: ?*u32 = null,
+    last_sy: ?*u32 = null,
+    merged_screen: ?*?Screen = null,
 
     fn writeColourFg(self: Display, color: Colour) Error!void {
         switch (color.tag) {
@@ -129,12 +133,28 @@ pub const Display = struct {
         const merged_w = self.sx;
         const merged_h = self.sy -| 1;
 
-        var merged_screen = try Screen.init(allocator, merged_w, merged_h);
-        defer merged_screen.deinit();
+        var local_merged_screen: Screen = undefined;
+        var merged_screen = &local_merged_screen;
+
+        if (self.merged_screen) |ms_ptr| {
+            if (ms_ptr.* == null or ms_ptr.*.?.grid.width != merged_w or ms_ptr.*.?.grid.height != merged_h) {
+                if (ms_ptr.*) |*ms| {
+                    ms.deinit();
+                }
+                ms_ptr.* = try Screen.init(allocator, merged_w, merged_h);
+            }
+            merged_screen = &(ms_ptr.*.?);
+        } else {
+            local_merged_screen = try Screen.init(allocator, merged_w, merged_h);
+        }
+        defer if (self.merged_screen == null) {
+            local_merged_screen.deinit();
+        };
 
         for (merged_screen.grid.lines.items) |*line| {
-            try line.cells.resize(allocator, merged_w);
             @memset(line.cells.items, Cell.empty());
+            line.wrapped = false;
+            line.dirty = true;
         }
 
         for (bounds) |pb| {
@@ -169,7 +189,7 @@ pub const Display = struct {
         }
 
         const mode_border_fg = if (pane_in_copy_mode) Colour.fromIndexed(11) else theme.pane_active_border_fg;
-        try drawLayoutBorders(layout_root, 0, 0, merged_w, merged_h, &merged_screen, active_pane, bounds, theme.pane_border_fg, mode_border_fg);
+        try drawLayoutBorders(layout_root, 0, 0, merged_w, merged_h, merged_screen, active_pane, bounds, theme.pane_border_fg, mode_border_fg);
 
         var active_bounds: ?PaneBounds = null;
         for (bounds) |pb| {
@@ -192,7 +212,7 @@ pub const Display = struct {
             merged_screen.cursor.visible = false;
         }
 
-        try self.renderContent(&merged_screen);
+        try self.renderContent(merged_screen);
         try self.renderSixelImages(bounds);
         try self.renderStatusBar(session_name, windows, active_window, theme.status_fg, theme.status_bg, message, command_mode, command_buf, pane_in_copy_mode);
 
@@ -296,6 +316,21 @@ pub const Display = struct {
         const h = @min(screen.grid.height, self.sy -| 1);
         const w = @min(screen.grid.width, self.sx);
 
+        if (self.last_cells) |lc| {
+            const expected_len = w * h;
+            if (self.last_sx.?.* != self.sx or self.last_sy.?.* != self.sy or lc.items.len != expected_len) {
+                if (self.capture_allocator) |alloc| {
+                    lc.clearRetainingCapacity();
+                    lc.resize(alloc, expected_len) catch {};
+                    var inv = Cell.empty();
+                    inv.char = 0x1FFFFF; // invalid Unicode to force redraw
+                    @memset(lc.items, inv);
+                }
+                self.last_sx.?.* = self.sx;
+                self.last_sy.?.* = self.sy;
+            }
+        }
+
         var active_fg = Colour.default_();
         var active_bg = Colour.default_();
         var active_attr = Attr{};
@@ -317,13 +352,9 @@ pub const Display = struct {
             };
 
             // Track the terminal cursor column within this row.
-            // We start at column 0 via an absolute move, then advance cur_cx as
-            // we write characters.  Before writing any non-padding cell we check
-            // that the tracked position matches the grid column; if it has drifted
-            // (e.g. after a wide-char encoding fallback) we re-anchor with a fresh
-            // absolute moveTo.
-            try self.moveTo(0, @intCast(y));
+            // We start as not anchored and only issue a moveTo when we actually write a changed cell.
             var cur_cx: u32 = 0;
+            var anchored = false;
 
             for (0..w) |x| {
                 var cell = if (cells) |cls| (if (x < cls.items.len) cls.items[x] else Cell.empty()) else Cell.empty();
@@ -333,12 +364,25 @@ pub const Display = struct {
                     }
                 }
 
+                if (self.last_cells) |lc| {
+                    const cell_idx = y * w + x;
+                    if (cell_idx < lc.items.len) {
+                        const last_cell = lc.items[cell_idx];
+                        if (cell.eql(last_cell)) {
+                            anchored = false;
+                            continue;
+                        }
+                        lc.items[cell_idx] = cell;
+                    }
+                }
+
                 if (cell.is_padding) continue;
 
                 // Re-anchor cursor if we have drifted from the expected column.
-                if (cur_cx != @as(u32, @intCast(x))) {
+                if (!anchored or cur_cx != @as(u32, @intCast(x))) {
                     try self.moveTo(@intCast(x), @intCast(y));
                     cur_cx = @intCast(x);
+                    anchored = true;
                 }
 
                 if (@as(u32, @bitCast(cell.fg)) != @as(u32, @bitCast(active_fg)) or
