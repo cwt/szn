@@ -1566,19 +1566,37 @@ pub const Server = struct {
     fn paneClipboardCallback(ctx: ?*anyopaque, target: []const u8, base64: []const u8) void {
         const self: *Server = @ptrCast(@alignCast(ctx orelse return));
         
-        // 1. Forward raw OSC 52 to all display clients
+        // 1. Forward raw OSC 52 to all display clients wrapped in an output packet
         const raw_buf = std.fmt.allocPrint(self.allocator, "\x1b]52;{s};{s}\x07", .{ target, base64 }) catch return;
         defer self.allocator.free(raw_buf);
 
+        const pkt = protocol.Packet.make(.output, raw_buf);
+        var hdr: [5]u8 = undefined;
+        pkt.header.encode(&hdr);
+
         for (self.display_clients.items) |dc| {
-            var remaining = raw_buf;
-            while (remaining.len > 0) {
-                const written = std.c.write(dc.fd, remaining.ptr, remaining.len);
+            var hdr_remaining: []const u8 = hdr[0..];
+            var write_ok = true;
+            while (hdr_remaining.len > 0) {
+                const written = std.c.write(dc.fd, hdr_remaining.ptr, hdr_remaining.len);
+                if (written < 0) {
+                    if (std.c.errno(written) == .INTR) continue;
+                    write_ok = false;
+                    break;
+                }
+                hdr_remaining = hdr_remaining[@intCast(written)..];
+            }
+
+            if (!write_ok) continue;
+
+            var body_remaining: []const u8 = raw_buf;
+            while (body_remaining.len > 0) {
+                const written = std.c.write(dc.fd, body_remaining.ptr, body_remaining.len);
                 if (written < 0) {
                     if (std.c.errno(written) == .INTR) continue;
                     break;
                 }
-                remaining = remaining[@intCast(written)..];
+                body_remaining = body_remaining[@intCast(written)..];
             }
         }
 
@@ -2870,9 +2888,8 @@ test "OSC 52 clipboard forwarding and buffer copy" {
 
     var temp_buf: [128]u8 = undefined;
     const read_res = std.c.read(client_fd, &temp_buf, temp_buf.len);
-    try testing.expect(read_res > 0);
     const received = temp_buf[0..@intCast(read_res)];
-    try testing.expectEqualStrings("\x1b]52;c;aGVsbG8=\x07", received);
+    try testing.expect(std.mem.indexOf(u8, received, "\x1b]52;c;aGVsbG8=\x07") != null);
 }
 
 test "mouse drag event forwarding" {
