@@ -2306,14 +2306,15 @@ test "mouse event filtering based on mouse_opt" {
     pane.pty = try @import("pty.zig").Pty.open();
 
     const fd = pane.pty.?.slave;
-    // Set non-blocking mode on slave PTY so we can read immediately without newline.
     const c_fcntl = struct {
         extern "c" fn fcntl(fd: c_int, cmd: c_int, ...) c_int;
     }.fcntl;
     const F_GETFL = 3;
     const F_SETFL = 4;
-    const O_NONBLOCK = 0x0004;
-
+    const O_NONBLOCK = comptime switch (@import("builtin").os.tag) {
+        .linux => @as(c_int, 0o4000),
+        else => @as(c_int, 0x0004),
+    };
     const flags = c_fcntl(fd, F_GETFL, @as(c_int, 0));
     _ = c_fcntl(fd, F_SETFL, flags | O_NONBLOCK);
 
@@ -2786,7 +2787,7 @@ test "mouse click and drag selection" {
     const win = s.active_window.?;
     const pane = win.active_pane.?;
 
-    try server.global_options.set("mouse", .{ .flag = true });
+    // mouse option defaults to true, no need to set it explicitly
 
     // Initially, copy mode is NOT active
     try testing.expect(pane.screen.copy_mode == null);
@@ -2918,7 +2919,10 @@ test "mouse drag event forwarding" {
     }.fcntl;
     const F_GETFL = 3;
     const F_SETFL = 4;
-    const O_NONBLOCK = 0x0004;
+    const O_NONBLOCK = comptime switch (@import("builtin").os.tag) {
+        .linux => @as(c_int, 0o4000),
+        else => @as(c_int, 0x0004),
+    };
     const flags = c_fcntl(fd, F_GETFL, @as(c_int, 0));
     _ = c_fcntl(fd, F_SETFL, flags | O_NONBLOCK);
 
