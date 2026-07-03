@@ -1135,7 +1135,37 @@ pub const Server = struct {
                         .mouse => |m| {
                             const mouse_opt = session.options.asFlag("mouse") orelse false;
                             if (mouse_opt) {
-                                if (m.button == .left) {
+                                if (m.button == .scroll_up or m.button == .scroll_down) {
+                                    self.handleMouseFocus(m.x, m.y) catch {};
+                                    const target_pane = window.active_pane orelse return;
+                                    const target_wants_mouse = target_pane.screen.mode.mouse_standard or
+                                        target_pane.screen.mode.mouse_button or
+                                        target_pane.screen.mode.mouse_sgr;
+                                    if (target_wants_mouse) {
+                                        self.forwardMouseToPane(target_pane, m, window);
+                                    } else {
+                                        if (target_pane.screen.copy_mode) |*target_cm| {
+                                            if (m.button == .scroll_up) {
+                                                target_cm.scroll_offset = @min(target_cm.scroll_offset + 3, @as(u32, @intCast(target_pane.screen.grid.history.items.len)));
+                                            } else {
+                                                if (target_cm.scroll_offset == 0) {
+                                                    target_pane.screen.copy_mode = null;
+                                                } else {
+                                                    target_cm.scroll_offset = target_cm.scroll_offset -| 3;
+                                                }
+                                            }
+                                            target_pane.dirty = true;
+                                        } else {
+                                            if (m.button == .scroll_up) {
+                                                target_pane.enterCopyMode() catch {};
+                                                if (target_pane.screen.copy_mode) |*target_cm| {
+                                                    target_cm.scroll_offset = @min(3, @as(u32, @intCast(target_pane.screen.grid.history.items.len)));
+                                                }
+                                                target_pane.dirty = true;
+                                            }
+                                        }
+                                    }
+                                } else if (m.button == .left) {
                                     const old_active_pane = window.active_pane;
                                     self.handleMouseFocus(m.x, m.y) catch {};
                                     const current_active_pane = window.active_pane orelse return;
@@ -1166,16 +1196,6 @@ pub const Server = struct {
                                         pane.screen.copy_mode = null;
                                         pane.dirty = true;
                                     }
-                                } else if (m.button == .scroll_up) {
-                                    cm.scroll_offset = @min(cm.scroll_offset + 3, @as(u32, @intCast(pane.screen.grid.history.items.len)));
-                                    pane.dirty = true;
-                                } else if (m.button == .scroll_down) {
-                                    if (cm.scroll_offset == 0) {
-                                        pane.screen.copy_mode = null;
-                                    } else {
-                                        cm.scroll_offset = cm.scroll_offset -| 3;
-                                    }
-                                    pane.dirty = true;
                                 }
                             }
                         },
@@ -1222,6 +1242,8 @@ pub const Server = struct {
                                 if (mouse_opt) {
                                     if (m.button == .left) {
                                         self.handleMouseFocus(m.x, m.y) catch {};
+                                    } else if (m.button == .scroll_up or m.button == .scroll_down) {
+                                        self.handleMouseFocus(m.x, m.y) catch {};
                                     }
                                     const active_pane = window.active_pane orelse return;
                                     const wants_mouse = active_pane.screen.mode.mouse_standard or
@@ -1233,54 +1255,28 @@ pub const Server = struct {
                                     });
                                     if (wants_mouse) {
                                         handled = true;
-                                        if (self.findPaneBounds(window.layout.root, active_pane, 0, 0, window.layout.width, window.layout.height)) |pb| {
-                                            if (m.x >= pb.x and m.x < pb.x + pb.w and m.y >= pb.y and m.y < pb.y + pb.h) {
-                                                const local_x = m.x - pb.x;
-                                                const local_y = m.y - pb.y;
-                                                var btn: u8 = switch (m.button) {
-                                                    .left => @as(u8, 0),
-                                                    .middle => 1,
-                                                    .right => 2,
-                                                    .release => 3,
-                                                    .scroll_up => 64,
-                                                    .scroll_down => 65,
-                                                    .scroll_left => 66,
-                                                    .scroll_right => 67,
-                                                };
-                                                if (m.mod.shift) btn |= 4;
-                                                if (m.mod.alt) btn |= 8;
-                                                if (m.mod.ctrl) btn |= 16;
-                                                if (m.drag) btn |= 32;
-
-                                                if (active_pane.pty) |*ap_pty| {
-                                                    if (active_pane.screen.mode.mouse_sgr) {
-                                                        const final_char: u8 = if (m.button == .release) 'm' else 'M';
-                                                        var sgr_buf: [64]u8 = undefined;
-                                                        const sgr_seq = std.fmt.bufPrint(&sgr_buf, "\x1b[<{d};{d};{d}{c}", .{
-                                                            btn,
-                                                            local_x + 1,
-                                                            local_y + 1,
-                                                            final_char,
-                                                        }) catch null;
-                                                        if (sgr_seq) |s| {
-                                                            ap_pty.writeInput(s) catch {};
-                                                        }
-                                                    } else {
-                                                        var legacy_buf: [6]u8 = .{ 0x1b, '[', 'M', 0, 0, 0 };
-                                                        legacy_buf[3] = btn + 32;
-                                                        legacy_buf[4] = @intCast(@min(local_x + 33, 255));
-                                                        legacy_buf[5] = @intCast(@min(local_y + 33, 255));
-                                                        ap_pty.writeInput(&legacy_buf) catch {};
-                                                    }
-                                                }
-                                            }
-                                        }
+                                        self.forwardMouseToPane(active_pane, m, window);
                                     } else {
                                         handled = true;
                                         if (m.button == .scroll_up) {
-                                            active_pane.enterCopyMode() catch {};
-                                            active_pane.screen.copy_mode.?.scroll_offset = @min(3, @as(u32, @intCast(active_pane.screen.grid.history.items.len)));
+                                            if (active_pane.screen.copy_mode) |*target_cm| {
+                                                target_cm.scroll_offset = @min(target_cm.scroll_offset + 3, @as(u32, @intCast(active_pane.screen.grid.history.items.len)));
+                                            } else {
+                                                active_pane.enterCopyMode() catch {};
+                                                if (active_pane.screen.copy_mode) |*target_cm| {
+                                                    target_cm.scroll_offset = @min(3, @as(u32, @intCast(active_pane.screen.grid.history.items.len)));
+                                                }
+                                            }
                                             active_pane.dirty = true;
+                                        } else if (m.button == .scroll_down) {
+                                            if (active_pane.screen.copy_mode) |*target_cm| {
+                                                if (target_cm.scroll_offset == 0) {
+                                                    active_pane.screen.copy_mode = null;
+                                                } else {
+                                                    target_cm.scroll_offset = target_cm.scroll_offset -| 3;
+                                                }
+                                                active_pane.dirty = true;
+                                            }
                                         } else if (m.button == .left and m.drag) {
                                             if (self.mouse_press_pane) |press_pane| {
                                                 if (self.findPaneBounds(window.layout.root, press_pane, 0, 0, window.layout.width, window.layout.height)) |pb| {
@@ -1420,6 +1416,55 @@ pub const Server = struct {
             if (prev_active) |prev| prev.dirty = true;
             found_pane.dirty = true;
             self.dirty = true;
+        }
+    }
+
+    pub fn forwardMouseToPane(self: *Server, pane: *Pane, m: anytype, window: *Window) void {
+        const wants_mouse = pane.screen.mode.mouse_standard or
+            pane.screen.mode.mouse_button or
+            pane.screen.mode.mouse_sgr;
+        if (!wants_mouse) return;
+        if (self.findPaneBounds(window.layout.root, pane, 0, 0, window.layout.width, window.layout.height)) |pb| {
+            if (m.x >= pb.x and m.x < pb.x + pb.w and m.y >= pb.y and m.y < pb.y + pb.h) {
+                const local_x = m.x - pb.x;
+                const local_y = m.y - pb.y;
+                var btn: u8 = switch (m.button) {
+                    .left => @as(u8, 0),
+                    .middle => 1,
+                    .right => 2,
+                    .release => 3,
+                    .scroll_up => 64,
+                    .scroll_down => 65,
+                    .scroll_left => 66,
+                    .scroll_right => 67,
+                };
+                if (m.mod.shift) btn |= 4;
+                if (m.mod.alt) btn |= 8;
+                if (m.mod.ctrl) btn |= 16;
+                if (m.drag) btn |= 32;
+
+                if (pane.pty) |*ap_pty| {
+                    if (pane.screen.mode.mouse_sgr) {
+                        const final_char: u8 = if (m.button == .release) 'm' else 'M';
+                        var sgr_buf: [64]u8 = undefined;
+                        const sgr_seq = std.fmt.bufPrint(&sgr_buf, "\x1b[<{d};{d};{d}{c}", .{
+                            btn,
+                            local_x + 1,
+                            local_y + 1,
+                            final_char,
+                        }) catch null;
+                        if (sgr_seq) |s| {
+                            ap_pty.writeInput(s) catch {};
+                        }
+                    } else {
+                        var legacy_buf: [6]u8 = .{ 0x1b, '[', 'M', 0, 0, 0 };
+                        legacy_buf[3] = btn + 32;
+                        legacy_buf[4] = @intCast(@min(local_x + 33, 255));
+                        legacy_buf[5] = @intCast(@min(local_y + 33, 255));
+                        ap_pty.writeInput(&legacy_buf) catch {};
+                    }
+                }
+            }
         }
     }
 
@@ -2872,6 +2917,36 @@ test "mouse selection from inactive pane focus and drag" {
     const pb = server.buffers.get(null);
     try testing.expect(pb != null);
     try testing.expectEqualStrings("xxxxxxxxxxx", pb.?);
+}
+
+test "mouse hover scroll focus and scroll" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    const s = try server.newSession("test-mouse-scroll-focus", 80, 24);
+    const win = s.active_window.?;
+    const pane1 = win.active_pane.?;
+
+    const pane2 = try win.splitPane(server.allocator, pane1, false, 0.5);
+
+    win.setActivePane(pane1);
+    try testing.expectEqual(pane1, win.active_pane.?);
+
+    try testing.expect(pane2.screen.copy_mode == null);
+
+    // Scroll up over pane2 at (50, 5) -> SGR button 64, coordinates (51, 6) -> \x1b[<64;51;6M
+    try server.processInput("\x1b[<64;51;6M");
+
+    // pane2 should be active now!
+    try testing.expectEqual(pane2, win.active_pane.?);
+    try testing.expect(pane2.screen.copy_mode != null);
+
+    // Scroll down over pane2 at (50, 5) -> SGR button 65 -> \x1b[<65;51;6M
+    try testing.expectEqual(@as(u32, 0), pane2.screen.copy_mode.?.scroll_offset);
+    try server.processInput("\x1b[<65;51;6M");
+
+    // Copy mode should be null now
+    try testing.expect(pane2.screen.copy_mode == null);
 }
 
 test "OSC 52 clipboard forwarding and buffer copy" {
