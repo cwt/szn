@@ -160,6 +160,13 @@ pub const CopyMode = struct {
         }
     }
 
+    pub fn adjustSelectionForAutoScroll(self: *CopyMode, delta: i32) void {
+        if (!self.selection.active) return;
+        self.selection.start_scroll_offset = @intCast(@as(i64, @intCast(self.selection.start_scroll_offset)) + delta);
+        self.selection.start_y = @intCast(@as(i64, @intCast(self.selection.start_y)) + delta);
+        self.selection.end_y = @intCast(@as(i64, @intCast(self.selection.end_y)) + delta);
+    }
+
     pub fn clearSelection(self: *CopyMode) void {
         self.selection.active = false;
     }

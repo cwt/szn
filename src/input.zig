@@ -179,7 +179,9 @@ pub const InputParser = struct {
         self.clearParams();
         self.intermediate = 0;
         self.private_marker = 0;
-        self.osc_buf.deinit(self.screen.allocator);
+        if (self.osc_buf.capacity > 0) {
+            self.osc_buf.deinit(self.screen.allocator);
+        }
         self.osc_buf = .empty;
     }
 

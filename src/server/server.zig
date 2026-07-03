@@ -112,6 +112,8 @@ pub const Server = struct {
     mouse_press_x: u32 = 0,
     mouse_press_y: u32 = 0,
     mouse_press_pane: ?*Pane = null,
+    mouse_autoscroll_dir: ?enum { up, down } = null,
+    mouse_autoscroll_pane: ?*Pane = null,
 
     pub fn init(allocator: std.mem.Allocator) ServerError!Server {
         const key_binding = @import("../key_binding.zig");
@@ -249,9 +251,31 @@ pub const Server = struct {
         }
     }
 
+    fn tickAutoscroll(self: *Server) void {
+        const pane = self.mouse_autoscroll_pane orelse return;
+        const dir = self.mouse_autoscroll_dir orelse return;
+        if (pane.screen.copy_mode) |*cm| {
+            if (cm.selection.active) {
+                const grid = &pane.screen.grid;
+                const hist_len: u32 = @intCast(grid.history.items.len);
+                if (dir == .up and cm.scroll_offset < hist_len) {
+                    cm.scroll_offset += 1;
+                    cm.adjustSelectionForAutoScroll(1);
+                    pane.dirty = true;
+                } else if (dir == .down and cm.scroll_offset > 0) {
+                    cm.scroll_offset -= 1;
+                    cm.adjustSelectionForAutoScroll(-1);
+                    pane.dirty = true;
+                }
+            }
+        }
+    }
+
     pub fn run(self: *Server, timeout_ms: i32) ServerError!void {
         reapZombies();
-        const events = try self.loop.pollOnce(self.allocator, timeout_ms);
+        self.tickAutoscroll();
+        const auto_timeout: i32 = if (self.mouse_autoscroll_pane != null) @min(timeout_ms, 50) else timeout_ms;
+        const events = try self.loop.pollOnce(self.allocator, auto_timeout);
         for (events) |ev| {
             switch (self.handlePtyEvent(ev)) {
                 .destroyed => break,
@@ -1171,21 +1195,39 @@ pub const Server = struct {
                                     const current_active_pane = window.active_pane orelse return;
                                     if (current_active_pane == old_active_pane) {
                                         if (self.findPaneBounds(window.layout.root, current_active_pane, 0, 0, window.layout.width, window.layout.height)) |pb| {
-                                            if (m.x >= pb.x and m.x < pb.x + pb.w and m.y >= pb.y and m.y < pb.y + pb.h) {
-                                                const local_x = m.x - pb.x;
-                                                const local_y = m.y - pb.y;
-                                                cm.cursor_x = @min(local_x, current_active_pane.screen.grid.width -| 1);
-                                                cm.cursor_y = @min(local_y, current_active_pane.screen.grid.height -| 1);
+                                            const local_x = m.x -| pb.x;
+                                            const local_y = m.y -| pb.y;
+                                            const grid_w = current_active_pane.screen.grid.width;
+                                            const grid_h = current_active_pane.screen.grid.height;
+                                            const inside = m.x >= pb.x and m.x < pb.x + pb.w and m.y >= pb.y and m.y < pb.y + pb.h;
+                                            if (inside) {
+                                                cm.cursor_x = @min(local_x, grid_w -| 1);
+                                                cm.cursor_y = @min(local_y, grid_h -| 1);
                                                 if (!cm.selection.active) {
                                                     cm.startSelection();
                                                 } else {
                                                     cm.updateSelection();
                                                 }
-                                                current_active_pane.dirty = true;
                                             }
+                                            const hist_len: u32 = @intCast(current_active_pane.screen.grid.history.items.len);
+                                            const at_top_edge = (local_y == 0 and inside) or m.y < pb.y;
+                                            const at_bottom_edge = (local_y >= grid_h -| 1 and grid_h > 0 and inside) or m.y >= pb.y + pb.h;
+                                            if (at_top_edge and cm.scroll_offset < hist_len) {
+                                                self.mouse_autoscroll_dir = .up;
+                                                self.mouse_autoscroll_pane = current_active_pane;
+                                            } else if (at_bottom_edge and cm.scroll_offset > 0) {
+                                                self.mouse_autoscroll_dir = .down;
+                                                self.mouse_autoscroll_pane = current_active_pane;
+                                            } else {
+                                                self.mouse_autoscroll_dir = null;
+                                                self.mouse_autoscroll_pane = null;
+                                            }
+                                            current_active_pane.dirty = true;
                                         }
                                     }
                                 } else if (m.button == .release) {
+                                    self.mouse_autoscroll_dir = null;
+                                    self.mouse_autoscroll_pane = null;
                                     if (cm.selection.active) {
                                         const data = cm.yankSelection(self.allocator, &pane.screen.grid) catch null;
                                         if (data) |d| {
@@ -1280,24 +1322,42 @@ pub const Server = struct {
                                         } else if (m.button == .left and m.drag) {
                                             if (self.mouse_press_pane) |press_pane| {
                                                 if (self.findPaneBounds(window.layout.root, press_pane, 0, 0, window.layout.width, window.layout.height)) |pb| {
-                                                    if (m.x >= pb.x and m.x < pb.x + pb.w and m.y >= pb.y and m.y < pb.y + pb.h) {
-                                                        const local_x = m.x - pb.x;
-                                                        const local_y = m.y - pb.y;
-                                                        if (press_pane.screen.copy_mode == null) {
-                                                            press_pane.enterCopyMode() catch {};
-                                                        }
-                                                        if (press_pane.screen.copy_mode) |*cm| {
+                                                    if (press_pane.screen.copy_mode == null) {
+                                                        press_pane.enterCopyMode() catch {};
+                                                    }
+                                                    if (press_pane.screen.copy_mode) |*cm| {
+                                                        const grid_w = press_pane.screen.grid.width;
+                                                        const grid_h = press_pane.screen.grid.height;
+                                                        const local_x = m.x -| pb.x;
+                                                        const local_y = m.y -| pb.y;
+                                                        const inside = m.x >= pb.x and m.x < pb.x + pb.w and m.y >= pb.y and m.y < pb.y + pb.h;
+                                                        if (inside) {
                                                             const press_local_x = if (self.mouse_press_x >= pb.x) self.mouse_press_x - pb.x else 0;
                                                             const press_local_y = if (self.mouse_press_y >= pb.y) self.mouse_press_y - pb.y else 0;
-                                                            cm.cursor_x = @min(press_local_x, press_pane.screen.grid.width -| 1);
-                                                            cm.cursor_y = @min(press_local_y, press_pane.screen.grid.height -| 1);
-                                                            cm.startSelection();
-                                                            cm.cursor_x = @min(local_x, press_pane.screen.grid.width -| 1);
-                                                            cm.cursor_y = @min(local_y, press_pane.screen.grid.height -| 1);
+                                                            if (!cm.selection.active) {
+                                                                cm.cursor_x = @min(press_local_x, grid_w -| 1);
+                                                                cm.cursor_y = @min(press_local_y, grid_h -| 1);
+                                                                cm.startSelection();
+                                                            }
+                                                            cm.cursor_x = @min(local_x, grid_w -| 1);
+                                                            cm.cursor_y = @min(local_y, grid_h -| 1);
                                                             cm.updateSelection();
                                                         }
-                                                        press_pane.dirty = true;
+                                                        const hist_len: u32 = @intCast(press_pane.screen.grid.history.items.len);
+                                                        const at_top_edge = (local_y == 0 and inside) or m.y < pb.y;
+                                                        const at_bottom_edge = (local_y >= grid_h -| 1 and grid_h > 0 and inside) or m.y >= pb.y + pb.h;
+                                                        if (at_top_edge and cm.scroll_offset < hist_len) {
+                                                            self.mouse_autoscroll_dir = .up;
+                                                            self.mouse_autoscroll_pane = press_pane;
+                                                        } else if (at_bottom_edge and cm.scroll_offset > 0) {
+                                                            self.mouse_autoscroll_dir = .down;
+                                                            self.mouse_autoscroll_pane = press_pane;
+                                                        } else {
+                                                            self.mouse_autoscroll_dir = null;
+                                                            self.mouse_autoscroll_pane = null;
+                                                        }
                                                     }
+                                                    press_pane.dirty = true;
                                                 }
                                             }
                                         } else if (m.button == .left) {
@@ -1306,6 +1366,22 @@ pub const Server = struct {
                                             self.handleMouseFocus(m.x, m.y) catch {};
                                             self.mouse_press_pane = window.active_pane;
                                         } else if (m.button == .release) {
+                                            self.mouse_autoscroll_dir = null;
+                                            self.mouse_autoscroll_pane = null;
+                                            if (self.mouse_press_pane) |press_pane| {
+                                                if (press_pane.screen.copy_mode) |*cm| {
+                                                    if (cm.selection.active) {
+                                                        const data = cm.yankSelection(self.allocator, &press_pane.screen.grid) catch null;
+                                                        if (data) |d| {
+                                                            const name = try self.buffers.generateName();
+                                                            errdefer self.allocator.free(name);
+                                                            try self.buffers.pushOwned(name, d);
+                                                        }
+                                                        press_pane.screen.copy_mode = null;
+                                                        press_pane.dirty = true;
+                                                    }
+                                                }
+                                            }
                                             self.mouse_press_pane = null;
                                         }
                                     }
