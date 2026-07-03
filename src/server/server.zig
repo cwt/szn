@@ -64,6 +64,12 @@ else
 extern "c" fn getuid() c.uid_t;
 extern "c" fn getpwuid(uid: c.uid_t) ?*const passwd;
 
+pub const DisplayClient = struct {
+    fd: i32,
+    sx: u32 = 80,
+    sy: u32 = 24,
+};
+
 pub const Server = struct {
     allocator: std.mem.Allocator,
     sessions: std.ArrayListUnmanaged(*Session) = .empty,
@@ -80,7 +86,8 @@ pub const Server = struct {
     global_options: @import("../options.zig").Options,
     global_window_options: @import("../options.zig").Options,
     response_buf: std.ArrayList(u8),
-    display_client_fd: ?i32 = null,
+    display_clients: std.ArrayListUnmanaged(DisplayClient) = .empty,
+    current_client_fd: ?i32 = null,
     render_buf: std.ArrayList(u8),
     buffers: buffer_mod.BufferList,
     log_messages: std.ArrayListUnmanaged([]const u8) = .empty,
@@ -146,6 +153,7 @@ pub const Server = struct {
             _ = c.close(fd);
         }
         self.client_fds.deinit(self.allocator);
+        self.display_clients.deinit(self.allocator);
         if (self.listener_fd) |fd| {
             socket_mod.closeSocket(fd);
         }
@@ -567,20 +575,30 @@ pub const Server = struct {
                 }
             },
             .detach => {
-                if (self.display_client_fd) |cfd| {
+                const target_fd = self.current_client_fd orelse (if (self.display_clients.items.len > 0) self.display_clients.items[0].fd else null);
+                if (target_fd) |cfd| {
                     const detach_pkt = protocol.Packet.make(.detach, "");
-                    var buf: [128]u8 = undefined;
-                    const ser = detach_pkt.serialize(&buf);
+                    var detach_buf: [128]u8 = undefined;
+                    const ser = detach_pkt.serialize(&detach_buf);
                     var remaining: []const u8 = ser;
                     while (remaining.len > 0) {
-                        const n = c.write(cfd, remaining.ptr, remaining.len);
-                        if (n < 0) {
-                            if (std.c.errno(n) == .INTR) continue;
+                        const written_bytes = c.write(cfd, remaining.ptr, remaining.len);
+                        if (written_bytes < 0) {
+                            if (std.c.errno(written_bytes) == .INTR) continue;
                             break;
                         }
-                        remaining = remaining[@intCast(n)..];
+                        remaining = remaining[@intCast(written_bytes)..];
                     }
-                    self.display_client_fd = null;
+                    for (self.display_clients.items, 0..) |dc, idx| {
+                        if (dc.fd == cfd) {
+                            _ = self.display_clients.swapRemove(idx);
+                            break;
+                        }
+                    }
+                    if (self.current_client_fd == cfd) {
+                        self.current_client_fd = null;
+                    }
+                    self.recalculateMinimumSize();
                 } else {
                     self.loop.running = false;
                 }
@@ -1515,7 +1533,16 @@ pub const Server = struct {
                     try dispatch.sendResponse(fd, &result);
                 },
                 .identify_term => {
-                    self.display_client_fd = fd;
+                    var exists = false;
+                    for (self.display_clients.items) |dc| {
+                        if (dc.fd == fd) {
+                            exists = true;
+                            break;
+                        }
+                    }
+                    if (!exists) {
+                        try self.display_clients.append(self.allocator, .{ .fd = fd });
+                    }
                     const reply = protocol.Packet.make(.ready, "ok");
                     var reply_buf: [128]u8 = undefined;
                     const serialized = reply.serialize(&reply_buf);
@@ -1532,6 +1559,7 @@ pub const Server = struct {
                     }
                 },
                 .stdin_data => {
+                    self.current_client_fd = fd;
                     self.processInput(pkt.data) catch |err| {
                         std.log.err("stdin processing error: {any}", .{err});
                     };
@@ -1540,15 +1568,27 @@ pub const Server = struct {
                     if (pkt.data.len >= 8) {
                         const new_w = std.mem.readInt(u32, pkt.data[0..4], .little);
                         const new_h = std.mem.readInt(u32, pkt.data[4..8], .little);
-                        self.display_sx = @max(new_w, 2);
-                        self.display_sy = @max(new_h, 2);
-                        if (self.activeSession()) |s| {
-                            s.resize(self.display_sx, self.display_sy - 1) catch {};
+                        for (self.display_clients.items) |*dc| {
+                            if (dc.fd == fd) {
+                                dc.sx = @max(new_w, 2);
+                                dc.sy = @max(new_h, 2);
+                                break;
+                            }
                         }
+                        self.recalculateMinimumSize();
                     }
                 },
                 .detach => {
-                    self.display_client_fd = null;
+                    for (self.display_clients.items, 0..) |dc, idx| {
+                        if (dc.fd == fd) {
+                            _ = self.display_clients.swapRemove(idx);
+                            break;
+                        }
+                    }
+                    if (self.current_client_fd == fd) {
+                        self.current_client_fd = null;
+                    }
+                    self.recalculateMinimumSize();
                 },
                 else => {},
             }
@@ -1567,13 +1607,36 @@ pub const Server = struct {
             self.allocator.destroy(entry.value);
         }
         _ = c.close(fd);
-        if (self.display_client_fd == fd) {
-            self.display_client_fd = null;
+        for (self.display_clients.items, 0..) |dc, idx| {
+            if (dc.fd == fd) {
+                _ = self.display_clients.swapRemove(idx);
+                break;
+            }
+        }
+        if (self.current_client_fd == fd) {
+            self.current_client_fd = null;
+        }
+        self.recalculateMinimumSize();
+    }
+
+    pub fn recalculateMinimumSize(self: *Server) void {
+        if (self.display_clients.items.len == 0) {
+            return;
+        }
+        var min_sx: u32 = 999999;
+        var min_sy: u32 = 999999;
+        for (self.display_clients.items) |dc| {
+            if (dc.sx < min_sx) min_sx = dc.sx;
+            if (dc.sy < min_sy) min_sy = dc.sy;
+        }
+        self.display_sx = @max(min_sx, 2);
+        self.display_sy = @max(min_sy, 2);
+        if (self.activeSession()) |s| {
+            s.resize(self.display_sx, self.display_sy - 1) catch {};
         }
     }
 
     pub fn renderToDisplayClient(self: *Server) void {
-        const display_fd = self.display_client_fd orelse return;
         const session = self.activeSession() orelse return;
         const window = session.active_window orelse return;
         const pane = window.active_pane orelse return;
@@ -1642,72 +1705,78 @@ pub const Server = struct {
             p.dirty = false;
         }
 
-        self.render_buf.clearRetainingCapacity();
+        for (self.display_clients.items) |dc| {
+            self.render_buf.clearRetainingCapacity();
 
-        var display = Display{
-            .fd = display_fd,
-            .sx = self.display_sx,
-            .sy = self.display_sy,
-            .capture = &self.render_buf,
-            .capture_allocator = self.allocator,
-        };
+            var display = Display{
+                .fd = dc.fd,
+                .sx = dc.sx,
+                .sy = dc.sy,
+                .capture = &self.render_buf,
+                .capture_allocator = self.allocator,
+            };
 
-        var bounds: std.ArrayList(render.PaneBounds) = .empty;
-        defer bounds.deinit(self.allocator);
-        self.collectPaneBounds(window.layout.root, 0, 0, self.display_sx, self.display_sy - 1, &bounds) catch |err| {
-            std.log.warn("collectPaneBounds error: {any}", .{err});
-            return;
-        };
+            var bounds: std.ArrayList(render.PaneBounds) = .empty;
+            defer bounds.deinit(self.allocator);
+            self.collectPaneBounds(window.layout.root, 0, 0, dc.sx, dc.sy - 1, &bounds) catch |err| {
+                std.log.warn("collectPaneBounds error: {any}", .{err});
+                continue;
+            };
 
-        const pane_in_copy_mode = pane.screen.copy_mode != null;
-        display.renderAll(
-            self.allocator,
-            bounds.items,
-            pane,
-            session.name,
-            session.windows.items,
-            session.active_window,
-            window.layout.root,
-            .{
-                .status_fg = session.options.asColour("status-fg") orelse Colour.default_(),
-                .status_bg = session.options.asColour("status-bg") orelse Colour.default_(),
-                .pane_border_fg = session.options.asColour("pane-border-fg") orelse Colour.default_(),
-                .pane_active_border_fg = session.options.asColour("pane-active-border-fg") orelse Colour.default_(),
-            },
-            self.message,
-            self.command_mode,
-            self.command_buf.items,
-            pane_in_copy_mode,
-        ) catch |err| {
-            std.log.warn("render error: {any}", .{err});
-            return;
-        };
+            const pane_in_copy_mode = pane.screen.copy_mode != null;
+            display.renderAll(
+                self.allocator,
+                bounds.items,
+                pane,
+                session.name,
+                session.windows.items,
+                session.active_window,
+                window.layout.root,
+                .{
+                    .status_fg = session.options.asColour("status-fg") orelse Colour.default_(),
+                    .status_bg = session.options.asColour("status-bg") orelse Colour.default_(),
+                    .pane_border_fg = session.options.asColour("pane-border-fg") orelse Colour.default_(),
+                    .pane_active_border_fg = session.options.asColour("pane-active-border-fg") orelse Colour.default_(),
+                },
+                self.message,
+                self.command_mode,
+                self.command_buf.items,
+                pane_in_copy_mode,
+            ) catch |err| {
+                std.log.warn("render error: {any}", .{err});
+                continue;
+            };
 
-        if (self.render_buf.items.len > 0) {
-            const pkt = protocol.Packet.make(.output, self.render_buf.items);
-            var hdr: [5]u8 = undefined;
-            pkt.header.encode(&hdr);
+            if (self.render_buf.items.len > 0) {
+                const pkt = protocol.Packet.make(.output, self.render_buf.items);
+                var hdr: [5]u8 = undefined;
+                pkt.header.encode(&hdr);
 
-            // Write header — retry partial writes
-            var hdr_remaining: []const u8 = hdr[0..];
-            while (hdr_remaining.len > 0) {
-                const n = c.write(display_fd, hdr_remaining.ptr, hdr_remaining.len);
-                if (n < 0) {
-                    if (std.c.errno(n) == .INTR) continue;
-                    return;
+                // Write header — retry partial writes
+                var hdr_remaining: []const u8 = hdr[0..];
+                var write_ok = true;
+                while (hdr_remaining.len > 0) {
+                    const written_bytes = c.write(dc.fd, hdr_remaining.ptr, hdr_remaining.len);
+                    if (written_bytes < 0) {
+                        if (std.c.errno(written_bytes) == .INTR) continue;
+                        write_ok = false;
+                        break;
+                    }
+                    hdr_remaining = hdr_remaining[@intCast(written_bytes)..];
                 }
-                hdr_remaining = hdr_remaining[@intCast(n)..];
-            }
 
-            // Write body — retry partial writes
-            var body_remaining: []const u8 = self.render_buf.items;
-            while (body_remaining.len > 0) {
-                const n = c.write(display_fd, body_remaining.ptr, body_remaining.len);
-                if (n < 0) {
-                    if (std.c.errno(n) == .INTR) continue;
-                    return;
+                if (!write_ok) continue;
+
+                // Write body — retry partial writes
+                var body_remaining: []const u8 = self.render_buf.items;
+                while (body_remaining.len > 0) {
+                    const written_bytes = c.write(dc.fd, body_remaining.ptr, body_remaining.len);
+                    if (written_bytes < 0) {
+                        if (std.c.errno(written_bytes) == .INTR) continue;
+                        break;
+                    }
+                    body_remaining = body_remaining[@intCast(written_bytes)..];
                 }
-                body_remaining = body_remaining[@intCast(n)..];
             }
         }
     }
@@ -2482,4 +2551,93 @@ test "command prompt tab completion" {
     // Command mode should be active again
     try testing.expect(server.command_mode);
     try testing.expectEqualStrings("se", server.command_buf.items);
+}
+
+test "multiple display clients attached simultaneously" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    // Create client A socketpair
+    var fds_a: [2]i32 = undefined;
+    if (std.c.socketpair(std.c.AF.UNIX, std.c.SOCK.STREAM, 0, &fds_a) != 0) return error.Unexpected;
+    const server_a = fds_a[0];
+    const client_a = fds_a[1];
+    defer _ = std.c.close(server_a);
+    defer _ = std.c.close(client_a);
+
+    // Create client B socketpair
+    var fds_b: [2]i32 = undefined;
+    if (std.c.socketpair(std.c.AF.UNIX, std.c.SOCK.STREAM, 0, &fds_b) != 0) return error.Unexpected;
+    const server_b = fds_b[0];
+    const client_b = fds_b[1];
+    defer _ = std.c.close(server_b);
+    defer _ = std.c.close(client_b);
+
+    // Set up message readers for both
+    const reader_a = try testing.allocator.create(MessageReader);
+    reader_a.* = .{};
+    try server.client_readers.put(server_a, reader_a);
+    try server.client_fds.append(server.allocator, server_a);
+    defer {
+        if (server.client_readers.fetchRemove(server_a)) |entry| {
+            testing.allocator.destroy(entry.value);
+        }
+    }
+
+    const reader_b = try testing.allocator.create(MessageReader);
+    reader_b.* = .{};
+    try server.client_readers.put(server_b, reader_b);
+    try server.client_fds.append(server.allocator, server_b);
+    defer {
+        if (server.client_readers.fetchRemove(server_b)) |entry| {
+            testing.allocator.destroy(entry.value);
+        }
+    }
+
+    // 1. Identify Client A as a display client
+    const identify_a = protocol.Packet.make(.identify_term, "xterm-256color");
+    var id_buf_a: [128]u8 = undefined;
+    const id_ser_a = identify_a.serialize(&id_buf_a);
+    _ = std.c.write(client_a, id_ser_a.ptr, id_ser_a.len);
+
+    try server.handleClient(server_a);
+    try testing.expectEqual(@as(usize, 1), server.display_clients.items.len);
+    try testing.expectEqual(server_a, server.display_clients.items[0].fd);
+
+    // Read the reply "ok" from client A end
+    var reply_buf_a: [128]u8 = undefined;
+    _ = std.c.read(client_a, &reply_buf_a, reply_buf_a.len);
+
+    // 2. Identify Client B as another display client
+    const identify_b = protocol.Packet.make(.identify_term, "xterm-256color");
+    var id_buf_b: [128]u8 = undefined;
+    const id_ser_b = identify_b.serialize(&id_buf_b);
+    _ = std.c.write(client_b, id_ser_b.ptr, id_ser_b.len);
+
+    try server.handleClient(server_b);
+    try testing.expectEqual(@as(usize, 2), server.display_clients.items.len);
+    // Both should still be attached!
+    try testing.expect(server.display_clients.items[0].fd == server_a or server.display_clients.items[1].fd == server_a);
+    try testing.expect(server.display_clients.items[0].fd == server_b or server.display_clients.items[1].fd == server_b);
+
+    // Read the reply "ok" from client B end
+    var reply_buf_b: [128]u8 = undefined;
+    _ = std.c.read(client_b, &reply_buf_b, reply_buf_b.len);
+
+    // Verify Client A did NOT receive any detach packet
+    const c_fcntl = struct {
+        extern "c" fn fcntl(fd: i32, cmd: i32, ...) i32;
+    }.fcntl;
+    const O_NONBLOCK = comptime switch (@import("builtin").os.tag) {
+        .macos, .ios, .watchos, .tvos => 0x0004,
+        .freebsd, .netbsd, .openbsd, .dragonfly => 0x0004,
+        else => 0x0800, // Linux
+    };
+    const flags = c_fcntl(client_a, 3, @as(i32, 0));
+    _ = c_fcntl(client_a, 4, flags | O_NONBLOCK);
+
+    var temp_buf: [128]u8 = undefined;
+    const read_res = std.c.read(client_a, &temp_buf, temp_buf.len);
+    try testing.expect(read_res < 0);
+    try testing.expect(std.c.errno(read_res) == .AGAIN);
 }
