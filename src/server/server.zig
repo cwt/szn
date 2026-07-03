@@ -109,6 +109,9 @@ pub const Server = struct {
     message_time: i64 = 0,
     command_mode: bool = false,
     command_buf: std.ArrayListUnmanaged(u8) = .empty,
+    mouse_press_x: u32 = 0,
+    mouse_press_y: u32 = 0,
+    mouse_press_pane: ?*Pane = null,
 
     pub fn init(allocator: std.mem.Allocator) ServerError!Server {
         const key_binding = @import("../key_binding.zig");
@@ -1278,25 +1281,36 @@ pub const Server = struct {
                                             active_pane.enterCopyMode() catch {};
                                             active_pane.screen.copy_mode.?.scroll_offset = @min(3, @as(u32, @intCast(active_pane.screen.grid.history.items.len)));
                                             active_pane.dirty = true;
-                                        } else if (m.button == .left) {
-                                            const old_active_pane = window.active_pane;
-                                            self.handleMouseFocus(m.x, m.y) catch {};
-                                            const current_active_pane = window.active_pane orelse return;
-                                            if (current_active_pane == old_active_pane) {
-                                                if (self.findPaneBounds(window.layout.root, current_active_pane, 0, 0, window.layout.width, window.layout.height)) |pb| {
+                                        } else if (m.button == .left and m.drag) {
+                                            if (self.mouse_press_pane) |press_pane| {
+                                                if (self.findPaneBounds(window.layout.root, press_pane, 0, 0, window.layout.width, window.layout.height)) |pb| {
                                                     if (m.x >= pb.x and m.x < pb.x + pb.w and m.y >= pb.y and m.y < pb.y + pb.h) {
                                                         const local_x = m.x - pb.x;
                                                         const local_y = m.y - pb.y;
-                                                        current_active_pane.enterCopyMode() catch {};
-                                                        if (current_active_pane.screen.copy_mode) |*cm| {
-                                                            cm.cursor_x = @min(local_x, current_active_pane.screen.grid.width -| 1);
-                                                            cm.cursor_y = @min(local_y, current_active_pane.screen.grid.height -| 1);
-                                                            cm.startSelection();
+                                                        if (press_pane.screen.copy_mode == null) {
+                                                            press_pane.enterCopyMode() catch {};
                                                         }
-                                                        current_active_pane.dirty = true;
+                                                        if (press_pane.screen.copy_mode) |*cm| {
+                                                            const press_local_x = if (self.mouse_press_x >= pb.x) self.mouse_press_x - pb.x else 0;
+                                                            const press_local_y = if (self.mouse_press_y >= pb.y) self.mouse_press_y - pb.y else 0;
+                                                            cm.cursor_x = @min(press_local_x, press_pane.screen.grid.width -| 1);
+                                                            cm.cursor_y = @min(press_local_y, press_pane.screen.grid.height -| 1);
+                                                            cm.startSelection();
+                                                            cm.cursor_x = @min(local_x, press_pane.screen.grid.width -| 1);
+                                                            cm.cursor_y = @min(local_y, press_pane.screen.grid.height -| 1);
+                                                            cm.updateSelection();
+                                                        }
+                                                        press_pane.dirty = true;
                                                     }
                                                 }
                                             }
+                                        } else if (m.button == .left) {
+                                            self.mouse_press_x = m.x;
+                                            self.mouse_press_y = m.y;
+                                            self.handleMouseFocus(m.x, m.y) catch {};
+                                            self.mouse_press_pane = window.active_pane;
+                                        } else if (m.button == .release) {
+                                            self.mouse_press_pane = null;
                                         }
                                     }
                                 } else {
@@ -2787,49 +2801,74 @@ test "mouse click and drag selection" {
     const win = s.active_window.?;
     const pane = win.active_pane.?;
 
-    // mouse option defaults to true, no need to set it explicitly
-
-    // Initially, copy mode is NOT active
     try testing.expect(pane.screen.copy_mode == null);
 
-    // Simulate mouse click down (left button) at (10, 5) which is inside pane boundaries (0,0 to 80,23)
-    // SGR mouse encoding for left button down at (10, 5) is: \x1b[<0;11;6M (since 1-based, 10+1=11, 5+1=6)
     try server.processInput("\x1b[<0;11;6M");
 
-    // Copy mode should now be active!
+    try testing.expect(pane.screen.copy_mode == null);
+
+    try server.processInput("\x1b[<32;21;6M");
+
     try testing.expect(pane.screen.copy_mode != null);
     const cm = &pane.screen.copy_mode.?;
     try testing.expect(cm.selection.active);
-    try testing.expectEqual(@as(u32, 10), cm.cursor_x);
-    try testing.expectEqual(@as(u32, 5), cm.cursor_y);
     try testing.expectEqual(@as(u32, 10), cm.selection.start_x);
     try testing.expectEqual(@as(u32, 5), cm.selection.start_y);
-
-    // Simulate dragging mouse to (20, 5) (left button drag)
-    // Drag button code in SGR is often parsed as left button (0).
-    // SGR mouse encoding for left button drag at (20, 5) is: \x1b[<0;21;6M (20+1=21, 5+1=6)
-    try server.processInput("\x1b[<0;21;6M");
-
-    // Selection endpoint should be updated to (20, 5)
-    try testing.expectEqual(@as(u32, 20), cm.cursor_x);
-    try testing.expectEqual(@as(u32, 5), cm.cursor_y);
     try testing.expectEqual(@as(u32, 20), cm.selection.end_x);
     try testing.expectEqual(@as(u32, 5), cm.selection.end_y);
 
-    // Populate cell values so we have something to yank
     for (10..21) |x| {
         pane.screen.grid.getLine(5).cells.items[x].char = 'x';
     }
 
-    // Simulate releasing the left button at (20, 5)
-    // SGR mouse release is sent with final character 'm'.
-    // SGR mouse encoding for release is: \x1b[<3;21;6m
     try server.processInput("\x1b[<3;21;6m");
 
-    // Copy mode should be deactivated upon release!
     try testing.expect(pane.screen.copy_mode == null);
 
-    // The yanked content should be in the paste buffer!
+    const pb = server.buffers.get(null);
+    try testing.expect(pb != null);
+    try testing.expectEqualStrings("xxxxxxxxxxx", pb.?);
+}
+
+test "mouse selection from inactive pane focus and drag" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    const s = try server.newSession("test-mouse-selection-inactive", 80, 24);
+    const win = s.active_window.?;
+    const pane1 = win.active_pane.?;
+
+    const pane2 = try win.splitPane(server.allocator, pane1, false, 0.5);
+
+    win.setActivePane(pane1);
+    try testing.expectEqual(pane1, win.active_pane.?);
+
+    try testing.expect(pane2.screen.copy_mode == null);
+
+    try server.processInput("\x1b[<0;51;6M");
+
+    try testing.expectEqual(pane2, win.active_pane.?);
+    try testing.expect(pane2.screen.copy_mode == null);
+
+    try server.processInput("\x1b[<32;61;6M");
+
+    try testing.expect(pane2.screen.copy_mode != null);
+    const cm = &pane2.screen.copy_mode.?;
+    try testing.expect(cm.selection.active);
+
+    try testing.expectEqual(@as(u32, 10), cm.selection.start_x);
+    try testing.expectEqual(@as(u32, 5), cm.selection.start_y);
+    try testing.expectEqual(@as(u32, 20), cm.selection.end_x);
+    try testing.expectEqual(@as(u32, 5), cm.selection.end_y);
+
+    for (10..21) |x| {
+        pane2.screen.grid.getLine(5).cells.items[x].char = 'x';
+    }
+
+    try server.processInput("\x1b[<3;61;6m");
+
+    try testing.expect(pane2.screen.copy_mode == null);
+
     const pb = server.buffers.get(null);
     try testing.expect(pb != null);
     try testing.expectEqualStrings("xxxxxxxxxxx", pb.?);
