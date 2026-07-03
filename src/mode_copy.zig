@@ -161,10 +161,8 @@ pub const CopyMode = struct {
     }
 
     pub fn adjustSelectionForAutoScroll(self: *CopyMode, delta: i32) void {
-        if (!self.selection.active) return;
-        self.selection.start_scroll_offset = @intCast(@as(i64, @intCast(self.selection.start_scroll_offset)) + delta);
-        self.selection.start_y = @intCast(@as(i64, @intCast(self.selection.start_y)) + delta);
-        self.selection.end_y = @intCast(@as(i64, @intCast(self.selection.end_y)) + delta);
+        _ = delta;
+        self.updateSelection();
     }
 
     pub fn clearSelection(self: *CopyMode) void {
@@ -173,11 +171,19 @@ pub const CopyMode = struct {
 
     pub fn isSelected(self: CopyMode, x: u32, y: u32) bool {
         if (!self.selection.active) return false;
-        const sy = @min(self.selection.start_y, self.selection.end_y);
-        const ey = @max(self.selection.start_y, self.selection.end_y);
-        if (y < sy or y > ey) return false;
 
-        const start_is_top = (sy == self.selection.start_y);
+        const diff_start = @as(i64, @intCast(self.scroll_offset)) - @as(i64, @intCast(self.selection.start_scroll_offset));
+
+        const sy_i64 = @as(i64, @intCast(self.selection.start_y)) + diff_start;
+        const ey_i64 = @as(i64, @intCast(self.selection.end_y));
+
+        const y_i64 = @as(i64, @intCast(y));
+
+        const sy = @min(sy_i64, ey_i64);
+        const ey = @max(sy_i64, ey_i64);
+        if (y_i64 < sy or y_i64 > ey) return false;
+
+        const start_is_top = (sy == sy_i64);
         const sx = if (start_is_top) self.selection.start_x else self.selection.end_x;
         const ex = if (start_is_top) self.selection.end_x else self.selection.start_x;
 
@@ -186,10 +192,10 @@ pub const CopyMode = struct {
             const max_x = @max(sx, ex);
             return x >= min_x and x <= max_x;
         }
-        if (y == sy) {
+        if (y_i64 == sy) {
             return x >= sx;
         }
-        if (y == ey) {
+        if (y_i64 == ey) {
             return x <= ex;
         }
         return true;
@@ -233,29 +239,52 @@ pub const CopyMode = struct {
         return false;
     }
 
+    fn getCellAtY_i64(self: *const CopyMode, grid: *const Grid, x: u32, y_i64: i64) Cell {
+        if (y_i64 < 0) {
+            const extra_scroll = @as(u32, @intCast(-y_i64));
+            return self.getCellAtOffset(grid, x, 0, self.scroll_offset + extra_scroll);
+        } else {
+            return self.getCellAtOffset(grid, x, @as(u32, @intCast(y_i64)), self.scroll_offset);
+        }
+    }
+
+    fn isLineWrappedY_i64(self: *const CopyMode, grid: *const Grid, y_i64: i64) bool {
+        if (y_i64 < 0) {
+            const extra_scroll = @as(u32, @intCast(-y_i64));
+            return self.isLineWrapped(grid, 0, self.scroll_offset + extra_scroll);
+        } else {
+            return self.isLineWrapped(grid, @as(u32, @intCast(y_i64)), self.scroll_offset);
+        }
+    }
+
     pub fn yankSelection(self: *const CopyMode, allocator: std.mem.Allocator, grid: *const Grid) Error![]const u8 {
         if (!self.selection.active) return try allocator.dupe(u8, "");
 
-        const sy = @min(self.selection.start_y, self.selection.end_y);
-        const ey = @max(self.selection.start_y, self.selection.end_y);
-        const start_is_top = (self.selection.start_y <= self.selection.end_y);
+        const diff_start = @as(i64, @intCast(self.scroll_offset)) - @as(i64, @intCast(self.selection.start_scroll_offset));
+
+        const sy_i64 = @as(i64, @intCast(self.selection.start_y)) + diff_start;
+        const ey_i64 = @as(i64, @intCast(self.selection.end_y));
+
+        const sy = @min(sy_i64, ey_i64);
+        const ey = @max(sy_i64, ey_i64);
+        const start_is_top = (sy == sy_i64);
         const sx = if (start_is_top) self.selection.start_x else self.selection.end_x;
         const ex = if (start_is_top) self.selection.end_x else self.selection.start_x;
 
         var result: std.ArrayListUnmanaged(u8) = .empty;
         errdefer result.deinit(allocator);
 
-        var screen_y = sy;
-        while (screen_y <= ey) : (screen_y += 1) {
-            const line_start = if (screen_y == sy) sx else 0;
-            const line_end = if (screen_y == ey) @min(ex, grid.width -| 1) else grid.width -| 1;
+        var y_i64 = sy;
+        while (y_i64 <= ey) : (y_i64 += 1) {
+            const line_start = if (y_i64 == sy) sx else 0;
+            const line_end = if (y_i64 == ey) @min(ex, grid.width -| 1) else grid.width -| 1;
 
             var line_buf: std.ArrayListUnmanaged(u8) = .empty;
             defer line_buf.deinit(allocator);
 
             var x = line_start;
             while (x <= line_end) : (x += 1) {
-                const cell = self.getCellAtOffset(grid, x, screen_y, self.selection.start_scroll_offset);
+                const cell = self.getCellAtY_i64(grid, x, y_i64);
                 if (cell.is_padding) continue;
                 if (cell.char != 0 and cell.char != ' ') {
                     var buf: [4]u8 = undefined;
@@ -290,7 +319,7 @@ pub const CopyMode = struct {
                 }
             }
 
-            const wrapped = self.isLineWrapped(grid, screen_y, self.selection.start_scroll_offset);
+            const wrapped = self.isLineWrappedY_i64(grid, y_i64);
             var line_slice: []const u8 = line_buf.items;
             if (wrapped) {
                 line_slice = std.mem.trimEnd(u8, line_slice, " ");
@@ -298,7 +327,7 @@ pub const CopyMode = struct {
 
             try result.appendSlice(allocator, line_slice);
 
-            if (screen_y < ey) {
+            if (y_i64 < ey) {
                 if (!wrapped) {
                     try result.append(allocator, '\n');
                 }
