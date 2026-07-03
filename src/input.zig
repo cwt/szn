@@ -17,14 +17,15 @@ pub const InputParser = struct {
     params_started: bool = false,
     intermediate: u8 = 0,
     private_marker: u8 = 0,
-    osc_buf: [256]u8 = undefined,
-    osc_len: u32 = 0,
+    osc_buf: std.ArrayListUnmanaged(u8) = .empty,
     pty: ?*@import("server/pty.zig").Pty = null,
     utf8_buf: [4]u8 = undefined,
     utf8_len: u8 = 0,
     utf8_expected: u8 = 0,
     title_cb: ?*const fn (ctx: ?*anyopaque, title: []const u8) void = null,
     title_ctx: ?*anyopaque = null,
+    clipboard_cb: ?*const fn (ctx: ?*anyopaque, target: []const u8, base64: []const u8) void = null,
+    clipboard_ctx: ?*anyopaque = null,
     /// Growable buffer for accumulating raw DCS / sixel bytes.
     /// Re-used across calls; reset to len=0 on each new DCS.
     dcs_buf: std.ArrayListUnmanaged(u8) = .empty,
@@ -59,6 +60,10 @@ pub const InputParser = struct {
             .utf8_expected = 0,
             .title_cb = null,
             .title_ctx = null,
+            .clipboard_cb = null,
+            .clipboard_ctx = null,
+            .dcs_buf = .empty,
+            .osc_buf = .empty,
         };
     }
 
@@ -70,17 +75,20 @@ pub const InputParser = struct {
         self.params_started = false;
         self.intermediate = 0;
         self.private_marker = 0;
-        self.osc_len = 0;
         self.utf8_len = 0;
         self.utf8_expected = 0;
         self.title_cb = null;
         self.title_ctx = null;
+        self.clipboard_cb = null;
+        self.clipboard_ctx = null;
         self.dcs_buf.clearRetainingCapacity();
         self.dcs_is_sixel = false;
+        self.osc_buf.clearRetainingCapacity();
     }
 
     pub fn deinit(self: *InputParser, allocator: std.mem.Allocator) void {
         self.dcs_buf.deinit(allocator);
+        self.osc_buf.deinit(allocator);
     }
 
     fn clearParams(self: *InputParser) void {
@@ -171,7 +179,8 @@ pub const InputParser = struct {
         self.clearParams();
         self.intermediate = 0;
         self.private_marker = 0;
-        self.osc_len = 0;
+        self.osc_buf.deinit(self.screen.allocator);
+        self.osc_buf = .empty;
     }
 
     fn advanceGround(self: *InputParser, byte: u8) Error!void {
@@ -219,7 +228,7 @@ pub const InputParser = struct {
             },
             ']' => {
                 self.state = .osc_string;
-                self.osc_len = 0;
+                self.osc_buf.clearRetainingCapacity();
                 self.clearParams();
             },
             'P' => self.state = .dcs_entry,
@@ -323,10 +332,7 @@ pub const InputParser = struct {
             },
             0x00...0x06, 0x08...0x1A, 0x1C...0x1F => {},
             0x20...0x7E, 0x7F, 0x80...0xFF => {
-                if (self.osc_len < self.osc_buf.len) {
-                    self.osc_buf[self.osc_len] = byte;
-                    self.osc_len += 1;
-                }
+                try self.osc_buf.append(self.screen.allocator, byte);
             },
         }
     }
@@ -823,15 +829,20 @@ pub const InputParser = struct {
     }
 
     fn dispatchOsc(self: *InputParser) Error!void {
+        defer {
+            self.osc_buf.deinit(self.screen.allocator);
+            self.osc_buf = .empty;
+        }
+        const osc_len = self.osc_buf.items.len;
         // Find first semicolon to separate command
         var cmd_end: u32 = 0;
-        while (cmd_end < self.osc_len and self.osc_buf[cmd_end] != ';') : (cmd_end += 1) {}
-        const cmd_str = self.osc_buf[0..cmd_end];
+        while (cmd_end < osc_len and self.osc_buf.items[cmd_end] != ';') : (cmd_end += 1) {}
+        const cmd_str = self.osc_buf.items[0..cmd_end];
         const cmd = std.fmt.parseInt(u32, cmd_str, 10) catch {
             return;
         };
-        const data_start = if (cmd_end < self.osc_len) cmd_end + 1 else cmd_end;
-        const data = self.osc_buf[data_start..self.osc_len];
+        const data_start = if (cmd_end < osc_len) cmd_end + 1 else cmd_end;
+        const data = self.osc_buf.items[data_start..osc_len];
 
         switch (cmd) {
             0, 2 => {
@@ -843,7 +854,13 @@ pub const InputParser = struct {
                 // Set clipboard: 52;Pc;data
                 var semicolon: u32 = 0;
                 while (semicolon < data.len and data[semicolon] != ';') : (semicolon += 1) {}
-                // clipboard data after second semicolon — ignore for now
+                if (semicolon < data.len) {
+                    const target = data[0..semicolon];
+                    const base64 = data[semicolon + 1 ..];
+                    if (self.clipboard_cb) |cb| {
+                        cb(self.clipboard_ctx, target, base64);
+                    }
+                }
             },
             else => {},
         }

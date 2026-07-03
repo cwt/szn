@@ -1562,8 +1562,51 @@ pub const Server = struct {
         }
     }
 
+    fn paneClipboardCallback(ctx: ?*anyopaque, target: []const u8, base64: []const u8) void {
+        const self: *Server = @ptrCast(@alignCast(ctx orelse return));
+        
+        // 1. Forward raw OSC 52 to all display clients
+        const raw_buf = std.fmt.allocPrint(self.allocator, "\x1b]52;{s};{s}\x07", .{ target, base64 }) catch return;
+        defer self.allocator.free(raw_buf);
+
+        for (self.display_clients.items) |dc| {
+            var remaining = raw_buf;
+            while (remaining.len > 0) {
+                const written = std.c.write(dc.fd, remaining.ptr, remaining.len);
+                if (written < 0) {
+                    if (std.c.errno(written) == .INTR) continue;
+                    break;
+                }
+                remaining = remaining[@intCast(written)..];
+            }
+        }
+
+        // 2. Decode base64 and push to self.buffers
+        const decoder = std.base64.standard.Decoder;
+        const decoded_len = decoder.calcSizeForSlice(base64) catch return;
+        const decoded = self.allocator.alloc(u8, decoded_len) catch return;
+        errdefer self.allocator.free(decoded);
+        decoder.decode(decoded, base64) catch {
+            self.allocator.free(decoded);
+            return;
+        };
+
+        const name = self.buffers.generateName() catch {
+            self.allocator.free(decoded);
+            return;
+        };
+        errdefer self.allocator.free(name);
+        self.buffers.pushOwned(name, decoded) catch {
+            self.allocator.free(name);
+            self.allocator.free(decoded);
+        };
+    }
+
     pub fn watchPanePty(self: *Server, pane: *Pane) ServerError!void {
         const pty = pane.pty orelse return;
+        const parser = pane.getParser();
+        parser.clipboard_cb = paneClipboardCallback;
+        parser.clipboard_ctx = self;
         try self.loop.addFd(self.allocator, pty.master, @as(i16, @intCast(std.posix.POLL.IN)), @ptrCast(pane));
     }
 
@@ -2770,4 +2813,63 @@ test "mouse click and drag selection" {
     const pb = server.buffers.get(null);
     try testing.expect(pb != null);
     try testing.expectEqualStrings("xxxxxxxxxxx", pb.?);
+}
+
+test "OSC 52 clipboard forwarding and buffer copy" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    const s = try server.newSession("test-osc52", 80, 24);
+    const win = s.active_window.?;
+    const pane = win.active_pane.?;
+    
+    var fds: [2]i32 = undefined;
+    if (std.c.socketpair(std.posix.AF.LOCAL, std.posix.SOCK.STREAM, 0, &fds) != 0) {
+        return error.SocketPairFailed;
+    }
+    const client_fd = fds[0];
+    const server_fd = fds[1];
+    defer _ = std.c.close(client_fd);
+    defer _ = std.c.close(server_fd);
+
+    try server.display_clients.append(server.allocator, .{ .fd = server_fd });
+    defer {
+        for (server.display_clients.items, 0..) |*dc, idx| {
+            if (dc.fd == server_fd) {
+                dc.deinit(server.allocator);
+                _ = server.display_clients.swapRemove(idx);
+                break;
+            }
+        }
+    }
+
+    const parser = pane.getParser();
+    parser.clipboard_cb = Server.paneClipboardCallback;
+    parser.clipboard_ctx = &server;
+
+    // Feed "hello" in base64: "aGVsbG8="
+    try parser.feed("\x1b]52;c;aGVsbG8=\x07");
+
+    // 1. Verify paste buffer has it
+    const pb = server.buffers.get(null);
+    try testing.expect(pb != null);
+    try testing.expectEqualStrings("hello", pb.?);
+
+    // 2. Verify display client received the raw sequence
+    const c_fcntl = struct {
+        extern "c" fn fcntl(fd: i32, cmd: i32, ...) i32;
+    }.fcntl;
+    const O_NONBLOCK = comptime switch (@import("builtin").os.tag) {
+        .macos, .ios, .watchos, .tvos => 0x0004,
+        .freebsd, .netbsd, .openbsd, .dragonfly => 0x0004,
+        else => 0x0800, // Linux
+    };
+    const flags = c_fcntl(client_fd, 3, @as(i32, 0));
+    _ = c_fcntl(client_fd, 4, flags | O_NONBLOCK);
+
+    var temp_buf: [128]u8 = undefined;
+    const read_res = std.c.read(client_fd, &temp_buf, temp_buf.len);
+    try testing.expect(read_res > 0);
+    const received = temp_buf[0..@intCast(read_res)];
+    try testing.expectEqualStrings("\x1b]52;c;aGVsbG8=\x07", received);
 }
