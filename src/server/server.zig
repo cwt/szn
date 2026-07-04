@@ -82,6 +82,8 @@ pub const DisplayClient = struct {
 };
 
 pub const Server = struct {
+    pub const MAX_PASTE_SIZE = 16384;
+
     allocator: std.mem.Allocator,
     sessions: std.ArrayListUnmanaged(*Session) = .empty,
     next_session_id: u32 = 1,
@@ -661,7 +663,13 @@ pub const Server = struct {
             },
             .paste_buffer => {
                 if (self.buffers.get(null)) |pb| {
-                    pane.writeInput(pb) catch {};
+                    if (pb.len > MAX_PASTE_SIZE) {
+                        var msg_buf: [128]u8 = undefined;
+                        const msg = std.fmt.bufPrint(&msg_buf, "Error: paste buffer too large ({d} bytes, limit is {d}B)", .{ pb.len, MAX_PASTE_SIZE }) catch "Error: paste buffer too large";
+                        self.setMessage(msg) catch {};
+                    } else {
+                        pane.writeInput(pb) catch {};
+                    }
                 }
             },
             .swap_pane_up => {
@@ -1057,8 +1065,14 @@ pub const Server = struct {
                                         if (selected) |item| {
                                             const buf_data = self.buffers.get(item.name);
                                             if (buf_data) |data| {
-                                                if (pane.pty) |*chosen_pty| {
-                                                    _ = chosen_pty.writeInput(data) catch {};
+                                                if (data.len > MAX_PASTE_SIZE) {
+                                                    var msg_buf: [128]u8 = undefined;
+                                                    const msg = std.fmt.bufPrint(&msg_buf, "Error: paste buffer too large ({d} bytes, limit is {d}B)", .{ data.len, MAX_PASTE_SIZE }) catch "Error: paste buffer too large";
+                                                    self.setMessage(msg) catch {};
+                                                } else {
+                                                    if (pane.pty) |*chosen_pty| {
+                                                        _ = chosen_pty.writeInput(data) catch {};
+                                                    }
                                                 }
                                             }
                                         }
@@ -2355,6 +2369,19 @@ test "prefix interception and key dispatching" {
         line_idx += 1;
     }
     try testing.expectEqualStrings("pasted-content", line_buf[0..line_idx]);
+
+    // Test paste-buffer limit warning
+    {
+        const large_data = try testing.allocator.alloc(u8, Server.MAX_PASTE_SIZE + 1);
+        defer testing.allocator.free(large_data);
+        @memset(large_data, 'A');
+
+        _ = server.buffers.delete("paste0");
+        try server.buffers.push("paste0", large_data);
+        try server.processInput(&[_]u8{ 0x02, ']' }); // Ctrl-b + ]
+        try testing.expect(server.message != null);
+        try testing.expect(std.mem.indexOf(u8, server.message.?, "Error: paste buffer too large") != null);
+    }
 
     // Manually split the pane to test swap and resize without spawning a real shell
     const new_pane = try active_win.splitPane(server.allocator, active_pane, false, 0.5);

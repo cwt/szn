@@ -425,6 +425,12 @@ fn cmdPasteBuffer(server: *Server, args: []const []const u8) CmdResult {
     }
 
     if (server.buffers.get(buf_name)) |pb| {
+        if (pb.len > Server.MAX_PASTE_SIZE) {
+            var msg_buf: [128]u8 = undefined;
+            const msg = std.fmt.bufPrint(&msg_buf, "Error: paste buffer too large ({d} bytes, limit is {d}B)", .{ pb.len, Server.MAX_PASTE_SIZE }) catch "Error: paste buffer too large";
+            server.setMessage(msg) catch {};
+            return .err;
+        }
         pane.writeInput(pb) catch return .err;
     }
     return .ok;
@@ -2237,6 +2243,27 @@ test "paste-buffer exec" {
     try testing.expectEqual(@as(u21, 'h'), pane.screen.grid.getCell(0, 0).char);
     try testing.expectEqual(@as(u21, 'e'), pane.screen.grid.getCell(1, 0).char);
     try testing.expectEqual(@as(u21, 'l'), pane.screen.grid.getCell(2, 0).char);
+}
+
+test "paste-buffer exec too large" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    const session = try server.newSession("test", 80, 24);
+    _ = session;
+
+    // Create a buffer larger than MAX_PASTE_SIZE
+    const large_data = try testing.allocator.alloc(u8, Server.MAX_PASTE_SIZE + 1);
+    defer testing.allocator.free(large_data);
+    @memset(large_data, 'A');
+
+    try server.buffers.push("largebuf", large_data);
+
+    var c = try parse("paste-buffer -b largebuf", testing.allocator);
+    defer c.deinit(testing.allocator);
+    try testing.expectEqual(CmdResult.err, c.exec(&server));
+    try testing.expect(server.message != null);
+    try testing.expect(std.mem.indexOf(u8, server.message.?, "Error: paste buffer too large") != null);
 }
 
 test "display-message exec" {
