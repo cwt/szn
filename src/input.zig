@@ -1925,15 +1925,22 @@ test "sixel 16 MiB cap transitions to discard and recovers on ST" {
 // This avoids PTY line-discipline transformations (e.g. echo, ^[ expansion).
 
 const Pty = @import("server/pty.zig").Pty;
-const c_sys = @cImport({
-    @cInclude("unistd.h");
-    @cInclude("fcntl.h");
-});
+const c_sys = struct {
+    extern "c" fn pipe(fds: *[2]c_int) c_int;
+    extern "c" fn close(fd: c_int) c_int;
+    extern "c" fn read(fd: c_int, buf: [*]u8, nbyte: usize) isize;
+    extern "c" fn fcntl(fd: c_int, cmd: c_int, ...) c_int;
+    const F_SETFL = 4;
+    const O_NONBLOCK = switch (@import("builtin").os.tag) {
+        .linux => @as(c_int, 0o4000),
+        else => @as(c_int, 0x0004),
+    };
+};
 
 /// Create a fake Pty whose writeInput writes into a pipe.
 /// Returns {pty, read_fd}. Caller must close read_fd and call pty.deinit().
 fn makePipePty() !struct { pty: Pty, read_fd: i32 } {
-    var fds: [2]i32 = undefined;
+    var fds: [2]c_int = undefined;
     if (c_sys.pipe(&fds) < 0) return error.PipeFailed;
     return .{
         .pty = Pty{ .master = fds[1], .slave = -1, .pid = -1 },

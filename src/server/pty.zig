@@ -14,6 +14,7 @@ pub const Error = error{
 extern "c" fn openpty(amaster: *c_int, aslave: *c_int, name: ?[*:0]u8, termp: ?*anyopaque, winp: ?*anyopaque) c_int;
 extern "c" fn fork() c_int;
 extern "c" fn close(fd: c_int) c_int;
+extern "c" fn pipe(fds: *[2]c_int) c_int;
 extern "c" fn dup2(oldfd: c_int, newfd: c_int) c_int;
 extern "c" fn fcntl(fd: c_int, cmd: c_int, ...) c_int;
 extern "c" fn read(fd: c_int, buf: [*]u8, nbyte: usize) isize;
@@ -300,10 +301,6 @@ test "pty slave has FD_CLOEXEC set" {
     try testing.expect((flags & FD_CLOEXEC) != 0);
 }
 
-const c_sys = @cImport({
-    @cInclude("unistd.h");
-});
-
 test "spawn with multiple argv elements — bug #123" {
     var pty = try Pty.open();
     defer pty.deinit();
@@ -314,10 +311,10 @@ test "spawn with multiple argv elements — bug #123" {
 
 test "writeInput retries partial write — bug #124" {
     // Use a pipe as a fake PTY master
-    var fds: [2]i32 = undefined;
-    if (c_sys.pipe(&fds) < 0) return error.PipeFailed;
-    defer _ = c_sys.close(fds[0]);
-    defer _ = c_sys.close(fds[1]);
+    var fds: [2]c_int = undefined;
+    if (pipe(&fds) < 0) return error.PipeFailed;
+    defer _ = close(fds[0]);
+    defer _ = close(fds[1]);
 
     var pty = Pty{ .master = fds[1], .slave = -1, .pid = -1 };
 
@@ -325,7 +322,7 @@ test "writeInput retries partial write — bug #124" {
     try pty.writeInput(data);
 
     var buf: [64]u8 = undefined;
-    const n = c_sys.read(fds[0], &buf, buf.len);
+    const n = read(fds[0], &buf, buf.len);
     try testing.expect(n == data.len);
     try testing.expectEqualStrings(data, buf[0..@intCast(n)]);
 }
