@@ -2374,6 +2374,18 @@ Two complementary changes:
 
 ### 185. `renderStatusBar` doesn't truncate long window names — writes past terminal width
 **File:** `src/server/render.zig:498–499`
+
+---
+
+### 186. `IdentifyTerm` struct is dead on the wire — live client sends a raw string
+**File:** `src/server/protocol.zig:107–126`, `src/client/client.zig:39–46`, `src/main.zig:364`, `src/server/server.zig:1838–1848`
+**Severity:** MEDIUM
+**Status:** ✅ FIXED — Deleted dead `IdentifyTerm` struct; interactive client sends raw string and `sendIdentify` does the same.
+
+The structured `IdentifyTerm` encoder (`term_len` byte + term string, max 64) is defined and used by `Client.sendIdentify`, but the live interactive client does **not** call it. It sends a raw `"xterm-256color"` string via `Packet.make(.identify_term, "xterm-256color")` (`main.zig:364`), and the server handler ignores the payload entirely — it only appends the fd to `display_clients` (`server.zig:1838`). So the term string is never stored server-side and the `IdentifyTerm` wire format is effectively dead code on the real path.
+
+---
+
 ### 187. Reserved message types declared but never constructed or handled
 **File:** `src/server/protocol.zig:10–24`
 **Severity:** LOW
@@ -2393,11 +2405,9 @@ The protocol has no field identifying *which* session to attach to. The daemon a
 ### 189. Protocol structs are not `packed` despite AGENTS.md claiming so
 **File:** `src/server/protocol.zig:50, 60, 107`
 **Severity:** LOW
-**Status:** OPEN — discovered 2026-07-08; not yet fixed.
+**Status:** ✅ FIXED — Corrected AGENTS.md wording and added a compile-time/unit test for exact serialized byte offsets in `protocol.zig`.
 
 `AGENTS.md` states IPC packets are "defined as packed structs," but `Header`/`Packet`/`IdentifyTerm` are plain structs with byte-exact manual encoding (`Header.encode` writes LE `u32` then the `u8` type). Layout is stable, but the "packed" claim is inaccurate.
-
-**Fix:** Either make them `packed` (and rely on field order) or correct the AGENTS.md wording.
 
 ---
 
@@ -2452,7 +2462,5 @@ When adding a sixel image, `px_width` is passed as `0`; only `px_height` is esti
 | Critical | 24 | 21 | 3 | **0** |
 | High | 43 | 42 | 1 | **0** |
 | Medium | 65 (61+4) | 61 | 2 | **2** |
-| Low | 61 (57+4) | 55 | 3 | **3** |
-| Total | 193 (185+8) | **179** | **9** | **5** |
-
-
+| Low | 61 (57+4) | 56 | 3 | **2** |
+| Total | 193 (185+8) | **180** | **9** | **4** |

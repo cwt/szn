@@ -148,3 +148,17 @@ test "message type request detection" {
     try testing.expect(MessageType.command.isRequest());
     try testing.expect(!MessageType.ready.isRequest());
 }
+
+test "packet layout byte-exact structure" {
+    const pkt = Packet.make(.command, "A");
+    var buf: [16]u8 = undefined;
+    const serialized = pkt.serialize(&buf);
+
+    try testing.expectEqual(@as(usize, 6), serialized.len);
+    try testing.expectEqual(@as(u8, 0x06), serialized[0]);
+    try testing.expectEqual(@as(u8, 0x00), serialized[1]);
+    try testing.expectEqual(@as(u8, 0x00), serialized[2]);
+    try testing.expectEqual(@as(u8, 0x00), serialized[3]);
+    try testing.expectEqual(@as(u8, 0x04), serialized[4]);
+    try testing.expectEqual(@as(u8, 0x41), serialized[5]);
+}

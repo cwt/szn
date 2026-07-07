@@ -54,7 +54,8 @@ Target Zig 0.16.0 (latest stable). Use `std.zig` style.
 2. **Arena allocation over reference counting.** Panes and sessions own their
    memory. When a session goes, everything goes.
 3. **Protocols over inheritance.** Client-server IPC uses a simple packet
-   protocol (not imsg). Define it as packed structs.
+   protocol (not imsg). Define it using plain structs with manual serialization
+   to guarantee byte-exact layout.
 4. **No global state.** Pass context explicitly. Use build-time dependency
    injection for testing.
 5. **Don't abstract the terminal.** Hardcode modern behaviour. If a feature
