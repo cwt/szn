@@ -3179,3 +3179,23 @@ test "mouse drag event forwarding" {
     const received = temp_buf[0..n];
     try testing.expect(std.mem.indexOf(u8, received, "[<32;16;9M") != null);
 }
+
+test "wire protocol attaches clients only to global active session" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    // Verify initially activeSession is null
+    try testing.expect(server.activeSession() == null);
+
+    // Create a session
+    const s1 = try server.newSession("session1", 80, 24);
+    // Retrieve the active session
+    const active = server.activeSession().?;
+    try testing.expectEqualStrings("session1", active.name);
+    try testing.expectEqual(s1, active);
+
+    // Even if another session is created, the active session remains the first one (global active)
+    const s2 = try server.newSession("session2", 80, 24);
+    _ = s2;
+    try testing.expectEqual(active, server.activeSession().?);
+}

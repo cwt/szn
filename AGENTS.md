@@ -59,6 +59,7 @@ Target Zig 0.16.0 (latest stable). Use `std.zig` style.
    injection for testing.
 5. **Don't abstract the terminal.** Hardcode modern behaviour. If a feature
    isn't universal on xterm-256color+ terminals, it doesn't ship.
+6. **Single-session attachment.** The IPC protocol and display client connection design are deliberately simple. A connected client always attaches to the global active session (the first session in the list), and there is no protocol support for specifying a target session to attach to. This matches the single active session architecture.
 
 ## Documentation
 

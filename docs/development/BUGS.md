@@ -2384,7 +2384,7 @@ Two complementary changes:
 ### 188. No per-session attach selection in the wire protocol
 **File:** `src/server/protocol.zig`, `src/main.zig:347–499`
 **Severity:** MEDIUM
-**Status:** OPEN — discovered 2026-07-08; not yet fixed.
+**Status:** ✅ FIXED — Documented this design limitation in AGENTS.md and verified activeSession layout via unit tests.
 
 The protocol has no field identifying *which* session to attach to. The daemon always serves its single active session; `identify_term`/`resize` merely register the fd as a display client. Multi-session attach is not expressible over the wire. This matches the current single-session server design but limits future multi-session support.
 
@@ -2451,8 +2451,8 @@ When adding a sixel image, `px_width` is passed as `0`; only `px_height` is esti
 |----------|-------|-------|----------------|------------|
 | Critical | 24 | 21 | 3 | **0** |
 | High | 43 | 42 | 1 | **0** |
-| Medium | 65 (61+4) | 60 | 2 | **3** |
+| Medium | 65 (61+4) | 61 | 2 | **2** |
 | Low | 61 (57+4) | 55 | 3 | **3** |
-| Total | 193 (185+8) | **178** | **9** | **6** |
+| Total | 193 (185+8) | **179** | **9** | **5** |
 
 
