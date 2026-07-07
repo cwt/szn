@@ -2374,36 +2374,10 @@ Two complementary changes:
 
 ### 185. `renderStatusBar` doesn't truncate long window names — writes past terminal width
 **File:** `src/server/render.zig:498–499`
-**Severity:** LOW
-**Status:** ✅ FIXED
-
-**Fix:** Truncate each window name to `(sx - 1) -| col -| suffix_len` before writing, so content never exceeds the terminal width.
-
----
-
-## NEW BUGS (2026-07-08 — protocol & architecture audit)
-
----
-
-### 186. `IdentifyTerm` struct is dead on the wire — live client sends a raw string
-**File:** `src/server/protocol.zig:107–126`, `src/client/client.zig:39–46`, `src/main.zig:364`, `src/server/server.zig:1838–1848`
-**Severity:** MEDIUM
-**Status:** ✅ FIXED — Deleted dead `IdentifyTerm` struct; interactive client sends raw string and `sendIdentify` does the same.
-
-The structured `IdentifyTerm` encoder (`term_len` byte + term string, max 64) is defined and used by `Client.sendIdentify`, but the live interactive client does **not** call it. It sends a raw `"xterm-256color"` string via `Packet.make(.identify_term, "xterm-256color")` (`main.zig:364`), and the server handler ignores the payload entirely — it only appends the fd to `display_clients` (`server.zig:1838`). So the term string is never stored server-side and the `IdentifyTerm` wire format is effectively dead code on the real path.
-
-**Fix:** Either finish wiring `IdentifyTerm` (call `sendIdentify`, store the term in `DisplayClient`) or delete the struct and document `identify_term` as an opaque string.
-
----
-
 ### 187. Reserved message types declared but never constructed or handled
 **File:** `src/server/protocol.zig:10–24`
 **Severity:** LOW
-**Status:** OPEN — discovered 2026-07-08; not yet fixed.
-
-`identify_cwd` (`0x02`), `identify_done` (`0x03`), `shell` (`0x07`), and `notify` (`0x84`) are in the `MessageType` enum (and `fromByte`), but no code constructs or handles them. Their payload formats are undefined and they are silently dropped by the default switch arms.
-
-**Fix:** Mark them reserved in a comment, or remove them until implemented.
+**Status:** ✅ FIXED — Removed unused `identify_cwd`, `identify_done`, `shell`, and `notify` message types from the protocol definition.
 
 ---
 
@@ -2478,7 +2452,7 @@ When adding a sixel image, `px_width` is passed as `0`; only `px_height` is esti
 | Critical | 24 | 21 | 3 | **0** |
 | High | 43 | 42 | 1 | **0** |
 | Medium | 65 (61+4) | 60 | 2 | **3** |
-| Low | 61 (57+4) | 54 | 3 | **4** |
-| Total | 193 (185+8) | **177** | **9** | **7** |
+| Low | 61 (57+4) | 55 | 3 | **3** |
+| Total | 193 (185+8) | **178** | **9** | **6** |
 
 

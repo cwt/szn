@@ -9,19 +9,15 @@ pub const Error = error{
 
 pub const MessageType = enum(u8) {
     identify_term = 0x01, // Payload: Opaque terminal name string (e.g. "xterm-256color")
-    identify_cwd = 0x02,
-    identify_done = 0x03,
     command = 0x04,
     resize = 0x05,
     detach = 0x06,
-    shell = 0x07,
     stdin_data = 0x08,
 
     ready = 0x80,
     output = 0x81,
     exit = 0x82,
     err = 0x83,
-    notify = 0x84,
 
     pub fn isRequest(self: MessageType) bool {
         return @intFromEnum(self) < 0x80;
@@ -30,18 +26,14 @@ pub const MessageType = enum(u8) {
     pub fn fromByte(byte: u8) ?MessageType {
         return switch (byte) {
             0x01 => .identify_term,
-            0x02 => .identify_cwd,
-            0x03 => .identify_done,
             0x04 => .command,
             0x05 => .resize,
             0x06 => .detach,
-            0x07 => .shell,
             0x08 => .stdin_data,
             0x80 => .ready,
             0x81 => .output,
             0x82 => .exit,
             0x83 => .err,
-            0x84 => .notify,
             else => return null,
         };
     }
@@ -139,8 +131,12 @@ test "packet deinit frees owned data and is idempotent" {
 
 test "message type fromByte rejects invalid values" {
     try testing.expect(MessageType.fromByte(0x00) == null);
+    try testing.expect(MessageType.fromByte(0x02) == null); // identify_cwd removed
+    try testing.expect(MessageType.fromByte(0x03) == null); // identify_done removed
+    try testing.expect(MessageType.fromByte(0x07) == null); // shell removed
     try testing.expect(MessageType.fromByte(0x09) == null);
     try testing.expect(MessageType.fromByte(0x7F) == null);
+    try testing.expect(MessageType.fromByte(0x84) == null); // notify removed
     try testing.expect(MessageType.fromByte(0xFF) == null);
     try testing.expectEqual(MessageType.command, MessageType.fromByte(0x04).?);
     try testing.expectEqual(MessageType.ready, MessageType.fromByte(0x80).?);
