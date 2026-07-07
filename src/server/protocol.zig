@@ -77,13 +77,13 @@ pub const Packet = struct {
     pub fn deserialize(buf: []const u8) Error!Packet {
         if (buf.len < 5) return error.InvalidPacket;
         const len = std.mem.readInt(u32, buf[0..4], .little);
-        if (len != buf.len) return error.SizeMismatch;
+        if (buf.len < len) return error.SizeMismatch;
         return Packet{
             .header = .{
                 .length = len,
                 .msg_type = buf[4],
             },
-            .data = buf[5..],
+            .data = buf[5..len],
         };
     }
 
@@ -164,4 +164,20 @@ test "packet layout byte-exact structure" {
     try testing.expectEqual(@as(u8, 0x00), serialized[3]);
     try testing.expectEqual(@as(u8, 0x04), serialized[4]);
     try testing.expectEqual(@as(u8, 0x41), serialized[5]);
+}
+
+test "packet deserialize works with trailing data" {
+    const original = Packet.make(.command, "hello");
+    var buf: [128]u8 = undefined;
+    const serialized = original.serialize(&buf);
+
+    // Append extra garbage to the end of the buffer
+    var larger_buf: [256]u8 = undefined;
+    @memcpy(larger_buf[0..serialized.len], serialized);
+    @memcpy(larger_buf[serialized.len..][0..10], "extradata!");
+
+    const parsed = try Packet.deserialize(larger_buf[0 .. serialized.len + 10]);
+    try testing.expectEqual(MessageType.command, @as(MessageType, @enumFromInt(parsed.header.msg_type)));
+    try testing.expectEqual(@as(u32, 10), parsed.header.length);
+    try testing.expectEqualStrings("hello", parsed.data);
 }

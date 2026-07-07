@@ -2432,11 +2432,9 @@ The server `handleClient` switch default drops unknown client→server types wit
 ### 192. `Packet.deserialize` requires exact buffer length — unsafe for streams
 **File:** `src/server/protocol.zig:82–93`
 **Severity:** LOW
-**Status:** OPEN — discovered 2026-07-08; not yet fixed.
+**Status:** ✅ FIXED — Allowed Packet.deserialize to parse input buffers with trailing data by slicing the data block up to the packet length.
 
 `deserialize` returns `SizeMismatch` unless `len == buf.len` exactly, so it cannot parse a concatenated stream of packets. The three streaming readers (`MessageReader`, `Client.recvPacket`, and the inline parser in `main.zig:448–496`) therefore re-implement framing instead of calling `deserialize`. Calling `deserialize` on a raw socket buffer is a misuse trap.
-
-**Fix:** Document that `deserialize` is single-packet-only, or add a stream-aware parser.
 
 ---
 
@@ -2458,5 +2456,5 @@ When adding a sixel image, `px_width` is passed as `0`; only `px_height` is esti
 | Critical | 24 | 21 | 3 | **0** |
 | High | 43 | 42 | 1 | **0** |
 | Medium | 65 (61+4) | 62 | 2 | **1** |
-| Low | 61 (57+4) | 57 | 3 | **1** |
-| Total | 193 (185+8) | **182** | **9** | **2** |
+| Low | 61 (57+4) | 58 | 3 | **0** |
+| Total | 193 (185+8) | **183** | **9** | **1** |
