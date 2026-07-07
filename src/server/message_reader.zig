@@ -13,7 +13,7 @@ pub const ReadError = error{
 };
 
 pub const MessageReader = struct {
-    buf: [8192]u8 = undefined,
+    buf: [protocol.MAX_CLIENT_PACKET_SIZE]u8 = undefined,
     pos: usize = 0,
 
     pub fn reset(self: *MessageReader) void {
@@ -258,4 +258,20 @@ test "message reader consume partial remaining" {
     reader.consume(p2);
 
     try testing.expectEqual(@as(usize, 0), reader.pos);
+}
+
+test "message reader rejects client packet exceeding MAX_CLIENT_PACKET_SIZE" {
+    var reader = MessageReader{};
+
+    // Create a packet that is slightly too large
+    var header_buf: [5]u8 = undefined;
+    const len = protocol.MAX_CLIENT_PACKET_SIZE + 1;
+    std.mem.writeInt(u32, header_buf[0..4], len, .little);
+    header_buf[4] = @intFromEnum(protocol.MessageType.command);
+
+    try reader.feed(&header_buf);
+
+    // Feeding should either succeed or fail depending on buffer space.
+    // If it succeeds, tryParse should reject it as PacketTooLarge.
+    try testing.expectError(error.PacketTooLarge, reader.tryParse());
 }

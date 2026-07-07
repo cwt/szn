@@ -2414,11 +2414,9 @@ The protocol has no field identifying *which* session to attach to. The daemon a
 ### 190. Inconsistent packet size limits across the three parsers
 **File:** `src/client/client.zig:53` (send 4096), `src/client/client.zig:71` (recv 1 MiB), `src/server/message_reader.zig:16` (8192)
 **Severity:** MEDIUM
-**Status:** OPEN — discovered 2026-07-08; not yet fixed.
+**Status:** ✅ FIXED — Defined canonical `MAX_PACKET_SIZE` (1 MiB) and `MAX_CLIENT_PACKET_SIZE` (8 KiB) limits in `protocol.zig` and updated all parsers and tests.
 
 Client send cap is 4096 (`5 + data.len > 4096`), client recv cap is 1 MiB (`MAX_PACKET_SIZE`), and the server `MessageReader` cap is 8192. Only `MAX_PACKET_SIZE` is a named constant. A server `.output` packet larger than 8192 is fine on the wire but would be rejected if it ever came back *into* the server. The caps are also asymmetric between client send and server recv.
-
-**Fix:** Define a single canonical packet-size constant and enforce it consistently (and document that the 8192 server cap only gates incoming client packets).
 
 ---
 
@@ -2461,6 +2459,6 @@ When adding a sixel image, `px_width` is passed as `0`; only `px_height` is esti
 |----------|-------|-------|----------------|------------|
 | Critical | 24 | 21 | 3 | **0** |
 | High | 43 | 42 | 1 | **0** |
-| Medium | 65 (61+4) | 61 | 2 | **2** |
+| Medium | 65 (61+4) | 62 | 2 | **1** |
 | Low | 61 (57+4) | 56 | 3 | **2** |
-| Total | 193 (185+8) | **180** | **9** | **4** |
+| Total | 193 (185+8) | **181** | **9** | **3** |

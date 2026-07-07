@@ -7,6 +7,9 @@ pub const Error = error{
     InvalidData,
 };
 
+pub const MAX_PACKET_SIZE = 1024 * 1024; // 1 MiB (server-to-client maximum)
+pub const MAX_CLIENT_PACKET_SIZE = 8192; // 8 KiB (client-to-server maximum)
+
 pub const MessageType = enum(u8) {
     identify_term = 0x01, // Payload: Opaque terminal name string (e.g. "xterm-256color")
     command = 0x04,

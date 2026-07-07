@@ -5,8 +5,6 @@ const connect = @import("connect.zig");
 
 pub const Error = protocol.Error || connect.Error || error{ ConnectionClosed, ReadFailed, WriteFailed, InvalidPacket, TermTooLong, PacketTooLarge };
 
-pub const MAX_PACKET_SIZE = 1024 * 1024; // 1 MiB max to prevent DoS
-
 fn fdWrite(fd: i32, buf: []const u8) Error!void {
     var off: usize = 0;
     while (off < buf.len) {
@@ -46,9 +44,9 @@ pub const Client = struct {
     }
 
     fn sendPacket(self: *Client, msg_type: protocol.MessageType, data: []const u8) Error!void {
-        if (5 + data.len > 4096) return error.PacketTooLarge;
+        if (5 + data.len > protocol.MAX_CLIENT_PACKET_SIZE) return error.PacketTooLarge;
         const pkt = protocol.Packet.make(msg_type, data);
-        var buf: [4096]u8 = undefined;
+        var buf: [protocol.MAX_CLIENT_PACKET_SIZE]u8 = undefined;
         const serialized = pkt.serialize(&buf);
         try fdWrite(self.fd, serialized);
     }
@@ -64,7 +62,7 @@ pub const Client = struct {
 
         const len = std.mem.readInt(u32, hdr[0..4], .little);
         if (len < 5) return error.InvalidPacket;
-        if (len > MAX_PACKET_SIZE) return error.PacketTooLarge;
+        if (len > protocol.MAX_PACKET_SIZE) return error.PacketTooLarge;
         const body_len = len - 5;
 
         // Dynamically allocate body buffer to support arbitrary reply sizes
@@ -101,7 +99,7 @@ test "sendPacket rejects oversized data" {
 
     var client = Client{ .allocator = testing.allocator, .fd = fds[1] };
 
-    const big_data = try testing.allocator.alloc(u8, 4092);
+    const big_data = try testing.allocator.alloc(u8, protocol.MAX_CLIENT_PACKET_SIZE);
     defer testing.allocator.free(big_data);
     @memset(big_data, 'A');
 
@@ -120,7 +118,7 @@ test "recvPacket rejects oversized length" {
 
     // Write a header with a huge length (MAX_PACKET_SIZE + 1)
     var hdr: [5]u8 = undefined;
-    std.mem.writeInt(u32, hdr[0..4], MAX_PACKET_SIZE + 1, .little);
+    std.mem.writeInt(u32, hdr[0..4], protocol.MAX_PACKET_SIZE + 1, .little);
     hdr[4] = @intFromEnum(protocol.MessageType.output);
     const n = std.c.write(fds[1], &hdr, hdr.len);
     try testing.expectEqual(@as(isize, 5), n);
