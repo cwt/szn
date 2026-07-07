@@ -1,3 +1,10 @@
+---
+type: lessons_learned
+title: "Lessons from Talyn"
+description: "Lessons learned from the Talyn Zig project, adapted to szn's domain."
+timestamp: 2026-06-30T04:57:33Z
+---
+
 # Lessons from Talyn (Zig Project)
 
 Lessons learned from [Talyn](https://github.com/cwt/talyn) that apply to szn.

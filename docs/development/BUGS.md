@@ -1,3 +1,10 @@
+---
+type: bug_tracker
+title: "Bugs — szn"
+description: "Known bugs sorted by severity (Critical to Low)."
+timestamp: 2026-06-30T04:57:33Z
+---
+
 # Bugs — szn
 
 Sorted by severity: Critical → High → Medium → Low.

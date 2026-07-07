@@ -1,3 +1,10 @@
+---
+type: project_priority
+title: "szn Functional Clone Progress"
+description: "Progress tracker toward a fully functional tmux clone."
+timestamp: 2026-07-03T03:57:05Z
+---
+
 # szn — Functional Clone Progress
 
 Track progress toward a fully functional tmux clone.

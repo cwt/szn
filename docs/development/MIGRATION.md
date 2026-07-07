@@ -1,3 +1,10 @@
+---
+type: architecture_guideline
+title: "Migration Plan: tmux (C) to szn (Zig)"
+description: "Rationale and plan for rewriting tmux in Zig."
+timestamp: 2026-06-30T04:57:33Z
+---
+
 # Migration Plan: tmux (C) → szn (Zig)
 
 ## Why Zig?

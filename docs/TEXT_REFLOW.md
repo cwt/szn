@@ -1,3 +1,10 @@
+---
+type: architecture_guideline
+title: "Text Reflow in szn"
+description: "Design, algorithms, and implementation of the text reflow system."
+timestamp: 2026-06-30T16:01:01Z
+---
+
 # Text Reflow in szn
 
 This document explains the design, algorithms, and engineering implementation of the **Text Reflow** system in `szn`.
