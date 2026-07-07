@@ -38,11 +38,7 @@ pub const Client = struct {
 
     pub fn sendIdentify(self: *Client, term: []const u8) Error!void {
         if (term.len > 64) return error.TermTooLong;
-        var it: protocol.IdentifyTerm = .{ .term_len = @intCast(term.len) };
-        @memcpy(it.term[0..term.len], term);
-        var buf: [128]u8 = undefined;
-        const data = it.encode(&buf);
-        try self.sendPacket(.identify_term, data);
+        try self.sendPacket(.identify_term, term);
     }
 
     pub fn sendCommand(self: *Client, cmd: []const u8) Error!void {
@@ -153,7 +149,7 @@ test "fdWrite retries on partial write — bug #93" {
     try testing.expectEqualStrings(data, buf[0..@as(usize, @intCast(n))]);
 }
 
-test "sendIdentify rejects term longer than 64 bytes" {
+test "sendIdentify transmits raw term and rejects term longer than 64 bytes" {
     const testing = std.testing;
 
     var fds: [2]i32 = undefined;
@@ -163,9 +159,19 @@ test "sendIdentify rejects term longer than 64 bytes" {
 
     var client = Client{ .allocator = testing.allocator, .fd = fds[1] };
 
+    // 1. Verify too long term rejection
     const long_term = try testing.allocator.alloc(u8, 100);
     defer testing.allocator.free(long_term);
     @memset(long_term, 'x');
-
     try testing.expectError(error.TermTooLong, client.sendIdentify(long_term));
+
+    // 2. Verify raw term string is sent correctly
+    try client.sendIdentify("xterm-256color");
+    var buf: [128]u8 = undefined;
+    const n = std.c.read(fds[0], &buf, buf.len);
+    try testing.expect(n > 0);
+    const read_bytes = buf[0..@as(usize, @intCast(n))];
+    const parsed = try protocol.Packet.deserialize(read_bytes);
+    try testing.expectEqual(@as(u8, @intFromEnum(protocol.MessageType.identify_term)), parsed.header.msg_type);
+    try testing.expectEqualStrings("xterm-256color", parsed.data);
 }
