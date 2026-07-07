@@ -499,17 +499,52 @@ pub const InputParser = struct {
         // Append the ST terminator so the outer terminal can parse it.
         try self.dcs_buf.appendSlice(self.screen.allocator, "\x1b\\");
 
-        // Rough pixel-height estimate: count sixel newline commands ('-').
-        // Each '-' advances by one band = 6 pixels.
-        var bands: u32 = 1;
-        for (self.dcs_buf.items) |b| {
-            if (b == '-') bands += 1;
-        }
-        const px_height: u32 = bands * 6;
+        var px_width: u32 = 0;
+        var px_height: u32 = 0;
 
-        // We don't know pixel width without fully decoding; pass 0.
-        // The render engine only uses px_height for cursor advancement.
-        const px_width: u32 = 0;
+        // Try to parse raster attributes command if present: " Pan ; Pad ; Ph ; Pv
+        // The dcs_buf contains "\x1bPq" (len 3) followed by payload.
+        if (std.mem.indexOfScalar(u8, self.dcs_buf.items[3..], '"')) |quote_idx_offset| {
+            const quote_idx = 3 + quote_idx_offset;
+            var it = std.mem.splitScalar(u8, self.dcs_buf.items[quote_idx + 1 ..], ';');
+            _ = it.next(); // skip Pan
+            _ = it.next(); // skip Pad
+            if (it.next()) |ph_str| {
+                var val: u32 = 0;
+                var has_val = false;
+                for (ph_str) |c| {
+                    if (std.ascii.isDigit(c)) {
+                        val = val * 10 + (c - '0');
+                        has_val = true;
+                    } else {
+                        break;
+                    }
+                }
+                if (has_val) px_width = val;
+            }
+            if (it.next()) |pv_str| {
+                var val: u32 = 0;
+                var has_val = false;
+                for (pv_str) |c| {
+                    if (std.ascii.isDigit(c)) {
+                        val = val * 10 + (c - '0');
+                        has_val = true;
+                    } else {
+                        break;
+                    }
+                }
+                if (has_val) px_height = val;
+            }
+        }
+
+        // Fallback to band estimation if raster height was not found or 0
+        if (px_height == 0) {
+            var bands: u32 = 1;
+            for (self.dcs_buf.items) |b| {
+                if (b == '-') bands += 1;
+            }
+            px_height = bands * 6;
+        }
 
         // Transfer buffer ownership to Screen.
         const owned = try self.screen.allocator.dupe(u8, self.dcs_buf.items);
@@ -1836,6 +1871,22 @@ test "sixel pixel height estimated from band count" {
     try testing.expectEqual(@as(usize, 1), screen.sixel_images.items.len);
     // bands = 1 + count('-') = 1 + 3 = 4,  px_height = 4 * 6 = 24
     try testing.expectEqual(@as(u32, 24), screen.sixel_images.items[0].px_height);
+}
+
+test "sixel pixel dimensions parsed from raster attributes" {
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+    var parser = InputParser.init(&screen);
+    defer parser.deinit(testing.allocator);
+
+    // Sixel with raster attributes command setting aspect ratio 1:1, width 320, height 240
+    const sixel = "\x1bPq\"1;1;320;240A\x1b\\";
+    try parser.feed(sixel);
+
+    try testing.expectEqual(@as(usize, 1), screen.sixel_images.items.len);
+    const img = screen.sixel_images.items[0];
+    try testing.expectEqual(@as(u32, 320), img.px_width);
+    try testing.expectEqual(@as(u32, 240), img.px_height);
 }
 
 test "sixel cursor advances after image" {

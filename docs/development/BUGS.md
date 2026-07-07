@@ -2441,11 +2441,9 @@ The server `handleClient` switch default drops unknown client→server types wit
 ### 193. Sixel image width unknown — cursor advance uses an approximation
 **File:** `src/input.zig:512` (`px_width` passed as 0), `src/input.zig:503–508` (`px_height` estimated from band count), `src/screen.zig:127` (advance)
 **Severity:** MEDIUM
-**Status:** OPEN — discovered 2026-07-08; not yet fixed.
+**Status:** ✅ FIXED — Parsed exact sixel dimensions from the raster attributes command (`"`) in DCS body if present, falling back to band estimation.
 
 When adding a sixel image, `px_width` is passed as `0`; only `px_height` is estimated from the band count (`input.zig:503–508`). The cursor advance uses a 20px-per-cell-row assumption (`screen.zig:127`). The server is a pure pass-through of the raw DCS bytes (`render.zig:603–618`), so sixel geometry is imprecise and can misposition following output relative to the image.
-
-**Fix:** Parse the sixel `Px`/`Py` image dimensions from the DCS body to compute accurate width/height.
 
 ---
 
@@ -2455,6 +2453,6 @@ When adding a sixel image, `px_width` is passed as `0`; only `px_height` is esti
 |----------|-------|-------|----------------|------------|
 | Critical | 24 | 21 | 3 | **0** |
 | High | 43 | 42 | 1 | **0** |
-| Medium | 65 (61+4) | 62 | 2 | **1** |
+| Medium | 65 (61+4) | 63 | 2 | **0** |
 | Low | 61 (57+4) | 58 | 3 | **0** |
-| Total | 193 (185+8) | **183** | **9** | **1** |
+| Total | 193 (185+8) | **184** | **9** | **0** |
