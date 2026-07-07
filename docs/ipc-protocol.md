@@ -12,8 +12,8 @@ length-prefixed packet protocol (defined in `src/server/protocol.zig`). This
 replaces tmux's imsg.
 
 > Note: the structs are **not** `packed` in the Zig sense — `Header`/`Packet`
-> are plain structs with byte-exact manual encoding (`protocol.zig:50,60`).
-> AGENTS.md describes them as "packed structs" aspirationally.
+> are plain structs with byte-exact manual encoding (`protocol.zig:50,60`)
+> to guarantee layout stability.
 
 ## Packet header (5 bytes)
 
@@ -24,9 +24,9 @@ replaces tmux's imsg.
 
 `length` total = `5 + data.len` (`protocol.zig:96`). `Header.encode` writes
 LE `u32` then the type byte (`protocol.zig:54-57`). `Packet.deserialize`
-requires `buf.len >= 5` and `len == buf.len` exactly (`protocol.zig:82-93`) —
-so it parses **one packet per buffer**; streaming framing is done by the
-readers in §3, not by `deserialize`.
+requires `buf.len >= 5` and `buf.len >= len` (`protocol.zig:82-93`) —
+so it parses the first packet in the buffer (extra trailing data is ignored);
+streaming framing is done by the readers in §3.
 
 ## Direction convention
 
@@ -41,12 +41,12 @@ A single `MessageType` enum (`protocol.zig:10-48`). `isRequest()` is
 | Value | Variant | Payload | Status |
 |-------|---------|---------|--------|
 | `0x01` | `identify_term` | opaque term string (live client sends raw `"xterm-256color"`) | used; payload ignored by server |
-| `0x02` | `identify_cwd` | undefined | reserved / unused |
-| `0x03` | `identify_done` | undefined | reserved / unused |
+| `0x02` | `identify_cwd` | — | deleted / invalid |
+| `0x03` | `identify_done` | — | deleted / invalid |
 | `0x04` | `command` | raw command-line string (e.g. `"new-session test"`) | used |
 | `0x05` | `resize` | 8 bytes: `u32` LE width + `u32` LE height | used |
 | `0x06` | `detach` | empty | used (both directions) |
-| `0x07` | `shell` | undefined | reserved / unused |
+| `0x07` | `shell` | — | deleted / invalid |
 | `0x08` | `stdin_data` | raw bytes from client stdin (max 4096/packet) | used |
 
 ### Server → Client (responses)
@@ -57,14 +57,11 @@ A single `MessageType` enum (`protocol.zig:10-48`). `isRequest()` is
 | `0x81` | `output` | raw terminal escape bytes (rendered frame; also OSC-52 clipboard) | used |
 | `0x82` | `exit` | 1 byte exit code (`u8`) | used |
 | `0x83` | `err` | error message string | used |
-| `0x84` | `notify` | undefined | reserved / unused |
+| `0x84` | `notify` | — | deleted / invalid |
 
 ## Key message behaviour
 
-- **`identify_term`** — the structured `IdentifyTerm` encoder
-  (`protocol.zig:107-126`, `client.zig:39-46`) is effectively dead: the live
-  client sends a raw string (`main.zig:364`) and the server handler ignores
-  the payload, only registering the fd as a display client (`server.zig:1838`).
+- **`identify_term`** — the payload is a raw string (e.g. `"xterm-256color"`). The server handler ignores the payload and only registers the file descriptor as a display client (`server.zig:1838`).
 - **`command`** — verbatim command line, space-separated; server parses via
   `cmd.parse` (`dispatch.zig:33`).
 - **`resize`** — 8-byte LE pair, clamped to min 2×2 (`server.zig:1876`);
@@ -80,18 +77,17 @@ A single `MessageType` enum (`protocol.zig:10-48`). `isRequest()` is
 
 Both streaming readers agree on the 5-byte LE-length header:
 
-- **Server** — `MessageReader` (`message_reader.zig:15-59`): fixed 8192-byte
-  buffer; `tryParse()` reads `length`, rejects `< 5` or `> 8192`, waits for a
-  complete packet, returns `Packet` whose `data` points *into* the reader
+- **Server** — `MessageReader` (`message_reader.zig:15-59`): fixed buffer of size
+  `protocol.MAX_CLIENT_PACKET_SIZE` (8 KiB); `tryParse()` reads `length`, rejects `< 5` or `> 8192`,
+  waits for a complete packet, returns `Packet` whose `data` points *into* the reader
   buffer; `consume()` shifts the unconsumed tail.
 - **Client** — `Client.recvPacket` (`client.zig:60-95`): reads exactly the
-  5-byte header, validates `len <= 1 MiB`, then reads the body. The interactive
-  client also parses inline in `main.zig:448-496`.
+  5-byte header, validates `len <= protocol.MAX_PACKET_SIZE` (1 MiB), then reads the body.
+  The interactive client also parses inline in `main.zig:448-496`.
 
-Size-limit inconsistencies worth noting: client send cap 4096
-(`client.zig:53`), client recv cap 1 MiB (`client.zig:71`), server reader cap
-8192 (`message_reader.zig:16`). Only `Client.MAX_PACKET_SIZE = 1 MiB` is
-named.
+Size limits are unified using:
+- `protocol.MAX_PACKET_SIZE = 1 MiB` (maximum server-to-client output packet size).
+- `protocol.MAX_CLIENT_PACKET_SIZE = 8 KiB` (maximum client-to-server command/stdin packet size).
 
 ## Handshake / attach flow
 
