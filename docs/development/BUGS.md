@@ -2379,4 +2379,106 @@ Two complementary changes:
 
 **Fix:** Truncate each window name to `(sx - 1) -| col -| suffix_len` before writing, so content never exceeds the terminal width.
 
+---
+
+## NEW BUGS (2026-07-08 — protocol & architecture audit)
+
+---
+
+### 186. `IdentifyTerm` struct is dead on the wire — live client sends a raw string
+**File:** `src/server/protocol.zig:107–126`, `src/client/client.zig:39–46`, `src/main.zig:364`, `src/server/server.zig:1838–1848`
+**Severity:** MEDIUM
+**Status:** OPEN — discovered 2026-07-08; not yet fixed.
+
+The structured `IdentifyTerm` encoder (`term_len` byte + term string, max 64) is defined and used by `Client.sendIdentify`, but the live interactive client does **not** call it. It sends a raw `"xterm-256color"` string via `Packet.make(.identify_term, "xterm-256color")` (`main.zig:364`), and the server handler ignores the payload entirely — it only appends the fd to `display_clients` (`server.zig:1838`). So the term string is never stored server-side and the `IdentifyTerm` wire format is effectively dead code on the real path.
+
+**Fix:** Either finish wiring `IdentifyTerm` (call `sendIdentify`, store the term in `DisplayClient`) or delete the struct and document `identify_term` as an opaque string.
+
+---
+
+### 187. Reserved message types declared but never constructed or handled
+**File:** `src/server/protocol.zig:10–24`
+**Severity:** LOW
+**Status:** OPEN — discovered 2026-07-08; not yet fixed.
+
+`identify_cwd` (`0x02`), `identify_done` (`0x03`), `shell` (`0x07`), and `notify` (`0x84`) are in the `MessageType` enum (and `fromByte`), but no code constructs or handles them. Their payload formats are undefined and they are silently dropped by the default switch arms.
+
+**Fix:** Mark them reserved in a comment, or remove them until implemented.
+
+---
+
+### 188. No per-session attach selection in the wire protocol
+**File:** `src/server/protocol.zig`, `src/main.zig:347–499`
+**Severity:** MEDIUM
+**Status:** OPEN — discovered 2026-07-08; not yet fixed.
+
+The protocol has no field identifying *which* session to attach to. The daemon always serves its single active session; `identify_term`/`resize` merely register the fd as a display client. Multi-session attach is not expressible over the wire. This matches the current single-session server design but limits future multi-session support.
+
+---
+
+### 189. Protocol structs are not `packed` despite AGENTS.md claiming so
+**File:** `src/server/protocol.zig:50, 60, 107`
+**Severity:** LOW
+**Status:** OPEN — discovered 2026-07-08; not yet fixed.
+
+`AGENTS.md` states IPC packets are "defined as packed structs," but `Header`/`Packet`/`IdentifyTerm` are plain structs with byte-exact manual encoding (`Header.encode` writes LE `u32` then the `u8` type). Layout is stable, but the "packed" claim is inaccurate.
+
+**Fix:** Either make them `packed` (and rely on field order) or correct the AGENTS.md wording.
+
+---
+
+### 190. Inconsistent packet size limits across the three parsers
+**File:** `src/client/client.zig:53` (send 4096), `src/client/client.zig:71` (recv 1 MiB), `src/server/message_reader.zig:16` (8192)
+**Severity:** MEDIUM
+**Status:** OPEN — discovered 2026-07-08; not yet fixed.
+
+Client send cap is 4096 (`5 + data.len > 4096`), client recv cap is 1 MiB (`MAX_PACKET_SIZE`), and the server `MessageReader` cap is 8192. Only `MAX_PACKET_SIZE` is a named constant. A server `.output` packet larger than 8192 is fine on the wire but would be rejected if it ever came back *into* the server. The caps are also asymmetric between client send and server recv.
+
+**Fix:** Define a single canonical packet-size constant and enforce it consistently (and document that the 8192 server cap only gates incoming client packets).
+
+---
+
+### 191. Silent `else` branches drop unknown / ignored messages
+**File:** `src/server/server.zig:1897` (`handleClient` `else => {}`), `src/main.zig:487` (interactive switch `else => {}`)
+**Severity:** LOW
+**Status:** OPEN — discovered 2026-07-08; not yet fixed.
+
+The server `handleClient` switch default drops unknown client→server types with no log. The interactive client switch default ignores `err`/`exit` during streaming (those are only handled in the one-shot command path, `main.zig:207–228`). Unknown message types are invisible during debugging.
+
+**Fix:** Log unrecognized types in both default arms.
+
+---
+
+### 192. `Packet.deserialize` requires exact buffer length — unsafe for streams
+**File:** `src/server/protocol.zig:82–93`
+**Severity:** LOW
+**Status:** OPEN — discovered 2026-07-08; not yet fixed.
+
+`deserialize` returns `SizeMismatch` unless `len == buf.len` exactly, so it cannot parse a concatenated stream of packets. The three streaming readers (`MessageReader`, `Client.recvPacket`, and the inline parser in `main.zig:448–496`) therefore re-implement framing instead of calling `deserialize`. Calling `deserialize` on a raw socket buffer is a misuse trap.
+
+**Fix:** Document that `deserialize` is single-packet-only, or add a stream-aware parser.
+
+---
+
+### 193. Sixel image width unknown — cursor advance uses an approximation
+**File:** `src/input.zig:512` (`px_width` passed as 0), `src/input.zig:503–508` (`px_height` estimated from band count), `src/screen.zig:127` (advance)
+**Severity:** MEDIUM
+**Status:** OPEN — discovered 2026-07-08; not yet fixed.
+
+When adding a sixel image, `px_width` is passed as `0`; only `px_height` is estimated from the band count (`input.zig:503–508`). The cursor advance uses a 20px-per-cell-row assumption (`screen.zig:127`). The server is a pure pass-through of the raw DCS bytes (`render.zig:603–618`), so sixel geometry is imprecise and can misposition following output relative to the image.
+
+**Fix:** Parse the sixel `Px`/`Py` image dimensions from the DCS body to compute accurate width/height.
+
+---
+
+## Updated Summary
+
+| Severity | Count | Fixed | False Positive | Unresolved |
+|----------|-------|-------|----------------|------------|
+| Critical | 24 | 21 | 3 | **0** |
+| High | 43 | 42 | 1 | **0** |
+| Medium | 65 (61+4) | 59 | 2 | **4** |
+| Low | 61 (57+4) | 54 | 3 | **4** |
+| Total | 193 (185+8) | **176** | **9** | **8** |
+
 
