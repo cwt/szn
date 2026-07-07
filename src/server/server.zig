@@ -72,6 +72,7 @@ pub const DisplayClient = struct {
     last_sx: u32 = 0,
     last_sy: u32 = 0,
     merged_screen: ?@import("../screen.zig").Screen = null,
+    last_paste: ?bool = null,
 
     pub fn deinit(self: *DisplayClient, allocator: std.mem.Allocator) void {
         self.last_cells.deinit(allocator);
@@ -668,7 +669,13 @@ pub const Server = struct {
                         const msg = std.fmt.bufPrint(&msg_buf, "Error: paste buffer too large ({d} bytes, limit is {d}B)", .{ pb.len, MAX_PASTE_SIZE }) catch "Error: paste buffer too large";
                         self.setMessage(msg) catch {};
                     } else {
-                        pane.writeInput(pb) catch {};
+                        if (pane.screen.mode.paste) {
+                            pane.writeInput("\x1b[200~") catch {};
+                            pane.writeInput(pb) catch {};
+                            pane.writeInput("\x1b[201~") catch {};
+                        } else {
+                            pane.writeInput(pb) catch {};
+                        }
                     }
                 }
             },
@@ -884,6 +891,17 @@ pub const Server = struct {
         while (i < buf.len) : (i += 1) {
             const byte = buf[i];
 
+            if (self.input_reader.state == .ground and byte >= 0x20 and byte != 0x7f and !self.command_mode and !pane.choose_mode.active and !pane.screen.clock_mode and pane.screen.copy_mode == null and self.dispatcher.prefix_state == .normal) {
+                var run_len: usize = 1;
+                while (i + run_len < buf.len) : (run_len += 1) {
+                    const next_byte = buf[i + run_len];
+                    if (next_byte < 0x20 or next_byte == 0x7f) break;
+                }
+                pane.writeInput(buf[i .. i + run_len]) catch {};
+                i += run_len - 1;
+                continue;
+            }
+
             if (self.command_mode) {
                 if (self.input_reader.feed(byte)) |event| {
                     switch (event) {
@@ -1071,7 +1089,13 @@ pub const Server = struct {
                                                     self.setMessage(msg) catch {};
                                                 } else {
                                                     if (pane.pty) |*chosen_pty| {
-                                                        _ = chosen_pty.writeInput(data) catch {};
+                                                         if (pane.screen.mode.paste) {
+                                                             _ = chosen_pty.writeInput("\x1b[200~") catch {};
+                                                             _ = chosen_pty.writeInput(data) catch {};
+                                                             _ = chosen_pty.writeInput("\x1b[201~") catch {};
+                                                         } else {
+                                                             _ = chosen_pty.writeInput(data) catch {};
+                                                         }
                                                     }
                                                 }
                                             }
@@ -1999,6 +2023,7 @@ pub const Server = struct {
                 .last_sx = &dc.last_sx,
                 .last_sy = &dc.last_sy,
                 .merged_screen = &dc.merged_screen,
+                .last_paste = &dc.last_paste,
             };
 
             var bounds: std.ArrayList(render.PaneBounds) = .empty;

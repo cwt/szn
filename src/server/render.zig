@@ -37,6 +37,7 @@ pub const Display = struct {
     last_sx: ?*u32 = null,
     last_sy: ?*u32 = null,
     merged_screen: ?*?Screen = null,
+    last_paste: ?*?bool = null,
 
     fn writeColourFg(self: Display, color: Colour) Error!void {
         switch (color.tag) {
@@ -108,6 +109,7 @@ pub const Display = struct {
     pub fn exitAltScreen(self: Display) Error!void {
         try self.writeBytes("\x1b[<1u");
         try self.writeBytes("\x1b[?1000l\x1b[?1002l\x1b[?1006l");
+        try self.writeBytes("\x1b[?2004l");
         try self.writeBytes("\x1b[?25h");
         try self.writeBytes("\x1b[?1049l");
     }
@@ -129,6 +131,21 @@ pub const Display = struct {
     ) Error!void {
         try self.writeBytes("\x1b[?25l");
         try self.writeBytes("\x1b[?2026h");
+
+        if (self.last_paste) |lp| {
+            const wants_paste = if (command_mode or pane_in_copy_mode or active_pane.choose_mode.active)
+                false
+            else
+                active_pane.screen.mode.paste;
+            if (lp.* == null or lp.*.? != wants_paste) {
+                if (wants_paste) {
+                    try self.writeBytes("\x1b[?2004h");
+                } else {
+                    try self.writeBytes("\x1b[?2004l");
+                }
+                lp.* = wants_paste;
+            }
+        }
 
         const merged_w = self.sx;
         const merged_h = self.sy -| 1;
@@ -725,8 +742,14 @@ test "renderStatusBar truncates long name to fit terminal width — bug #185" {
     var visible_cols: u32 = 0;
     var in_esc = false;
     for (capture_buf.items) |ch| {
-        if (ch == 0x1b) { in_esc = true; continue; }
-        if (in_esc) { if (ch == 'm' or ch == 'H') in_esc = false; continue; }
+        if (ch == 0x1b) {
+            in_esc = true;
+            continue;
+        }
+        if (in_esc) {
+            if (ch == 'm' or ch == 'H') in_esc = false;
+            continue;
+        }
         visible_cols += 1;
     }
     try testing.expect(visible_cols <= max_visible);

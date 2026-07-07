@@ -350,6 +350,16 @@ pub const Term = struct {
         try self.write("\x1b[?2026l");
     }
 
+    // ── Paste ──
+
+    pub fn setBracketedPaste(self: *Term, enable: bool) Error!void {
+        if (enable) {
+            try self.write("\x1b[?2004h");
+        } else {
+            try self.write("\x1b[?2004l");
+        }
+    }
+
     // ── Mouse ──
 
     pub fn setMouseSGR(self: *Term, enable: bool) Error!void {
@@ -858,6 +868,18 @@ test "mouse SGR mode" {
     const out2 = written(&term.writer);
     try testing.expect(std.mem.indexOf(u8, out2, "\x1b[?1000l") != null);
     try testing.expect(std.mem.indexOf(u8, out2, "\x1b[?1006l") != null);
+}
+
+test "bracketed paste mode" {
+    var buf: [64]u8 = undefined;
+    var term = Term.init(Writer.fixed(&buf), 80, 24);
+    try term.setBracketedPaste(true);
+    const out1 = written(&term.writer);
+    try testing.expect(std.mem.indexOf(u8, out1, "\x1b[?2004h") != null);
+    term.writer.end = 0;
+    try term.setBracketedPaste(false);
+    const out2 = written(&term.writer);
+    try testing.expect(std.mem.indexOf(u8, out2, "\x1b[?2004l") != null);
 }
 
 test "double underline emits SGR 21 — C2 fix" {
