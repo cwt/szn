@@ -81,7 +81,7 @@ pub const Screen = struct {
     clock_utc: bool = false,
     tab_stop: u32 = 8,
     /// Sixel images received from child processes, kept for re-emission.
-    sixel_images: std.ArrayListUnmanaged(SixelImage) = .empty,
+    sixel_images: std.ArrayList(SixelImage) = .empty,
     last_char: ?u21 = null,
     extkeys: u8 = 0,
     kitty_kbd_flags: u32 = 0,

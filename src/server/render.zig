@@ -33,7 +33,7 @@ pub const Display = struct {
     sy: u32,
     capture: ?*std.ArrayList(u8) = null,
     capture_allocator: ?std.mem.Allocator = null,
-    last_cells: ?*std.ArrayListUnmanaged(Cell) = null,
+    last_cells: ?*std.ArrayList(Cell) = null,
     last_sx: ?*u32 = null,
     last_sy: ?*u32 = null,
     merged_screen: ?*?Screen = null,
@@ -181,7 +181,7 @@ pub const Display = struct {
 
                 const combined_idx = (@as(isize, @intCast(pane_grid.history.items.len)) - @as(isize, @intCast(if (pb.pane.screen.copy_mode) |cm| cm.scroll_offset else 0))) + @as(isize, @intCast(y));
                 const cells = if (combined_idx < 0)
-                    @as(?*const std.ArrayListUnmanaged(Cell), null)
+                    @as(?*const std.ArrayList(Cell), null)
                 else if (combined_idx < pane_grid.history.items.len)
                     &pane_grid.history.items[@intCast(combined_idx)].cells
                 else blk: {
@@ -189,7 +189,7 @@ pub const Display = struct {
                     break :blk if (visible_y < pane_grid.height)
                         &pane_grid.getLine(@intCast(visible_y)).cells
                     else
-                        @as(?*const std.ArrayListUnmanaged(Cell), null);
+                        @as(?*const std.ArrayList(Cell), null);
                 };
 
                 for (0..pb.w) |x| {
@@ -357,7 +357,7 @@ pub const Display = struct {
         for (0..h) |y| {
             const combined_idx = (@as(isize, @intCast(screen.grid.history.items.len)) - @as(isize, @intCast(if (screen.copy_mode) |cm| cm.scroll_offset else 0))) + @as(isize, @intCast(y));
             const cells = if (combined_idx < 0)
-                @as(?*const std.ArrayListUnmanaged(Cell), null)
+                @as(?*const std.ArrayList(Cell), null)
             else if (combined_idx < screen.grid.history.items.len)
                 &screen.grid.history.items[@intCast(combined_idx)].cells
             else blk: {
@@ -365,7 +365,7 @@ pub const Display = struct {
                 break :blk if (visible_y < screen.grid.height)
                     &screen.grid.getLine(@intCast(visible_y)).cells
                 else
-                    @as(?*const std.ArrayListUnmanaged(Cell), null);
+                    @as(?*const std.ArrayList(Cell), null);
             };
 
             // Track the terminal cursor column within this row.

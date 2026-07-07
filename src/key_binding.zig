@@ -52,7 +52,7 @@ pub const Binding = struct {
 
 pub const KeyTable = struct {
     allocator: std.mem.Allocator,
-    bindings: std.ArrayListUnmanaged(Binding) = .empty,
+    bindings: std.ArrayList(Binding) = .empty,
 
     pub fn init(allocator: std.mem.Allocator) KeyTable {
         return .{ .allocator = allocator };

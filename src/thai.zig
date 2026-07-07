@@ -509,9 +509,9 @@ pub fn findWordBreaks(allocator: std.mem.Allocator, cells: []const Cell) ![]usiz
 
     const libthai = getLibThai() orelse return &[_]usize{};
 
-    var codepoints: std.ArrayListUnmanaged(u32) = .empty;
+    var codepoints: std.ArrayList(u32) = .empty;
     defer codepoints.deinit(allocator);
-    var cell_indices: std.ArrayListUnmanaged(usize) = .empty;
+    var cell_indices: std.ArrayList(usize) = .empty;
     defer cell_indices.deinit(allocator);
 
     for (cells, 0..) |c, i| {
@@ -546,7 +546,7 @@ pub fn findWordBreaks(allocator: std.mem.Allocator, cells: []const Cell) ![]usiz
 
     if (num_breaks <= 0) return &[_]usize{};
 
-    var result: std.ArrayListUnmanaged(usize) = .empty;
+    var result: std.ArrayList(usize) = .empty;
     errdefer result.deinit(allocator);
 
     var i: usize = 0;

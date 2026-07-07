@@ -10,7 +10,7 @@ pub const Session = struct {
     arena: std.heap.ArenaAllocator,
     id: u32,
     name: []const u8,
-    windows: std.ArrayListUnmanaged(*Window) = .empty,
+    windows: std.ArrayList(*Window) = .empty,
     active_window: ?*Window = null,
     last_window: ?*Window = null,
     width: u32,

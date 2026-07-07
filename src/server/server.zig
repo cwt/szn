@@ -68,7 +68,7 @@ pub const DisplayClient = struct {
     fd: i32,
     sx: u32 = 80,
     sy: u32 = 24,
-    last_cells: std.ArrayListUnmanaged(@import("../grid.zig").Cell) = .empty,
+    last_cells: std.ArrayList(@import("../grid.zig").Cell) = .empty,
     last_sx: u32 = 0,
     last_sy: u32 = 0,
     merged_screen: ?@import("../screen.zig").Screen = null,
@@ -86,12 +86,12 @@ pub const Server = struct {
     pub const MAX_PASTE_SIZE = 16384;
 
     allocator: std.mem.Allocator,
-    sessions: std.ArrayListUnmanaged(*Session) = .empty,
+    sessions: std.ArrayList(*Session) = .empty,
     next_session_id: u32 = 1,
     next_window_id: u32 = 1,
     next_pane_id: u32 = 1,
     listener_fd: ?i32 = null,
-    client_fds: std.ArrayListUnmanaged(i32) = .empty,
+    client_fds: std.ArrayList(i32) = .empty,
     client_readers: std.AutoHashMap(i32, *MessageReader),
     input_reader: @import("../tty/tty_key.zig").InputReader = .{},
     dispatcher: @import("../key_binding.zig").KeyDispatcher,
@@ -100,18 +100,18 @@ pub const Server = struct {
     global_options: @import("../options.zig").Options,
     global_window_options: @import("../options.zig").Options,
     response_buf: std.ArrayList(u8),
-    display_clients: std.ArrayListUnmanaged(DisplayClient) = .empty,
+    display_clients: std.ArrayList(DisplayClient) = .empty,
     current_client_fd: ?i32 = null,
     render_buf: std.ArrayList(u8),
     buffers: buffer_mod.BufferList,
-    log_messages: std.ArrayListUnmanaged([]const u8) = .empty,
+    log_messages: std.ArrayList([]const u8) = .empty,
     display_sx: u32 = 80,
     display_sy: u32 = 24,
     dirty: bool = true,
     message: ?[]const u8 = null,
     message_time: i64 = 0,
     command_mode: bool = false,
-    command_buf: std.ArrayListUnmanaged(u8) = .empty,
+    command_buf: std.ArrayList(u8) = .empty,
     mouse_press_x: u32 = 0,
     mouse_press_y: u32 = 0,
     mouse_press_pane: ?*Pane = null,
@@ -1089,13 +1089,13 @@ pub const Server = struct {
                                                     self.setMessage(msg) catch {};
                                                 } else {
                                                     if (pane.pty) |*chosen_pty| {
-                                                         if (pane.screen.mode.paste) {
-                                                             _ = chosen_pty.writeInput("\x1b[200~") catch {};
-                                                             _ = chosen_pty.writeInput(data) catch {};
-                                                             _ = chosen_pty.writeInput("\x1b[201~") catch {};
-                                                         } else {
-                                                             _ = chosen_pty.writeInput(data) catch {};
-                                                         }
+                                                        if (pane.screen.mode.paste) {
+                                                            _ = chosen_pty.writeInput("\x1b[200~") catch {};
+                                                            _ = chosen_pty.writeInput(data) catch {};
+                                                            _ = chosen_pty.writeInput("\x1b[201~") catch {};
+                                                        } else {
+                                                            _ = chosen_pty.writeInput(data) catch {};
+                                                        }
                                                     }
                                                 }
                                             }

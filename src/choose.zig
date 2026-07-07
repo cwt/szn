@@ -17,7 +17,7 @@ pub const ChooseItem = struct {
 };
 
 pub const ChooseMode = struct {
-    items: std.ArrayListUnmanaged(ChooseItem) = .empty,
+    items: std.ArrayList(ChooseItem) = .empty,
     cursor: u32 = 0,
     scroll: u32 = 0,
     active: bool = false,

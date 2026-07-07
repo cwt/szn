@@ -43,7 +43,7 @@ pub const Context = struct {
 };
 
 pub fn expand(allocator: std.mem.Allocator, template: []const u8, ctx: *const Context) FormatError![]const u8 {
-    var result: std.ArrayListUnmanaged(u8) = .empty;
+    var result: std.ArrayList(u8) = .empty;
     errdefer result.deinit(allocator);
 
     var i: usize = 0;
@@ -194,13 +194,13 @@ fn expandVariable(allocator: std.mem.Allocator, name: []const u8, ctx: *const Co
     return try allocator.dupe(u8, "");
 }
 
-fn freeArgs(allocator: std.mem.Allocator, args: *std.ArrayListUnmanaged([]const u8)) void {
+fn freeArgs(allocator: std.mem.Allocator, args: *std.ArrayList([]const u8)) void {
     for (args.items) |arg| allocator.free(arg);
     args.deinit(allocator);
 }
 
 fn expandConditional(allocator: std.mem.Allocator, content: []const u8, ctx: *const Context) FormatError![]const u8 {
-    var args: std.ArrayListUnmanaged([]const u8) = .empty;
+    var args: std.ArrayList([]const u8) = .empty;
     defer freeArgs(allocator, &args);
 
     try splitArgs(allocator, content, &args);
@@ -227,7 +227,7 @@ fn expandConditional(allocator: std.mem.Allocator, content: []const u8, ctx: *co
 
 fn expandLiteral(allocator: std.mem.Allocator, content: []const u8, ctx: *const Context) FormatError![]const u8 {
     _ = ctx;
-    var result: std.ArrayListUnmanaged(u8) = .empty;
+    var result: std.ArrayList(u8) = .empty;
     errdefer result.deinit(allocator);
 
     var i: usize = 0;
@@ -305,7 +305,7 @@ fn expandCompareGe(allocator: std.mem.Allocator, content: []const u8, ctx: *cons
 const CompareOp = enum { eq, neq, lt, gt, le, ge };
 
 fn expandCompareBinary(allocator: std.mem.Allocator, content: []const u8, ctx: *const Context, op: CompareOp) FormatError![]const u8 {
-    var args: std.ArrayListUnmanaged([]const u8) = .empty;
+    var args: std.ArrayList([]const u8) = .empty;
     defer freeArgs(allocator, &args);
 
     try splitArgs(allocator, content, &args);
@@ -331,7 +331,7 @@ fn expandCompareBinary(allocator: std.mem.Allocator, content: []const u8, ctx: *
 }
 
 fn expandAnd(allocator: std.mem.Allocator, content: []const u8, ctx: *const Context) FormatError![]const u8 {
-    var args: std.ArrayListUnmanaged([]const u8) = .empty;
+    var args: std.ArrayList([]const u8) = .empty;
     defer freeArgs(allocator, &args);
 
     try splitArgs(allocator, content, &args);
@@ -347,7 +347,7 @@ fn expandAnd(allocator: std.mem.Allocator, content: []const u8, ctx: *const Cont
 }
 
 fn expandOr(allocator: std.mem.Allocator, content: []const u8, ctx: *const Context) FormatError![]const u8 {
-    var args: std.ArrayListUnmanaged([]const u8) = .empty;
+    var args: std.ArrayList([]const u8) = .empty;
     defer freeArgs(allocator, &args);
 
     try splitArgs(allocator, content, &args);
@@ -430,7 +430,7 @@ fn expandTruncate(allocator: std.mem.Allocator, content: []const u8, ctx: *const
     return try allocator.dupe(u8, value[0..n]);
 }
 
-fn splitArgs(allocator: std.mem.Allocator, content: []const u8, args: *std.ArrayListUnmanaged([]const u8)) FormatError!void {
+fn splitArgs(allocator: std.mem.Allocator, content: []const u8, args: *std.ArrayList([]const u8)) FormatError!void {
     var start: usize = 0;
     var depth: usize = 0;
     var i: usize = 0;

@@ -257,7 +257,7 @@ pub const Layout = struct {
     }
 
     pub fn countLeaves(self: *const Layout) usize {
-        var stack: std.ArrayListUnmanaged(*const Node) = .empty;
+        var stack: std.ArrayList(*const Node) = .empty;
         defer stack.deinit(self.allocator);
         stack.append(self.allocator, self.root) catch return 0;
 

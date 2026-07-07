@@ -17,7 +17,7 @@ pub const InputParser = struct {
     params_started: bool = false,
     intermediate: u8 = 0,
     private_marker: u8 = 0,
-    osc_buf: std.ArrayListUnmanaged(u8) = .empty,
+    osc_buf: std.ArrayList(u8) = .empty,
     pty: ?*@import("server/pty.zig").Pty = null,
     utf8_buf: [4]u8 = undefined,
     utf8_len: u8 = 0,
@@ -28,7 +28,7 @@ pub const InputParser = struct {
     clipboard_ctx: ?*anyopaque = null,
     /// Growable buffer for accumulating raw DCS / sixel bytes.
     /// Re-used across calls; reset to len=0 on each new DCS.
-    dcs_buf: std.ArrayListUnmanaged(u8) = .empty,
+    dcs_buf: std.ArrayList(u8) = .empty,
     /// True when the current DCS sequence is a sixel stream (final byte 'q').
     dcs_is_sixel: bool = false,
 

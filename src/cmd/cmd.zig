@@ -500,7 +500,7 @@ fn cmdChooseBuffer(server: *Server, args: []const []const u8) CmdResult {
     const window = session.active_window orelse return .err;
     const pane = window.active_pane orelse return .err;
 
-    var items: std.ArrayListUnmanaged(ChooseItem) = .empty;
+    var items: std.ArrayList(ChooseItem) = .empty;
     defer {
         for (items.items) |item| {
             server.allocator.free(item.name);
@@ -1547,7 +1547,7 @@ pub fn formatHelp(allocator: std.mem.Allocator, command_name: ?[]const u8) Parse
 }
 
 pub fn parse(input: []const u8, allocator: std.mem.Allocator) !CmdArgs {
-    var arg_list: std.ArrayListUnmanaged([]const u8) = .empty;
+    var arg_list: std.ArrayList([]const u8) = .empty;
     errdefer arg_list.deinit(allocator);
     var it = std.mem.tokenizeScalar(u8, input, ' ');
     while (it.next()) |token| {

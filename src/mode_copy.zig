@@ -271,7 +271,7 @@ pub const CopyMode = struct {
         const sx = if (start_is_top) self.selection.start_x else self.selection.end_x;
         const ex = if (start_is_top) self.selection.end_x else self.selection.start_x;
 
-        var result: std.ArrayListUnmanaged(u8) = .empty;
+        var result: std.ArrayList(u8) = .empty;
         errdefer result.deinit(allocator);
 
         var y_i64 = sy;
@@ -279,7 +279,7 @@ pub const CopyMode = struct {
             const line_start = if (y_i64 == sy) sx else 0;
             const line_end = if (y_i64 == ey) @min(ex, grid.width -| 1) else grid.width -| 1;
 
-            var line_buf: std.ArrayListUnmanaged(u8) = .empty;
+            var line_buf: std.ArrayList(u8) = .empty;
             defer line_buf.deinit(allocator);
 
             var x = line_start;

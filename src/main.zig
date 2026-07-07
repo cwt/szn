@@ -69,7 +69,7 @@ fn mainInner(init: std.process.Init) Error!void {
         std.process.exit(1);
     }
 
-    var args: std.ArrayListUnmanaged([]const u8) = .empty;
+    var args: std.ArrayList([]const u8) = .empty;
     defer args.deinit(allocator);
 
     var arg_it = try std.process.Args.Iterator.initAllocator(init.minimal.args, allocator);
@@ -394,7 +394,7 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
     display.enterAltScreen() catch {};
     defer display.exitAltScreen() catch {};
 
-    var read_buf: std.ArrayListUnmanaged(u8) = .empty;
+    var read_buf: std.ArrayList(u8) = .empty;
     defer read_buf.deinit(allocator);
     var running = true;
 

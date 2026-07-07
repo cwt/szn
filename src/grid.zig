@@ -52,7 +52,7 @@ pub const Cell = packed struct(u128) {
 };
 
 pub const GridLine = struct {
-    cells: std.ArrayListUnmanaged(Cell) = .empty,
+    cells: std.ArrayList(Cell) = .empty,
     dirty: bool = true,
     /// True when this line is a soft-wrap continuation from the previous line.
     /// Used by reflow to reconstruct logical lines.
@@ -69,8 +69,8 @@ pub const Grid = struct {
     allocator: std.mem.Allocator,
     width: u32,
     height: u32,
-    lines: std.ArrayListUnmanaged(GridLine) = .empty,
-    history: std.ArrayListUnmanaged(GridLine) = .empty,
+    lines: std.ArrayList(GridLine) = .empty,
+    history: std.ArrayList(GridLine) = .empty,
     history_limit: u32 = 2000,
     start_index: u32 = 0,
 
@@ -389,7 +389,7 @@ pub const Grid = struct {
         cursor_offset: ?usize,
         out_cursor_pos: ?*CursorPos,
     ) ![]GridLine {
-        var lines: std.ArrayListUnmanaged(GridLine) = .empty;
+        var lines: std.ArrayList(GridLine) = .empty;
         errdefer {
             for (lines.items) |*l| l.deinit(allocator);
             lines.deinit(allocator);
@@ -399,7 +399,7 @@ pub const Grid = struct {
         defer allocator.free(word_breaks);
 
         if (cells.len == 0) {
-            var line_cells: std.ArrayListUnmanaged(Cell) = .empty;
+            var line_cells: std.ArrayList(Cell) = .empty;
             try line_cells.resize(allocator, new_width);
             @memset(line_cells.items, Cell.empty());
             var gl = GridLine{ .dirty = true, .wrapped = false };
@@ -419,7 +419,7 @@ pub const Grid = struct {
         var i: usize = 0;
         while (i < cells.len) {
             const line_start = i;
-            var line_cells: std.ArrayListUnmanaged(Cell) = .empty;
+            var line_cells: std.ArrayList(Cell) = .empty;
             defer line_cells.deinit(allocator);
             var line_width: u32 = 0;
             var did_break = false;
@@ -693,11 +693,11 @@ pub const Grid = struct {
         }
 
         // ── Flatten all lines into logical lines ──
-        var flat_cells: std.ArrayListUnmanaged(Cell) = .empty;
+        var flat_cells: std.ArrayList(Cell) = .empty;
         defer flat_cells.deinit(self.allocator);
 
         const Span = struct { start: usize, len: usize };
-        var logical_spans: std.ArrayListUnmanaged(Span) = .empty;
+        var logical_spans: std.ArrayList(Span) = .empty;
         defer logical_spans.deinit(self.allocator);
 
         const allocator = self.allocator;
@@ -769,7 +769,7 @@ pub const Grid = struct {
         self.history = .empty;
 
         // ── Rewrap each logical line and build new line set ──
-        var new_lines: std.ArrayListUnmanaged(GridLine) = .empty;
+        var new_lines: std.ArrayList(GridLine) = .empty;
         errdefer {
             for (new_lines.items) |*l| l.deinit(allocator);
             new_lines.deinit(allocator);
@@ -820,7 +820,7 @@ pub const Grid = struct {
             new_lines = .empty;
             // Pad self.lines with empty lines to match self.height
             while (self.lines.items.len < height) {
-                var line_cells: std.ArrayListUnmanaged(Cell) = .empty;
+                var line_cells: std.ArrayList(Cell) = .empty;
                 try line_cells.resize(allocator, new_width);
                 @memset(line_cells.items, Cell.empty());
                 try self.lines.append(allocator, GridLine{
@@ -1690,4 +1690,3 @@ test "setSize reflow Thai word trailing space bug" {
     // Cell 27 should be ย
     try testing.expectEqual(@as(u21, 0x0E22), grid.getCell(27, 0).char); // ย
 }
-

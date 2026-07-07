@@ -59,8 +59,8 @@ pub const IfShell = struct {
 };
 
 pub const ParseResult = struct {
-    directives: std.ArrayListUnmanaged(Directive),
-    errors: std.ArrayListUnmanaged([]const u8),
+    directives: std.ArrayList(Directive),
+    errors: std.ArrayList([]const u8),
 
     pub fn deinit(self: *ParseResult, allocator: std.mem.Allocator) void {
         for (self.directives.items) |*d| {
@@ -355,7 +355,7 @@ fn parseSetEnv(allocator: std.mem.Allocator, args: []const u8, result: *ParseRes
 
 fn unescapeQuoted(allocator: std.mem.Allocator, s: []const u8) Error![]const u8 {
     if (std.mem.indexOfScalar(u8, s, '\\') == null) return allocator.dupe(u8, s);
-    var result = try std.ArrayListUnmanaged(u8).initCapacity(allocator, s.len);
+    var result = try std.ArrayList(u8).initCapacity(allocator, s.len);
     errdefer result.deinit(allocator);
     var i: usize = 0;
     while (i < s.len) {

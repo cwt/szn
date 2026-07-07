@@ -21,10 +21,10 @@ pub const PollEvent = struct {
 };
 
 pub const Loop = struct {
-    fds: std.ArrayListUnmanaged(FdEntry) = .empty,
+    fds: std.ArrayList(FdEntry) = .empty,
     running: bool = true,
-    event_buf: std.ArrayListUnmanaged(PollEvent) = .empty,
-    pollfds: std.ArrayListUnmanaged(std.posix.pollfd) = .empty,
+    event_buf: std.ArrayList(PollEvent) = .empty,
+    pollfds: std.ArrayList(std.posix.pollfd) = .empty,
 
     pub fn init() Loop {
         return Loop{};
@@ -104,7 +104,7 @@ test "loop init" {
 }
 
 test "loop handles more than 64 fds without stack overflow" {
-    var pipes = std.ArrayListUnmanaged([2]i32){ .items = &.{}, .capacity = 0 };
+    var pipes = std.ArrayList([2]i32){ .items = &.{}, .capacity = 0 };
     defer pipes.deinit(testing.allocator);
 
     var loop = Loop.init();

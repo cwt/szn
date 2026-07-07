@@ -220,7 +220,7 @@ pub const Window = struct {
     allocator: std.mem.Allocator,
     id: u32,
     name: []const u8,
-    panes: std.ArrayListUnmanaged(*Pane) = .empty,
+    panes: std.ArrayList(*Pane) = .empty,
     active_pane: ?*Pane = null,
     width: u32,
     height: u32,
@@ -281,7 +281,7 @@ pub const Window = struct {
             lh: u32,
         };
 
-        var stack: std.ArrayListUnmanaged(Frame) = .empty;
+        var stack: std.ArrayList(Frame) = .empty;
         defer stack.deinit(self.allocator);
         try stack.append(self.allocator, Frame{ .node = root, .lw = root_lw, .lh = root_lh });
 

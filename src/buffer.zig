@@ -13,7 +13,7 @@ pub const BufferEntry = struct {
 
 pub const BufferList = struct {
     allocator: std.mem.Allocator,
-    items: std.ArrayListUnmanaged(BufferEntry) = .empty,
+    items: std.ArrayList(BufferEntry) = .empty,
 
     pub fn init(allocator: std.mem.Allocator) BufferList {
         return .{ .allocator = allocator };
