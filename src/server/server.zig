@@ -1826,7 +1826,10 @@ pub const Server = struct {
 
         while (try reader.tryParse()) |pkt| {
             defer reader.consume(pkt);
-            const msg_type = @as(protocol.MessageType, @enumFromInt(pkt.header.msg_type));
+            const msg_type = protocol.MessageType.fromByte(pkt.header.msg_type) orelse {
+                std.log.warn("server received unknown message type byte: {}", .{pkt.header.msg_type});
+                continue;
+            };
             switch (msg_type) {
                 .command => {
                     const dispatch = @import("dispatch.zig");
@@ -1894,7 +1897,9 @@ pub const Server = struct {
                     }
                     self.recalculateMinimumSize();
                 },
-                else => {},
+                else => {
+                    std.log.warn("server ignored unhandled message type: {any}", .{msg_type});
+                },
             }
         }
     }
@@ -3198,4 +3203,34 @@ test "wire protocol attaches clients only to global active session" {
     const s2 = try server.newSession("session2", 80, 24);
     _ = s2;
     try testing.expectEqual(active, server.activeSession().?);
+}
+
+test "server handleClient handles unknown message types gracefully" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    var fds: [2]i32 = undefined;
+    if (std.c.socketpair(std.c.AF.UNIX, std.c.SOCK.STREAM, 0, &fds) != 0) return error.Unexpected;
+    const server_fd = fds[0];
+    const client_fd = fds[1];
+    defer _ = std.c.close(server_fd);
+    defer _ = std.c.close(client_fd);
+
+    const reader = try testing.allocator.create(MessageReader);
+    reader.* = .{};
+    try server.client_readers.put(server_fd, reader);
+    try server.client_fds.append(server.allocator, server_fd);
+    defer {
+        if (server.client_readers.fetchRemove(server_fd)) |entry| {
+            testing.allocator.destroy(entry.value);
+        }
+    }
+
+    // Write a packet with invalid message type byte (0xFF)
+    var pkt_buf = [_]u8{ 0x05, 0x00, 0x00, 0x00, 0xFF };
+    const n = std.c.write(client_fd, &pkt_buf, pkt_buf.len);
+    try testing.expectEqual(@as(isize, 5), n);
+
+    // Call handleClient: it should not fail/return error, it should log and ignore
+    try server.handleClient(server_fd);
 }

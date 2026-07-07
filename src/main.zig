@@ -471,6 +471,7 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
                 if (read_buf.items.len - read_pos < pkt_len) break;
 
                 const msg_type = protocol.MessageType.fromByte(read_buf.items[read_pos + 4]) orelse {
+                    std.log.warn("client received unknown message type byte: {}", .{read_buf.items[read_pos + 4]});
                     read_pos += pkt_len;
                     continue;
                 };
@@ -484,7 +485,9 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
                     .detach => {
                         running = false;
                     },
-                    else => {},
+                    else => {
+                        std.log.warn("client ignored unhandled message type: {any}", .{msg_type});
+                    },
                 }
 
                 read_pos += pkt_len;

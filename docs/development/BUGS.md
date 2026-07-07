@@ -2423,11 +2423,9 @@ Client send cap is 4096 (`5 + data.len > 4096`), client recv cap is 1 MiB (`MAX_
 ### 191. Silent `else` branches drop unknown / ignored messages
 **File:** `src/server/server.zig:1897` (`handleClient` `else => {}`), `src/main.zig:487` (interactive switch `else => {}`)
 **Severity:** LOW
-**Status:** OPEN — discovered 2026-07-08; not yet fixed.
+**Status:** ✅ FIXED — Added `std.log.warn` for unknown/unhandled packet bytes and types in both server and client message loops, and added a verification unit test.
 
 The server `handleClient` switch default drops unknown client→server types with no log. The interactive client switch default ignores `err`/`exit` during streaming (those are only handled in the one-shot command path, `main.zig:207–228`). Unknown message types are invisible during debugging.
-
-**Fix:** Log unrecognized types in both default arms.
 
 ---
 
@@ -2460,5 +2458,5 @@ When adding a sixel image, `px_width` is passed as `0`; only `px_height` is esti
 | Critical | 24 | 21 | 3 | **0** |
 | High | 43 | 42 | 1 | **0** |
 | Medium | 65 (61+4) | 62 | 2 | **1** |
-| Low | 61 (57+4) | 56 | 3 | **2** |
-| Total | 193 (185+8) | **181** | **9** | **3** |
+| Low | 61 (57+4) | 57 | 3 | **1** |
+| Total | 193 (185+8) | **182** | **9** | **2** |
