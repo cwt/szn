@@ -11,3 +11,4 @@ timestamp: 2026-07-07T18:51:04Z
 - [Lessons from Talyn](lessons-from-talyn.md)
 - [Migration Plan](MIGRATION.md)
 - [Progress](PROGRESS.md)
+- [Sixel Grid Allocation](sixel_grid_allocation.md)
