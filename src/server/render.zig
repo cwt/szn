@@ -661,9 +661,13 @@ pub const Display = struct {
     /// Screen. We move the cursor to the image anchor, emit the raw DCS bytes,
     /// then reset SGR so subsequent character rendering is unaffected.
     fn renderSixelImages(self: Display, bounds: []const PaneBounds) Error!void {
-        var rendered_ids = [_]bool{false} ** 64;
-
         for (bounds) |pb| {
+            // Deduplicate by registry slot *per pane*. Each pane owns its own
+            // SixelImage ring buffer, so the "already drawn this frame" flag must
+            // not be shared across panes — otherwise a second pane whose image
+            // happens to occupy the same slot index would be silently skipped.
+            var rendered_ids = [_]bool{false} ** 64;
+
             const screen = pb.pane.screen;
             const pane_h = pb.h;
             const pane_w = pb.w;
@@ -960,6 +964,54 @@ test "renderSixelImages emits DCS at correct absolute position" {
     try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1bPqA\x1b\\") != null);
     // … and a SGR reset after it.
     try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1b[m") != null);
+}
+
+test "renderSixelImages renders sixel from every pane — bug #194" {
+    const allocator = std.testing.allocator;
+    var capture_buf: std.ArrayList(u8) = .empty;
+    defer capture_buf.deinit(allocator);
+
+    const display = Display{
+        .fd = -1,
+        .sx = 80,
+        .sy = 24,
+        .capture = &capture_buf,
+        .capture_allocator = allocator,
+    };
+
+    var win1 = try Window.init(allocator, 1, "pane-a", 40, 23, null);
+    defer win1.deinit(allocator);
+    var win2 = try Window.init(allocator, 2, "pane-b", 40, 23, null);
+    defer win2.deinit(allocator);
+    const pane1 = win1.active_pane.?;
+    const pane2 = win2.active_pane.?;
+
+    // Both panes store their image in slot 0 (id % 64 == 0).
+    const dcs1 = try allocator.dupe(u8, "\x1bPqONEx\x1b\\");
+    pane1.screen.sixel_images[0] = .{ .data = dcs1, .col = 5, .row = 3, .px_width = 10, .px_height = 20, .id = 0 };
+    var c1 = &pane1.screen.grid.getLineMut(3).cells.items[5];
+    c1.attr.sixel = true;
+    c1.char = 0;
+    c1.comb1 = 0;
+    c1.comb2 = 0;
+
+    const dcs2 = try allocator.dupe(u8, "\x1bPqTWO\x1b\\");
+    pane2.screen.sixel_images[0] = .{ .data = dcs2, .col = 5, .row = 3, .px_width = 10, .px_height = 20, .id = 0 };
+    var c2 = &pane2.screen.grid.getLineMut(3).cells.items[5];
+    c2.attr.sixel = true;
+    c2.char = 0;
+    c2.comb1 = 0;
+    c2.comb2 = 0;
+
+    const bounds = [_]PaneBounds{
+        .{ .pane = pane1, .x = 0, .y = 0, .w = 40, .h = 23 },
+        .{ .pane = pane2, .x = 0, .y = 0, .w = 40, .h = 23 },
+    };
+    try display.renderSixelImages(&bounds);
+
+    // Both pane images must be emitted, even though they share slot index 0.
+    try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1bPqONEx\x1b\\") != null);
+    try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1bPqTWO\x1b\\") != null);
 }
 
 test "sy saturating subtraction — bug #126" {

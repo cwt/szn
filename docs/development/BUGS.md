@@ -2468,7 +2468,7 @@ Audit of commit `8a625a26a6df` ("Implement Sixel Grid Allocation & Registry Mode
 ### 194. Multi-pane sixel dropped — `rendered_ids` shared across panes
 **File:** `src/server/render.zig:664`, `src/server/render.zig:663–733`
 **Severity:** HIGH
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — `rendered_ids` is now allocated *inside* the `for (bounds)` loop, so deduplication is per-pane (each pane owns its own 64-slot ring buffer). A unit test (`renderSixelImages renders sixel from every pane — bug #194`) verifies two panes each storing an image in slot 0 both emit their DCS bytes.
 
 ```zig
 var rendered_ids = [_]bool{false} ** 64;          // declared ONCE, outside the bounds loop
@@ -2586,7 +2586,7 @@ The design stores `comb1` (13-bit `dx`) and `comb2` (13-bit `dy`) in **every** s
 | Severity | Count | Fixed | False Positive | Unresolved |
 |----------|-------|-------|----------------|------------|
 | Critical | 24 | 21 | 3 | **0** |
-| High | 45 (43+2) | 42 | 1 | **2** |
+| High | 45 (43+2) | 43 | 1 | **1** |
 | Medium | 69 (65+4) | 63 | 2 | **4** |
 | Low | 63 (61+2) | 58 | 3 | **2** |
-| Total | 201 (193+8) | **184** | **9** | **8** |
+| Total | 201 (193+8) | **185** | **9** | **7** |
