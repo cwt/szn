@@ -211,11 +211,11 @@ pub const Display = struct {
                             if ((img.id & 0x1FFFFF) == image_id) {
                                 const cell_rows = if (img.px_height > 0) (img.px_height + 19) / 20 else 1;
                                 const cell_cols = if (img.px_width > 0) (img.px_width + 9) / 10 else 1;
-                                const dx = cell.comb1;
-                                const dy = cell.comb2;
 
-                                const img_pane_col = @as(i32, @intCast(x)) - @as(i32, @intCast(dx));
-                                const img_pane_row = @as(i32, @intCast(y)) - @as(i32, @intCast(dy));
+                                // Position derived from the image's stored anchor
+                                // (bug #200), not per-cell comb offsets.
+                                const img_pane_col = @as(i32, @intCast(img.anchor_col));
+                                const img_pane_row = @as(i32, @intCast(img.anchor_row));
 
                                 // Keep the image whenever ANY part of it still
                                 // intersects the pane. Only clear it once it has
@@ -711,14 +711,14 @@ pub const Display = struct {
                                 if ((img.id & 0x1FFFFF) == image_id) {
                                     if (!rendered_ids[slot]) {
                                         rendered_ids[slot] = true;
-                                        const dx = cell.comb1;
-                                        const dy = cell.comb2;
-                                        
-                                        const img_pane_col = @as(i32, @intCast(x)) - @as(i32, @intCast(dx));
-                                        const img_pane_row = @as(i32, @intCast(y)) - @as(i32, @intCast(dy));
 
                                         const cell_rows = if (img.px_height > 0) (img.px_height + 19) / 20 else 1;
                                         const cell_cols = if (img.px_width > 0) (img.px_width + 9) / 10 else 1;
+
+                                        // Position derived from the image's stored
+                                        // anchor (bug #200), not per-cell comb offsets.
+                                        const img_pane_col = @as(i32, @intCast(img.anchor_col));
+                                        const img_pane_row = @as(i32, @intCast(img.anchor_row));
 
                                         // Partial-scroll handling (bug #197): draw the
                                         // image whenever it overlaps the visible outer
@@ -1004,6 +1004,8 @@ test "renderSixelImages emits DCS at correct absolute position" {
         .px_width = 10,
         .px_height = 20,
         .id = 0,
+        .anchor_col = 5,
+        .anchor_row = 3,
     };
     var cell = &pane.screen.grid.getLineMut(3).cells.items[5];
     cell.attr.sixel = true;
@@ -1119,6 +1121,39 @@ test "renderSixelImages keeps partially-scrolled sixel visible — bug #197" {
     try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1bPqPARTIAL\x1b\\") != null);
 }
 
+test "renderSixelImages derives position from image anchor not cell comb — bug #200" {
+    const allocator = std.testing.allocator;
+    var capture_buf: std.ArrayList(u8) = .empty;
+    defer capture_buf.deinit(allocator);
+
+    const display = Display{
+        .fd = -1,
+        .sx = 80,
+        .sy = 24,
+        .capture = &capture_buf,
+        .capture_allocator = allocator,
+    };
+
+    var win = try Window.init(allocator, 1, "anchor", 80, 23, null);
+    defer win.deinit(allocator);
+    const pane = win.active_pane.?;
+
+    const raw = try allocator.dupe(u8, "\x1bPqANCHOR\x1b\\");
+    try pane.screen.addSixelImage(raw, 10, 20);
+
+    // Corrupt the top-left cell's comb2 (simulating a partial overwrite that
+    // failed to clear attr.sixel). Before the fix the render position was
+    // derived from cell.comb2, yielding a bogus anchor and dropping the image.
+    var cell = pane.screen.grid.getLineMut(0).cells.items[0];
+    cell.comb2 = 99;
+    pane.screen.grid.getLineMut(0).cells.items[0] = cell;
+
+    const bounds = [_]PaneBounds{.{ .pane = pane, .x = 0, .y = 0, .w = 80, .h = 23 }};
+    try display.renderSixelImages(&bounds);
+
+    try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1bPqANCHOR\x1b\\") != null);
+}
+
 test "sy saturating subtraction — bug #126" {
     try testing.expectEqual(@as(u32, 0), @as(u32, 0) -| 1);
     try testing.expectEqual(@as(u32, 0), @as(u32, 1) -| 1);
@@ -1184,9 +1219,12 @@ test "sixel rendering with scrolling" {
     // Verbatim DCS bytes
     try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1bPqTEST\x1b\\") != null);
 
-    // Scroll by 10 more lines to push the top-left completely off-screen (row becomes < 0)
+    // Scroll enough that the image is completely off-screen (anchor + cell_rows
+    // <= 0). With a 15-row image and anchor at 6 after the first newline, this
+    // needs >15 further scrolls (bug #197/#200: partial scroll now keeps the
+    // still-visible remainder, so we must push it fully past the top edge).
     var i: usize = 0;
-    while (i < 10) : (i += 1) {
+    while (i < 22) : (i += 1) {
         try pane.screen.writeChar('\n');
     }
 

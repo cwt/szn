@@ -2566,7 +2566,7 @@ The assumption "20px per cell row, 10px per cell column" is baked into **both** 
 ### 200. Redundant per-cell `dx`/`dy` storage in the 128-bit `Cell`
 **File:** `src/grid.zig:26–33` (`Cell` layout), `src/screen.zig:148–165` (per-cell `comb1`/`comb2` fill)
 **Severity:** LOW
-**Status:** ❌ UNRESOLVED — design flaw
+**Status:** ✅ FIXED — `SixelImage` now stores a single `anchor_col`/`anchor_row` (the image top-left) set in `addSixelImage`. `renderSixelImages` and the merged-screen clipping derive the draw position from this anchor instead of reconstructing it from each cell's `comb1`/`comb2`, eliminating the consistency hazard when a cell is partially overwritten. Because the anchor must track content as the grid scrolls, `Screen.shiftSixelAnchors()` is called whenever the main grid scrolls up/down. Added unit test `renderSixelImages derives position from image anchor not cell comb — bug #200`.
 
 The design stores `comb1` (13-bit `dx`) and `comb2` (13-bit `dy`) in **every** sixel cell, even though the anchor is fully reconstructable from any single cell (anchor = `(x - dx, y - dy)`). This consumes 26 bits per cell and is a consistency hazard: if any cell in an image is partially overwritten (e.g. by a text write that fails to clear `attr.sixel`), the reconstructed anchor becomes wrong for that cell's region, producing a mis-placed redraw. The anchor (or the single top-left cell coordinate) could instead be stored once in the registry `SixelImage` and referenced by id.
 
@@ -2588,5 +2588,5 @@ The design stores `comb1` (13-bit `dx`) and `comb2` (13-bit `dy`) in **every** s
 | Critical | 24 | 21 | 3 | **0** |
 | High | 45 (43+2) | 43 | 1 | **1** |
 | Medium | 69 (65+4) | 65 | 2 | **2** |
-| Low | 63 (61+2) | 59 | 3 | **1** |
-| Total | 201 (193+8) | **188** | **9** | **4** |
+| Low | 63 (61+2) | 60 | 3 | **0** |
+| Total | 201 (193+8) | **189** | **9** | **3** |

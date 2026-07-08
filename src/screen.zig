@@ -23,6 +23,12 @@ pub const SixelImage = struct {
     px_height: u32,
     /// Unique monotonically increasing Sixel image ID
     id: u32,
+    /// Pane-relative top-left anchor of the image. Stored once on the image
+    /// (bug #200) so the render position is reconstructable from the image
+    /// itself rather than from per-cell `comb1`/`comb2` offsets, which are a
+    /// consistency hazard if a cell is partially overwritten.
+    anchor_col: u32 = 0,
+    anchor_row: i32 = 0,
 
     pub fn deinit(self: *SixelImage, allocator: std.mem.Allocator) void {
         allocator.free(self.data);
@@ -134,6 +140,8 @@ pub const Screen = struct {
             .px_width = px_width,
             .px_height = px_height,
             .id = id,
+            .anchor_col = self.cursor.x,
+            .anchor_row = @intCast(self.cursor.y),
         };
 
         const cell_rows = if (px_height > 0) (px_height + 19) / 20 else 1;
@@ -166,10 +174,22 @@ pub const Screen = struct {
                 self.cursor.y += 1;
             } else {
                 try self.grid.scrollUp();
+                self.shiftSixelAnchors(-1);
             }
         }
         self.cursor.x = 0;
         self.dirty = true;
+    }
+
+    /// Shift every registered sixel image's stored anchor by `delta_rows`
+    /// whenever the main grid scrolls (bug #200: the render position is derived
+    /// from the image's anchor, which must track content as it scrolls).
+    fn shiftSixelAnchors(self: *Screen, delta_rows: i32) void {
+        for (&self.sixel_images) |*opt_img| {
+            if (opt_img.*) |*img| {
+                img.anchor_row += delta_rows;
+            }
+        }
     }
 
 
@@ -246,6 +266,7 @@ pub const Screen = struct {
         if (char == '\n') {
             if (self.cursor.y + 1 >= self.grid.height) {
                 try self.grid.scrollUp();
+                self.shiftSixelAnchors(-1);
                 const bottom_line = self.grid.getLineMut(self.grid.height - 1);
                 @memset(bottom_line.cells.items, self.eraseCell());
                 bottom_line.dirty = true;
@@ -316,6 +337,7 @@ pub const Screen = struct {
                 self.cursor.x = 0;
                 if (self.cursor.y + 1 >= self.grid.height) {
                     try self.grid.scrollUp();
+                self.shiftSixelAnchors(-1);
                     const bottom_line = self.grid.getLineMut(self.grid.height - 1);
                     @memset(bottom_line.cells.items, self.eraseCell());
                     bottom_line.dirty = true;
@@ -354,6 +376,7 @@ pub const Screen = struct {
                 self.cursor.x = 0;
                 if (self.cursor.y + 1 >= self.grid.height) {
                     try self.grid.scrollUp();
+                self.shiftSixelAnchors(-1);
                     const bottom_line = self.grid.getLineMut(self.grid.height - 1);
                     @memset(bottom_line.cells.items, self.eraseCell());
                     bottom_line.dirty = true;
@@ -674,6 +697,7 @@ pub const Screen = struct {
             var i: u32 = 0;
             while (i < count) : (i += 1) {
                 try self.grid.scrollUp();
+                self.shiftSixelAnchors(-1);
                 const bottom_line = self.grid.getLineMut(self.grid.height - 1);
                 @memset(bottom_line.cells.items, fill);
                 bottom_line.dirty = true;
@@ -707,6 +731,7 @@ pub const Screen = struct {
             while (i < count) : (i += 1) {
                 if (self.grid.history.items.len > 0) {
                     try self.grid.scrollDown();
+                    self.shiftSixelAnchors(1);
                     const top_line = self.grid.getLineMut(0);
                     @memset(top_line.cells.items, fill);
                     top_line.dirty = true;
