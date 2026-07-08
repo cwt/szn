@@ -486,13 +486,6 @@ pub const Screen = struct {
     }
 
     pub fn eraseDisplay(self: *Screen, mode: u8) void {
-        var had_sixels = false;
-        for (self.sixel_images) |opt_img| {
-            if (opt_img != null) {
-                had_sixels = true;
-                break;
-            }
-        }
         const fill = self.eraseCell();
         switch (mode) {
             0 => {
@@ -529,6 +522,7 @@ pub const Screen = struct {
             else => {},
         }
 
+        var removed_sixel = false;
         for (&self.sixel_images) |*opt_img| {
             if (opt_img.*) |img| {
                 const cell_rows = if (img.px_height > 0) (img.px_height + 19) / 20 else 1;
@@ -539,6 +533,7 @@ pub const Screen = struct {
                     else => false,
                 };
                 if (remove) {
+                    removed_sixel = true;
                     var to_deinit = opt_img.*;
                     opt_img.* = null;
                     if (to_deinit) |*ti| ti.deinit(self.allocator);
@@ -546,7 +541,10 @@ pub const Screen = struct {
             }
         }
 
-        if (had_sixels) {
+        // Only force a full repaint if an image that overlapped the erased
+        // region was actually removed (bug #201) — not merely because a sixel
+        // happens to exist somewhere in the registry.
+        if (removed_sixel) {
             self.force_clear = true;
         }
         self.dirty = true;
@@ -1198,6 +1196,26 @@ test "eraseDisplay mode 2 clears all" {
     try screen.writeStr("line1\nline2\nline3");
     screen.eraseDisplay(2);
     try testing.expect(screen.grid.isEmpty());
+}
+
+test "eraseDisplay only force_clears when an overlapping sixel is removed — bug #201" {
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+
+    const dcs = try testing.allocator.dupe(u8, "\x1bPqX\x1b\\");
+    screen.sixel_images[0] = .{ .data = dcs, .col = 0, .row = 0, .px_width = 10, .px_height = 20, .id = 0 };
+
+    // Mode 0 erases from the cursor downward; place the cursor past the image
+    // so it is NOT removed. force_clear must stay false (bug #201).
+    screen.cursor.y = 10;
+    screen.eraseDisplay(0);
+    try testing.expect(screen.sixel_images[0] != null);
+    try testing.expect(!screen.force_clear);
+
+    // Mode 2 erases everything, removing the image -> force_clear set.
+    screen.eraseDisplay(2);
+    try testing.expect(screen.sixel_images[0] == null);
+    try testing.expect(screen.force_clear);
 }
 
 test "cursor save and restore" {

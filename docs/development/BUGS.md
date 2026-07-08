@@ -2575,7 +2575,7 @@ The design stores `comb1` (13-bit `dx`) and `comb2` (13-bit `dy`) in **every** s
 ### 201. `eraseDisplay` `force_clear` triggered by any image in the registry, not the erased region
 **File:** `src/screen.zig:486–494`, `src/screen.zig:528–549`
 **Severity:** LOW
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — `eraseDisplay` now tracks whether an image *overlapping the erased region* was actually removed and only sets `force_clear` in that case, instead of whenever any image existed in the registry. Added unit test.
 
 `eraseDisplay` sets `force_clear = true` whenever `had_sixels` is true — i.e. whenever **any** image exists in the registry, regardless of whether the erased region (`mode` 0/1/2/3) actually overlapped it. This guarantees a full `\x1b[2J` repaint (see #196) on every erase operation in a session that has ever shown sixel, even for trivial `clear`-style erases in a different region. The `force_clear` should be set only when an image that overlaps the erased region was actually removed.
 
@@ -2588,5 +2588,5 @@ The design stores `comb1` (13-bit `dx`) and `comb2` (13-bit `dy`) in **every** s
 | Critical | 24 | 21 | 3 | **0** |
 | High | 45 (43+2) | 43 | 1 | **1** |
 | Medium | 69 (65+4) | 65 | 2 | **2** |
-| Low | 63 (61+2) | 58 | 3 | **2** |
-| Total | 201 (193+8) | **187** | **9** | **5** |
+| Low | 63 (61+2) | 59 | 3 | **1** |
+| Total | 201 (193+8) | **188** | **9** | **4** |
