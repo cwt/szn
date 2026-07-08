@@ -164,8 +164,15 @@ pub const Display = struct {
         } else {
             local_merged_screen = try Screen.init(allocator, merged_w, merged_h);
         }
-        merged_screen.force_clear = active_pane.screen.force_clear;
-        active_pane.screen.force_clear = false;
+        // force_clear must be honoured for ANY pane, not just the active one.
+        // A non-active pane that triggers eraseDisplay/resetHard would otherwise
+        // lose its flag and never force a full repaint.
+        var force_clear_any = active_pane.screen.force_clear;
+        for (bounds) |pb| {
+            force_clear_any = force_clear_any or pb.pane.screen.force_clear;
+            pb.pane.screen.force_clear = false;
+        }
+        merged_screen.force_clear = force_clear_any;
         defer if (self.merged_screen == null) {
             local_merged_screen.deinit();
         };
@@ -913,6 +920,50 @@ test "renderAll cursor visibility hide" {
     // Verify the cursor was NOT shown at the end
     const has_show_cursor = std.mem.indexOf(u8, capture_buf.items, "\x1b[?25h") != null;
     try std.testing.expect(!has_show_cursor);
+}
+
+test "renderAll honours force_clear from a non-active pane — bug #196" {
+    const allocator = std.testing.allocator;
+    var capture_buf: std.ArrayList(u8) = .empty;
+    defer capture_buf.deinit(allocator);
+
+    const display = Display{
+        .fd = -1,
+        .sx = 80,
+        .sy = 24,
+        .capture = &capture_buf,
+        .capture_allocator = allocator,
+    };
+
+    var win1 = try Window.init(allocator, 1, "active", 40, 23, null);
+    defer win1.deinit(allocator);
+    var win2 = try Window.init(allocator, 2, "inactive", 40, 23, null);
+    defer win2.deinit(allocator);
+    const active_pane = win1.active_pane.?;
+    const inactive_pane = win2.active_pane.?;
+
+    // The non-active pane requests a force clear; the active one does not.
+    inactive_pane.screen.force_clear = true;
+
+    const bounds = [_]PaneBounds{
+        .{ .pane = active_pane, .x = 0, .y = 0, .w = 40, .h = 23 },
+        .{ .pane = inactive_pane, .x = 40, .y = 0, .w = 40, .h = 23 },
+    };
+
+    const Node = @import("../layout.zig").Node;
+    const node = Node{ .leaf = active_pane };
+
+    try display.renderAll(allocator, &bounds, active_pane, "sess", &[_]*Window{ &win1, &win2 }, &win1, &node, .{
+        .status_fg = Colour.default_(),
+        .status_bg = Colour.default_(),
+        .pane_border_fg = Colour.fromIndexed(8),
+        .pane_active_border_fg = Colour.fromIndexed(2),
+    }, null, false, "", false);
+
+    // A full-screen erase must have been emitted because of the non-active pane.
+    try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1b[2J") != null);
+    // The flag must be consumed so it doesn't fire every frame.
+    try std.testing.expect(!inactive_pane.screen.force_clear);
 }
 
 test "renderSixelImages emits DCS at correct absolute position" {

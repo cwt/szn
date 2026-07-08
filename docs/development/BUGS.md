@@ -2508,7 +2508,7 @@ This directly contradicts the design doc's claimed "Perfect Scroll Sync" (`sixel
 ### 196. `force_clear` wipes the entire multiplexer display and is only propagated from the active pane
 **File:** `src/server/render.zig:389–396`, `src/server/render.zig:166–167`
 **Severity:** MEDIUM
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — `renderAll` now ORs `force_clear` across *every* pane in `bounds` (not only `active_pane.screen`) and consumes each pane's flag. Added unit test `renderAll honours force_clear from a non-active pane — bug #196`.
 
 ```zig
 if (screen.force_clear) {
@@ -2587,6 +2587,6 @@ The design stores `comb1` (13-bit `dx`) and `comb2` (13-bit `dy`) in **every** s
 |----------|-------|-------|----------------|------------|
 | Critical | 24 | 21 | 3 | **0** |
 | High | 45 (43+2) | 43 | 1 | **1** |
-| Medium | 69 (65+4) | 63 | 2 | **4** |
+| Medium | 69 (65+4) | 64 | 2 | **3** |
 | Low | 63 (61+2) | 58 | 3 | **2** |
-| Total | 201 (193+8) | **185** | **9** | **7** |
+| Total | 201 (193+8) | **186** | **9** | **6** |
