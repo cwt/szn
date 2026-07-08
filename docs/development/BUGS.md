@@ -2525,7 +2525,7 @@ if (screen.force_clear) {
 ### 197. Partially-scrolled images are hidden entirely, contradicting the design doc
 **File:** `src/server/render.zig:207–241` (merged-screen clipping), `src/server/render.zig:669–731` (render-time `fits` check)
 **Severity:** MEDIUM
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — both the merged-screen clipping and `renderSixelImages` now keep an image whenever it *intersects* the pane (only clearing/dropping it when it has scrolled completely out of bounds), and the render path draws at the clamped visible edge so the terminal shows the remaining rows/cols. Added unit test `renderSixelImages keeps partially-scrolled sixel visible — bug #197`.
 
 The design doc states: *"If `abs_row < 0` (partially scrolled off the top), we skip redrawing it, letting the terminal's native viewport scrolling handle display of the remaining visible bottom pixels"* (`sixel_grid_allocation.md:54`).
 
@@ -2587,6 +2587,6 @@ The design stores `comb1` (13-bit `dx`) and `comb2` (13-bit `dy`) in **every** s
 |----------|-------|-------|----------------|------------|
 | Critical | 24 | 21 | 3 | **0** |
 | High | 45 (43+2) | 43 | 1 | **1** |
-| Medium | 69 (65+4) | 64 | 2 | **3** |
+| Medium | 69 (65+4) | 65 | 2 | **2** |
 | Low | 63 (61+2) | 58 | 3 | **2** |
-| Total | 201 (193+8) | **186** | **9** | **6** |
+| Total | 201 (193+8) | **187** | **9** | **5** |

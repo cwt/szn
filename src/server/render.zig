@@ -217,12 +217,17 @@ pub const Display = struct {
                                 const img_pane_col = @as(i32, @intCast(x)) - @as(i32, @intCast(dx));
                                 const img_pane_row = @as(i32, @intCast(y)) - @as(i32, @intCast(dy));
 
-                                const fits = img_pane_col >= 0 and
-                                             img_pane_row >= 0 and
-                                             (img_pane_col + @as(i32, @intCast(cell_cols))) <= @as(i32, @intCast(pb.w)) and
-                                             (img_pane_row + @as(i32, @intCast(cell_rows))) <= @as(i32, @intCast(pb.h));
+                                // Keep the image whenever ANY part of it still
+                                // intersects the pane. Only clear it once it has
+                                // scrolled completely out of bounds (bug #197 —
+                                // previously a single off-screen row hid the whole
+                                // image, dropping its still-visible remainder).
+                                const intersects = (img_pane_col + @as(i32, @intCast(cell_cols))) > 0 and
+                                    (img_pane_row + @as(i32, @intCast(cell_rows))) > 0 and
+                                    img_pane_col < @as(i32, @intCast(pb.w)) and
+                                    img_pane_row < @as(i32, @intCast(pb.h));
 
-                                if (!fits) {
+                                if (!intersects) {
                                     cell.attr.sixel = false;
                                     cell.char = 0;
                                     cell.comb1 = 0;
@@ -715,20 +720,27 @@ pub const Display = struct {
                                         const cell_rows = if (img.px_height > 0) (img.px_height + 19) / 20 else 1;
                                         const cell_cols = if (img.px_width > 0) (img.px_width + 9) / 10 else 1;
 
-                                        const fits = img_pane_col >= 0 and
-                                                     img_pane_row >= 0 and
-                                                     (img_pane_col + @as(i32, @intCast(cell_cols))) <= @as(i32, @intCast(pb.w)) and
-                                                     (img_pane_row + @as(i32, @intCast(cell_rows))) <= @as(i32, @intCast(pb.h));
+                                        // Partial-scroll handling (bug #197): draw the
+                                        // image whenever it overlaps the visible outer
+                                        // terminal. The terminal clips any part that
+                                        // extends past the top/left edge, so we anchor
+                                        // at the clamped position and let the remaining
+                                        // visible rows/cols render instead of dropping
+                                        // the entire image.
+                                        const abs_col_i = @as(i32, @intCast(pb.x)) + img_pane_col;
+                                        const abs_row_i = @as(i32, @intCast(pb.y)) + img_pane_row;
 
-                                        if (fits) {
-                                            const abs_col = @as(i32, @intCast(pb.x)) + img_pane_col;
-                                            const abs_row = @as(i32, @intCast(pb.y)) + img_pane_row;
+                                        const visible = (abs_col_i + @as(i32, @intCast(cell_cols))) > 0 and
+                                            abs_col_i < @as(i32, @intCast(self.sx)) and
+                                            (abs_row_i + @as(i32, @intCast(cell_rows))) > 0 and
+                                            abs_row_i < @as(i32, @intCast(self.sy -| 1));
 
-                                            if (abs_row >= 0 and abs_row < @as(i32, @intCast(self.sy -| 1)) and abs_col < @as(i32, @intCast(self.sx))) {
-                                                try self.moveTo(@intCast(abs_col), @intCast(abs_row));
-                                                try self.writeBytes(img.data);
-                                                try self.writeBytes("\x1b[m");
-                                            }
+                                        if (visible) {
+                                            const draw_col = @max(0, abs_col_i);
+                                            const draw_row = @max(0, abs_row_i);
+                                            try self.moveTo(@intCast(draw_col), @intCast(draw_row));
+                                            try self.writeBytes(img.data);
+                                            try self.writeBytes("\x1b[m");
                                         }
                                     }
                                 }
@@ -1063,6 +1075,48 @@ test "renderSixelImages renders sixel from every pane — bug #194" {
     // Both pane images must be emitted, even though they share slot index 0.
     try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1bPqONEx\x1b\\") != null);
     try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1bPqTWO\x1b\\") != null);
+}
+
+test "renderSixelImages keeps partially-scrolled sixel visible — bug #197" {
+    const allocator = std.testing.allocator;
+    var capture_buf: std.ArrayList(u8) = .empty;
+    defer capture_buf.deinit(allocator);
+
+    const display = Display{
+        .fd = -1,
+        .sx = 80,
+        .sy = 24,
+        .capture = &capture_buf,
+        .capture_allocator = allocator,
+    };
+
+    var win = try Window.init(allocator, 1, "partial", 80, 23, null);
+    defer win.deinit(allocator);
+    const pane = win.active_pane.?;
+
+    // A 5×10 cell image (50×200 px).
+    const raw = try allocator.dupe(u8, "\x1bPqPARTIAL\x1b\\");
+    try pane.screen.addSixelImage(raw, 50, 200);
+
+    // Simulate a 3-line upward scroll: shift every sixel cell's dy by +3 so the
+    // image top sits at pane row -3 (partially scrolled off the top).
+    var y: u32 = 0;
+    while (y < 10) : (y += 1) {
+        var x: u32 = 0;
+        while (x < 5) : (x += 1) {
+            var cell = pane.screen.grid.getLineMut(y).cells.items[x];
+            if (cell.attr.sixel) {
+                cell.comb2 = @intCast(y + 3);
+                pane.screen.grid.getLineMut(y).cells.items[x] = cell;
+            }
+        }
+    }
+
+    const bounds = [_]PaneBounds{.{ .pane = pane, .x = 0, .y = 0, .w = 80, .h = 23 }};
+    try display.renderSixelImages(&bounds);
+
+    // The top is off-screen, but the remaining rows must still be emitted.
+    try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1bPqPARTIAL\x1b\\") != null);
 }
 
 test "sy saturating subtraction — bug #126" {
