@@ -2456,3 +2456,137 @@ When adding a sixel image, `px_width` is passed as `0`; only `px_height` is esti
 | Medium | 65 (61+4) | 63 | 2 | **0** |
 | Low | 61 (57+4) | 58 | 3 | **0** |
 | Total | 193 (185+8) | **184** | **9** | **0** |
+
+---
+
+## NEW BUGS (2026-07-08 — Sixel Grid Allocation & Registry Model audit)
+
+Audit of commit `8a625a26a6df` ("Implement Sixel Grid Allocation & Registry Model with boundary containment and force-clear logic") and its design doc `docs/development/sixel_grid_allocation.md`. These are **NEW and UNRESOLVED** — the implementation compiles and its unit tests pass, but the tests do not exercise multi-pane layouts, real-terminal sixel-overlay semantics, or ring-buffer eviction under load.
+
+---
+
+### 194. Multi-pane sixel dropped — `rendered_ids` shared across panes
+**File:** `src/server/render.zig:664`, `src/server/render.zig:663–733`
+**Severity:** HIGH
+**Status:** ❌ UNRESOLVED
+
+```zig
+var rendered_ids = [_]bool{false} ** 64;          // declared ONCE, outside the bounds loop
+for (bounds) |pb| {
+    ...
+    if (!rendered_ids[slot]) {                     // keyed only by slot index
+        rendered_ids[slot] = true;
+        ... self.writeBytes(img.data); ...
+    }
+}
+```
+
+`rendered_ids` is allocated once per `renderSixelImages` call and keyed by `slot` (the registry index `id % 64`). Two different panes whose screens each hold a sixel image in slot `0` will collide: the first pane's image is drawn and sets `rendered_ids[0] = true`; the second pane's slot-0 image is then skipped entirely. Sixel silently disappears from every non-first pane that happens to use the same slot index. The flag must be per-pane (or keyed by `&screen` + `slot`).
+
+---
+
+### 195. Sixel overlay is never actually erased — `ECH` is ineffective, causing ghosting/smearing on scroll
+**File:** `src/server/render.zig:455–457` (per-cell erase), `src/server/render.zig:389–396` (`force_clear`), `src/server/render.zig:701–710` (slot-null / id-mismatch clear)
+**Severity:** HIGH
+**Status:** ❌ UNRESOLVED
+
+The sixel pixel data is emitted **verbatim** as a raw DCS sequence onto the terminal's separate sixel overlay layer. The only mechanisms that attempt to remove old sixel are:
+
+1. `try self.writeBytes("\x1b[X")` (Erase Character) when a cell transitions `sixel → non-sixel`.
+2. The full-screen `\x1b[2J` issued by `force_clear` (only on `eraseDisplay`/`resetHard`/`clearScreen`).
+3. Clearing `attr.sixel` locally on the merged-screen cell copy when the slot is null / id mismatches / image doesn't `fit`.
+
+None of these reliably wipe the overlay:
+- `ECH` operates on the **text** grid, not the sixel overlay. Virtually no terminal emulator erases sixel pixels with `CSI X`. So old pixels persist.
+- `renderSixelImages` redraws the image at its **current anchor every frame** (good), but never erases the **previously drawn** position. As the image scrolls, each frame paints at a new anchor while all prior positions remain on screen → a **smearing trail** of the same image going up the terminal.
+- Because the overlay is never cleared, the per-cell `force_erase` (`sixel→non-sixel` transition) does nothing useful, and the ghost remains.
+
+This directly contradicts the design doc's claimed "Perfect Scroll Sync" (`sixel_grid_allocation.md:60`). A real erase path is required — e.g. re-issue the image with an inline erase (DECSIXEL `P2` erase operation) or, failing that, a targeted full repaint of the affected pane region rather than relying on `ECH`.
+
+---
+
+### 196. `force_clear` wipes the entire multiplexer display and is only propagated from the active pane
+**File:** `src/server/render.zig:389–396`, `src/server/render.zig:166–167`
+**Severity:** MEDIUM
+**Status:** ❌ UNRESOLVED
+
+```zig
+if (screen.force_clear) {
+    screen.force_clear = false;
+    try self.writeBytes("\x1b[2J");        // Erase In Display — clears ALL panes
+    ...
+}
+```
+
+`\x1b[2J` erases the **whole** outer terminal. In a multiplexer that means every pane's content is wiped and must be fully repainted — expensive, and a guaranteed full-screen flash on every `eraseDisplay`/`resetHard`/`clearScreen`, even when the sixel in question was in a tiny region. Furthermore, `force_clear` is copied into the merged screen **only from `active_pane.screen`** (`render.zig:166`), so a non-active pane that triggers `force_clear` (e.g. via its own `eraseDisplay`) loses the flag entirely and its sixel is never force-cleared.
+
+---
+
+### 197. Partially-scrolled images are hidden entirely, contradicting the design doc
+**File:** `src/server/render.zig:207–241` (merged-screen clipping), `src/server/render.zig:669–731` (render-time `fits` check)
+**Severity:** MEDIUM
+**Status:** ❌ UNRESOLVED
+
+The design doc states: *"If `abs_row < 0` (partially scrolled off the top), we skip redrawing it, letting the terminal's native viewport scrolling handle display of the remaining visible bottom pixels"* (`sixel_grid_allocation.md:54`).
+
+The code does not do this. Instead:
+
+```zig
+const fits = img_pane_col >= 0 and img_pane_row >= 0 and
+             (img_pane_col + cell_cols) <= pb.w and
+             (img_pane_row + cell_rows) <= pb.h;
+if (!fits) {
+    cell.attr.sixel = false;   // clears the WHOLE image, not just the off-screen part
+    ...
+}
+```
+
+When any part of the image is out of bounds (top scrolled above the pane, or it would exceed pane `w`/`h`), the **entire** image is hidden (`attr.sixel` cleared on every cell). So an image that is one row into scrolling off the top vanishes completely, rather than showing its remaining bottom rows. This both contradicts the doc and breaks the "Perfect Scroll Sync" benefit claim. Combined with #195, partially-scrolled images leave a ghost at their last full position and then disappear.
+
+---
+
+### 198. Copy-mode / scrollback sixel is silently lost after the 64-image ring wraps
+**File:** `src/screen.zig:86–87` (`[64]?SixelImage`), `src/server/render.zig:694–710` (id-mismatch clear)
+**Severity:** MEDIUM
+**Status:** ❌ UNRESOLVED
+
+The registry is a fixed 64-slot ring keyed by `id % 64`. History/scrollback cells store only the 21-bit `id` in `cell.char`. When a 65th image is added, `slot = id % 64` collides and the previous slot's `SixelImage` (data, `px_width`, `px_height`) is freed. Any scrollback cell still referencing that slot now fails the `img.id & 0x1FFFFF == image_id` check and has its `attr.sixel` cleared (`render.zig:701–710`). So sixel in history silently disappears after 64 images — the design doc's "Copy-Mode Support" benefit (`sixel_grid_allocation.md:61`) only holds until the ring wraps, which is easy to hit with any image-heavy session. The doc lists no such limitation.
+
+---
+
+### 199. Pixel↔cell conversion hardcoded to 20px/row and 10px/col
+**File:** `src/screen.zig:138` (`cell_rows = (px_height+19)/20`), `src/screen.zig:139` (`cell_cols = (px_width+9)/10`), `src/server/render.zig:209–210` (same in render clipping)
+**Severity:** MEDIUM
+**Status:** ❌ UNRESOLVED
+
+The assumption "20px per cell row, 10px per cell column" is baked into **both** cursor advancement (`addSixelImage`) and the `fits` clipping test (`renderSixelImages`). Terminal cell metrics vary (common values are ~20px tall but width is font-dependent and often ≠ 10px; many terminals report e.g. 9×18 or 8×16). On any terminal that doesn't match these constants, the image anchor and the `fits` boundary are computed against the wrong cell extent → sixel is mis-anchored or incorrectly clipped/hidden. This should be derived from the real terminal cell size (queryable via `DECSLPP`/font metrics) rather than hardcoded.
+
+---
+
+### 200. Redundant per-cell `dx`/`dy` storage in the 128-bit `Cell`
+**File:** `src/grid.zig:26–33` (`Cell` layout), `src/screen.zig:148–165` (per-cell `comb1`/`comb2` fill)
+**Severity:** LOW
+**Status:** ❌ UNRESOLVED — design flaw
+
+The design stores `comb1` (13-bit `dx`) and `comb2` (13-bit `dy`) in **every** sixel cell, even though the anchor is fully reconstructable from any single cell (anchor = `(x - dx, y - dy)`). This consumes 26 bits per cell and is a consistency hazard: if any cell in an image is partially overwritten (e.g. by a text write that fails to clear `attr.sixel`), the reconstructed anchor becomes wrong for that cell's region, producing a mis-placed redraw. The anchor (or the single top-left cell coordinate) could instead be stored once in the registry `SixelImage` and referenced by id.
+
+---
+
+### 201. `eraseDisplay` `force_clear` triggered by any image in the registry, not the erased region
+**File:** `src/screen.zig:486–494`, `src/screen.zig:528–549`
+**Severity:** LOW
+**Status:** ❌ UNRESOLVED
+
+`eraseDisplay` sets `force_clear = true` whenever `had_sixels` is true — i.e. whenever **any** image exists in the registry, regardless of whether the erased region (`mode` 0/1/2/3) actually overlapped it. This guarantees a full `\x1b[2J` repaint (see #196) on every erase operation in a session that has ever shown sixel, even for trivial `clear`-style erases in a different region. The `force_clear` should be set only when an image that overlaps the erased region was actually removed.
+
+---
+
+## Updated Summary
+
+| Severity | Count | Fixed | False Positive | Unresolved |
+|----------|-------|-------|----------------|------------|
+| Critical | 24 | 21 | 3 | **0** |
+| High | 45 (43+2) | 42 | 1 | **2** |
+| Medium | 69 (65+4) | 63 | 2 | **4** |
+| Low | 63 (61+2) | 58 | 3 | **2** |
+| Total | 201 (193+8) | **184** | **9** | **8** |
