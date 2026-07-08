@@ -2488,7 +2488,7 @@ for (bounds) |pb| {
 ### 195. Sixel overlay is never actually erased — `ECH` is ineffective, causing ghosting/smearing on scroll
 **File:** `src/server/render.zig:455–457` (per-cell erase), `src/server/render.zig:389–396` (`force_clear`), `src/server/render.zig:701–710` (slot-null / id-mismatch clear)
 **Severity:** HIGH
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — `Screen` now carries `sixel_last_anchor[64]` (the clamped top-left cell each slot's image was last drawn at). `renderSixelImages` erases any slot whose anchor moved or that disappeared by emitting a DECSIXEL erase-below (`ESC P 1 q ESC \`) at the previous anchor before redrawing, so the overlay is cleared instead of smeared/ghosted. `ECH` is no longer relied upon to clear sixel pixels. Unit tests `renderSixelImages erases previous position when image scrolls` and `renderSixelImages erases removed image overlay` verify the erase is emitted at the old anchor and the image is redrawn at the new one.
 
 The sixel pixel data is emitted **verbatim** as a raw DCS sequence onto the terminal's separate sixel overlay layer. The only mechanisms that attempt to remove old sixel are:
 
@@ -2586,7 +2586,7 @@ The design stores `comb1` (13-bit `dx`) and `comb2` (13-bit `dy`) in **every** s
 | Severity | Count | Fixed | False Positive | Unresolved |
 |----------|-------|-------|----------------|------------|
 | Critical | 24 | 21 | 3 | **0** |
-| High | 45 (43+2) | 43 | 1 | **1** |
+| High | 45 (43+2) | 44 | 1 | **0** |
 | Medium | 69 (65+4) | 66 | 2 | **1** |
 | Low | 63 (61+2) | 60 | 3 | **0** |
-| Total | 201 (193+8) | **190** | **9** | **2** |
+| Total | 201 (193+8) | **191** | **9** | **1** |

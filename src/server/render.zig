@@ -2,6 +2,7 @@ const std = @import("std");
 const c = std.c;
 const testing = std.testing;
 const Screen = @import("../screen.zig").Screen;
+const SixelAnchor = @import("../screen.zig").SixelAnchor;
 const Cell = @import("../grid.zig").Cell;
 const Colour = @import("../colour.zig").Colour;
 const Attr = @import("../grid.zig").Attr;
@@ -672,22 +673,36 @@ pub const Display = struct {
     /// Each pane contributes zero or more SixelImage entries stored in its
     /// Screen. We move the cursor to the image anchor, emit the raw DCS bytes,
     /// then reset SGR so subsequent character rendering is unaffected.
+    ///
+    /// The terminal renders sixel on a separate overlay layer that is *not*
+    /// cleared by `CSI X` (Erase Character): re-drawing an image at its new
+    /// anchor every frame while never erasing the previous positions leaves a
+    /// smear as the image scrolls, and a removed image leaves a permanent ghost
+    /// (bug #195). To fix this we track, per pane Screen, the anchor each slot
+    /// was last drawn at (`sixel_last_anchor`). Each frame we:
+    ///   1. erase any slot whose anchor moved or that disappeared (a DECSIXEL
+    ///      erase-below operation positioned at the *previous* anchor), and
+    ///   2. draw every currently-visible image at its current anchor.
+    /// All erases happen before all draws so a redraw always restores any
+    /// overlay pixels the erase may have cleared.
     fn renderSixelImages(self: Display, bounds: []const PaneBounds) Error!void {
         for (bounds) |pb| {
-            // Deduplicate by registry slot *per pane*. Each pane owns its own
-            // SixelImage ring buffer, so the "already drawn this frame" flag must
-            // not be shared across panes — otherwise a second pane whose image
-            // happens to occupy the same slot index would be silently skipped.
-            var rendered_ids = [_]bool{false} ** 64;
-
-            const screen = pb.pane.screen;
+            const screen = &pb.pane.screen;
             const pane_h = pb.h;
             const pane_w = pb.w;
+
+            // Deduplicate by registry slot *per pane*. Each pane owns its own
+            // SixelImage ring buffer, so the "already drawn this frame" set must
+            // not be shared across panes — otherwise a second pane whose image
+            // happens to occupy the same slot index would be silently skipped
+            // (bug #194). We record the clamped draw anchor of every visible
+            // image this frame.
+            var current: [64]?SixelAnchor = [_]?SixelAnchor{null} ** 64;
 
             var y: u32 = 0;
             while (y < pane_h) : (y += 1) {
                 const combined_idx = (@as(isize, @intCast(screen.grid.history.items.len)) - @as(isize, @intCast(if (screen.copy_mode) |cm| cm.scroll_offset else 0))) + @as(isize, @intCast(y));
-                
+
                 const cells = if (combined_idx < 0)
                     @as(?*const std.ArrayList(Cell), null)
                 else if (combined_idx < screen.grid.history.items.len)
@@ -707,41 +722,34 @@ pub const Display = struct {
                         if (cell.attr.sixel) {
                             const image_id = cell.char;
                             const slot = image_id % 64;
+                            if (current[slot] != null) continue;
                             if (screen.sixel_images[slot]) |img| {
                                 if ((img.id & 0x1FFFFF) == image_id) {
-                                    if (!rendered_ids[slot]) {
-                                        rendered_ids[slot] = true;
+                                    const cell_rows = if (img.px_height > 0) (img.px_height + screen.cell_px_height - 1) / screen.cell_px_height else 1;
+                                    const cell_cols = if (img.px_width > 0) (img.px_width + screen.cell_px_width - 1) / screen.cell_px_width else 1;
 
-                                        const cell_rows = if (img.px_height > 0) (img.px_height + screen.cell_px_height - 1) / screen.cell_px_height else 1;
-                                        const cell_cols = if (img.px_width > 0) (img.px_width + screen.cell_px_width - 1) / screen.cell_px_width else 1;
+                                    // Position derived from the image's stored
+                                    // anchor (bug #200), not per-cell comb offsets.
+                                    const img_pane_col = @as(i32, @intCast(img.anchor_col));
+                                    const img_pane_row = @as(i32, @intCast(img.anchor_row));
 
-                                        // Position derived from the image's stored
-                                        // anchor (bug #200), not per-cell comb offsets.
-                                        const img_pane_col = @as(i32, @intCast(img.anchor_col));
-                                        const img_pane_row = @as(i32, @intCast(img.anchor_row));
+                                    // Partial-scroll handling (bug #197): draw the
+                                    // image whenever it overlaps the visible outer
+                                    // terminal. The terminal clips any part that
+                                    // extends past the top/left edge, so we anchor
+                                    // at the clamped position and let the remaining
+                                    // visible rows/cols render instead of dropping
+                                    // the entire image.
+                                    const abs_col_i = @as(i32, @intCast(pb.x)) + img_pane_col;
+                                    const abs_row_i = @as(i32, @intCast(pb.y)) + img_pane_row;
 
-                                        // Partial-scroll handling (bug #197): draw the
-                                        // image whenever it overlaps the visible outer
-                                        // terminal. The terminal clips any part that
-                                        // extends past the top/left edge, so we anchor
-                                        // at the clamped position and let the remaining
-                                        // visible rows/cols render instead of dropping
-                                        // the entire image.
-                                        const abs_col_i = @as(i32, @intCast(pb.x)) + img_pane_col;
-                                        const abs_row_i = @as(i32, @intCast(pb.y)) + img_pane_row;
+                                    const visible = (abs_col_i + @as(i32, @intCast(cell_cols))) > 0 and
+                                        abs_col_i < @as(i32, @intCast(self.sx)) and
+                                        (abs_row_i + @as(i32, @intCast(cell_rows))) > 0 and
+                                        abs_row_i < @as(i32, @intCast(self.sy -| 1));
 
-                                        const visible = (abs_col_i + @as(i32, @intCast(cell_cols))) > 0 and
-                                            abs_col_i < @as(i32, @intCast(self.sx)) and
-                                            (abs_row_i + @as(i32, @intCast(cell_rows))) > 0 and
-                                            abs_row_i < @as(i32, @intCast(self.sy -| 1));
-
-                                        if (visible) {
-                                            const draw_col = @max(0, abs_col_i);
-                                            const draw_row = @max(0, abs_row_i);
-                                            try self.moveTo(@intCast(draw_col), @intCast(draw_row));
-                                            try self.writeBytes(img.data);
-                                            try self.writeBytes("\x1b[m");
-                                        }
+                                    if (visible) {
+                                        current[slot] = .{ .col = @max(0, abs_col_i), .row = @max(0, abs_row_i) };
                                     }
                                 }
                             }
@@ -749,6 +757,34 @@ pub const Display = struct {
                     }
                 }
             }
+
+            // Phase 1 — erase every slot that was drawn last frame but has moved
+            // or disappeared. The DECSIXEL erase-below operation (`ESC P 1 q`)
+            // positioned at the previous anchor clears the overlay pixels the
+            // text-grid `CSI X` can never reach, removing the smear/ghost.
+            for (screen.sixel_last_anchor, 0..) |prev, slot| {
+                if (prev == null) continue;
+                const cur = current[slot];
+                if (cur == null or cur.?.col != prev.?.col or cur.?.row != prev.?.row) {
+                    const px = @as(u32, @intCast(prev.?.col));
+                    const py = @as(u32, @intCast(prev.?.row));
+                    try self.moveTo(px, py);
+                    try self.writeBytes("\x1bP1q\x1b\\"); // DECSIXEL erase-below
+                }
+            }
+
+            // Phase 2 — draw every currently-visible image at its anchor.
+            for (current, 0..) |cur, slot| {
+                if (cur == null) continue;
+                const img = screen.sixel_images[slot].?;
+                const px = @as(u32, @intCast(cur.?.col));
+                const py = @as(u32, @intCast(cur.?.row));
+                try self.moveTo(px, py);
+                try self.writeBytes(img.data);
+                try self.writeBytes("\x1b[m");
+            }
+
+            screen.sixel_last_anchor = current;
         }
     }
 };
@@ -1119,6 +1155,92 @@ test "renderSixelImages keeps partially-scrolled sixel visible — bug #197" {
 
     // The top is off-screen, but the remaining rows must still be emitted.
     try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1bPqPARTIAL\x1b\\") != null);
+}
+
+test "renderSixelImages erases previous position when image scrolls — bug #195" {
+    const allocator = std.testing.allocator;
+    var capture_buf: std.ArrayList(u8) = .empty;
+    defer capture_buf.deinit(allocator);
+
+    const display = Display{
+        .fd = -1,
+        .sx = 80,
+        .sy = 24,
+        .capture = &capture_buf,
+        .capture_allocator = allocator,
+    };
+
+    var win = try Window.init(allocator, 1, "smear", 80, 23, null);
+    defer win.deinit(allocator);
+    const pane = win.active_pane.?;
+
+    // Place the image at a known anchor so we can detect the erase at that
+    // position after it scrolls.
+    pane.screen.cursor.x = 0;
+    pane.screen.cursor.y = 10;
+    const raw = try allocator.dupe(u8, "\x1bPqSM\x1b\\");
+    try pane.screen.addSixelImage(raw, 10, 20); // anchor (0, 10)
+
+    // First render draws the image at its anchor and records last_anchor.
+    const bounds = [_]PaneBounds{.{ .pane = pane, .x = 0, .y = 0, .w = 80, .h = 23 }};
+    try display.renderSixelImages(&bounds);
+    try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1bPqSM\x1b\\") != null);
+    // No erase on the very first frame (nothing was drawn previously).
+    try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1bP1q\x1b\\") == null);
+
+    // Scroll the pane up by one line so the image anchor moves to row 9.
+    pane.screen.cursor.x = 0;
+    pane.screen.cursor.y = 22;
+    try pane.screen.writeChar('\n'); // triggers scrollUp -> shiftSixelAnchors(-1)
+
+    capture_buf.clearRetainingCapacity();
+    try display.renderSixelImages(&bounds);
+
+    // The old anchor (row 11, col 1 -> 1-indexed) must have been erased with a
+    // DECSIXEL erase-below, and the image must have been redrawn at its new
+    // anchor — proving the smear trail is cleared instead of left behind.
+    try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1b[11;1H") != null);
+    try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1bP1q\x1b\\") != null);
+    try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1bPqSM\x1b\\") != null);
+}
+
+test "renderSixelImages erases removed image overlay — bug #195" {
+    const allocator = std.testing.allocator;
+    var capture_buf: std.ArrayList(u8) = .empty;
+    defer capture_buf.deinit(allocator);
+
+    const display = Display{
+        .fd = -1,
+        .sx = 80,
+        .sy = 24,
+        .capture = &capture_buf,
+        .capture_allocator = allocator,
+    };
+
+    var win = try Window.init(allocator, 1, "ghost", 80, 23, null);
+    defer win.deinit(allocator);
+    const pane = win.active_pane.?;
+
+    pane.screen.cursor.x = 0;
+    pane.screen.cursor.y = 5;
+    const raw = try allocator.dupe(u8, "\x1bPqGHOST\x1b\\");
+    try pane.screen.addSixelImage(raw, 10, 20); // anchor (0, 5)
+
+    const bounds = [_]PaneBounds{.{ .pane = pane, .x = 0, .y = 0, .w = 80, .h = 23 }};
+    try display.renderSixelImages(&bounds);
+
+    // Remove the image from the registry (e.g. eraseDisplay mode 2).
+    if (pane.screen.sixel_images[0]) |*img| img.deinit(pane.screen.allocator);
+    pane.screen.sixel_images[0] = null;
+
+    capture_buf.clearRetainingCapacity();
+    try display.renderSixelImages(&bounds);
+
+    // The previously drawn overlay must be erased (no image redrawn, but an
+    // erase-below is emitted at the old anchor row 6, col 1).
+    try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1bPqGHOST\x1b\\") == null);
+    try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1b[6;1H") != null);
+    try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1bP1q\x1b\\") != null);
 }
 
 test "renderSixelImages derives position from image anchor not cell comb — bug #200" {

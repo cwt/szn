@@ -34,6 +34,14 @@ pub const SixelImage = struct {
         allocator.free(self.data);
     }
 };
+
+/// Pane-relative top-left cell anchor (clamped to >= 0) an image was last
+/// drawn at. Used by the renderer to erase a moved/removed image's overlay
+/// pixels (bug #195).
+pub const SixelAnchor = struct {
+    col: i32,
+    row: i32,
+};
 const Cell = grid.Cell;
 const Grid = grid.Grid;
 const GridLine = grid.GridLine;
@@ -91,6 +99,13 @@ pub const Screen = struct {
     /// Sixel images received from child processes, stored in a ring buffer registry.
     sixel_images: [64]?SixelImage = [_]?SixelImage{null} ** 64,
     next_sixel_id: u32 = 0,
+    /// Anchor (pane-relative top-left cell, clamped to >= 0) each registry
+    /// slot's sixel image was last drawn at during the previous render frame.
+    /// The renderer uses this to erase a moved/removed image's overlay pixels
+    /// (bug #195): the terminal's separate sixel layer is not cleared by `ECH`,
+    /// so without tracking the last anchor a scrolling image leaves a smear
+    /// trail, and a removed image leaves a permanent ghost.
+    sixel_last_anchor: [64]?SixelAnchor = [_]?SixelAnchor{null} ** 64,
     /// Terminal cell size in pixels, used to convert sixel pixel dimensions into
     /// character-cell extents (bug #199). Defaults match the common 10×20 metrics
     /// but should be set from the real terminal (e.g. DECSLPP / font metrics).
