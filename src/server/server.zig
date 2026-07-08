@@ -117,6 +117,7 @@ pub const Server = struct {
     mouse_press_pane: ?*Pane = null,
     mouse_autoscroll_dir: ?enum { up, down } = null,
     mouse_autoscroll_pane: ?*Pane = null,
+    ignore_unknown_msg_warn: bool = false,
 
     pub fn init(allocator: std.mem.Allocator) ServerError!Server {
         const key_binding = @import("../key_binding.zig");
@@ -149,6 +150,7 @@ pub const Server = struct {
             .buffers = buffer_mod.BufferList.init(allocator),
             .log_messages = .empty,
             .dirty = true,
+            .ignore_unknown_msg_warn = false,
         };
     }
 
@@ -1827,7 +1829,9 @@ pub const Server = struct {
         while (try reader.tryParse()) |pkt| {
             defer reader.consume(pkt);
             const msg_type = protocol.MessageType.fromByte(pkt.header.msg_type) orelse {
-                std.log.warn("server received unknown message type byte: {}", .{pkt.header.msg_type});
+                if (!self.ignore_unknown_msg_warn) {
+                    std.log.warn("server received unknown message type byte: {}", .{pkt.header.msg_type});
+                }
                 continue;
             };
             switch (msg_type) {
@@ -3207,6 +3211,7 @@ test "wire protocol attaches clients only to global active session" {
 
 test "server handleClient handles unknown message types gracefully" {
     var server = try Server.init(testing.allocator);
+    server.ignore_unknown_msg_warn = true;
     defer server.deinit();
 
     var fds: [2]i32 = undefined;
