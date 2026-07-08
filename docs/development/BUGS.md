@@ -2548,9 +2548,9 @@ When any part of the image is out of bounds (top scrolled above the pane, or it 
 ### 198. Copy-mode / scrollback sixel is silently lost after the 64-image ring wraps
 **File:** `src/screen.zig:86–87` (`[64]?SixelImage`), `src/server/render.zig:694–710` (id-mismatch clear)
 **Severity:** MEDIUM
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — Added check to avoid evicting sixel images still referenced by cells in the active grid/history, and updated renderer lookup accordingly.
 
-The registry is a fixed 64-slot ring keyed by `id % 64`. History/scrollback cells store only the 21-bit `id` in `cell.char`. When a 65th image is added, `slot = id % 64` collides and the previous slot's `SixelImage` (data, `px_width`, `px_height`) is freed. Any scrollback cell still referencing that slot now fails the `img.id & 0x1FFFFF == image_id` check and has its `attr.sixel` cleared (`render.zig:701–710`). So sixel in history silently disappears after 64 images — the design doc's "Copy-Mode Support" benefit (`sixel_grid_allocation.md:61`) only holds until the ring wraps, which is easy to hit with any image-heavy session. The doc lists no such limitation.
+The registry is a fixed 64-slot ring. We now avoid overwriting slots whose images are still referenced in the grid/history (using `isImageReferenced` checks on eviction), and resolve lookups dynamically in `render.zig` using helper methods (`findSixelImage`/`findSixelImageSlot`) rather than assuming `id % 64`.
 
 ---
 
@@ -2587,6 +2587,6 @@ The design stores `comb1` (13-bit `dx`) and `comb2` (13-bit `dy`) in **every** s
 |----------|-------|-------|----------------|------------|
 | Critical | 24 | 21 | 3 | **0** |
 | High | 45 (43+2) | 44 | 1 | **0** |
-| Medium | 69 (65+4) | 66 | 2 | **1** |
+| Medium | 69 (65+4) | 67 | 2 | **0** |
 | Low | 63 (61+2) | 60 | 3 | **0** |
-| Total | 201 (193+8) | **191** | **9** | **1** |
+| Total | 201 (193+8) | **192** | **9** | **0** |

@@ -207,34 +207,26 @@ pub const Display = struct {
                     var cell = if (cells) |cls| (if (x < cls.items.len) cls.items[x] else Cell.empty()) else Cell.empty();
                     if (cell.attr.sixel) {
                         const image_id = cell.char;
-                        const slot = image_id % 64;
-                        if (pb.pane.screen.sixel_images[slot]) |img| {
-                            if ((img.id & 0x1FFFFF) == image_id) {
-                                const cell_rows = if (img.px_height > 0) (img.px_height + pb.pane.screen.cell_px_height - 1) / pb.pane.screen.cell_px_height else 1;
-                                const cell_cols = if (img.px_width > 0) (img.px_width + pb.pane.screen.cell_px_width - 1) / pb.pane.screen.cell_px_width else 1;
+                        if (pb.pane.screen.findSixelImage(image_id)) |img| {
+                            const cell_rows = if (img.px_height > 0) (img.px_height + pb.pane.screen.cell_px_height - 1) / pb.pane.screen.cell_px_height else 1;
+                            const cell_cols = if (img.px_width > 0) (img.px_width + pb.pane.screen.cell_px_width - 1) / pb.pane.screen.cell_px_width else 1;
 
-                                // Position derived from the image's stored anchor
-                                // (bug #200), not per-cell comb offsets.
-                                const img_pane_col = @as(i32, @intCast(img.anchor_col));
-                                const img_pane_row = @as(i32, @intCast(img.anchor_row));
+                            // Position derived from the image's stored anchor
+                            // (bug #200), not per-cell comb offsets.
+                            const img_pane_col = @as(i32, @intCast(img.anchor_col));
+                            const img_pane_row = @as(i32, @intCast(img.anchor_row));
 
-                                // Keep the image whenever ANY part of it still
-                                // intersects the pane. Only clear it once it has
-                                // scrolled completely out of bounds (bug #197 —
-                                // previously a single off-screen row hid the whole
-                                // image, dropping its still-visible remainder).
-                                const intersects = (img_pane_col + @as(i32, @intCast(cell_cols))) > 0 and
-                                    (img_pane_row + @as(i32, @intCast(cell_rows))) > 0 and
-                                    img_pane_col < @as(i32, @intCast(pb.w)) and
-                                    img_pane_row < @as(i32, @intCast(pb.h));
+                            // Keep the image whenever ANY part of it still
+                            // intersects the pane. Only clear it once it has
+                            // scrolled completely out of bounds (bug #197 —
+                            // previously a single off-screen row hid the whole
+                            // image, dropping its still-visible remainder).
+                            const intersects = (img_pane_col + @as(i32, @intCast(cell_cols))) > 0 and
+                                (img_pane_row + @as(i32, @intCast(cell_rows))) > 0 and
+                                img_pane_col < @as(i32, @intCast(pb.w)) and
+                                img_pane_row < @as(i32, @intCast(pb.h));
 
-                                if (!intersects) {
-                                    cell.attr.sixel = false;
-                                    cell.char = 0;
-                                    cell.comb1 = 0;
-                                    cell.comb2 = 0;
-                                }
-                            } else {
+                            if (!intersects) {
                                 cell.attr.sixel = false;
                                 cell.char = 0;
                                 cell.comb1 = 0;
@@ -721,36 +713,34 @@ pub const Display = struct {
                         const cell = if (x < cls.items.len) cls.items[x] else Cell.empty();
                         if (cell.attr.sixel) {
                             const image_id = cell.char;
-                            const slot = image_id % 64;
-                            if (current[slot] != null) continue;
-                            if (screen.sixel_images[slot]) |img| {
-                                if ((img.id & 0x1FFFFF) == image_id) {
-                                    const cell_rows = if (img.px_height > 0) (img.px_height + screen.cell_px_height - 1) / screen.cell_px_height else 1;
-                                    const cell_cols = if (img.px_width > 0) (img.px_width + screen.cell_px_width - 1) / screen.cell_px_width else 1;
+                            if (screen.findSixelImageSlot(image_id)) |slot| {
+                                if (current[slot] != null) continue;
+                                const img = screen.sixel_images[slot].?;
+                                const cell_rows = if (img.px_height > 0) (img.px_height + screen.cell_px_height - 1) / screen.cell_px_height else 1;
+                                const cell_cols = if (img.px_width > 0) (img.px_width + screen.cell_px_width - 1) / screen.cell_px_width else 1;
 
-                                    // Position derived from the image's stored
-                                    // anchor (bug #200), not per-cell comb offsets.
-                                    const img_pane_col = @as(i32, @intCast(img.anchor_col));
-                                    const img_pane_row = @as(i32, @intCast(img.anchor_row));
+                                // Position derived from the image's stored
+                                // anchor (bug #200), not per-cell comb offsets.
+                                const img_pane_col = @as(i32, @intCast(img.anchor_col));
+                                const img_pane_row = @as(i32, @intCast(img.anchor_row));
 
-                                    // Partial-scroll handling (bug #197): draw the
-                                    // image whenever it overlaps the visible outer
-                                    // terminal. The terminal clips any part that
-                                    // extends past the top/left edge, so we anchor
-                                    // at the clamped position and let the remaining
-                                    // visible rows/cols render instead of dropping
-                                    // the entire image.
-                                    const abs_col_i = @as(i32, @intCast(pb.x)) + img_pane_col;
-                                    const abs_row_i = @as(i32, @intCast(pb.y)) + img_pane_row;
+                                // Partial-scroll handling (bug #197): draw the
+                                // image whenever it overlaps the visible outer
+                                // terminal. The terminal clips any part that
+                                // extends past the top/left edge, so we anchor
+                                // at the clamped position and let the remaining
+                                // visible rows/cols render instead of dropping
+                                // the entire image.
+                                const abs_col_i = @as(i32, @intCast(pb.x)) + img_pane_col;
+                                const abs_row_i = @as(i32, @intCast(pb.y)) + img_pane_row;
 
-                                    const visible = (abs_col_i + @as(i32, @intCast(cell_cols))) > 0 and
-                                        abs_col_i < @as(i32, @intCast(self.sx)) and
-                                        (abs_row_i + @as(i32, @intCast(cell_rows))) > 0 and
-                                        abs_row_i < @as(i32, @intCast(self.sy -| 1));
+                                const visible = (abs_col_i + @as(i32, @intCast(cell_cols))) > 0 and
+                                    abs_col_i < @as(i32, @intCast(self.sx)) and
+                                    (abs_row_i + @as(i32, @intCast(cell_rows))) > 0 and
+                                    abs_row_i < @as(i32, @intCast(self.sy -| 1));
 
-                                    if (visible) {
-                                        current[slot] = .{ .col = @max(0, abs_col_i), .row = @max(0, abs_row_i) };
-                                    }
+                                if (visible) {
+                                    current[slot] = .{ .col = @max(0, abs_col_i), .row = @max(0, abs_row_i) };
                                 }
                             }
                         }

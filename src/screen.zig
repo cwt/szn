@@ -148,7 +148,57 @@ pub const Screen = struct {
     ) Error!void {
         const id = self.next_sixel_id;
         self.next_sixel_id += 1;
-        const slot = id % 64;
+
+        // Find a slot for the new image (bug #198: don't overwrite referenced images)
+        var target_slot: ?usize = null;
+
+        const preferred_slot = id % 64;
+
+        // 1. Try preferred slot if empty or not referenced
+        if (self.sixel_images[preferred_slot] == null) {
+            target_slot = preferred_slot;
+        } else if (!self.isImageReferenced(self.sixel_images[preferred_slot].?.id)) {
+            target_slot = preferred_slot;
+        }
+
+        // 2. Otherwise, find any empty slot
+        if (target_slot == null) {
+            for (self.sixel_images, 0..) |opt_img, idx| {
+                if (opt_img == null) {
+                    target_slot = idx;
+                    break;
+                }
+            }
+        }
+
+        // 3. If no empty slot, find any slot whose image is no longer referenced
+        if (target_slot == null) {
+            for (self.sixel_images, 0..) |opt_img, idx| {
+                if (opt_img) |img| {
+                    if (!self.isImageReferenced(img.id)) {
+                        target_slot = idx;
+                        break;
+                    }
+                }
+            }
+        }
+
+        // 4. If all slots are full and referenced, evict the oldest image (min id)
+        if (target_slot == null) {
+            var min_id: u32 = std.math.maxInt(u32);
+            var min_idx: usize = 0;
+            for (self.sixel_images, 0..) |opt_img, idx| {
+                if (opt_img) |img| {
+                    if (img.id < min_id) {
+                        min_id = img.id;
+                        min_idx = idx;
+                    }
+                }
+            }
+            target_slot = min_idx;
+        }
+
+        const slot = target_slot.?;
         if (self.sixel_images[slot]) |*old| {
             old.deinit(self.allocator);
         }
@@ -210,6 +260,74 @@ pub const Screen = struct {
                 img.anchor_row += delta_rows;
             }
         }
+    }
+
+    /// Returns true if the sixel image with the given absolute ID is referenced
+    /// by any cell in the main grid, main history, or alt grid/history.
+    pub fn isImageReferenced(self: *const Screen, id: u32) bool {
+        const target_id = @as(u21, @intCast(id & 0x1FFFFF));
+
+        // Check main grid lines
+        for (self.grid.lines.items) |line| {
+            for (line.cells.items) |cell| {
+                if (cell.attr.sixel and cell.char == target_id) {
+                    return true;
+                }
+            }
+        }
+
+        // Check main grid history
+        for (self.grid.history.items) |line| {
+            for (line.cells.items) |cell| {
+                if (cell.attr.sixel and cell.char == target_id) {
+                    return true;
+                }
+            }
+        }
+
+        // Check alt grid if it exists
+        if (self.alt_grid) |alt| {
+            for (alt.lines.items) |line| {
+                for (line.cells.items) |cell| {
+                    if (cell.attr.sixel and cell.char == target_id) {
+                        return true;
+                    }
+                }
+            }
+            for (alt.history.items) |line| {
+                for (line.cells.items) |cell| {
+                    if (cell.attr.sixel and cell.char == target_id) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /// Finds a sixel image in the registry by its absolute ID.
+    pub fn findSixelImage(self: *const Screen, image_id: u32) ?SixelImage {
+        for (self.sixel_images) |opt_img| {
+            if (opt_img) |img| {
+                if ((img.id & 0x1FFFFF) == image_id) {
+                    return img;
+                }
+            }
+        }
+        return null;
+    }
+
+    /// Finds the slot index of a sixel image in the registry by its absolute ID.
+    pub fn findSixelImageSlot(self: *const Screen, image_id: u32) ?usize {
+        for (self.sixel_images, 0..) |opt_img, idx| {
+            if (opt_img) |img| {
+                if ((img.id & 0x1FFFFF) == image_id) {
+                    return idx;
+                }
+            }
+        }
+        return null;
     }
 
 
@@ -1707,5 +1825,54 @@ test "sixel clearing" {
 
     try screen.resetHard();
     try testing.expect(screen.sixel_images[4] == null);
+}
+
+test "sixel registry wrapping keeps referenced images — bug #198" {
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+
+    // 1. Add the first image (ID 0) at row 0. It will occupy cells in the grid at row 0.
+    screen.cursor.y = 0;
+    screen.cursor.x = 0;
+    const dcs0 = try testing.allocator.dupe(u8, "\x1bPqX\x1b\\");
+    try screen.addSixelImage(dcs0, 10, 20); // occupies slot 0, ID 0
+    try testing.expect(screen.sixel_images[0] != null);
+    try testing.expectEqual(@as(u32, 0), screen.sixel_images[0].?.id);
+
+    // 2. Add 63 more images. They will occupy slots 1 to 63.
+    // For each image, we immediately overwrite/clear its grid cells so that they are NOT referenced.
+    var i: u32 = 1;
+    while (i < 64) : (i += 1) {
+        screen.cursor.y = 2; // draw at row 2 so we don't touch row 0
+        screen.cursor.x = 0;
+        const dcs = try testing.allocator.dupe(u8, "\x1bPqX\x1b\\");
+        try screen.addSixelImage(dcs, 10, 20); // goes to slot i, ID i
+        
+        // Clear the cells at row 2 to make the image unreferenced
+        const line = screen.grid.getLineMut(2);
+        @memset(line.cells.items, Cell.empty());
+    }
+
+    // Double check that image 0 is still referenced and image 1 is NOT referenced.
+    try testing.expect(screen.isImageReferenced(0));
+    try testing.expect(!screen.isImageReferenced(1));
+
+    // 3. Add the 65th image (ID 64). Its preferred slot is 0 (64 % 64 = 0).
+    // But since ID 0 in slot 0 is still referenced, it should avoid slot 0 and use another slot (e.g. slot 1).
+    screen.cursor.y = 4;
+    screen.cursor.x = 0;
+    const dcs64 = try testing.allocator.dupe(u8, "\x1bPqX\x1b\\");
+    try screen.addSixelImage(dcs64, 10, 20); // ID 64
+
+    // Verify that ID 0 was NOT evicted and is still in slot 0.
+    try testing.expect(screen.sixel_images[0] != null);
+    try testing.expectEqual(@as(u32, 0), screen.sixel_images[0].?.id);
+
+    // Verify that the new image (ID 64) is in the registry and NOT in slot 0.
+    const slot64 = screen.findSixelImageSlot(64);
+    try testing.expect(slot64 != null);
+    try testing.expect(slot64.? != 0);
+    try testing.expect(screen.sixel_images[slot64.?] != null);
+    try testing.expectEqual(@as(u32, 64), screen.sixel_images[slot64.?].?.id);
 }
 

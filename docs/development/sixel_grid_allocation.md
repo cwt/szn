@@ -31,15 +31,20 @@ This allows any cell to dynamically specify:
 - Which image it belongs to.
 - Exactly where the top-left anchor of the image is physically located relative to that cell: `(x - dx, y - dy)`.
 
-### B. Bounded Sixel Registry (Ring Buffer)
-To avoid complex reference counting hooks during `GridLine` allocation and pruning, we use a fixed-capacity **Ring Buffer Sixel Registry** (capacity of 64 images per pane):
-- The `Screen` owns a `SixelRegistry` storing `[64]?SixelImage`.
+### B. Bounded Sixel Registry (Reference-Aware Ring Buffer)
+To avoid complex reference counting hooks during `GridLine` allocation and pruning, we use a fixed-capacity **Sixel Registry** (capacity of 64 images per pane):
+- The `Screen` owns the registry storing `[64]?SixelImage`.
 - Each `SixelImage` contains its unique `id` and the raw `data` (DCS bytes).
 - When a new image is parsed:
   1. It is allocated a monotonically increasing `id`.
-  2. It is inserted into the registry at `id % 64`.
-  3. The slot's previous image (if any) is deallocated.
+  2. A target slot is chosen:
+     - First, the preferred slot `id % 64` is checked. If it is empty or its image is no longer referenced in the grid/history, it is used.
+     - Otherwise, we search for any empty slot.
+     - If all slots are full, we search for any slot whose image is no longer referenced by any cells in the active grid, history, or alt grid/history.
+     - If all slots are full and all images are referenced, the oldest image (minimum ID) is evicted as a last resort.
+  3. The slot's previous image (if any) is deallocated, and the new image is stored.
   4. The cells spanning the image's dimensions are filled in the grid with `attr.sixel = true`, `char = id`, and their local coordinate offsets `(dx, dy)`.
+- During rendering, the slot index is retrieved dynamically by searching the registry for the image ID (`findSixelImage`/`findSixelImageSlot`) rather than assuming `id % 64` directly, preventing collisions and preserving copy-mode/scrollback graphics.
 
 ### C. Viewport Diffing & Rendering
 During the render cycle:
