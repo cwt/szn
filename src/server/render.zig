@@ -209,8 +209,8 @@ pub const Display = struct {
                         const slot = image_id % 64;
                         if (pb.pane.screen.sixel_images[slot]) |img| {
                             if ((img.id & 0x1FFFFF) == image_id) {
-                                const cell_rows = if (img.px_height > 0) (img.px_height + 19) / 20 else 1;
-                                const cell_cols = if (img.px_width > 0) (img.px_width + 9) / 10 else 1;
+                                const cell_rows = if (img.px_height > 0) (img.px_height + pb.pane.screen.cell_px_height - 1) / pb.pane.screen.cell_px_height else 1;
+                                const cell_cols = if (img.px_width > 0) (img.px_width + pb.pane.screen.cell_px_width - 1) / pb.pane.screen.cell_px_width else 1;
 
                                 // Position derived from the image's stored anchor
                                 // (bug #200), not per-cell comb offsets.
@@ -712,8 +712,8 @@ pub const Display = struct {
                                     if (!rendered_ids[slot]) {
                                         rendered_ids[slot] = true;
 
-                                        const cell_rows = if (img.px_height > 0) (img.px_height + 19) / 20 else 1;
-                                        const cell_cols = if (img.px_width > 0) (img.px_width + 9) / 10 else 1;
+                                        const cell_rows = if (img.px_height > 0) (img.px_height + screen.cell_px_height - 1) / screen.cell_px_height else 1;
+                                        const cell_cols = if (img.px_width > 0) (img.px_width + screen.cell_px_width - 1) / screen.cell_px_width else 1;
 
                                         // Position derived from the image's stored
                                         // anchor (bug #200), not per-cell comb offsets.

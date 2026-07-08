@@ -91,6 +91,11 @@ pub const Screen = struct {
     /// Sixel images received from child processes, stored in a ring buffer registry.
     sixel_images: [64]?SixelImage = [_]?SixelImage{null} ** 64,
     next_sixel_id: u32 = 0,
+    /// Terminal cell size in pixels, used to convert sixel pixel dimensions into
+    /// character-cell extents (bug #199). Defaults match the common 10×20 metrics
+    /// but should be set from the real terminal (e.g. DECSLPP / font metrics).
+    cell_px_width: u32 = 10,
+    cell_px_height: u32 = 20,
     force_clear: bool = false,
     last_char: ?u21 = null,
     extkeys: u8 = 0,
@@ -144,8 +149,8 @@ pub const Screen = struct {
             .anchor_row = @intCast(self.cursor.y),
         };
 
-        const cell_rows = if (px_height > 0) (px_height + 19) / 20 else 1;
-        const cell_cols = if (px_width > 0) (px_width + 9) / 10 else 1;
+        const cell_rows = if (px_height > 0) (px_height + self.cell_px_height - 1) / self.cell_px_height else 1;
+        const cell_cols = if (px_width > 0) (px_width + self.cell_px_width - 1) / self.cell_px_width else 1;
 
         // Populate cells in the bounding box
         var y: u32 = 0;
@@ -1241,6 +1246,25 @@ test "eraseDisplay only force_clears when an overlapping sixel is removed — bu
     screen.eraseDisplay(2);
     try testing.expect(screen.sixel_images[0] == null);
     try testing.expect(screen.force_clear);
+}
+
+test "addSixelImage uses configurable cell pixel size — bug #199" {
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+    // Non-default terminal cell metrics (8×16 instead of the hardcoded 10×20).
+    screen.cell_px_width = 8;
+    screen.cell_px_height = 16;
+
+    const dcs = try testing.allocator.dupe(u8, "\x1bPqX\x1b\\");
+    screen.cursor.x = 0;
+    screen.cursor.y = 0;
+    try screen.addSixelImage(dcs, 300, 200); // rows = (200+15)/16 = 13, cols = (300+7)/8 = 38
+
+    // Hardcoded 20px/row would give 10 rows; the configured size must win.
+    try testing.expect(screen.grid.getCell(0, 12).attr.sixel);
+    try testing.expect(!screen.grid.getCell(0, 13).attr.sixel);
+    try testing.expect(screen.grid.getCell(37, 0).attr.sixel);
+    try testing.expect(!screen.grid.getCell(38, 0).attr.sixel);
 }
 
 test "cursor save and restore" {

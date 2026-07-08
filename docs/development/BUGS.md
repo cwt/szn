@@ -2557,7 +2557,7 @@ The registry is a fixed 64-slot ring keyed by `id % 64`. History/scrollback cell
 ### 199. Pixel↔cell conversion hardcoded to 20px/row and 10px/col
 **File:** `src/screen.zig:138` (`cell_rows = (px_height+19)/20`), `src/screen.zig:139` (`cell_cols = (px_width+9)/10`), `src/server/render.zig:209–210` (same in render clipping)
 **Severity:** MEDIUM
-**Status:** ❌ UNRESOLVED
+**Status:** ✅ FIXED — `Screen` now carries `cell_px_width`/`cell_px_height` (default 10×20) used by `addSixelImage` and both render sites for pixel↔cell conversion, so non-default terminals no longer mis-anchor or mis-clip sixel. Added unit test.
 
 The assumption "20px per cell row, 10px per cell column" is baked into **both** cursor advancement (`addSixelImage`) and the `fits` clipping test (`renderSixelImages`). Terminal cell metrics vary (common values are ~20px tall but width is font-dependent and often ≠ 10px; many terminals report e.g. 9×18 or 8×16). On any terminal that doesn't match these constants, the image anchor and the `fits` boundary are computed against the wrong cell extent → sixel is mis-anchored or incorrectly clipped/hidden. This should be derived from the real terminal cell size (queryable via `DECSLPP`/font metrics) rather than hardcoded.
 
@@ -2587,6 +2587,6 @@ The design stores `comb1` (13-bit `dx`) and `comb2` (13-bit `dy`) in **every** s
 |----------|-------|-------|----------------|------------|
 | Critical | 24 | 21 | 3 | **0** |
 | High | 45 (43+2) | 43 | 1 | **1** |
-| Medium | 69 (65+4) | 65 | 2 | **2** |
+| Medium | 69 (65+4) | 66 | 2 | **1** |
 | Low | 63 (61+2) | 60 | 3 | **0** |
-| Total | 201 (193+8) | **189** | **9** | **3** |
+| Total | 201 (193+8) | **190** | **9** | **2** |
