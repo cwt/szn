@@ -19,7 +19,8 @@ pub const Attr = packed struct(u16) {
     overline: bool = false,
     double_underline: bool = false,
     curly_underline: bool = false,
-    _padding: u5 = 0,
+    sixel: bool = false,
+    _padding: u4 = 0,
 };
 
 pub const Cell = packed struct(u128) {

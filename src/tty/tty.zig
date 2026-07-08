@@ -15,7 +15,7 @@ pub const Error = fd_writer.Error;
 
 const attrFields = blk: {
     const all = std.meta.fields(Attr);
-    break :blk all[0 .. all.len - 1]; // exclude _padding
+    break :blk all[0 .. all.len - 2]; // exclude sixel and _padding
 };
 const attrCodes = [_][]const u8{ "1", "2", "3", "4", "5", "7", "8", "9", "53", "21", "4:3" };
 

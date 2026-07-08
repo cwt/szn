@@ -164,6 +164,8 @@ pub const Display = struct {
         } else {
             local_merged_screen = try Screen.init(allocator, merged_w, merged_h);
         }
+        merged_screen.force_clear = active_pane.screen.force_clear;
+        active_pane.screen.force_clear = false;
         defer if (self.merged_screen == null) {
             local_merged_screen.deinit();
         };
@@ -195,6 +197,43 @@ pub const Display = struct {
                 for (0..pb.w) |x| {
                     if (pb.x + x >= merged_w) break;
                     var cell = if (cells) |cls| (if (x < cls.items.len) cls.items[x] else Cell.empty()) else Cell.empty();
+                    if (cell.attr.sixel) {
+                        const image_id = cell.char;
+                        const slot = image_id % 64;
+                        if (pb.pane.screen.sixel_images[slot]) |img| {
+                            if ((img.id & 0x1FFFFF) == image_id) {
+                                const cell_rows = if (img.px_height > 0) (img.px_height + 19) / 20 else 1;
+                                const cell_cols = if (img.px_width > 0) (img.px_width + 9) / 10 else 1;
+                                const dx = cell.comb1;
+                                const dy = cell.comb2;
+
+                                const img_pane_col = @as(i32, @intCast(x)) - @as(i32, @intCast(dx));
+                                const img_pane_row = @as(i32, @intCast(y)) - @as(i32, @intCast(dy));
+
+                                const fits = img_pane_col >= 0 and
+                                             img_pane_row >= 0 and
+                                             (img_pane_col + @as(i32, @intCast(cell_cols))) <= @as(i32, @intCast(pb.w)) and
+                                             (img_pane_row + @as(i32, @intCast(cell_rows))) <= @as(i32, @intCast(pb.h));
+
+                                if (!fits) {
+                                    cell.attr.sixel = false;
+                                    cell.char = 0;
+                                    cell.comb1 = 0;
+                                    cell.comb2 = 0;
+                                }
+                            } else {
+                                cell.attr.sixel = false;
+                                cell.char = 0;
+                                cell.comb1 = 0;
+                                cell.comb2 = 0;
+                            }
+                        } else {
+                            cell.attr.sixel = false;
+                            cell.char = 0;
+                            cell.comb1 = 0;
+                            cell.comb2 = 0;
+                        }
+                    }
                     if (pb.pane.screen.copy_mode) |cm| {
                         if (cm.isSelected(@intCast(x), @intCast(y))) {
                             cell.attr.reverse = !cell.attr.reverse;
@@ -348,6 +387,16 @@ pub const Display = struct {
             }
         }
 
+        if (screen.force_clear) {
+            screen.force_clear = false;
+            try self.writeBytes("\x1b[2J");
+            if (self.last_cells) |lc| {
+                var inv = Cell.empty();
+                inv.char = 0x1FFFFF; // invalid Unicode to force redraw
+                @memset(lc.items, inv);
+            }
+        }
+
         var active_fg = Colour.default_();
         var active_bg = Colour.default_();
         var active_attr = Attr{};
@@ -381,6 +430,7 @@ pub const Display = struct {
                     }
                 }
 
+                var force_erase = false;
                 if (self.last_cells) |lc| {
                     const cell_idx = y * w + x;
                     if (cell_idx < lc.items.len) {
@@ -388,6 +438,9 @@ pub const Display = struct {
                         if (cell.eql(last_cell)) {
                             anchored = false;
                             continue;
+                        }
+                        if (last_cell.attr.sixel and !cell.attr.sixel) {
+                            force_erase = true;
                         }
                         lc.items[cell_idx] = cell;
                     }
@@ -400,6 +453,10 @@ pub const Display = struct {
                     try self.moveTo(@intCast(x), @intCast(y));
                     cur_cx = @intCast(x);
                     anchored = true;
+                }
+
+                if (force_erase) {
+                    try self.writeBytes("\x1b[X");
                 }
 
                 if (@as(u32, @bitCast(cell.fg)) != @as(u32, @bitCast(active_fg)) or
@@ -419,7 +476,7 @@ pub const Display = struct {
 
                     const attrFields = comptime blk: {
                         const all = std.meta.fields(Attr);
-                        break :blk all[0 .. all.len - 1];
+                        break :blk all[0 .. all.len - 2];
                     };
                     const attrCodes = [_][]const u8{
                         "1", // bold
@@ -475,7 +532,10 @@ pub const Display = struct {
                     try self.writeBytes(sgr_buf[0..sgr_pos]);
                 }
 
-                const cp = cell.char;
+                var cp = cell.char;
+                if (cell.attr.sixel) {
+                    cp = 0;
+                }
                 if (cp == 0 or cp == ' ') {
                     try self.writeBytes(" ");
                     cur_cx += 1;
@@ -601,18 +661,70 @@ pub const Display = struct {
     /// Screen. We move the cursor to the image anchor, emit the raw DCS bytes,
     /// then reset SGR so subsequent character rendering is unaffected.
     fn renderSixelImages(self: Display, bounds: []const PaneBounds) Error!void {
+        var rendered_ids = [_]bool{false} ** 64;
+
         for (bounds) |pb| {
-            for (pb.pane.screen.sixel_images.items) |img| {
-                // Translate pane-local row/col to display-absolute row/col.
-                const abs_col = pb.x + img.col;
-                const abs_row = pb.y + img.row;
-                // Skip images that would be outside the display area.
-                if (abs_row >= self.sy -| 1 or abs_col >= self.sx) continue;
-                try self.moveTo(abs_col, abs_row);
-                // Emit the raw DCS bytes verbatim. The outer terminal renders pixels.
-                try self.writeBytes(img.data);
-                // Reset SGR after the DCS sequence so subsequent text is clean.
-                try self.writeBytes("\x1b[m");
+            const screen = pb.pane.screen;
+            const pane_h = pb.h;
+            const pane_w = pb.w;
+
+            var y: u32 = 0;
+            while (y < pane_h) : (y += 1) {
+                const combined_idx = (@as(isize, @intCast(screen.grid.history.items.len)) - @as(isize, @intCast(if (screen.copy_mode) |cm| cm.scroll_offset else 0))) + @as(isize, @intCast(y));
+                
+                const cells = if (combined_idx < 0)
+                    @as(?*const std.ArrayList(Cell), null)
+                else if (combined_idx < screen.grid.history.items.len)
+                    &screen.grid.history.items[@intCast(combined_idx)].cells
+                else blk: {
+                    const visible_y = combined_idx - @as(isize, @intCast(screen.grid.history.items.len));
+                    break :blk if (visible_y < screen.grid.height)
+                        &screen.grid.getLine(@intCast(visible_y)).cells
+                    else
+                        @as(?*const std.ArrayList(Cell), null);
+                };
+
+                if (cells) |cls| {
+                    var x: u32 = 0;
+                    while (x < pane_w) : (x += 1) {
+                        const cell = if (x < cls.items.len) cls.items[x] else Cell.empty();
+                        if (cell.attr.sixel) {
+                            const image_id = cell.char;
+                            const slot = image_id % 64;
+                            if (screen.sixel_images[slot]) |img| {
+                                if ((img.id & 0x1FFFFF) == image_id) {
+                                    if (!rendered_ids[slot]) {
+                                        rendered_ids[slot] = true;
+                                        const dx = cell.comb1;
+                                        const dy = cell.comb2;
+                                        
+                                        const img_pane_col = @as(i32, @intCast(x)) - @as(i32, @intCast(dx));
+                                        const img_pane_row = @as(i32, @intCast(y)) - @as(i32, @intCast(dy));
+
+                                        const cell_rows = if (img.px_height > 0) (img.px_height + 19) / 20 else 1;
+                                        const cell_cols = if (img.px_width > 0) (img.px_width + 9) / 10 else 1;
+
+                                        const fits = img_pane_col >= 0 and
+                                                     img_pane_row >= 0 and
+                                                     (img_pane_col + @as(i32, @intCast(cell_cols))) <= @as(i32, @intCast(pb.w)) and
+                                                     (img_pane_row + @as(i32, @intCast(cell_rows))) <= @as(i32, @intCast(pb.h));
+
+                                        if (fits) {
+                                            const abs_col = @as(i32, @intCast(pb.x)) + img_pane_col;
+                                            const abs_row = @as(i32, @intCast(pb.y)) + img_pane_row;
+
+                                            if (abs_row >= 0 and abs_row < @as(i32, @intCast(self.sy -| 1)) and abs_col < @as(i32, @intCast(self.sx))) {
+                                                try self.moveTo(@intCast(abs_col), @intCast(abs_row));
+                                                try self.writeBytes(img.data);
+                                                try self.writeBytes("\x1b[m");
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -818,14 +930,19 @@ test "renderSixelImages emits DCS at correct absolute position" {
 
     // Inject a synthetic sixel image at pane cell (5, 3) with known DCS bytes.
     const raw_dcs = try allocator.dupe(u8, "\x1bPqA\x1b\\");
-    const img = @import("../screen.zig").SixelImage{
+    pane.screen.sixel_images[0] = .{
         .data = raw_dcs,
         .col = 5,
         .row = 3,
-        .px_width = 0,
-        .px_height = 6,
+        .px_width = 10,
+        .px_height = 20,
+        .id = 0,
     };
-    try pane.screen.sixel_images.append(allocator, img);
+    var cell = &pane.screen.grid.getLineMut(3).cells.items[5];
+    cell.attr.sixel = true;
+    cell.char = 0;
+    cell.comb1 = 0;
+    cell.comb2 = 0;
 
     const bounds = [_]PaneBounds{.{
         .pane = pane,
@@ -849,4 +966,102 @@ test "sy saturating subtraction — bug #126" {
     try testing.expectEqual(@as(u32, 0), @as(u32, 0) -| 1);
     try testing.expectEqual(@as(u32, 0), @as(u32, 1) -| 1);
     try testing.expectEqual(@as(u32, 2), @as(u32, 3) -| 1);
+}
+
+test "sixel rendering with scrolling" {
+    const allocator = std.testing.allocator;
+    var capture_buf: std.ArrayList(u8) = .empty;
+    defer capture_buf.deinit(allocator);
+
+    const display = Display{
+        .fd = -1,
+        .sx = 80,
+        .sy = 24,
+        .capture = &capture_buf,
+        .capture_allocator = allocator,
+    };
+
+    var win = try Window.init(allocator, 1, "test-sixel-scrolling", 80, 23, null);
+    defer win.deinit(allocator);
+    const pane = win.active_pane.?;
+
+    // Position cursor at the pane bottom row (22)
+    pane.screen.cursor.y = 22;
+
+    // Call addSixelImage with a 15-row height image (300px)
+    const raw_dcs = try allocator.dupe(u8, "\x1bPqTEST\x1b\\");
+    try pane.screen.addSixelImage(raw_dcs, 100, 300);
+
+    // Verify cell coordinates after addSixelImage (should start at 22 - 15 = 7)
+    {
+        const cell = pane.screen.grid.getCell(0, 7);
+        try std.testing.expect(cell.attr.sixel);
+        try std.testing.expectEqual(@as(u21, 0), cell.char); // image id 0
+        try std.testing.expectEqual(@as(u13, 0), cell.comb2); // dy = 0
+    }
+
+    // Write a newline to trigger a scroll in writeChar
+    try pane.screen.writeChar('\n');
+
+    // Verify cell coordinate is decremented to 6 (it has scrolled up by 1)
+    {
+        const cell = pane.screen.grid.getCell(0, 6);
+        try std.testing.expect(cell.attr.sixel);
+        try std.testing.expectEqual(@as(u21, 0), cell.char);
+        try std.testing.expectEqual(@as(u13, 0), cell.comb2);
+    }
+
+    // Render it!
+    const bounds = [_]PaneBounds{.{
+        .pane = pane,
+        .x = 0,
+        .y = 0,
+        .w = 80,
+        .h = 23,
+    }};
+    try display.renderSixelImages(&bounds);
+
+    // Verify output:
+    // Move cursor to row 7 (which is 1-indexed, i.e., 7H, since top-left is at row 6)
+    try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1b[7;1H") != null);
+    // Verbatim DCS bytes
+    try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1bPqTEST\x1b\\") != null);
+
+    // Scroll by 10 more lines to push the top-left completely off-screen (row becomes < 0)
+    var i: usize = 0;
+    while (i < 10) : (i += 1) {
+        try pane.screen.writeChar('\n');
+    }
+
+    capture_buf.clearRetainingCapacity();
+    
+    // Render it!
+    // Since the top of the image went off-screen, renderAll should clear attr.sixel
+    var merged = try Screen.init(allocator, 80, 23);
+    defer merged.deinit();
+
+    const Node = @import("../layout.zig").Node;
+    const node = Node{ .leaf = pane };
+    const windows = [_]*Window{&win};
+
+    var opt_merged: ?Screen = merged;
+    var display_with_merged = display;
+    display_with_merged.merged_screen = &opt_merged;
+
+    try display_with_merged.renderAll(allocator, &bounds, pane, "session", &windows, &win, &node, .{
+        .status_fg = Colour.default_(),
+        .status_bg = Colour.default_(),
+        .pane_border_fg = Colour.fromIndexed(8),
+        .pane_active_border_fg = Colour.fromIndexed(2),
+    }, null, false, "", false);
+
+    // Swap back to free resources correctly in defer
+    merged = opt_merged.?;
+    
+    // Verify that the sixel attribute is cleared for the cells
+    const cell = merged.grid.getCell(0, 0);
+    try std.testing.expect(!cell.attr.sixel);
+
+    // Verify output: DCS bytes should NOT be in the output
+    try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1bPqTEST\x1b\\") == null);
 }

@@ -1830,16 +1830,25 @@ test "sixel DCS ESC-backslash terminator stores image" {
     try testing.expectEqual(InputParser.State.ground, parser.state);
 
     // Exactly one image should have been stored.
-    try testing.expectEqual(@as(usize, 1), screen.sixel_images.items.len);
+    const SixelImage = @import("screen.zig").SixelImage;
+    var count: usize = 0;
+    var opt_found: ?SixelImage = null;
+    for (screen.sixel_images) |opt_img| {
+        if (opt_img) |img| {
+            count += 1;
+            if (opt_found == null) opt_found = img;
+        }
+    }
+    try testing.expectEqual(@as(usize, 1), count);
 
     // The stored data must contain the raw DCS bytes including the ST.
-    const img = screen.sixel_images.items[0];
+    const img = opt_found.?;
     try testing.expect(std.mem.indexOf(u8, img.data, "\x1bP") != null);
     try testing.expect(std.mem.endsWith(u8, img.data, "\x1b\\"));
 
     // Image was anchored at cursor origin (0,0).
     try testing.expectEqual(@as(u32, 0), img.col);
-    try testing.expectEqual(@as(u32, 0), img.row);
+    try testing.expectEqual(@as(i32, 0), img.row);
 }
 
 test "sixel DCS 8-bit ST (0x9C) terminator stores image" {
@@ -1853,9 +1862,18 @@ test "sixel DCS 8-bit ST (0x9C) terminator stores image" {
     try parser.feed(sixel);
 
     try testing.expectEqual(InputParser.State.ground, parser.state);
-    try testing.expectEqual(@as(usize, 1), screen.sixel_images.items.len);
+    const SixelImage = @import("screen.zig").SixelImage;
+    var count: usize = 0;
+    var opt_found: ?SixelImage = null;
+    for (screen.sixel_images) |opt_img| {
+        if (opt_img) |img| {
+            count += 1;
+            if (opt_found == null) opt_found = img;
+        }
+    }
+    try testing.expectEqual(@as(usize, 1), count);
     // Data should still contain the trailing ESC \ (we normalise to 7-bit).
-    try testing.expect(std.mem.endsWith(u8, screen.sixel_images.items[0].data, "\x1b\\"));
+    try testing.expect(std.mem.endsWith(u8, opt_found.?.data, "\x1b\\"));
 }
 
 test "sixel pixel height estimated from band count" {
@@ -1868,9 +1886,18 @@ test "sixel pixel height estimated from band count" {
     const sixel = "\x1bPqA-A-A-A\x1b\\";
     try parser.feed(sixel);
 
-    try testing.expectEqual(@as(usize, 1), screen.sixel_images.items.len);
+    const SixelImage = @import("screen.zig").SixelImage;
+    var count: usize = 0;
+    var opt_found: ?SixelImage = null;
+    for (screen.sixel_images) |opt_img| {
+        if (opt_img) |img| {
+            count += 1;
+            if (opt_found == null) opt_found = img;
+        }
+    }
+    try testing.expectEqual(@as(usize, 1), count);
     // bands = 1 + count('-') = 1 + 3 = 4,  px_height = 4 * 6 = 24
-    try testing.expectEqual(@as(u32, 24), screen.sixel_images.items[0].px_height);
+    try testing.expectEqual(@as(u32, 24), opt_found.?.px_height);
 }
 
 test "sixel pixel dimensions parsed from raster attributes" {
@@ -1883,8 +1910,17 @@ test "sixel pixel dimensions parsed from raster attributes" {
     const sixel = "\x1bPq\"1;1;320;240A\x1b\\";
     try parser.feed(sixel);
 
-    try testing.expectEqual(@as(usize, 1), screen.sixel_images.items.len);
-    const img = screen.sixel_images.items[0];
+    const SixelImage = @import("screen.zig").SixelImage;
+    var count: usize = 0;
+    var opt_found: ?SixelImage = null;
+    for (screen.sixel_images) |opt_img| {
+        if (opt_img) |img| {
+            count += 1;
+            if (opt_found == null) opt_found = img;
+        }
+    }
+    try testing.expectEqual(@as(usize, 1), count);
+    const img = opt_found.?;
     try testing.expectEqual(@as(u32, 320), img.px_width);
     try testing.expectEqual(@as(u32, 240), img.px_height);
 }
@@ -1915,7 +1951,11 @@ test "sixel from dcs_param path (ESC P 0 ; 0 q ...)" {
     try parser.feed(sixel);
 
     try testing.expectEqual(InputParser.State.ground, parser.state);
-    try testing.expectEqual(@as(usize, 1), screen.sixel_images.items.len);
+    var count: usize = 0;
+    for (screen.sixel_images) |opt_img| {
+        if (opt_img != null) count += 1;
+    }
+    try testing.expectEqual(@as(usize, 1), count);
 }
 
 test "non-sixel DCS sequence is silently discarded" {
@@ -1930,7 +1970,11 @@ test "non-sixel DCS sequence is silently discarded" {
 
     try testing.expectEqual(InputParser.State.ground, parser.state);
     // No images stored.
-    try testing.expectEqual(@as(usize, 0), screen.sixel_images.items.len);
+    var count: usize = 0;
+    for (screen.sixel_images) |opt_img| {
+        if (opt_img != null) count += 1;
+    }
+    try testing.expectEqual(@as(usize, 0), count);
 }
 
 test "sixel 16 MiB cap transitions to discard and recovers on ST" {
@@ -1965,7 +2009,11 @@ test "sixel 16 MiB cap transitions to discard and recovers on ST" {
     try testing.expectEqual(InputParser.State.ground, parser.state);
 
     // No image was stored (cap was exceeded, data discarded).
-    try testing.expectEqual(@as(usize, 0), screen.sixel_images.items.len);
+    var count: usize = 0;
+    for (screen.sixel_images) |opt_img| {
+        if (opt_img != null) count += 1;
+    }
+    try testing.expectEqual(@as(usize, 0), count);
 }
 
 // ─── Device Attributes tests ─────────────────────────────────────────────────

@@ -16,11 +16,13 @@ pub const SixelImage = struct {
     /// Cell column where the image starts (cursor x when DCS began)
     col: u32,
     /// Cell row where the image starts (cursor y when DCS began)
-    row: u32,
+    row: i32,
     /// Width in pixels (parsed from sixel P2 parameter or 0 if unknown)
     px_width: u32,
     /// Height in pixels (counted from sixel band count * 6, or 0 if unknown)
     px_height: u32,
+    /// Unique monotonically increasing Sixel image ID
+    id: u32,
 
     pub fn deinit(self: *SixelImage, allocator: std.mem.Allocator) void {
         allocator.free(self.data);
@@ -80,8 +82,10 @@ pub const Screen = struct {
     clock_mode: bool = false,
     clock_utc: bool = false,
     tab_stop: u32 = 8,
-    /// Sixel images received from child processes, kept for re-emission.
-    sixel_images: std.ArrayList(SixelImage) = .empty,
+    /// Sixel images received from child processes, stored in a ring buffer registry.
+    sixel_images: [64]?SixelImage = [_]?SixelImage{null} ** 64,
+    next_sixel_id: u32 = 0,
+    force_clear: bool = false,
     last_char: ?u21 = null,
     extkeys: u8 = 0,
     kitty_kbd_flags: u32 = 0,
@@ -99,8 +103,11 @@ pub const Screen = struct {
     pub fn deinit(self: *Screen) void {
         self.grid.deinit();
         if (self.alt_grid) |*g| g.deinit();
-        for (self.sixel_images.items) |*img| img.deinit(self.allocator);
-        self.sixel_images.deinit(self.allocator);
+        for (&self.sixel_images) |*opt_img| {
+            if (opt_img.*) |*img| {
+                img.deinit(self.allocator);
+            }
+        }
     }
 
     /// Store a sixel image at the current cursor position.
@@ -113,18 +120,46 @@ pub const Screen = struct {
         px_width: u32,
         px_height: u32,
     ) Error!void {
-        const img = SixelImage{
+        const id = self.next_sixel_id;
+        self.next_sixel_id += 1;
+        const slot = id % 64;
+        if (self.sixel_images[slot]) |*old| {
+            old.deinit(self.allocator);
+        }
+
+        self.sixel_images[slot] = SixelImage{
             .data = dcs_bytes,
             .col = self.cursor.x,
-            .row = self.cursor.y,
+            .row = @intCast(self.cursor.y),
             .px_width = px_width,
             .px_height = px_height,
+            .id = id,
         };
-        try self.sixel_images.append(self.allocator, img);
-        // Advance cursor down by the number of character rows the image spans.
-        // Most terminals use 20px per cell row as a fallback when the pixel
-        // height of a cell is unknown; szn uses the same conservative value.
+
         const cell_rows = if (px_height > 0) (px_height + 19) / 20 else 1;
+        const cell_cols = if (px_width > 0) (px_width + 9) / 10 else 1;
+
+        // Populate cells in the bounding box
+        var y: u32 = 0;
+        while (y < cell_rows) : (y += 1) {
+            const grid_y = self.cursor.y + y;
+            if (grid_y >= self.grid.height) break;
+            const line = self.grid.getLineMut(grid_y);
+            var x: u32 = 0;
+            while (x < cell_cols) : (x += 1) {
+                const grid_x = self.cursor.x + x;
+                if (grid_x >= self.grid.width) break;
+                if (grid_x < line.cells.items.len) {
+                    var cell = &line.cells.items[grid_x];
+                    cell.attr.sixel = true;
+                    cell.char = @intCast(id & 0x1FFFFF);
+                    cell.comb1 = @intCast(x & 0x1FFF);
+                    cell.comb2 = @intCast(y & 0x1FFF);
+                }
+            }
+        }
+
+        // Advance cursor down by the number of character rows the image spans.
         var r: u32 = 0;
         while (r < cell_rows) : (r += 1) {
             if (self.cursor.y + 1 < self.grid.height) {
@@ -137,19 +172,7 @@ pub const Screen = struct {
         self.dirty = true;
     }
 
-    /// Remove all sixel images whose anchor row is above the visible area
-    /// (scrolled out of view) to keep memory bounded.
-    pub fn pruneSixelImages(self: *Screen) void {
-        var i: usize = 0;
-        while (i < self.sixel_images.items.len) {
-            if (self.sixel_images.items[i].row >= self.grid.height) {
-                var img = self.sixel_images.swapRemove(i);
-                img.deinit(self.allocator);
-            } else {
-                i += 1;
-            }
-        }
-    }
+
 
     pub fn eraseCell(self: *const Screen) Cell {
         return .{
@@ -463,6 +486,13 @@ pub const Screen = struct {
     }
 
     pub fn eraseDisplay(self: *Screen, mode: u8) void {
+        var had_sixels = false;
+        for (self.sixel_images) |opt_img| {
+            if (opt_img != null) {
+                had_sixels = true;
+                break;
+            }
+        }
         const fill = self.eraseCell();
         switch (mode) {
             0 => {
@@ -497,6 +527,27 @@ pub const Screen = struct {
                 }
             },
             else => {},
+        }
+
+        for (&self.sixel_images) |*opt_img| {
+            if (opt_img.*) |img| {
+                const cell_rows = if (img.px_height > 0) (img.px_height + 19) / 20 else 1;
+                const remove = switch (mode) {
+                    0 => (img.row + @as(i32, @intCast(cell_rows))) > @as(i32, @intCast(self.cursor.y)),
+                    1 => img.row <= @as(i32, @intCast(self.cursor.y)),
+                    2, 3 => true,
+                    else => false,
+                };
+                if (remove) {
+                    var to_deinit = opt_img.*;
+                    opt_img.* = null;
+                    if (to_deinit) |*ti| ti.deinit(self.allocator);
+                }
+            }
+        }
+
+        if (had_sixels) {
+            self.force_clear = true;
         }
         self.dirty = true;
     }
@@ -808,6 +859,13 @@ pub const Screen = struct {
     }
 
     pub fn resetHard(self: *Screen) Error!void {
+        var had_sixels = false;
+        for (self.sixel_images) |opt_img| {
+            if (opt_img != null) {
+                had_sixels = true;
+                break;
+            }
+        }
         self.cursor = .{};
         self.saved_cursor = null;
         self.mode = .{};
@@ -818,6 +876,15 @@ pub const Screen = struct {
         self.kitty_kbd_flags = 0;
         self.kitty_kbd_stack_len = 0;
         self.grid.clear();
+        for (&self.sixel_images) |*opt_img| {
+            if (opt_img.*) |*img| {
+                img.deinit(self.allocator);
+            }
+            opt_img.* = null;
+        }
+        if (had_sixels) {
+            self.force_clear = true;
+        }
         self.dirty = true;
     }
 
@@ -828,6 +895,12 @@ pub const Screen = struct {
 
     pub fn clearScreen(self: *Screen) void {
         self.grid.clear();
+        for (&self.sixel_images) |*opt_img| {
+            if (opt_img.*) |*img| {
+                img.deinit(self.allocator);
+            }
+            opt_img.* = null;
+        }
         self.dirty = true;
     }
 
@@ -1441,3 +1514,116 @@ test "writeChar: combining after wide character" {
     const base_cell = screen.grid.getCell(0, 0);
     try testing.expect(char_width.combiningCodepoint(base_cell.comb1) == 0x0301);
 }
+
+test "sixel scrolling" {
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+
+    // Position cursor at row 10
+    screen.cursor.y = 10;
+    screen.cursor.x = 0;
+
+    // Add a sixel image (height 40px = 2 rows, so it covers rows 10, 11)
+    const raw_dcs = try testing.allocator.dupe(u8, "\x1bPq\x1b\\");
+    try screen.addSixelImage(raw_dcs, 100, 40);
+
+    // Verify cell coordinates
+    {
+        const cell = screen.grid.getCell(0, 10);
+        try testing.expect(cell.attr.sixel);
+        try testing.expectEqual(@as(u21, 0), cell.char); // ID = 0
+        try testing.expectEqual(@as(u13, 0), cell.comb2); // dy = 0
+    }
+    {
+        const cell = screen.grid.getCell(0, 11);
+        try testing.expect(cell.attr.sixel);
+        try testing.expectEqual(@as(u21, 0), cell.char);
+        try testing.expectEqual(@as(u13, 1), cell.comb2); // dy = 1
+    }
+
+    // Scroll up by 1 line (screen.scrollUp)
+    try screen.scrollUp(1);
+    // Cells should shift up to 9 and 10
+    {
+        const cell = screen.grid.getCell(0, 9);
+        try testing.expect(cell.attr.sixel);
+        try testing.expectEqual(@as(u21, 0), cell.char);
+        try testing.expectEqual(@as(u13, 0), cell.comb2);
+    }
+    {
+        const cell = screen.grid.getCell(0, 10);
+        try testing.expect(cell.attr.sixel);
+        try testing.expectEqual(@as(u21, 0), cell.char);
+        try testing.expectEqual(@as(u13, 1), cell.comb2);
+    }
+}
+
+test "sixel clearing" {
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+
+    // Add a sixel image at row 10 (height 40px = 2 rows, so it covers rows 10, 11)
+    screen.cursor.y = 10;
+    screen.cursor.x = 0;
+    const raw_dcs1 = try testing.allocator.dupe(u8, "\x1bPq\x1b\\");
+    try screen.addSixelImage(raw_dcs1, 100, 40);
+
+    // Add a sixel image at row 15 (height 40px = 2 rows, so it covers rows 15, 16)
+    screen.cursor.y = 15;
+    screen.cursor.x = 0;
+    const raw_dcs2 = try testing.allocator.dupe(u8, "\x1bPq\x1b\\");
+    try screen.addSixelImage(raw_dcs2, 100, 40);
+
+    try testing.expect(screen.sixel_images[0] != null);
+    try testing.expect(screen.sixel_images[1] != null);
+
+    // Test eraseDisplay(0) (clear from cursor down)
+    // Position cursor at row 14.
+    // The image at 10-11 should NOT be removed from registry (row 11 < 14).
+    // The image at 15-16 should be removed since its row 15 >= 14 overlaps.
+    screen.cursor.y = 14;
+    screen.eraseDisplay(0);
+    try testing.expect(screen.sixel_images[0] != null);
+    try testing.expect(screen.sixel_images[1] == null);
+
+    // Add back second image
+    screen.cursor.y = 15;
+    screen.cursor.x = 0;
+    const raw_dcs3 = try testing.allocator.dupe(u8, "\x1bPq\x1b\\");
+    try screen.addSixelImage(raw_dcs3, 100, 40); // this goes to ID 2 (slot 2)
+    try testing.expect(screen.sixel_images[2] != null);
+
+    // Test eraseDisplay(1) (clear from top to cursor)
+    // Position cursor at row 12.
+    // The image at 10 (row 10 <= 12) should be removed.
+    // The image at 15 (row 15 <= 12 is false) should NOT be removed.
+    screen.cursor.y = 12;
+    screen.eraseDisplay(1);
+    try testing.expect(screen.sixel_images[0] == null);
+    try testing.expect(screen.sixel_images[2] != null);
+
+    // Test eraseDisplay(2) (clear whole screen)
+    screen.eraseDisplay(2);
+    try testing.expect(screen.sixel_images[2] == null);
+
+    // Add an image back for clearScreen test
+    screen.cursor.y = 5;
+    screen.cursor.x = 0;
+    const raw_dcs4 = try testing.allocator.dupe(u8, "\x1bPq\x1b\\");
+    try screen.addSixelImage(raw_dcs4, 100, 40); // ID 3 (slot 3)
+    try testing.expect(screen.sixel_images[3] != null);
+
+    screen.clearScreen();
+    try testing.expect(screen.sixel_images[3] == null);
+
+    // Add an image back for resetHard test
+    screen.cursor.y = 5;
+    screen.cursor.x = 0;
+    const raw_dcs5 = try testing.allocator.dupe(u8, "\x1bPq\x1b\\");
+    try screen.addSixelImage(raw_dcs5, 100, 40); // ID 4 (slot 4)
+    try testing.expect(screen.sixel_images[4] != null);
+
+    try screen.resetHard();
+    try testing.expect(screen.sixel_images[4] == null);
+}
+
