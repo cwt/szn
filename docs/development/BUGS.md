@@ -2579,6 +2579,13 @@ The design stores `comb1` (13-bit `dx`) and `comb2` (13-bit `dy`) in **every** s
 
 `eraseDisplay` sets `force_clear = true` whenever `had_sixels` is true — i.e. whenever **any** image exists in the registry, regardless of whether the erased region (`mode` 0/1/2/3) actually overlapped it. This guarantees a full `\x1b[2J` repaint (see #196) on every erase operation in a session that has ever shown sixel, even for trivial `clear`-style erases in a different region. The `force_clear` should be set only when an image that overlaps the erased region was actually removed.
 
+### 202. Sixel bleeds over the split border and gets stuck when scrolled above the pane
+**File:** `src/server/render.zig:734–744` (`renderSixelImages`)
+**Severity:** HIGH
+**Status:** ✅ FIXED — visibility and draw position now use the *pane* rectangle (`pb.x/y/w/h`) instead of the whole-terminal bounds (`self.sx`/`self.sy`). The image is drawn at its true (unclamped) anchor only while it is **fully contained** in the pane, and is dropped (`current[slot] == null`) the moment it scrolls past any pane edge, so the existing erase-below at the previous anchor clears the overlay. This lets the image scroll up with the pane's content (no pinning) while never bleeding over a neighbouring pane or getting stuck as a ghost on the split border. Added unit test `renderSixelImages clips sixel to pane and erases when scrolled above the border — bug #202`.
+
+`renderSixelImages` computes `visible` against the entire terminal and clamps the draw anchor with `@max(0, abs_row_i)`. For a sixel in the lower split pane, pressing Enter scrolls content up and `shiftSixelAnchors(-1)` moves the image anchor negative. Once `abs_row_i` goes below 0 the `(abs_row_i + cell_rows) > 0` check still passes, so the image is drawn — but `@max(0, abs_row_i)` pins the anchor to **terminal row 0**, painting the image over the upper pane as if it were on a layer above the split. Because every subsequent frame redraws at the same clamped `(col, 0)` anchor, `cur == prev` and no erase is emitted, leaving a ghost **stuck on the split border** until `reset`/`clear`. Clipping to the pane rectangle and requiring full containment lets the image scroll up with the content (it is drawn at its true anchor while inside the pane) and be erased cleanly the moment it crosses a pane edge, so it neither bleeds into a neighbour pane nor sticks.
+
 ---
 
 ## Updated Summary
@@ -2589,4 +2596,4 @@ The design stores `comb1` (13-bit `dx`) and `comb2` (13-bit `dy`) in **every** s
 | High | 45 (43+2) | 44 | 1 | **0** |
 | Medium | 69 (65+4) | 67 | 2 | **0** |
 | Low | 63 (61+2) | 60 | 3 | **0** |
-| Total | 201 (193+8) | **192** | **9** | **0** |
+| Total | 202 (193+9) | **193** | **9** | **0** |

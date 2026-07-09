@@ -344,6 +344,48 @@ fn runServerDaemon(allocator: std.mem.Allocator) Error!void {
     server.shutdownServer();
 }
 
+/// Synchronously query the terminal for text-area pixel size (CSI 14 t)
+/// and send the computed cell dimensions to the server. Returns true if a
+/// valid response was received and forwarded.
+fn queryCellSize(server_fd: i32, stdout_fd: i32, stdin_fd: i32, sx: u32, sy: u32) bool {
+    _ = c.write(stdout_fd, "\x1b[14t", 5);
+
+    var pollfd: [1]std.posix.pollfd = .{.{ .fd = stdin_fd, .events = @as(i16, @intCast(std.posix.POLL.IN)), .revents = 0 }};
+    const rc = std.posix.poll(&pollfd, 200) catch return false;
+    if (rc < 1) return false;
+
+    var buf: [64]u8 = undefined;
+    const n = c.read(stdin_fd, &buf, buf.len);
+    if (n <= 0) return false;
+    const len: usize = @intCast(n);
+
+    if (len < 6 or buf[0] != 0x1b or buf[1] != '[' or buf[2] != '4' or buf[3] != ';') return false;
+    var i: usize = 4;
+    var px_h: u32 = 0;
+    while (i < len and buf[i] >= '0' and buf[i] <= '9') : (i += 1) {
+        px_h = px_h * 10 + @as(u32, buf[i] - '0');
+    }
+    if (i >= len or buf[i] != ';') return false;
+    i += 1;
+    var px_w: u32 = 0;
+    while (i < len and buf[i] >= '0' and buf[i] <= '9') : (i += 1) {
+        px_w = px_w * 10 + @as(u32, buf[i] - '0');
+    }
+    if (i >= len or buf[i] != 't' or sy == 0 or sx == 0) return false;
+
+    const cell_h: u32 = @max(px_h / sy, 1);
+    const cell_w: u32 = @max(px_w / sx, 1);
+
+    var cell_data: [8]u8 = undefined;
+    std.mem.writeInt(u32, cell_data[0..4], cell_h, .little);
+    std.mem.writeInt(u32, cell_data[4..8], cell_w, .little);
+    const cs_pkt = protocol.Packet.make(.cell_size, &cell_data);
+    var cs_buf: [128]u8 = undefined;
+    const cs_ser = cs_pkt.serialize(&cs_buf);
+    writeAll(server_fd, cs_ser) catch return false;
+    return true;
+}
+
 fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
     const stdin_fd = c.STDIN_FILENO;
     const stdout_fd = c.STDOUT_FILENO;
@@ -427,7 +469,8 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
             var stdin_buf: [4096]u8 = undefined;
             const n = c.read(stdin_fd, &stdin_buf, stdin_buf.len);
             if (n > 0) {
-                const sd_pkt = protocol.Packet.make(.stdin_data, stdin_buf[0..@as(usize, @intCast(n))]);
+            const len: usize = @intCast(n);
+                const sd_pkt = protocol.Packet.make(.stdin_data, stdin_buf[0..len]);
                 var sd_buf: [4096 + 5]u8 = undefined;
                 const sd_ser = sd_pkt.serialize(&sd_buf);
                 try writeAll(server_fd, sd_ser);
@@ -484,6 +527,9 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
                     },
                     .detach => {
                         running = false;
+                    },
+                    .request_cell_size => {
+                        _ = queryCellSize(server_fd, stdout_fd, stdin_fd, sx, sy);
                     },
                     else => {
                         std.log.warn("client ignored unhandled message type: {any}", .{msg_type});

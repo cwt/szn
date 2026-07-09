@@ -74,7 +74,7 @@ pub const Display = struct {
         }
     }
 
-    fn writeBytes(self: Display, bytes: []const u8) Error!void {
+    pub fn writeBytes(self: Display, bytes: []const u8) Error!void {
         if (self.capture) |cap| {
             try cap.appendSlice(self.capture_allocator.?, bytes);
         } else {
@@ -216,17 +216,19 @@ pub const Display = struct {
                             const img_pane_col = @as(i32, @intCast(img.anchor_col));
                             const img_pane_row = @as(i32, @intCast(img.anchor_row));
 
-                            // Keep the image whenever ANY part of it still
-                            // intersects the pane. Only clear it once it has
-                            // scrolled completely out of bounds (bug #197 —
-                            // previously a single off-screen row hid the whole
-                            // image, dropping its still-visible remainder).
-                            const intersects = (img_pane_col + @as(i32, @intCast(cell_cols))) > 0 and
-                                (img_pane_row + @as(i32, @intCast(cell_rows))) > 0 and
-                                img_pane_col < @as(i32, @intCast(pb.w)) and
-                                img_pane_row < @as(i32, @intCast(pb.h));
+                            // Mark the cell as sixel only when the image is
+                            // *fully contained* in this pane, matching the
+                            // rule used by renderSixelImages for the actual
+                            // sixel draw. When the two disagree you get
+                            // artifacts: either text drawn over the sixel
+                            // overlay, or blank cells without sixel — which
+                            // appears as a "tail" / ghost on screen (bug #202).
+                            const contained_img = img_pane_col >= 0 and
+                                img_pane_col + @as(i32, @intCast(cell_cols)) <= @as(i32, @intCast(pb.w)) and
+                                img_pane_row >= 0 and
+                                img_pane_row + @as(i32, @intCast(cell_rows)) <= @as(i32, @intCast(pb.h));
 
-                            if (!intersects) {
+                            if (!contained_img) {
                                 cell.attr.sixel = false;
                                 cell.char = 0;
                                 cell.comb1 = 0;
@@ -673,22 +675,44 @@ pub const Display = struct {
     /// (bug #195). To fix this we track, per pane Screen, the anchor each slot
     /// was last drawn at (`sixel_last_anchor`). Each frame we:
     ///   1. erase any slot whose anchor moved or that disappeared (a DECSIXEL
-    ///      erase-below operation positioned at the *previous* anchor), and
+    ///      Ps=0 erase-from-cursor-to-end operation, positioned at the
     ///   2. draw every currently-visible image at its current anchor.
     /// All erases happen before all draws so a redraw always restores any
     /// overlay pixels the erase may have cleared.
     fn renderSixelImages(self: Display, bounds: []const PaneBounds) Error!void {
+        // Phase 0 — unconditionally clear the entire sixel graphics layer once
+        // per frame if any pane has sixel images OR if any were drawn last frame.
+        // This is the most robust approach: it eliminates any dependency on
+        // cursor positioning, per-slot tracking, or terminal-specific DECSED
+        // behavior.
+        var needs_erase = false;
+        for (bounds) |pb| {
+            // Check if this pane has any sixel images in the registry.
+            for (pb.pane.screen.sixel_images) |opt_img| {
+                if (opt_img != null) {
+                    needs_erase = true;
+                    break;
+                }
+            }
+            // Check if this pane drew any sixel images last frame.
+            for (pb.pane.screen.sixel_last_anchor) |opt_anchor| {
+                if (opt_anchor != null) {
+                    needs_erase = true;
+                    break;
+                }
+            }
+            if (needs_erase) break;
+        }
+
+        if (needs_erase) {
+            try self.writeBytes("\x1bP2q\x1b\\"); // DECSIXEL erase all (Ps=2)
+        }
+
         for (bounds) |pb| {
             const screen = &pb.pane.screen;
             const pane_h = pb.h;
             const pane_w = pb.w;
 
-            // Deduplicate by registry slot *per pane*. Each pane owns its own
-            // SixelImage ring buffer, so the "already drawn this frame" set must
-            // not be shared across panes — otherwise a second pane whose image
-            // happens to occupy the same slot index would be silently skipped
-            // (bug #194). We record the clamped draw anchor of every visible
-            // image this frame.
             var current: [64]?SixelAnchor = [_]?SixelAnchor{null} ** 64;
 
             var y: u32 = 0;
@@ -719,28 +743,26 @@ pub const Display = struct {
                                 const cell_rows = if (img.px_height > 0) (img.px_height + screen.cell_px_height - 1) / screen.cell_px_height else 1;
                                 const cell_cols = if (img.px_width > 0) (img.px_width + screen.cell_px_width - 1) / screen.cell_px_width else 1;
 
-                                // Position derived from the image's stored
-                                // anchor (bug #200), not per-cell comb offsets.
                                 const img_pane_col = @as(i32, @intCast(img.anchor_col));
                                 const img_pane_row = @as(i32, @intCast(img.anchor_row));
 
-                                // Partial-scroll handling (bug #197): draw the
-                                // image whenever it overlaps the visible outer
-                                // terminal. The terminal clips any part that
-                                // extends past the top/left edge, so we anchor
-                                // at the clamped position and let the remaining
-                                // visible rows/cols render instead of dropping
-                                // the entire image.
-                                const abs_col_i = @as(i32, @intCast(pb.x)) + img_pane_col;
-                                const abs_row_i = @as(i32, @intCast(pb.y)) + img_pane_row;
+                                const pane_left = @as(i32, @intCast(pb.x));
+                                const pane_top = @as(i32, @intCast(pb.y));
+                                const pane_right = pane_left + @as(i32, @intCast(pane_w));
+                                const pane_bottom = pane_top + @as(i32, @intCast(pane_h));
 
-                                const visible = (abs_col_i + @as(i32, @intCast(cell_cols))) > 0 and
-                                    abs_col_i < @as(i32, @intCast(self.sx)) and
-                                    (abs_row_i + @as(i32, @intCast(cell_rows))) > 0 and
-                                    abs_row_i < @as(i32, @intCast(self.sy -| 1));
+                                const img_left = pane_left + img_pane_col;
+                                const img_top = pane_top + img_pane_row;
+                                const img_right = img_left + @as(i32, @intCast(cell_cols));
+                                const img_bottom = img_top + @as(i32, @intCast(cell_rows));
 
-                                if (visible) {
-                                    current[slot] = .{ .col = @max(0, abs_col_i), .row = @max(0, abs_row_i) };
+                                const contained = img_left >= pane_left and
+                                    img_right <= pane_right and
+                                    img_top >= pane_top and
+                                    img_bottom <= pane_bottom;
+
+                                if (contained) {
+                                    current[slot] = .{ .col = img_left, .row = img_top };
                                 }
                             }
                         }
@@ -748,22 +770,8 @@ pub const Display = struct {
                 }
             }
 
-            // Phase 1 — erase every slot that was drawn last frame but has moved
-            // or disappeared. The DECSIXEL erase-below operation (`ESC P 1 q`)
-            // positioned at the previous anchor clears the overlay pixels the
-            // text-grid `CSI X` can never reach, removing the smear/ghost.
-            for (screen.sixel_last_anchor, 0..) |prev, slot| {
-                if (prev == null) continue;
-                const cur = current[slot];
-                if (cur == null or cur.?.col != prev.?.col or cur.?.row != prev.?.row) {
-                    const px = @as(u32, @intCast(prev.?.col));
-                    const py = @as(u32, @intCast(prev.?.row));
-                    try self.moveTo(px, py);
-                    try self.writeBytes("\x1bP1q\x1b\\"); // DECSIXEL erase-below
-                }
-            }
-
             // Phase 2 — draw every currently-visible image at its anchor.
+            // (No per-slot erase needed since we cleared everything in phase 0.)
             for (current, 0..) |cur, slot| {
                 if (cur == null) continue;
                 const img = screen.sixel_images[slot].?;
@@ -1147,6 +1155,56 @@ test "renderSixelImages keeps partially-scrolled sixel visible — bug #197" {
     try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1bPqPARTIAL\x1b\\") != null);
 }
 
+test "renderSixelImages clips sixel to pane and erases when scrolled above the border — bug #202" {
+    const allocator = std.testing.allocator;
+    var capture_buf: std.ArrayList(u8) = .empty;
+    defer capture_buf.deinit(allocator);
+
+    const display = Display{
+        .fd = -1,
+        .sx = 80,
+        .sy = 24,
+        .capture = &capture_buf,
+        .capture_allocator = allocator,
+    };
+
+    // A 5×10 cell image (50×200 px) in the LOWER pane (terminal rows 12..22).
+    var win = try Window.init(allocator, 1, "lower", 80, 11, null);
+    defer win.deinit(allocator);
+    const pane = win.active_pane.?;
+
+    const raw = try allocator.dupe(u8, "\x1bPqCLIP\x1b\\");
+    pane.screen.sixel_images[0] = .{
+        .data = raw,
+        .col = 0,
+        .row = 0,
+        .px_width = 50,
+        .px_height = 200,
+        .id = 0,
+        .anchor_col = 0,
+        .anchor_row = 0,
+    };
+    var cell = &pane.screen.grid.getLineMut(0).cells.items[0];
+    cell.attr.sixel = true;
+    cell.char = 0;
+
+    const bounds = [_]PaneBounds{.{ .pane = pane, .x = 0, .y = 12, .w = 80, .h = 11 }};
+
+    // Pass 1: image fully inside the lower pane — it must be drawn.
+    try display.renderSixelImages(&bounds);
+    try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1bPqCLIP\x1b\\") != null);
+
+    // Pass 2: scroll the image 13 lines up so its whole body is above the pane
+    // top. It must be erased (not drawn at a pinned terminal-row-0 position,
+    // which would bleed over the upper pane / get stuck on the split border).
+    pane.screen.sixel_images[0].?.anchor_row = -13;
+
+    capture_buf.clearRetainingCapacity();
+    try display.renderSixelImages(&bounds);
+    try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1bPqCLIP\x1b\\") == null);
+    try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1bP2q\x1b\\") != null);
+}
+
 test "renderSixelImages erases previous position when image scrolls — bug #195" {
     const allocator = std.testing.allocator;
     var capture_buf: std.ArrayList(u8) = .empty;
@@ -1171,12 +1229,12 @@ test "renderSixelImages erases previous position when image scrolls — bug #195
     const raw = try allocator.dupe(u8, "\x1bPqSM\x1b\\");
     try pane.screen.addSixelImage(raw, 10, 20); // anchor (0, 10)
 
-    // First render draws the image at its anchor and records last_anchor.
+    // First render draws the image at its anchor.
     const bounds = [_]PaneBounds{.{ .pane = pane, .x = 0, .y = 0, .w = 80, .h = 23 }};
     try display.renderSixelImages(&bounds);
     try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1bPqSM\x1b\\") != null);
-    // No erase on the very first frame (nothing was drawn previously).
-    try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1bP1q\x1b\\") == null);
+    // Erase-all is emitted on the first frame since the image exists in the registry.
+    try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1bP2q\x1b\\") != null);
 
     // Scroll the pane up by one line so the image anchor moves to row 9.
     pane.screen.cursor.x = 0;
@@ -1186,11 +1244,8 @@ test "renderSixelImages erases previous position when image scrolls — bug #195
     capture_buf.clearRetainingCapacity();
     try display.renderSixelImages(&bounds);
 
-    // The old anchor (row 11, col 1 -> 1-indexed) must have been erased with a
-    // DECSIXEL erase-below, and the image must have been redrawn at its new
-    // anchor — proving the smear trail is cleared instead of left behind.
-    try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1b[11;1H") != null);
-    try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1bP1q\x1b\\") != null);
+    // Erase-all is emitted, and the image is redrawn at its new anchor.
+    try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1bP2q\x1b\\") != null);
     try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1bPqSM\x1b\\") != null);
 }
 
@@ -1227,10 +1282,9 @@ test "renderSixelImages erases removed image overlay — bug #195" {
     try display.renderSixelImages(&bounds);
 
     // The previously drawn overlay must be erased (no image redrawn, but an
-    // erase-below is emitted at the old anchor row 6, col 1).
+    // erase-all is emitted to clear the sixel layer).
     try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1bPqGHOST\x1b\\") == null);
-    try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1b[6;1H") != null);
-    try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1bP1q\x1b\\") != null);
+    try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1bP2q\x1b\\") != null);
 }
 
 test "renderSixelImages derives position from image anchor not cell comb — bug #200" {
@@ -1292,11 +1346,13 @@ test "sixel rendering with scrolling" {
     // Position cursor at the pane bottom row (22)
     pane.screen.cursor.y = 22;
 
-    // Call addSixelImage with a 15-row height image (300px)
+    // Call addSixelImage with a 15-row height image (300px with cell_px_height=20)
     const raw_dcs = try allocator.dupe(u8, "\x1bPqTEST\x1b\\");
     try pane.screen.addSixelImage(raw_dcs, 100, 300);
 
-    // Verify cell coordinates after addSixelImage (should start at 22 - 15 = 7)
+    // Verify cell coordinates after addSixelImage. The cursor was on the last
+    // line (22); a 15-row image anchored there scrolls up by 15 (14 to fit plus
+    // 1 so the cursor lands on the last content line), putting its top at 7.
     {
         const cell = pane.screen.grid.getCell(0, 7);
         try std.testing.expect(cell.attr.sixel);
@@ -1325,8 +1381,8 @@ test "sixel rendering with scrolling" {
     }};
     try display.renderSixelImages(&bounds);
 
-    // Verify output:
-    // Move cursor to row 7 (which is 1-indexed, i.e., 7H, since top-left is at row 6)
+    // Verify output: after the single scroll the image top is at pane row 6
+    // (0-indexed), i.e. 1-indexed 7H.
     try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1b[7;1H") != null);
     // Verbatim DCS bytes
     try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1bPqTEST\x1b\\") != null);
@@ -1372,3 +1428,4 @@ test "sixel rendering with scrolling" {
     // Verify output: DCS bytes should NOT be in the output
     try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1bPqTEST\x1b\\") == null);
 }
+

@@ -119,6 +119,20 @@ pub const Server = struct {
     mouse_autoscroll_pane: ?*Pane = null,
     ignore_unknown_msg_warn: bool = false,
 
+    /// Cell pixel dimensions, learned from the display client's XTWINOPS
+    /// response. A terminal property, so the same value applies to every pane.
+    /// Stored on the server because the `cell_size` message can arrive before
+    /// any session/window/pane exists (it is sent at startup); the value is
+    /// then applied to every Screen as it is created.
+    cell_px_height: u32 = 20,
+    cell_px_width: u32 = 10,
+
+    /// When true, a sixel was added to a screen and the server hasn't yet
+    /// asked the display client to query the terminal for current cell pixel
+    /// dimensions. Set true in handlePtyEvent after feedPty; cleared after
+    /// sending request_cell_size to all display clients.
+    needs_cell_size_refresh: bool = false,
+
     pub fn init(allocator: std.mem.Allocator) ServerError!Server {
         const key_binding = @import("../key_binding.zig");
         const key_mod = @import("../key.zig");
@@ -376,9 +390,17 @@ pub const Server = struct {
                 self.loop.removeFd(ev.fd);
                 exited = true;
             };
+            if (!exited and pane.screen.cell_size_needs_refresh) {
+                self.needs_cell_size_refresh = true;
+                pane.screen.cell_size_needs_refresh = false;
+            }
         } else if (has_hup) {
             // Read any pending data before the fd leaves the poll set.
             _ = pane.feedPty() catch {};
+            if (pane.screen.cell_size_needs_refresh) {
+                self.needs_cell_size_refresh = true;
+                pane.screen.cell_size_needs_refresh = false;
+            }
             self.loop.removeFd(ev.fd);
             // On Linux the kernel can report POLLHUP when the foreground
             // process group goes empty (e.g. vim/htop just exited) while the
@@ -1888,6 +1910,19 @@ pub const Server = struct {
                         self.recalculateMinimumSize();
                     }
                 },
+                .cell_size => {
+                    if (pkt.data.len >= 8) {
+                        const height_px = std.mem.readInt(u32, pkt.data[0..4], .little);
+                        const width_px = std.mem.readInt(u32, pkt.data[4..8], .little);
+                        // Store on the server so the value survives session/window
+                        // (re)creation, and apply to every existing screen. The
+                        // message is sent at startup — often before any session
+                        // exists — so the active-pane branch alone would drop it.
+                        self.cell_px_height = height_px;
+                        self.cell_px_width = width_px;
+                        self.applyCellSizeToAllScreens();
+                    }
+                },
                 .detach => {
                     for (self.display_clients.items, 0..) |*dc, idx| {
                         if (dc.fd == fd) {
@@ -1950,7 +1985,20 @@ pub const Server = struct {
         }
     }
 
+    pub fn sendRequestCellSize(self: *Server) void {
+        if (!self.needs_cell_size_refresh) return;
+        self.needs_cell_size_refresh = false;
+        const pkt = protocol.Packet.make(.request_cell_size, "");
+        var hdr: [5]u8 = undefined;
+        pkt.header.encode(&hdr);
+        const hdr_slice: []const u8 = hdr[0..];
+        for (self.display_clients.items) |dc| {
+            _ = c.write(dc.fd, hdr_slice.ptr, hdr_slice.len);
+        }
+    }
+
     pub fn renderToDisplayClient(self: *Server) void {
+        self.sendRequestCellSize();
         const session = self.activeSession() orelse return;
         const window = session.active_window orelse return;
         const pane = window.active_pane orelse return;
@@ -2105,6 +2153,14 @@ pub const Server = struct {
         errdefer self.allocator.destroy(session);
         try session.init(self.allocator, self.next_session_id, name, width, height, &self.global_options, &self.global_window_options);
         self.next_session_id += 1;
+        // Apply the learned cell pixel size to the freshly-created screen(s),
+        // since the cell_size message may have arrived before this session
+        // existed (it is sent at startup).
+        for (session.windows.items) |w| {
+            for (w.panes.items) |p| {
+                p.screen.updateCellSize(self.cell_px_height, self.cell_px_width);
+            }
+        }
         try self.sessions.append(self.allocator, session);
         self.dirty = true;
         return session;
@@ -2137,6 +2193,20 @@ pub const Server = struct {
             if (std.mem.eql(u8, s.name, name)) return s;
         }
         return null;
+    }
+
+    /// Apply the server's learned cell pixel size to every Screen currently
+    /// alive (all sessions → windows → panes). Called whenever a `cell_size`
+    /// message arrives and after each new session is created, so the value is
+    /// never lost to screen (re)creation.
+    pub fn applyCellSizeToAllScreens(self: *Server) void {
+        for (self.sessions.items) |s| {
+            for (s.windows.items) |w| {
+                for (w.panes.items) |p| {
+                    p.screen.updateCellSize(self.cell_px_height, self.cell_px_width);
+                }
+            }
+        }
     }
 
     pub fn applyDirectives(self: *Server, parsed: *const @import("../cfg.zig").ParseResult) ServerError!void {

@@ -111,6 +111,10 @@ pub const Screen = struct {
     /// but should be set from the real terminal (e.g. DECSLPP / font metrics).
     cell_px_width: u32 = 10,
     cell_px_height: u32 = 20,
+    /// Set true when a sixel is added, signalling the server to query the
+    /// display terminal for current cell pixel dimensions before the next
+    /// render. The server clears this after sending the request.
+    cell_size_needs_refresh: bool = false,
     force_clear: bool = false,
     last_char: ?u21 = null,
     extkeys: u8 = 0,
@@ -136,6 +140,18 @@ pub const Screen = struct {
         }
     }
 
+    /// Update cell pixel dimensions from terminal window size query response.
+    /// Call this when receiving XTWINOPS response (CSI 4 ; height ; width t).
+    /// Update the per-cell pixel dimensions. These are properties of the
+    /// physical terminal, so the SAME value applies to every pane regardless
+    /// of how the window is split. The display client computes them from the
+    /// XTWINOPS window-pixel response divided by the full display grid size and
+    /// sends the resulting cell dimensions here directly (no further division).
+    pub fn updateCellSize(self: *Screen, cell_height_px: u32, cell_width_px: u32) void {
+        if (cell_height_px > 0) self.cell_px_height = cell_height_px;
+        if (cell_width_px > 0) self.cell_px_width = cell_width_px;
+    }
+
     /// Store a sixel image at the current cursor position.
     /// `dcs_bytes` must be the complete raw DCS sequence (ESC P ... ESC \).
     /// Ownership is transferred — `dcs_bytes` must have been allocated with
@@ -146,6 +162,7 @@ pub const Screen = struct {
         px_width: u32,
         px_height: u32,
     ) Error!void {
+        self.cell_size_needs_refresh = true;
         const id = self.next_sixel_id;
         self.next_sixel_id += 1;
 
@@ -217,15 +234,27 @@ pub const Screen = struct {
         const cell_rows = if (px_height > 0) (px_height + self.cell_px_height - 1) / self.cell_px_height else 1;
         const cell_cols = if (px_width > 0) (px_width + self.cell_px_width - 1) / self.cell_px_width else 1;
 
-        // Populate cells in the bounding box
+        // Place marker cells row by row, scrolling the grid up as needed so that
+        // *every* row of the image gets a complete set of marker cells even when
+        // the cursor starts at (or near) the bottom line. Pre-scrolling here
+        // keeps the stored anchor in lock-step with the marker rows: previously
+        // an image added at the last line left only a single marker row (the
+        // `grid_y >= height` check `break`ed before the others), which desynced
+        // the sixel overlay from its cells and produced trailing artifacts
+        // (bug: first image with cursor on the last line).
+        const anchor_col = self.cursor.x;
         var y: u32 = 0;
         while (y < cell_rows) : (y += 1) {
-            const grid_y = self.cursor.y + y;
-            if (grid_y >= self.grid.height) break;
+            if (self.cursor.y >= self.grid.height) {
+                try self.grid.scrollUp();
+                self.shiftSixelAnchors(-1);
+                self.cursor.y = self.grid.height - 1;
+            }
+            const grid_y = self.cursor.y;
             const line = self.grid.getLineMut(grid_y);
             var x: u32 = 0;
             while (x < cell_cols) : (x += 1) {
-                const grid_x = self.cursor.x + x;
+                const grid_x = anchor_col + x;
                 if (grid_x >= self.grid.width) break;
                 if (grid_x < line.cells.items.len) {
                     var cell = &line.cells.items[grid_x];
@@ -235,18 +264,21 @@ pub const Screen = struct {
                     cell.comb2 = @intCast(y & 0x1FFF);
                 }
             }
+            self.cursor.y += 1;
         }
 
-        // Advance cursor down by the number of character rows the image spans.
-        var r: u32 = 0;
-        while (r < cell_rows) : (r += 1) {
-            if (self.cursor.y + 1 < self.grid.height) {
-                self.cursor.y += 1;
-            } else {
-                try self.grid.scrollUp();
-                self.shiftSixelAnchors(-1);
-            }
+        // Leave the cursor on the line just below the image so the next write
+        // scrolls it into view if it ran past the bottom. If the image was
+        // added at (or near) the last line, the cursor can end up ON the bottom
+        // line / status bar. Scroll the image up one more line so the cursor
+        // sits on the last *content* line, just below the image (bug: cursor
+        // landed on the status bar, hiding the shell prompt).
+        while (self.cursor.y >= self.grid.height) {
+            try self.grid.scrollUp();
+            self.shiftSixelAnchors(-1);
+            self.cursor.y = self.grid.height - 1;
         }
+
         self.cursor.x = 0;
         self.dirty = true;
     }
@@ -828,6 +860,9 @@ pub const Screen = struct {
                 @memset(last.cells.items, fill);
                 last.dirty = true;
             }
+            // Sixel images anchored within the scroll region must follow the
+            // content shift so their anchors stay in sync with their cells.
+            self.shiftSixelAnchors(-1);
             self.dirty = true;
         } else {
             const count = @min(n, self.grid.height);
@@ -1875,4 +1910,5 @@ test "sixel registry wrapping keeps referenced images — bug #198" {
     try testing.expect(screen.sixel_images[slot64.?] != null);
     try testing.expectEqual(@as(u32, 64), screen.sixel_images[slot64.?].?.id);
 }
+
 

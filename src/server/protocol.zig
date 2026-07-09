@@ -16,11 +16,13 @@ pub const MessageType = enum(u8) {
     resize = 0x05,
     detach = 0x06,
     stdin_data = 0x08,
+    cell_size = 0x09, // Payload: u32 cell_height_px, u32 cell_width_px (little-endian)
 
     ready = 0x80,
     output = 0x81,
     exit = 0x82,
     err = 0x83,
+    request_cell_size = 0x84, // Server → client: please query CSI 14 t and reply with cell_size
 
     pub fn isRequest(self: MessageType) bool {
         return @intFromEnum(self) < 0x80;
@@ -33,10 +35,12 @@ pub const MessageType = enum(u8) {
             0x05 => .resize,
             0x06 => .detach,
             0x08 => .stdin_data,
+            0x09 => .cell_size,
             0x80 => .ready,
             0x81 => .output,
             0x82 => .exit,
             0x83 => .err,
+            0x84 => .request_cell_size,
             else => return null,
         };
     }
@@ -137,14 +141,14 @@ test "message type fromByte rejects invalid values" {
     try testing.expect(MessageType.fromByte(0x02) == null); // identify_cwd removed
     try testing.expect(MessageType.fromByte(0x03) == null); // identify_done removed
     try testing.expect(MessageType.fromByte(0x07) == null); // shell removed
-    try testing.expect(MessageType.fromByte(0x09) == null);
     try testing.expect(MessageType.fromByte(0x7F) == null);
-    try testing.expect(MessageType.fromByte(0x84) == null); // notify removed
+    try testing.expectEqual(MessageType.request_cell_size, MessageType.fromByte(0x84).?);
     try testing.expect(MessageType.fromByte(0xFF) == null);
     try testing.expectEqual(MessageType.command, MessageType.fromByte(0x04).?);
     try testing.expectEqual(MessageType.ready, MessageType.fromByte(0x80).?);
     try testing.expectEqual(MessageType.detach, MessageType.fromByte(0x06).?);
     try testing.expectEqual(MessageType.output, MessageType.fromByte(0x81).?);
+    try testing.expectEqual(MessageType.cell_size, MessageType.fromByte(0x09).?);
 }
 
 test "message type request detection" {
