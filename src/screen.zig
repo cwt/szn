@@ -35,6 +35,20 @@ pub const SixelImage = struct {
     }
 };
 
+/// A sixel captured from the PTY but not yet placed because the terminal's
+/// real cell pixel size has not been measured yet. Held until a `cell_size`
+/// response arrives (see #204) so the cursor advance / marker rows use the
+/// correct footprint instead of the built-in defaults.
+pub const PendingSixel = struct {
+    data: []u8,
+    px_width: u32,
+    px_height: u32,
+
+    pub fn deinit(self: PendingSixel, allocator: std.mem.Allocator) void {
+        allocator.free(self.data);
+    }
+};
+
 /// Pane-relative top-left cell anchor (clamped to >= 0) an image was last
 /// drawn at. Used by the renderer to erase a moved/removed image's overlay
 /// pixels (bug #195).
@@ -111,6 +125,13 @@ pub const Screen = struct {
     /// but should be set from the real terminal (e.g. DECSLPP / font metrics).
     cell_px_width: u32 = 10,
     cell_px_height: u32 = 20,
+    /// True once `cell_px_width/height` hold a measured value rather than the
+    /// built-in defaults. The early oversized-image drop in `addSixelImage`
+    /// waits for this so it never mis-judges an image against stale defaults.
+    cell_size_known: bool = false,
+    /// A sixel buffered while `cell_size_known` is false. The server pauses
+    /// this pane's PTY feed and bounds the wait with its own timer (see #204).
+    pending_sixel: ?PendingSixel = null,
     /// Set true when a sixel is added, signalling the server to query the
     /// display terminal for current cell pixel dimensions before the next
     /// render. The server clears this after sending the request.
@@ -133,6 +154,7 @@ pub const Screen = struct {
     pub fn deinit(self: *Screen) void {
         self.grid.deinit();
         if (self.alt_grid) |*g| g.deinit();
+        if (self.pending_sixel) |p| p.deinit(self.allocator);
         for (&self.sixel_images) |*opt_img| {
             if (opt_img.*) |*img| {
                 img.deinit(self.allocator);
@@ -150,6 +172,24 @@ pub const Screen = struct {
     pub fn updateCellSize(self: *Screen, cell_height_px: u32, cell_width_px: u32) void {
         if (cell_height_px > 0) self.cell_px_height = cell_height_px;
         if (cell_width_px > 0) self.cell_px_width = cell_width_px;
+        // A measured value just arrived: replay any sixel we buffered while
+        // waiting so it gets placed with the correct footprint (see #204).
+        self.flushPendingSixel();
+    }
+
+    /// Place the sixel buffered in `pending_sixel` now that the cell size is
+    /// known. Must only be called once `cell_size_known` is true. Safe to call
+    /// when there is nothing pending.
+    pub fn flushPendingSixel(self: *Screen) void {
+        const pending = self.pending_sixel orelse return;
+        self.pending_sixel = null;
+        if (!self.cell_size_known) return;
+        self.placeSixelImage(pending.data, pending.px_width, pending.px_height) catch |e| {
+            // Ownership of `data` stays with the slot if placement assigned it
+            // before failing; otherwise it is lost here. Either way nothing is
+            // double-freed.
+            std.log.warn("failed to replay buffered sixel: {any}", .{e});
+        };
     }
 
     /// Store a sixel image at the current cursor position.
@@ -162,7 +202,48 @@ pub const Screen = struct {
         px_width: u32,
         px_height: u32,
     ) Error!void {
+        // Under the fully-contained sixel rule an image can only ever be drawn
+        // when it fits entirely inside the pane. If it spans more cell rows or
+        // columns than the grid has it can never be `contained`, so it would be
+        // silently discarded anyway — after we'd already scrolled the whole
+        // grid up and stored it. Bail out first to skip that wasted work (and
+        // the scrollback destruction) and free the captured bytes.
+        const footprint_rows = if (px_height > 0) (px_height + self.cell_px_height - 1) / self.cell_px_height else 1;
+        const footprint_cols = if (px_width > 0) (px_width + self.cell_px_width - 1) / self.cell_px_width else 1;
+        // Only drop once we have a measured cell size; while still on the
+        // built-in defaults the footprint could be wrong and we must wait for
+        // the real dimensions before deciding (see #203).
+        if (self.cell_size_known and (footprint_rows > self.grid.height or footprint_cols > self.grid.width)) {
+            self.allocator.free(dcs_bytes);
+            return;
+        }
+
         self.cell_size_needs_refresh = true;
+
+        // Wait for a measured cell size before placing. Until then the
+        // footprint — and therefore the cursor advance and marker rows — is
+        // only a guess, which is exactly what produced the "extra lines after
+        // the first sixel" bug (#204). Buffer the captured bytes; the server
+        // pauses this pane's PTY feed so the shell's prompt (written right
+        // after the sixel DCS) cannot race the measurement and land on top of
+        // where the image will go.
+        if (!self.cell_size_known) {
+            if (self.pending_sixel) |p| p.deinit(self.allocator);
+            self.pending_sixel = .{ .data = dcs_bytes, .px_width = px_width, .px_height = px_height };
+            return;
+        }
+
+        try self.placeSixelImage(dcs_bytes, px_width, px_height);
+    }
+
+    /// Place an already-captured sixel at the current cursor (used directly
+    /// once the cell size is known, or to replay a buffered sixel, #204).
+    fn placeSixelImage(
+        self: *Screen,
+        dcs_bytes: []u8,
+        px_width: u32,
+        px_height: u32,
+    ) Error!void {
         const id = self.next_sixel_id;
         self.next_sixel_id += 1;
 
@@ -1419,6 +1500,7 @@ test "eraseDisplay only force_clears when an overlapping sixel is removed — bu
 test "addSixelImage uses configurable cell pixel size — bug #199" {
     var screen = try Screen.init(testing.allocator, 80, 24);
     defer screen.deinit();
+    screen.cell_size_known = true;
     // Non-default terminal cell metrics (8×16 instead of the hardcoded 10×20).
     screen.cell_px_width = 8;
     screen.cell_px_height = 16;
@@ -1433,6 +1515,74 @@ test "addSixelImage uses configurable cell pixel size — bug #199" {
     try testing.expect(!screen.grid.getCell(0, 13).attr.sixel);
     try testing.expect(screen.grid.getCell(37, 0).attr.sixel);
     try testing.expect(!screen.grid.getCell(38, 0).attr.sixel);
+}
+
+test "addSixelImage drops an image larger than the pane — bug #203" {
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+    // 2000px tall at 20px/cell = 100 rows > 24 grid rows: undisplayable.
+    screen.cell_px_width = 20;
+    screen.cell_px_height = 20;
+    screen.cell_size_known = true;
+
+    const dcs = try testing.allocator.dupe(u8, "\x1bPqBIG\x1b\\");
+    screen.cursor.x = 0;
+    screen.cursor.y = 0;
+    try screen.addSixelImage(dcs, 100, 2000);
+
+    // Nothing was stored in the registry, and the grid was left untouched
+    // (no marker cells placed, no scrollback churn) for the dropped image.
+    try testing.expect(screen.sixel_images[0] == null);
+    try testing.expect(!screen.grid.getCell(0, 0).attr.sixel);
+    try testing.expectEqual(@as(u32, 0), screen.cursor.y);
+}
+
+test "addSixelImage buffers an image before cell size is known — bug #203" {
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+    screen.cell_px_width = 20;
+    screen.cell_px_height = 20;
+    // Unknown (default) cell size: the image is buffered, not placed or dropped.
+    screen.cell_size_known = false;
+
+    const dcs = try testing.allocator.dupe(u8, "\x1bPqBIG\x1b\\");
+    screen.cursor.x = 0;
+    screen.cursor.y = 0;
+    try screen.addSixelImage(dcs, 100, 2000);
+
+    try testing.expect(screen.sixel_images[0] == null);
+    try testing.expect(screen.pending_sixel != null);
+    try testing.expect(!screen.grid.getCell(0, 0).attr.sixel);
+    try testing.expectEqual(@as(u32, 0), screen.cursor.y);
+}
+
+test "addSixelImage replays a buffered image once cell size is known — bug #204" {
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+    screen.cell_px_width = 20;
+    screen.cell_px_height = 20;
+    screen.cell_size_known = false;
+
+    const dcs = try testing.allocator.dupe(u8, "\x1bPqREPLAY\x1b\\");
+    screen.cursor.x = 0;
+    screen.cursor.y = 0;
+    try screen.addSixelImage(dcs, 100, 200); // 10 rows at 20px/cell
+
+    try testing.expect(screen.pending_sixel != null);
+    try testing.expect(screen.sixel_images[0] == null);
+
+    // A measured cell size arrives: the buffered sixel must now be placed with
+    // the correct footprint and cleared from the pending slot.
+    screen.cell_px_width = 20;
+    screen.cell_px_height = 20;
+    screen.cell_size_known = true;
+    screen.updateCellSize(20, 20);
+
+    try testing.expect(screen.pending_sixel == null);
+    try testing.expect(screen.sixel_images[0] != null);
+    // 200px / 20px = 10 rows of marker cells placed, cursor advanced below.
+    try testing.expect(screen.grid.getCell(0, 9).attr.sixel);
+    try testing.expect(screen.grid.getCell(0, 10).attr.sixel == false);
 }
 
 test "cursor save and restore" {
@@ -1753,6 +1903,7 @@ test "writeChar: combining after wide character" {
 test "sixel scrolling" {
     var screen = try Screen.init(testing.allocator, 80, 24);
     defer screen.deinit();
+    screen.cell_size_known = true;
 
     // Position cursor at row 10
     screen.cursor.y = 10;
@@ -1796,6 +1947,7 @@ test "sixel scrolling" {
 test "sixel clearing" {
     var screen = try Screen.init(testing.allocator, 80, 24);
     defer screen.deinit();
+    screen.cell_size_known = true;
 
     // Add a sixel image at row 10 (height 40px = 2 rows, so it covers rows 10, 11)
     screen.cursor.y = 10;
@@ -1865,6 +2017,7 @@ test "sixel clearing" {
 test "sixel registry wrapping keeps referenced images — bug #198" {
     var screen = try Screen.init(testing.allocator, 80, 24);
     defer screen.deinit();
+    screen.cell_size_known = true;
 
     // 1. Add the first image (ID 0) at row 0. It will occupy cells in the grid at row 0.
     screen.cursor.y = 0;

@@ -1132,6 +1132,7 @@ test "renderSixelImages keeps partially-scrolled sixel visible — bug #197" {
 
     // A 5×10 cell image (50×200 px).
     const raw = try allocator.dupe(u8, "\x1bPqPARTIAL\x1b\\");
+    pane.screen.cell_size_known = true;
     try pane.screen.addSixelImage(raw, 50, 200);
 
     // Simulate a 3-line upward scroll: shift every sixel cell's dy by +3 so the
@@ -1227,6 +1228,7 @@ test "renderSixelImages erases previous position when image scrolls — bug #195
     pane.screen.cursor.x = 0;
     pane.screen.cursor.y = 10;
     const raw = try allocator.dupe(u8, "\x1bPqSM\x1b\\");
+    pane.screen.cell_size_known = true;
     try pane.screen.addSixelImage(raw, 10, 20); // anchor (0, 10)
 
     // First render draws the image at its anchor.
@@ -1269,6 +1271,7 @@ test "renderSixelImages erases removed image overlay — bug #195" {
     pane.screen.cursor.x = 0;
     pane.screen.cursor.y = 5;
     const raw = try allocator.dupe(u8, "\x1bPqGHOST\x1b\\");
+    pane.screen.cell_size_known = true;
     try pane.screen.addSixelImage(raw, 10, 20); // anchor (0, 5)
 
     const bounds = [_]PaneBounds{.{ .pane = pane, .x = 0, .y = 0, .w = 80, .h = 23 }};
@@ -1305,6 +1308,7 @@ test "renderSixelImages derives position from image anchor not cell comb — bug
     const pane = win.active_pane.?;
 
     const raw = try allocator.dupe(u8, "\x1bPqANCHOR\x1b\\");
+    pane.screen.cell_size_known = true;
     try pane.screen.addSixelImage(raw, 10, 20);
 
     // Corrupt the top-left cell's comb2 (simulating a partial overwrite that
@@ -1348,6 +1352,7 @@ test "sixel rendering with scrolling" {
 
     // Call addSixelImage with a 15-row height image (300px with cell_px_height=20)
     const raw_dcs = try allocator.dupe(u8, "\x1bPqTEST\x1b\\");
+    pane.screen.cell_size_known = true;
     try pane.screen.addSixelImage(raw_dcs, 100, 300);
 
     // Verify cell coordinates after addSixelImage. The cursor was on the last

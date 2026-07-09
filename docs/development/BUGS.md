@@ -2586,6 +2586,20 @@ The design stores `comb1` (13-bit `dx`) and `comb2` (13-bit `dy`) in **every** s
 
 `renderSixelImages` computes `visible` against the entire terminal and clamps the draw anchor with `@max(0, abs_row_i)`. For a sixel in the lower split pane, pressing Enter scrolls content up and `shiftSixelAnchors(-1)` moves the image anchor negative. Once `abs_row_i` goes below 0 the `(abs_row_i + cell_rows) > 0` check still passes, so the image is drawn — but `@max(0, abs_row_i)` pins the anchor to **terminal row 0**, painting the image over the upper pane as if it were on a layer above the split. Because every subsequent frame redraws at the same clamped `(col, 0)` anchor, `cur == prev` and no erase is emitted, leaving a ghost **stuck on the split border** until `reset`/`clear`. Clipping to the pane rectangle and requiring full containment lets the image scroll up with the content (it is drawn at its true anchor while inside the pane) and be erased cleanly the moment it crosses a pane edge, so it neither bleeds into a neighbour pane nor sticks.
 
+### 203. `img2sixel` on an image larger than the pane wastes work and destroys scrollback
+**File:** `src/screen.zig:159` (`addSixelImage`)
+**Severity:** MEDIUM
+**Status:** ✅ FIXED — `addSixelImage` now computes the image's cell footprint (`cell_rows`/`cell_cols`) up front and returns immediately (freeing the captured bytes) when it exceeds the pane (`grid`) dimensions. Because the render path only draws a sixel that is *fully contained* in the pane, such an image can never be displayed, so the early bail skips the pre-scroll marker loop, the `shiftSixelAnchors` churn, and the registry entry that forced a per-frame erase-all — without ever sending anything to the terminal. The drop is gated on a per-screen `cell_size_known` flag (mirroring the server's), so it only fires once a *measured* cell size has arrived from the display client; while still on the built-in defaults szn waits for the real dimensions rather than risk discarding a valid image on stale numbers. Added unit tests `addSixelImage drops an image larger than the pane — bug #203` and `addSixelImage does not drop an oversized image before cell size is known — bug #203`.
+
+Running `img2sixel` on a large image (e.g. taller than the viewable area) feeds a sixel whose cell footprint is bigger than the pane. `addSixelImage` previously ran its full pre-scroll loop — scrolling the grid up by every oversized row and shifting all anchors — and stored the image in the registry, where the renderer would then drop it every frame (after sending a redundant erase-all). The user saw the shell "idle" and their scrollback shoved off-screen for an image that was never going to render. Detecting the size mismatch at capture time makes the discard instant and side-effect-free.
+
+### 204. First sixel ever displayed always gets extra lines (cell size measured too late)
+**File:** `src/screen.zig` (`addSixelImage` / `pending_sixel`), `src/server/server.zig` (`handlePtyEvent`)
+**Severity:** MEDIUM
+**Status:** ✅ FIXED — when a sixel arrives before a *measured* cell size is known, `addSixelImage` now buffers the captured DCS bytes in `pending_sixel` instead of placing them with the built-in default (20×10) cell size. The server pauses that pane's PTY feed (holding the shell's subsequent output in the kernel buffer) until the `cell_size` response arrives, then replays the buffered image via `flushPendingSixel` at the correct footprint. Added unit tests `addSixelImage buffers an image before cell size is known — bug #203` and `addSixelImage replays a buffered image once cell size is known — bug #204`.
+
+The dynamic cell-size query (commit `7cc4d17`) fixed the *general* "extra lines after img" case, but the **first** sixel still raced the measurement: `addSixelImage` ran with the default 20px cell height, computed too many cell rows, and advanced the cursor too far — leaving a blank gap after the image. The query only fires *because* the sixel was added, so its result lands a frame too late for that same image, and the cursor advance is already baked into the grid. Buffering the sixel (and pausing the PTY feed so the shell's prompt can't race in and land on top of where the image will go) means the very first image is also measured first, so its footprint and cursor advance are correct. A `cell_size_wait_ms` (2s) timeout force-replays with whatever size we have so a pane can never stall if the terminal never answers.
+
 ---
 
 ## Updated Summary
@@ -2596,4 +2610,4 @@ The design stores `comb1` (13-bit `dx`) and `comb2` (13-bit `dy`) in **every** s
 | High | 45 (43+2) | 44 | 1 | **0** |
 | Medium | 69 (65+4) | 67 | 2 | **0** |
 | Low | 63 (61+2) | 60 | 3 | **0** |
-| Total | 202 (193+9) | **193** | **9** | **0** |
+| Total | 204 (193+11) | **195** | **9** | **0** |

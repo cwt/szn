@@ -1818,6 +1818,7 @@ test "3-byte ESC sequences are consumed and ignored without cursor side effects"
 test "sixel DCS ESC-backslash terminator stores image" {
     var screen = try Screen.init(testing.allocator, 80, 24);
     defer screen.deinit();
+    screen.cell_size_known = true;
     var parser = InputParser.init(&screen);
     defer parser.deinit(testing.allocator);
 
@@ -1854,6 +1855,7 @@ test "sixel DCS ESC-backslash terminator stores image" {
 test "sixel DCS 8-bit ST (0x9C) terminator stores image" {
     var screen = try Screen.init(testing.allocator, 80, 24);
     defer screen.deinit();
+    screen.cell_size_known = true;
     var parser = InputParser.init(&screen);
     defer parser.deinit(testing.allocator);
 
@@ -1879,6 +1881,7 @@ test "sixel DCS 8-bit ST (0x9C) terminator stores image" {
 test "sixel pixel height estimated from band count" {
     var screen = try Screen.init(testing.allocator, 80, 24);
     defer screen.deinit();
+    screen.cell_size_known = true;
     var parser = InputParser.init(&screen);
     defer parser.deinit(testing.allocator);
 
@@ -1903,6 +1906,7 @@ test "sixel pixel height estimated from band count" {
 test "sixel pixel dimensions parsed from raster attributes" {
     var screen = try Screen.init(testing.allocator, 80, 24);
     defer screen.deinit();
+    screen.cell_size_known = true;
     var parser = InputParser.init(&screen);
     defer parser.deinit(testing.allocator);
 
@@ -1928,6 +1932,7 @@ test "sixel pixel dimensions parsed from raster attributes" {
 test "sixel cursor advances after image" {
     var screen = try Screen.init(testing.allocator, 80, 24);
     defer screen.deinit();
+    screen.cell_size_known = true;
     var parser = InputParser.init(&screen);
     defer parser.deinit(testing.allocator);
 
@@ -1943,6 +1948,7 @@ test "sixel cursor advances after image" {
 test "sixel from dcs_param path (ESC P 0 ; 0 q ...)" {
     var screen = try Screen.init(testing.allocator, 80, 24);
     defer screen.deinit();
+    screen.cell_size_known = true;
     var parser = InputParser.init(&screen);
     defer parser.deinit(testing.allocator);
 

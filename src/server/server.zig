@@ -3,6 +3,10 @@ const c = std.c;
 const testing = std.testing;
 const session_mod = @import("../session.zig");
 
+/// How long (ms) a pane's PTY feed is paused while a sixel is buffered
+/// awaiting a measured cell size before we give up and place it anyway (#204).
+const cell_size_wait_ms: i64 = 2000;
+
 var sigchldFlag = std.atomic.Value(bool).init(false);
 
 pub export fn sigchld_handler(sig: c.SIG) callconv(.c) void {
@@ -126,6 +130,14 @@ pub const Server = struct {
     /// then applied to every Screen as it is created.
     cell_px_height: u32 = 20,
     cell_px_width: u32 = 10,
+    /// True once a measured `cell_size` has arrived from the display client.
+    /// Until then `cell_px_*` hold built-in defaults and the per-screen
+    /// `cell_size_known` flag stays false so oversized-image drops wait for
+    /// real dimensions (see #203).
+    cell_size_known: bool = false,
+    /// `currentMillis()` captured when a pane was first seen with a buffered
+    /// sixel awaiting measurement, so we can bound the PTY-feed pause (#204).
+    cell_size_pending_since: i64 = 0,
 
     /// When true, a sixel was added to a screen and the server hasn't yet
     /// asked the display client to query the terminal for current cell pixel
@@ -381,6 +393,34 @@ pub const Server = struct {
 
         var exited = false;
         if (has_in) {
+            // Pause feeding while a sixel is buffered awaiting a measured cell
+            // size (#204). The shell prints its next prompt right after the
+            // sixel DCS; if we let that through now it would land on top of the
+            // image's eventual position. Hold the PTY data in the kernel
+            // buffer until the measurement arrives and the sixel is replayed.
+            if (pane.screen.pending_sixel != null) {
+                // Make sure the query actually goes out (the normal path that
+                // propagates this flag is skipped while we're paused).
+                self.needs_cell_size_refresh = true;
+                if (self.cell_size_pending_since == 0) {
+                    self.cell_size_pending_since = currentMillis();
+                }
+                const now = currentMillis();
+                if (now - self.cell_size_pending_since > cell_size_wait_ms) {
+                    // Measurement is taking too long — give up waiting and
+                    // place with whatever cell size we have so we never stall
+                    // the pane.
+                    pane.screen.flushPendingSixel();
+                    self.cell_size_pending_since = 0;
+                } else {
+                    const c_usleep = struct {
+                        extern "c" fn usleep(usec: c_uint) c_int;
+                    }.usleep;
+                    _ = c_usleep(2000);
+                }
+                return .handled;
+            }
+            self.cell_size_pending_since = 0;
             pane.feedPty() catch |err| {
                 if (err == error.ProcessExited) {
                     std.log.info("pty process exited", .{});
@@ -1920,6 +1960,7 @@ pub const Server = struct {
                         // exists — so the active-pane branch alone would drop it.
                         self.cell_px_height = height_px;
                         self.cell_px_width = width_px;
+                        self.cell_size_known = true;
                         self.applyCellSizeToAllScreens();
                     }
                 },
@@ -2158,6 +2199,11 @@ pub const Server = struct {
         // existed (it is sent at startup).
         for (session.windows.items) |w| {
             for (w.panes.items) |p| {
+                // Set `cell_size_known` BEFORE `updateCellSize`: the latter
+                // flushes any buffered sixel, and that flush must see the
+                // measured flag as true or it bails and the first image is
+                // never placed (bug #204 regression).
+                p.screen.cell_size_known = self.cell_size_known;
                 p.screen.updateCellSize(self.cell_px_height, self.cell_px_width);
             }
         }
@@ -2203,6 +2249,10 @@ pub const Server = struct {
         for (self.sessions.items) |s| {
             for (s.windows.items) |w| {
                 for (w.panes.items) |p| {
+                    // Set `cell_size_known` BEFORE `updateCellSize` so the
+                    // buffered-sixel flush inside it sees the measured flag
+                    // (bug #204 regression).
+                    p.screen.cell_size_known = self.cell_size_known;
                     p.screen.updateCellSize(self.cell_px_height, self.cell_px_width);
                 }
             }
