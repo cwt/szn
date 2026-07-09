@@ -48,6 +48,7 @@ A single `MessageType` enum (`protocol.zig:10-48`). `isRequest()` is
 | `0x06` | `detach` | empty | used (both directions) |
 | `0x07` | `shell` | — | deleted / invalid |
 | `0x08` | `stdin_data` | raw bytes from client stdin (max 4096/packet) | used |
+| `0x09` | `cell_size` | 8 bytes: `u32` LE `cell_height_px` + `u32` LE `cell_width_px` | used |
 
 ### Server → Client (responses)
 
@@ -57,7 +58,7 @@ A single `MessageType` enum (`protocol.zig:10-48`). `isRequest()` is
 | `0x81` | `output` | raw terminal escape bytes (rendered frame; also OSC-52 clipboard) | used |
 | `0x82` | `exit` | 1 byte exit code (`u8`) | used |
 | `0x83` | `err` | error message string | used |
-| `0x84` | `notify` | — | deleted / invalid |
+| `0x84` | `request_cell_size` | empty | used |
 
 ## Key message behaviour
 
@@ -68,6 +69,18 @@ A single `MessageType` enum (`protocol.zig:10-48`). `isRequest()` is
   sent at startup and on `SIGWINCH` (`main.zig:369-375, 416-421`).
 - **`stdin_data`** — forwarded to the active pane's PTY input
   (`server.zig:1864`); sets `current_client_fd`.
+- **`cell_size`** — measured terminal cell dimensions from the display
+  client's `CSI 14 t` (XTWINOPS) query. Payload is `u32` LE
+  `cell_height_px` then `u32` LE `cell_width_px`. The server stores these
+  on `Server` (`cell_px_height`/`cell_px_width`) and applies them to every
+  `Screen` via `applyCellSizeToAllScreens`; a terminal property, so the same
+  value holds for all panes. Replaces the discarded startup query so sixel
+  cell↔pixel conversion is correct even when launched via
+  `alacritty -e szn`.
+- **`request_cell_size`** — server→client nudge telling the display client
+  to run `CSI 14 t`, parse the response, and reply with a `cell_size`
+  message. Sent just before a render whenever a sixel was added and the size
+  is stale/unknown (driven by `needs_cell_size_refresh`).
 - **`output`** — one rendered frame from `renderToDisplayClient`
   (`server.zig:2060-2090`); also OSC-52 clipboard forwarded to all clients.
 - **`exit`** — produced by `CmdResult.stop` (e.g. `detach-client`), payload is
@@ -102,6 +115,14 @@ Size limits are unified using:
 There is **no per-session attach selection** in the wire protocol — the daemon
 always serves its single active session. No initial-state dump either; the
 server simply begins streaming `output` once a client is a display client.
+
+> **Cell-size discovery is on-demand, not at startup.** A `CSI 14 t` query
+> fired during `alacritty -e szn` startup returns wrong dimensions, so szn
+> never queries at boot. Instead, when the first sixel is added the server
+> sends `request_cell_size`; the client queries and replies `cell_size`
+> (`0x09`), which the server applies to every screen. Until that reply lands,
+> a sixel is **buffered** (`Screen.pending_sixel`) and the pane's PTY feed is
+> paused so the shell prompt can't race the measurement.
 
 ## Socket path / addressing
 

@@ -44,8 +44,11 @@ A reference for the domain vocabulary used throughout szn's code and docs.
   line-wrap, alt-screen, cursor, paste, mouse-sgr, sync, …), `copy_mode`, and
   `sixel_images`.
 - **SixelImage** (`screen.zig:13`) — a stored sixel graphic: the raw DCS bytes
-  plus anchor `col`/`row` and estimated pixel size. Rendered verbatim at its
-  absolute position.
+  plus anchor `col`/`row` and parsed pixel dimensions (`px_width`/`px_height`
+  from the raster attributes). Rendered verbatim at its absolute position.
+  If a sixel arrives before the terminal's cell size is *measured*, it is
+  buffered in `Screen.pending_sixel` and replayed once `cell_size_known`
+  (driven by the `cell_size` IPC message) is true.
 
 ## Modes and interaction
 

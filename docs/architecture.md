@@ -44,7 +44,7 @@ which pane a PTY fd belongs to.
 - `reapZombies()` drains exited children on `SIGCHLD`.
 - `tickAutoscroll()` for copy-mode mouse scroll.
 - Dispatches poll events: PTY events first (`handlePtyEvent`,
-  `server.zig:352-428`), then `stdin_fd`, the listener, and each client fd.
+  `server.zig:380`), then `stdin_fd`, the listener, and each client fd.
 
 Watched fds: listener socket, each client fd, and each pane PTY master fd
 (registered via `watchPanePty`, `server.zig:1797-1803`). When the last
@@ -74,8 +74,12 @@ packet).
   by copy-mode scroll), draws UTF-8 box borders, and positions the cursor.
 - `renderContent()` (`render.zig:332-515`) keeps `last_cells` per display
   client and skips unchanged cells (incremental diff).
-- `renderSixelImages()` (`render.zig:603-618`) forwards each pane's raw sixel
-  DCS bytes verbatim.
+- `renderSixelImages()` (`render.zig:682`) forwards each pane's raw sixel
+  DCS bytes verbatim, but only for images that are *fully contained* in the
+  pane (others are erased). Cell↔pixel conversion uses the measured cell
+  size; when a sixel is added before that is known, `Screen.addSixelImage`
+  buffers it (`pending_sixel`) and the server pauses the pane's PTY feed
+  until the `cell_size` reply arrives (`#204`).
 
 `src/tty/tty.zig` provides `Term`, a lower-level emitter with cached
 `cx/cy/fg/bg/attrs` to minimize redundant escapes; used in tests and as the
@@ -91,7 +95,9 @@ set including sixel). Attached per pane (`window.zig:88-100`) and fed by
 It handles cursor moves, erase, insert/delete line/char, scroll,
 `DECSET`/`DECRST`, SGR, terminal queries (DA1/DA2, DSR, DECRQM,
 `XTSMGRAPHICS` sixel negotiation), sixel DCS (accumulated then
-`Screen.addSixelImage`), OSC title/clipboard, and kitty keyboard (`CSI u`).
+`Screen.addSixelImage`, which buffers the image in `pending_sixel` until a
+measured cell size is known — see `cell_size_needs_refresh`), OSC
+title/clipboard, and kitty keyboard (`CSI u`).
 
 ## Screen & grid
 
