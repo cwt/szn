@@ -83,6 +83,7 @@ pub fn setCloexec(fd: i32) void {
 
 const TIOCSWINSZ: c_ulong = if (@import("builtin").os.tag == .macos) 0x80087467 else 0x5414;
 const DEFAULT_SHELL: []const u8 = "/bin/zsh";
+const WNOHANG: c_int = 1;
 
 extern "c" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
 
@@ -206,7 +207,7 @@ pub const Pty = struct {
     pub fn reap(self: *Pty) void {
         if (self.pid > 0) {
             var status: c_int = 0;
-            const rc = waitpid(self.pid, &status, 1); // WNOHANG
+            const rc = waitpid(self.pid, &status, WNOHANG);
             if (rc > 0) self.pid = -1;
         }
     }

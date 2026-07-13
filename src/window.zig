@@ -46,11 +46,27 @@ pub const Pane = struct {
         self.deinited = true;
         self.choose_mode.deinit(self.screen.grid.allocator);
         if (self.saved_grid) |*g| g.deinit();
+        if (self.parser) |*p| p.deinit(self.screen.grid.allocator);
         self.screen.deinit();
         if (self.pty) |*p| {
             p.deinit();
             self.pty = null;
         }
+    }
+
+    pub fn restoreSavedGrid(self: *Pane) void {
+        const grid_alloc = self.screen.grid.allocator;
+        if (self.saved_grid) |sg| {
+            self.screen.grid.deinit();
+            self.screen.grid = sg;
+            self.saved_grid = null;
+        } else {
+            if (@import("grid.zig").Grid.init(grid_alloc, self.screen.grid.width, self.screen.grid.height)) |fallback| {
+                self.screen.grid.deinit();
+                self.screen.grid = fallback;
+            } else |_| {}
+        }
+        self.dirty = true;
     }
 
     pub fn writeStr(self: *Pane, s: []const u8) Error!void {

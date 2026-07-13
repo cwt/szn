@@ -38,7 +38,8 @@ pub fn resolve(buf: []u8) Error![:0]const u8 {
         if (rc < 0) {
             const err = std.c.errno(rc);
             if (err != .EXIST) {
-                // fall through — let the socket path attempt give a clearer error
+                const path = try std.fmt.bufPrintZ(buf[0..MAX_PATH], "/tmp/szn-{d}.sock", .{getuid()});
+                return path;
             }
         }
 

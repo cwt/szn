@@ -89,7 +89,10 @@ fn cmdNewWindow(server: *Server, args: []const []const u8) CmdResult {
     if (new_win.active_pane) |p| {
         const current_cwd = server.paneCwd(pane);
         defer if (current_cwd) |cwd_ptr| server.allocator.free(cwd_ptr);
-        server.setupPane(session, p, current_cwd) catch return .err;
+        server.setupPane(session, p, current_cwd) catch {
+            session.killWindow(server.allocator, new_win);
+            return .err;
+        };
     }
     return .ok;
 }
@@ -146,7 +149,10 @@ fn cmdSplitWindow(server: *Server, args: []const []const u8) CmdResult {
     if (pane.pty != null) {
         const current_cwd = server.paneCwd(pane);
         defer if (current_cwd) |cwd_ptr| server.allocator.free(cwd_ptr);
-        server.setupPane(session, new_pane, current_cwd) catch return .err;
+        server.setupPane(session, new_pane, current_cwd) catch {
+            server.destroyPane(new_pane);
+            return .err;
+        };
     }
     return .ok;
 }
@@ -501,20 +507,10 @@ fn cmdChooseBuffer(server: *Server, args: []const []const u8) CmdResult {
     const pane = window.active_pane orelse return .err;
 
     var items: std.ArrayList(ChooseItem) = .empty;
-    defer {
-        for (items.items) |item| {
-            server.allocator.free(item.name);
-            server.allocator.free(item.data);
-        }
-        items.deinit(server.allocator);
-    }
+    defer items.deinit(server.allocator);
 
     for (server.buffers.items.items) |b| {
-        const n = server.allocator.dupe(u8, b.name) catch return .err;
-        errdefer server.allocator.free(n);
-        const d = server.allocator.dupe(u8, b.data) catch return .err;
-        errdefer server.allocator.free(d);
-        items.append(server.allocator, .{ .name = n, .data = d }) catch return .err;
+        items.append(server.allocator, .{ .name = b.name, .data = b.data }) catch return .err;
     }
 
     if (pane.saved_grid) |*g| {

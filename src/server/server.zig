@@ -6,6 +6,7 @@ const session_mod = @import("../session.zig");
 /// How long (ms) a pane's PTY feed is paused while a sixel is buffered
 /// awaiting a measured cell size before we give up and place it anyway (#204).
 const cell_size_wait_ms: i64 = 2000;
+const WNOHANG: c_int = 1;
 
 var sigchldFlag = std.atomic.Value(bool).init(false);
 
@@ -275,8 +276,11 @@ pub const Server = struct {
             sigchldFlag.store(false, .seq_cst);
             var status: c_int = 0;
             while (true) {
-                const pid = c.waitpid(-1, &status, 1);
-                if (pid <= 0) break;
+                const pid = c.waitpid(-1, &status, WNOHANG);
+                if (pid <= 0) {
+                    if (pid == -1 and std.c.errno(pid) == .INTR) continue;
+                    break;
+                }
                 std.log.info("reapZombies reaped pid {d} with status {d}", .{ pid, status });
             }
         }
@@ -448,7 +452,7 @@ pub const Server = struct {
             // process is actually dead before declaring exit.
             var status: c_int = 0;
             const shell_alive = if (pane.pty) |pty| blk: {
-                const rc = c.waitpid(pty.pid, &status, 1); // WNOHANG
+                const rc = c.waitpid(pty.pid, &status, WNOHANG);
                 std.log.info("HUP waitpid(pid={d}) returned {d}, status={d}", .{ pty.pid, rc, status });
                 break :blk rc == 0;
             } else false;
@@ -1013,30 +1017,15 @@ pub const Server = struct {
                             } else if (is_tab) {
                                 const prefix = self.command_buf.items;
                                 var matches: std.ArrayList(@import("../choose.zig").ChooseItem) = .empty;
-                                defer {
-                                    for (matches.items) |item| {
-                                        self.allocator.free(item.name);
-                                        self.allocator.free(item.data);
-                                    }
-                                    matches.deinit(self.allocator);
-                                }
+                                defer matches.deinit(self.allocator);
 
                                 const table = @import("../cmd/cmd.zig").cmdTable();
                                 for (table) |entry| {
                                     if (std.mem.startsWith(u8, entry.name, prefix)) {
-                                        const dup_name = self.allocator.dupe(u8, entry.name) catch continue;
-                                        errdefer self.allocator.free(dup_name);
-                                        const dup_data = self.allocator.dupe(u8, entry.name) catch {
-                                            self.allocator.free(dup_name);
-                                            continue;
-                                        };
                                         matches.append(self.allocator, .{
-                                            .name = dup_name,
-                                            .data = dup_data,
-                                        }) catch {
-                                            self.allocator.free(dup_name);
-                                            self.allocator.free(dup_data);
-                                        };
+                                            .name = entry.name,
+                                            .data = entry.name,
+                                        }) catch {};
                                     }
                                 }
 
@@ -1089,19 +1078,7 @@ pub const Server = struct {
                         const is_cmd = (pane.choose_mode.target == .command);
                         pane.choose_mode.active = false;
 
-                        const grid_alloc = pane.screen.grid.allocator;
-                        if (pane.saved_grid) |sg| {
-                            pane.screen.grid.deinit();
-                            pane.screen.grid = sg;
-                            pane.saved_grid = null;
-                        } else {
-                            if (@import("../grid.zig").Grid.init(grid_alloc, pane.screen.grid.width, pane.screen.grid.height)) |fallback| {
-                                pane.screen.grid.deinit();
-                                pane.screen.grid = fallback;
-                            } else |_| {}
-                        }
-
-                        pane.dirty = true;
+                        pane.restoreSavedGrid();
                         if (is_cmd) {
                             self.command_mode = true;
                         }
@@ -1123,19 +1100,7 @@ pub const Server = struct {
                                     const is_cmd = (pane.choose_mode.target == .command);
                                     pane.choose_mode.active = false;
 
-                                    const grid_alloc = pane.screen.grid.allocator;
-                                    if (pane.saved_grid) |sg| {
-                                        pane.screen.grid.deinit();
-                                        pane.screen.grid = sg;
-                                        pane.saved_grid = null;
-                                    } else {
-                                        if (@import("../grid.zig").Grid.init(grid_alloc, pane.screen.grid.width, pane.screen.grid.height)) |fallback| {
-                                            pane.screen.grid.deinit();
-                                            pane.screen.grid = fallback;
-                                        } else |_| {}
-                                    }
-
-                                    pane.dirty = true;
+                                    pane.restoreSavedGrid();
                                     if (is_cmd) {
                                         if (selected) |item| {
                                             self.command_buf.clearRetainingCapacity();
@@ -1170,19 +1135,7 @@ pub const Server = struct {
                                     const is_cmd = (pane.choose_mode.target == .command);
                                     pane.choose_mode.active = false;
 
-                                    const grid_alloc = pane.screen.grid.allocator;
-                                    if (pane.saved_grid) |sg| {
-                                        pane.screen.grid.deinit();
-                                        pane.screen.grid = sg;
-                                        pane.saved_grid = null;
-                                    } else {
-                                        if (@import("../grid.zig").Grid.init(grid_alloc, pane.screen.grid.width, pane.screen.grid.height)) |fallback| {
-                                            pane.screen.grid.deinit();
-                                            pane.screen.grid = fallback;
-                                        } else |_| {}
-                                    }
-
-                                    pane.dirty = true;
+                                    pane.restoreSavedGrid();
                                     if (is_cmd) {
                                         self.command_mode = true;
                                     }
@@ -1198,19 +1151,7 @@ pub const Server = struct {
             if (pane.screen.clock_mode) {
                 pane.screen.clock_mode = false;
 
-                const grid_alloc = pane.screen.grid.allocator;
-                if (pane.saved_grid) |sg| {
-                    pane.screen.grid.deinit();
-                    pane.screen.grid = sg;
-                    pane.saved_grid = null;
-                } else {
-                    if (@import("../grid.zig").Grid.init(grid_alloc, pane.screen.grid.width, pane.screen.grid.height)) |fallback| {
-                        pane.screen.grid.deinit();
-                        pane.screen.grid = fallback;
-                    } else |_| {}
-                }
-
-                pane.dirty = true;
+                pane.restoreSavedGrid();
             }
 
             if (pane.screen.copy_mode) |*cm| {

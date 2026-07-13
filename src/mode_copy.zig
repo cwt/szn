@@ -320,10 +320,7 @@ pub const CopyMode = struct {
             }
 
             const wrapped = self.isLineWrappedY_i64(grid, y_i64);
-            var line_slice: []const u8 = line_buf.items;
-            if (wrapped) {
-                line_slice = std.mem.trimEnd(u8, line_slice, " ");
-            }
+            const line_slice = std.mem.trimEnd(u8, line_buf.items, " ");
 
             try result.appendSlice(allocator, line_slice);
 
