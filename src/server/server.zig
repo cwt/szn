@@ -1759,18 +1759,28 @@ pub const Server = struct {
             },
             .split => |s| {
                 if (s.direction == .horizontal) {
-                    const split_w = @max(1, @as(u32, @intFromFloat(@as(f64, @floatFromInt(lw)) * s.proportion)));
-                    if (x < lx + split_w) {
-                        return self.findPaneAtNode(s.a, x, y, lx, ly, split_w -| 1, lh);
+                    const available_w = lw -| 1;
+                    const split_w = @as(u32, @intFromFloat(@as(f64, @floatFromInt(available_w)) * s.proportion));
+                    const w1 = @max(1, split_w);
+                    const w2 = @max(1, available_w -| w1);
+                    if (x < lx + w1) {
+                        return self.findPaneAtNode(s.a, x, y, lx, ly, w1, lh);
+                    } else if (x == lx + w1) {
+                        return null;
                     } else {
-                        return self.findPaneAtNode(s.b, x, y, lx + split_w, ly, lw - split_w, lh);
+                        return self.findPaneAtNode(s.b, x, y, lx + w1 + 1, ly, w2, lh);
                     }
                 } else {
-                    const split_h = @max(1, @as(u32, @intFromFloat(@as(f64, @floatFromInt(lh)) * s.proportion)));
-                    if (y < ly + split_h) {
-                        return self.findPaneAtNode(s.a, x, y, lx, ly, lw, split_h -| 1);
+                    const available_h = lh -| 1;
+                    const split_h = @as(u32, @intFromFloat(@as(f64, @floatFromInt(available_h)) * s.proportion));
+                    const h1 = @max(1, split_h);
+                    const h2 = @max(1, available_h -| h1);
+                    if (y < ly + h1) {
+                        return self.findPaneAtNode(s.a, x, y, lx, ly, lw, h1);
+                    } else if (y == ly + h1) {
+                        return null;
                     } else {
-                        return self.findPaneAtNode(s.b, x, y, lx, ly + split_h, lw, lh - split_h);
+                        return self.findPaneAtNode(s.b, x, y, lx, ly + h1 + 1, lw, h2);
                     }
                 }
             },
@@ -1787,13 +1797,19 @@ pub const Server = struct {
             },
             .split => |s| {
                 if (s.direction == .horizontal) {
-                    const split_w = @max(1, @as(u32, @intFromFloat(@as(f64, @floatFromInt(lw)) * s.proportion)));
-                    if (self.findPaneBounds(s.a, target, lx, ly, split_w -| 1, lh)) |b| return b;
-                    if (self.findPaneBounds(s.b, target, lx + split_w, ly, lw -| split_w, lh)) |b| return b;
+                    const available_w = lw -| 1;
+                    const split_w = @as(u32, @intFromFloat(@as(f64, @floatFromInt(available_w)) * s.proportion));
+                    const w1 = @max(1, split_w);
+                    const w2 = @max(1, available_w -| w1);
+                    if (self.findPaneBounds(s.a, target, lx, ly, w1, lh)) |b| return b;
+                    if (self.findPaneBounds(s.b, target, lx + w1 + 1, ly, w2, lh)) |b| return b;
                 } else {
-                    const split_h = @max(1, @as(u32, @intFromFloat(@as(f64, @floatFromInt(lh)) * s.proportion)));
-                    if (self.findPaneBounds(s.a, target, lx, ly, lw, split_h -| 1)) |b| return b;
-                    if (self.findPaneBounds(s.b, target, lx, ly + split_h, lw, lh -| split_h)) |b| return b;
+                    const available_h = lh -| 1;
+                    const split_h = @as(u32, @intFromFloat(@as(f64, @floatFromInt(available_h)) * s.proportion));
+                    const h1 = @max(1, split_h);
+                    const h2 = @max(1, available_h -| h1);
+                    if (self.findPaneBounds(s.a, target, lx, ly, lw, h1)) |b| return b;
+                    if (self.findPaneBounds(s.b, target, lx, ly + h1 + 1, lw, h2)) |b| return b;
                 }
                 return null;
             },
@@ -2900,6 +2916,37 @@ test "findPaneAtNode accounts for border width — bug #127" {
     // Click on the border column (col 39) — should return null
     const border = server.findPaneAtNode(win.layout.root, 39, 0, 0, 0, 80, 24);
     try testing.expect(border == null);
+}
+
+test "findPaneAtNode and findPaneBounds vertical split layout mismatch" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    // Create a session of size 80x5
+    const s = try server.newSession("test", 80, 5);
+    const win = s.active_window.?;
+    const pane1 = win.active_pane.?;
+
+    // Split vertically (top/bottom) with 0.5 proportion
+    const pane2 = try win.splitPane(testing.allocator, pane1, true, 0.5);
+
+    // Let's test findPaneBounds for pane2:
+    const pb2 = server.findPaneBounds(win.layout.root, pane2, 0, 0, 80, 5).?;
+    try testing.expectEqual(@as(u32, 3), pb2.y); // Should start at row 3
+    try testing.expectEqual(@as(u32, 2), pb2.h); // Should have height 2
+
+    // Let's test findPaneAtNode:
+    // Row 2 is the border, should return null
+    const found_border = server.findPaneAtNode(win.layout.root, 0, 2, 0, 0, 80, 5);
+    try testing.expect(found_border == null);
+
+    // Row 3 is in pane2, should return pane2
+    const found_p2 = server.findPaneAtNode(win.layout.root, 0, 3, 0, 0, 80, 5);
+    try testing.expect(found_p2 == pane2);
+
+    // Row 1 is in pane1, should return pane1
+    const found_p1 = server.findPaneAtNode(win.layout.root, 0, 1, 0, 0, 80, 5);
+    try testing.expect(found_p1 == pane1);
 }
 
 test "killSession preserves active session — bug #133" {
