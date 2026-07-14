@@ -301,6 +301,7 @@ fn runServerDaemon(allocator: std.mem.Allocator) Error!void {
     };
 
     const session = try server.newSession("default", sx, sy - 1);
+    const default_session_id = session.id;
     // Verify that the initial session has an active window and pane
     if (session.active_window) |win| {
         if (win.active_pane == null) {
@@ -334,10 +335,10 @@ fn runServerDaemon(allocator: std.mem.Allocator) Error!void {
         try server.run(1);
     }
 
-    // Spawn the default shell only if the default session (ID 0) hasn't been killed.
+    // Spawn the default shell only if the default session hasn't been killed.
     var default_pane: ?*@import("window.zig").Pane = null;
     for (server.sessions.items) |s| {
-        if (s.id == 0) {
+        if (s.id == default_session_id) {
             if (s.active_window) |w| {
                 default_pane = w.active_pane;
             }
