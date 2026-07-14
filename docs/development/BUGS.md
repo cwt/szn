@@ -2602,12 +2602,21 @@ The dynamic cell-size query (commit `7cc4d17`) fixed the *general* "extra lines 
 
 ---
 
+### 205. Closed PTY fds not removed from event loop on session/window kill — infinite 100% CPU busy-loop
+**File:** `src/server/server.zig:389–393`, `src/server/server.zig:2172–2190`
+**Severity:** CRITICAL
+**Status:** ✅ FIXED — updated `killSession` and `killAllSessions` to explicitly remove PTY master fds from the loop when a session/pane is destroyed, and updated `handlePtyEvent` to proactively remove stale pane fds from the loop when detected.
+
+When a session or window is killed, its panes are deinitialized, closing their PTY master file descriptors. However, the server was failing to remove these closed file descriptors from its poll event loop (`self.loop.fds`). Because the closed fds remained registered, `poll` continuously returned them with events (such as `POLLNVAL`), causing the single-threaded server daemon to enter an infinite 100% CPU busy-loop. This rendered the daemon completely unresponsive to any new client connections, causing subsequent commands to fail with connection resets (`ECONNRESET`).
+
+---
+
 ## Updated Summary
 
 | Severity | Count | Fixed | False Positive | Unresolved |
 |----------|-------|-------|----------------|------------|
-| Critical | 24 | 21 | 3 | **0** |
+| Critical | 25 | 22 | 3 | **0** |
 | High | 45 (43+2) | 44 | 1 | **0** |
 | Medium | 69 (65+4) | 67 | 2 | **0** |
 | Low | 63 (61+2) | 60 | 3 | **0** |
-| Total | 204 (193+11) | **195** | **9** | **0** |
+| Total | 205 (194+11) | **196** | **9** | **0** |

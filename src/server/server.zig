@@ -389,6 +389,7 @@ pub const Server = struct {
         const pane: *Pane = @ptrCast(@alignCast(ev.udata orelse return .not_ours));
         if (!self.isPaneValid(pane)) {
             std.log.debug("handlePtyEvent: received event for invalid/stale pane pointer", .{});
+            self.loop.removeFd(ev.fd);
             return .handled;
         }
         const has_in = (ev.revents & @as(i16, @intCast(std.posix.POLL.IN))) != 0;
@@ -2174,6 +2175,13 @@ pub const Server = struct {
             if (std.mem.eql(u8, s.name, name)) break i;
         } else return error.SessionNotFound;
         var session = self.sessions.orderedRemove(idx);
+        for (session.windows.items) |win| {
+            for (win.panes.items) |pane| {
+                if (pane.pty) |pty| {
+                    self.loop.removeFd(pty.master);
+                }
+            }
+        }
         session.deinit(self.allocator);
         self.allocator.destroy(session);
         self.dirty = true;
@@ -2181,6 +2189,13 @@ pub const Server = struct {
 
     pub fn killAllSessions(self: *Server) void {
         for (self.sessions.items) |s| {
+            for (s.windows.items) |win| {
+                for (win.panes.items) |pane| {
+                    if (pane.pty) |pty| {
+                        self.loop.removeFd(pty.master);
+                    }
+                }
+            }
             s.deinit(self.allocator);
             self.allocator.destroy(s);
         }

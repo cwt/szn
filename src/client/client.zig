@@ -9,16 +9,28 @@ fn fdWrite(fd: i32, buf: []const u8) Error!void {
     var off: usize = 0;
     while (off < buf.len) {
         const n = std.c.write(fd, buf.ptr + off, buf.len - off);
-        if (n < 0) return error.WriteFailed;
+        if (n < 0) {
+            const err = std.c.errno(n);
+            if (err == .INTR) continue;
+            std.debug.print("fdWrite failed with errno: {any}\n", .{err});
+            return error.WriteFailed;
+        }
         if (n == 0) return error.WriteFailed;
         off += @as(usize, @intCast(n));
     }
 }
 
 fn fdRead(fd: i32, buf: []u8) Error!usize {
-    const n = std.c.read(fd, buf.ptr, buf.len);
-    if (n < 0) return error.ReadFailed;
-    return @as(usize, @intCast(n));
+    while (true) {
+        const n = std.c.read(fd, buf.ptr, buf.len);
+        if (n < 0) {
+            const err = std.c.errno(n);
+            if (err == .INTR) continue;
+            std.debug.print("fdRead failed with errno: {any}\n", .{err});
+            return error.ReadFailed;
+        }
+        return @as(usize, @intCast(n));
+    }
 }
 
 pub const Client = struct {
