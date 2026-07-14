@@ -523,6 +523,7 @@ pub const Server = struct {
                 session.killWindow(self.allocator, win);
             } else {
                 win.removePane(self.allocator, pane);
+                pane.deinit();
             }
 
             if (session.windows.items.len == 0) {
@@ -618,7 +619,7 @@ pub const Server = struct {
             },
             .kill_pane => {
                 if (window.panes.items.len > 1) {
-                    window.removePane(self.allocator, pane);
+                    self.destroyPane(pane);
                 }
             },
             .next_window => {

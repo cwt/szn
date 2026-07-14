@@ -267,7 +267,7 @@ fn cmdKillPane(server: *Server, _: []const []const u8) CmdResult {
     const window = session.active_window orelse return .err;
     const pane = window.active_pane orelse return .err;
     if (window.panes.items.len <= 1) return .err;
-    window.removePane(server.allocator, pane);
+    server.destroyPane(pane);
     return .ok;
 }
 
