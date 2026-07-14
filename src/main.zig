@@ -301,14 +301,16 @@ fn runServerDaemon(allocator: std.mem.Allocator) Error!void {
     };
 
     const session = try server.newSession("default", sx, sy - 1);
-    const window = session.active_window orelse {
+    // Verify that the initial session has an active window and pane
+    if (session.active_window) |win| {
+        if (win.active_pane == null) {
+            std.log.err("newSession returned window with no active pane", .{});
+            return error.OutOfMemory;
+        }
+    } else {
         std.log.err("newSession returned session with no active window", .{});
         return error.OutOfMemory;
-    };
-    const pane = window.active_pane orelse {
-        std.log.err("newSession returned window with no active pane", .{});
-        return error.OutOfMemory;
-    };
+    }
 
     server.display_sx = sx;
     server.display_sy = sy;
@@ -332,9 +334,21 @@ fn runServerDaemon(allocator: std.mem.Allocator) Error!void {
         try server.run(1);
     }
 
-    try pane.spawn(allocator, &[_][]const u8{shell}, null);
-    try server.watchPanePty(pane);
-    pane.initPty();
+    // Spawn the default shell only if the default session (ID 0) hasn't been killed.
+    var default_pane: ?*@import("window.zig").Pane = null;
+    for (server.sessions.items) |s| {
+        if (s.id == 0) {
+            if (s.active_window) |w| {
+                default_pane = w.active_pane;
+            }
+            break;
+        }
+    }
+    if (default_pane) |p| {
+        try p.spawn(allocator, &[_][]const u8{shell}, null);
+        try server.watchPanePty(p);
+        p.initPty();
+    }
 
     while (server.loop.running) {
         try server.run(100);
