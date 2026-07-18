@@ -1593,13 +1593,15 @@ test "UTF-8 multi-byte character parsing" {
     var screen = try Screen.init(testing.allocator, 80, 24);
     defer screen.deinit();
     var parser = InputParser.init(&screen);
-    // ❯ is E2 9D AF
+    // ❯ (U+276F, a Dingbats emoji) is width 2 on emoji-capable terminals
+    // (see char_width.zig bug #206 fix), so it occupies columns 0–1.
     try parser.feed("❯abc");
     try testing.expectEqual(@as(u21, 0x276f), screen.grid.getCell(0, 0).char); // U+276F is ❯
-    try testing.expectEqual(@as(u21, 'a'), screen.grid.getCell(1, 0).char);
-    try testing.expectEqual(@as(u21, 'b'), screen.grid.getCell(2, 0).char);
-    try testing.expectEqual(@as(u21, 'c'), screen.grid.getCell(3, 0).char);
-    try testing.expectEqual(@as(u32, 4), screen.cursor.x);
+    try testing.expectEqual(@as(bool, true), screen.grid.getCell(1, 0).is_padding); // padding cell
+    try testing.expectEqual(@as(u21, 'a'), screen.grid.getCell(2, 0).char);
+    try testing.expectEqual(@as(u21, 'b'), screen.grid.getCell(3, 0).char);
+    try testing.expectEqual(@as(u21, 'c'), screen.grid.getCell(4, 0).char);
+    try testing.expectEqual(@as(u32, 5), screen.cursor.x);
     try testing.expectEqual(@as(u8, @intFromEnum(InputParser.State.ground)), @intFromEnum(parser.state));
 }
 

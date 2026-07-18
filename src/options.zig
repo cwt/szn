@@ -206,6 +206,13 @@ pub const SESSION_OPTIONS = &[_]OptionDef{
     .{ .name = "display-time", .type = .number, .default = OptionValue{ .number = 1000 }, .min = 0, .max = 60000 },
     .{ .name = "set-titles", .type = .flag, .default = OptionValue{ .flag = false } },
     .{ .name = "set-clipboard", .type = .choice, .default = OptionValue{ .choice = "external" }, .choices = &[_][]const u8{ "off", "external", "on" } },
+    // Per-codepoint width overrides, mirroring tmux `codepoint-widths`.
+    // Format: a space-separated list of entries, each "U+XXXX=W" or
+    // "U+XXXX-U+YYYY=W" (W is 1 or 2). Use this to match a terminal
+    // that renders ambiguous emoji/symbols at a width szn does not assume
+    // by default (bug #206). Setting the option rebuilds the override
+    // table from scratch; e.g. `set -g codepoint-widths "U+2705=1"`.
+    .{ .name = "codepoint-widths", .type = .string, .default = OptionValue{ .string = "" } },
 };
 
 pub const WINDOW_OPTIONS = &[_]OptionDef{

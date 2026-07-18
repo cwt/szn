@@ -4,6 +4,7 @@ const server_mod = @import("../server/server.zig");
 const Server = server_mod.Server;
 const Pane = @import("../window.zig").Pane;
 const ChooseItem = @import("../choose.zig").ChooseItem;
+const char_width = @import("../char_width.zig");
 
 pub const CmdResult = enum(u8) {
     ok,
@@ -862,6 +863,9 @@ fn cmdSetOption(server: *Server, args: []const []const u8) CmdResult {
         } else {
             session.options.set(option_name, parsed_val) catch return .err;
         }
+    }
+    if (std.mem.eql(u8, option_name, "codepoint-widths") and parsed_val == .string) {
+        char_width.applyCodepointWidths(server.allocator, parsed_val.string) catch return .err;
     }
     return .ok;
 }

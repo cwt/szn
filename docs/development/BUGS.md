@@ -2620,3 +2620,59 @@ When a session or window is killed, its panes are deinitialized, closing their P
 | Medium | 69 (65+4) | 67 | 2 | **0** |
 | Low | 63 (61+2) | 60 | 3 | **0** |
 | Total | 205 (194+11) | **196** | **9** | **0** |
+
+---
+
+## NEW BUGS (2026-07-18 — emoji/cursor-width miscalculation)
+
+---
+
+### 206. Stale Unicode width table — agent CLI symbols (✓ ★ ♥ arrows) misclassified width 1, cursor drifts
+**File:** `src/char_width.zig:86–435` (`charWidth`), consumers `src/screen.zig:558` (`writeChar`), `src/server/render.zig:551,558` (`renderContent`), `src/tty/tty.zig:416` (`writeCell`)
+**Severity:** HIGH
+**Status:** ✅ FIXED — `charWidth` now uses a modern Unicode 15/16 East-Asian-Width + emoji-presentation table; ambiguous-width symbols that render as width 2 in emoji presentation are now reported as width 2. A `codepoint-widths` session option (mirroring `tmux`'s `codepoint-widths`) lets operators override per-codepoint widths to match any terminal. Unit tests added.
+
+The `wide_ranges` table is an old (Unicode 9/11-era) static list that classifies many emoji and symbol codepoints as **width 1**, but modern terminals (iTerm2, Ghostty, kitty, WezTerm, the macOS Terminal) render them as **width 2**. Confirmed misclassifications on the actual code:
+
+```
+U+2705 (white heavy check)  width=1   ← real terminal: 2
+U+2B50 (star)               width=1   ← real terminal: 2
+U+2764 (heavy black heart)  width=1   ← real terminal: 2
+U+2714 (heavy check mark)   width=1   ← real terminal: 2
+U+261D (raised hand)        width=1   ← real terminal: 2
+U+2934 (arrow)              width=1   ← real terminal: 2
+U+1F1E6+ (regional indicators / flags) width=2  ✓ (correct)
+U+1F600 (grinning face)     width=2   ✓ (correct)
+```
+
+**Mechanism (why "character at wrong place"):**
+
+1. `Screen.writeChar` (`src/screen.zig:558`) advances the *model* cursor by `charWidth(char)`. For `U+2705` szn advances the column by **1**, but the real terminal (and the agent CLI drawing into it) advances by **2**.
+2. So `screen.cursor.x` drifts **+1 per misclassified wide symbol** relative to where the terminal hardware cursor actually is.
+3. On the next redraw, `renderContent` (`src/server/render.zig:459`) re-anchors with `moveTo(x, y)` based on the *model* column, which is now off by the accumulated drift. Printed characters land one (or more) columns to the left/right. The more emoji/checkmarks/arrows the agent prints, the worse the drift — which is why it is intermittent ("sometime") and depends on what the agent emitted.
+
+This also breaks any program that queries the cursor position (DSR `\e[6n`) or relies on exact column tracking, because szn's reported model cursor never matches the real terminal.
+
+**Trigger:** Running a coding-agent CLI (e.g. `antigravity-cli`, `claude`, `gemini`, `codex`) inside a szn pane. These tools emit heavy checkmarks (✓ ✅), stars (★), hearts (♥), and arrows constantly in their status/todo UI.
+
+**Fix:** Replaced the manual `wide_ranges`/`zero_width_ranges` tables with a current width function that:
+- keeps the zero-width / combining ranges (still width 0),
+- treats the East-Asian Wide and Fullwidth blocks as width 2,
+- treats emoji-presentation symbols (Miscellaneous Symbols `U+2600`–`U+27BF`, Dingbats `U+2700`–`U+27BF` subset, `U+2B00`–`U+2BFF`, `U+1F000`+ emoji, regional indicators) as width 2 when they have emoji presentation,
+- falls back to 1 for everything else.
+
+The `writeChar` / `renderContent` / `writeCell` call sites did not need changes — they already consume `charWidth()` correctly; the bug was purely the width table returning the wrong value.
+
+**There is no capability to detect the terminal's ambiguous-width policy.** Nothing in any terminal protocol (not XTWINOPS cell-size queries, not TERMINFO) reports whether a given terminal renders `U+2705` as width 1 or width 2 — each emulator hard-codes its own choice. `main.zig:362` already queries the real cell pixel size via `XTWINOPS`, but no equivalent exists for ambiguous width. `szn` therefore cannot auto-adapt, and neither can `tmux` (see `tmux` issue #4287 — Nicholas Marriott: *"there is no sensible way for us to predict that a terminal will treat [a char] differently"*). The only robust answer is a per-codepoint override, exactly what `tmux` ships as `codepoint-widths`.
+
+**Override option (`codepoint-widths`, session/global):** a space-separated string of entries `U+XXXX=W` or `U+XXXX-U+YYYY=W` (W = 1 or 2). Setting it rebuilds szn's runtime override table (`src/char_width.zig` `applyCodepointWidths` / `setOverride` / `overrideWidth`) from scratch; `charWidth` consults overrides before any table, so a value of `1` makes szn agree with a width-1 terminal and a value of `2` (the default table's behaviour) with a width-2 terminal. Examples:
+
+```
+set -g codepoint-widths "U+2705=1"        # this box renders ✓ as width 1
+set -g codepoint-widths "U+2600-U+26FF=1" # entire Miscellaneous Symbols block
+set -g codepoint-widths ""                  # clear → back to szn defaults
+```
+
+This mirrors `tmux`'s `utf8_default_width_cache` + `codepoint-widths` design. The default szn table assumes width 2 (correct for iTerm2/Ghostty/kitty/WezTerm/macOS Terminal), so most users need no override.
+
+---

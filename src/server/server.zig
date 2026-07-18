@@ -2,6 +2,7 @@ const std = @import("std");
 const c = std.c;
 const testing = std.testing;
 const session_mod = @import("../session.zig");
+const char_width = @import("../char_width.zig");
 
 /// How long (ms) a pane's PTY feed is paused while a sixel is buffered
 /// awaiting a measured cell size before we give up and place it anyway (#204).
@@ -2261,6 +2262,11 @@ pub const Server = struct {
                         if (s.value == .key) {
                             self.dispatcher.prefix = s.value.key;
                         }
+                    }
+                    if (std.mem.eql(u8, s.option, "codepoint-widths") and s.value == .string) {
+                        char_width.applyCodepointWidths(self.allocator, s.value.string) catch |err| {
+                            std.log.warn("codepoint-widths: {s}", .{@errorName(err)});
+                        };
                     }
                 },
                 .bind_key => |b| {

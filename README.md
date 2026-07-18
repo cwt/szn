@@ -49,6 +49,28 @@ the two. Less code, fewer surprises, and nothing left over from 1978.
   session → window → pane model are all preserved. If you know tmux, you
   already know szn.
 
+## Character Width & Emoji
+
+szn tracks the cursor model with a modern Unicode width table (Unicode 15/16
+East-Asian-Width + emoji-presentation). Ambiguous-width symbols that modern
+terminals render as **width 2** — emoji (✅ ★ ♥), Dingbats, Miscellaneous
+Symbols, and regional indicators — are reported as width 2 by default, so the
+model cursor stays in lockstep with the real terminal and text never drifts.
+
+Terminals don't agree on ambiguous width and **there is no capability to query
+it** — each emulator hardcodes its own choice. If your terminal renders some
+symbols as width 1, override per-codepoint to match it (mirrors tmux's
+`codepoint-widths`):
+
+```bash
+# Tell szn U+2705 (✅) renders as width 1 on this terminal
+set -g codepoint-widths "U+2705=1"
+# Override a whole block
+set -g codepoint-widths "U+2600-U+26FF=1"
+# Clear all overrides → back to szn's defaults
+set -g codepoint-widths ""
+```
+
 ## Status
 
 All core development phases (Phases 0 to 11) are fully implemented and complete. We have a robust, functional Zig terminal multiplexer featuring:
@@ -58,7 +80,7 @@ All core development phases (Phases 0 to 11) are fully implemented and complete.
 - Standard VT100 wrap-pending and Background Color Erase (BCE) support for accurate rendering.
 - Full multi-pane layouts, interactive copy mode, status bars, and config parsing (`.szn.conf`).
 - **Advanced Text Reflow** — automatically rewraps text on pane resizing, respecting CJK characters, combining marks, and Thai cluster integrity (including an $O(1)$ syllable backtracking algorithm). See [docs/TEXT_REFLOW.md](docs/TEXT_REFLOW.md) for full design details.
-- **730 unit and integration tests passing.**
+- **760 unit and integration tests passing.**
 
 ### Performance
 

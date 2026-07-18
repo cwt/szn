@@ -6,6 +6,107 @@ const WidthRange = struct {
     width: u2,
 };
 
+// ── User codepoint-width overrides ──
+//
+// There is no terminal capability that reports whether ambiguous-width symbols
+// (emoji, dingbats, misc symbols) render as width 1 or width 2. Each
+// terminal emulator makes its own choice, and szn cannot query it. This is
+// exactly the situation tmux faces; tmux solves it with a per-codepoint
+// override option (`codepoint-widths`, see options.zig) that fills a runtime
+// cache (`utf8_default_width_cache`). We mirror that design here.
+//
+// Overrides are stored in a small fixed table (matching tmux's bounded cache)
+// and consulted before any width table in `charWidth`. The `codepoint-widths`
+// option parser calls `setOverride` / `clearOverrides` to populate it.
+
+pub const MAX_OVERRIDES = 256;
+
+const Override = struct {
+    start: u21,
+    end: u21,
+    width: u2,
+};
+
+var override_count: usize = 0;
+var overrides: [MAX_OVERRIDES]Override = undefined;
+
+/// Replace the entire override table with a single codepoint range.
+/// Returns `error.OverrideTableFull` if the table is saturated.
+pub fn setOverride(start: u21, end: u21, width: u2) !void {
+    if (override_count >= MAX_OVERRIDES) return error.OverrideTableFull;
+    overrides[override_count] = .{ .start = start, .end = end, .width = width };
+    override_count += 1;
+}
+
+/// Remove all overrides. The `codepoint-widths` option rebuilds the table
+/// from scratch on every assignment, so we never need incremental deletion.
+pub fn clearOverrides() void {
+    override_count = 0;
+}
+
+pub const OverrideError = error{ OverrideTableFull };
+
+fn overrideWidth(cp: u21) ?u2 {
+    var i: usize = 0;
+    while (i < override_count) : (i += 1) {
+        if (cp >= overrides[i].start and cp <= overrides[i].end) {
+            return overrides[i].width;
+        }
+    }
+    return null;
+}
+
+/// Parse a `codepoint-widths` option value and (re)build the override
+/// table from scratch. Accepts a space-separated list of entries:
+///
+///   U+2705=1            single codepoint
+///   U+2600-U+26FF=2     inclusive range
+///
+/// The width must be 1 or 2. An empty string clears all overrides
+/// (restoring szn's built-in defaults). Returns `OverrideTableFull` if
+/// more than MAX_OVERRIDES distinct entries are supplied.
+pub fn applyCodepointWidths(allocator: std.mem.Allocator, value: []const u8) ParseOverrideError!void {
+    _ = allocator;
+    clearOverrides();
+    var it = std.mem.tokenizeScalar(u8, std.mem.trim(u8, value, " \t"), ' ');
+    while (it.next()) |entry| {
+        const eq = std.mem.indexOfScalar(u8, entry, '=') orelse return error.InvalidEntry;
+        const cp_part = entry[0..eq];
+        const w_part = entry[eq + 1 ..];
+        const width: u2 = blk: {
+            if (std.mem.eql(u8, w_part, "1")) break :blk 1;
+            if (std.mem.eql(u8, w_part, "2")) break :blk 2;
+            return error.InvalidWidth;
+        };
+        if (std.mem.indexOf(u8, cp_part, "-")) |dash| {
+            const lo = parseCp(cp_part[0..dash]) orelse return error.InvalidCodepoint;
+            const hi = parseCp(cp_part[dash + 1 ..]) orelse return error.InvalidCodepoint;
+            try setOverride(lo, hi, width);
+        } else {
+            const cp = parseCp(cp_part) orelse return error.InvalidCodepoint;
+            try setOverride(cp, cp, width);
+        }
+    }
+}
+
+fn parseCp(s: []const u8) ?u21 {
+    var rest = s;
+    if (std.mem.startsWith(u8, rest, "U+") or std.mem.startsWith(u8, rest, "u+")) {
+        rest = rest[2..];
+    } else if (std.mem.startsWith(u8, rest, "0x") or std.mem.startsWith(u8, rest, "0X")) {
+        rest = rest[2..];
+    }
+    if (rest.len == 0) return null;
+    return std.fmt.parseInt(u21, rest, 16) catch null;
+}
+
+pub const ParseOverrideError = error{
+    OverrideTableFull,
+    InvalidEntry,
+    InvalidCodepoint,
+    InvalidWidth,
+};
+
 fn searchTable(key: u21, ranges: []const WidthRange) bool {
     if (ranges.len == 0) return false;
     var lo: usize = 0;
@@ -84,6 +185,10 @@ pub fn combiningCodepoint(idx: u13) u21 {
 }
 
 pub fn charWidth(cp: u21) u2 {
+    // User overrides win first — these let the operator match whatever width
+    // their terminal actually uses for ambiguous codepoints (bug #206).
+    if (overrideWidth(cp)) |w| return w;
+
     // Fast path: ASCII printable + Latin-1 Supplement
     if (cp < 0x0300) {
         if (cp < 0x20 or (cp >= 0x7F and cp <= 0xA0)) return 0;
@@ -92,6 +197,12 @@ pub fn charWidth(cp: u21) u2 {
     // Binary search in the non-trivial ranges table
     if (searchTable(cp, &zero_width_ranges)) return 0;
     if (searchTable(cp, &wide_ranges)) return 2;
+    // Emoji-presentation codepoints that modern terminals (iTerm2, kitty,
+    // Ghostty, WezTerm, Terminal.app) render as width 2 even though their
+    // East-Asian-Width class is "ambiguous" or "neutral".  Misclassifying
+    // these as width 1 makes the model cursor drift relative to the real
+    // terminal, which is bug #206.
+    if (searchTable(cp, &emoji_presentation_ranges)) return 2;
 
     return 1;
 }
@@ -434,6 +545,27 @@ const wide_ranges = [_]WidthRange{
     .{ .start = 0x30000, .end = 0x3FFFD, .width = 2 },
 };
 
+// Codepoints that have emoji presentation and are rendered width 2 by
+// modern terminals, even though their East-Asian-Width property is
+// "ambiguous" or "neutral" (not in wide_ranges).  Without these, the model
+// cursor advances by 1 while the real terminal advances by 2, drifting the
+// cursor and mispositioning subsequent output (bug #206).  Variation
+// selectors (U+FE0F) and skin-tone modifiers (U+1F3FB–U+1F3FF) are zero-width
+// and handled by zero_width_ranges; here we list the base emoji themselves.
+const emoji_presentation_ranges = [_]WidthRange{
+    .{ .start = 0x231A, .end = 0x231B, .width = 2 }, // watch, hourglass
+    .{ .start = 0x23E9, .end = 0x23FA, .width = 2 }, // various emoji symbols (shuffle, recycle, symbols)
+    .{ .start = 0x23FC, .end = 0x23FE, .width = 2 }, // film frames, signal strength
+    .{ .start = 0x2600, .end = 0x26FF, .width = 2 }, // Miscellaneous Symbols (sun, moon, weather, chess, etc.)
+    .{ .start = 0x2700, .end = 0x27BF, .width = 2 }, // Dingbats (✅ ★ ♥ arrows, etc.)
+    .{ .start = 0x2B00, .end = 0x2BFF, .width = 2 }, // Miscellaneous Symbols and Arrows
+    .{ .start = 0x1F1E6, .end = 0x1F1FF, .width = 2 }, // regional indicators (flags)
+    .{ .start = 0x1F300, .end = 0x1F5FF, .width = 2 }, // Symbols & Pictographs
+    .{ .start = 0x1F650, .end = 0x1F67F, .width = 2 }, // enclosed-alphanum ext. pictographs
+    .{ .start = 0x1F900, .end = 0x1F9FF, .width = 2 }, // Supplemental Symbols and Pictographs
+    .{ .start = 0x1FA70, .end = 0x1FAFF, .width = 2 }, // Symbols and Pictographs Extended-A
+};
+
 test "charWidth: ASCII" {
     try std.testing.expectEqual(@as(u2, 1), charWidth('A'));
     try std.testing.expectEqual(@as(u2, 1), charWidth(' '));
@@ -487,6 +619,20 @@ test "charWidth: emoji are wide" {
     try std.testing.expectEqual(@as(u2, 2), charWidth(0x1F602)); // joy
 }
 
+test "charWidth: emoji-presentation symbols are wide (bug #206)" {
+    try std.testing.expectEqual(@as(u2, 2), charWidth(0x2705)); // white heavy check mark
+    try std.testing.expectEqual(@as(u2, 2), charWidth(0x2714)); // heavy check mark
+    try std.testing.expectEqual(@as(u2, 2), charWidth(0x2B50)); // star
+    try std.testing.expectEqual(@as(u2, 2), charWidth(0x2764)); // heavy black heart
+    try std.testing.expectEqual(@as(u2, 2), charWidth(0x2600)); // black sun with rays
+    try std.testing.expectEqual(@as(u2, 2), charWidth(0x2601)); // cloud
+    try std.testing.expectEqual(@as(u2, 2), charWidth(0x231A)); // wristwatch
+    try std.testing.expectEqual(@as(u2, 2), charWidth(0x23E9)); // reverse button
+    try std.testing.expectEqual(@as(u2, 2), charWidth(0x2603)); // snowman
+    try std.testing.expectEqual(@as(u2, 2), charWidth(0x1F1E6)); // regional indicator A (flag)
+    try std.testing.expectEqual(@as(u2, 2), charWidth(0x1F650)); // enclosed A in negative squared
+}
+
 test "charWidth: ZWJ and variation selectors are zero-width" {
     try std.testing.expectEqual(@as(u2, 0), charWidth(0x200D)); // ZWJ
     try std.testing.expectEqual(@as(u2, 0), charWidth(0xFE0F)); // variation selector
@@ -507,4 +653,23 @@ test "charWidth: sorted tables invariant" {
     for (wide_ranges[1..], 0..) |r, i| {
         try std.testing.expect(wide_ranges[i].end < r.start);
     }
+    for (emoji_presentation_ranges[1..], 0..) |r, i| {
+        try std.testing.expect(emoji_presentation_ranges[i].end < r.start);
+    }
+}
+
+test "charWidth: codepoint-widths override (bug #206)" {
+    // Default: U+2705 is a width-2 emoji symbol.
+    try std.testing.expectEqual(@as(u2, 2), charWidth(0x2705));
+    // A terminal that renders it as width 1 can override it.
+    try applyCodepointWidths(std.testing.allocator, "U+2705=1");
+    try std.testing.expectEqual(@as(u2, 1), charWidth(0x2705));
+    // Ranges work too.
+    try applyCodepointWidths(std.testing.allocator, "U+2600-U+26FF=1");
+    try std.testing.expectEqual(@as(u2, 1), charWidth(0x2600));
+    try std.testing.expectEqual(@as(u2, 1), charWidth(0x26FF));
+    // And we can restore the default by clearing.
+    try applyCodepointWidths(std.testing.allocator, "");
+    try std.testing.expectEqual(@as(u2, 2), charWidth(0x2705));
+    try std.testing.expectEqual(@as(u2, 2), charWidth(0x2600));
 }
