@@ -557,7 +557,10 @@ const emoji_presentation_ranges = [_]WidthRange{
     .{ .start = 0x23E9, .end = 0x23FA, .width = 2 }, // various emoji symbols (shuffle, recycle, symbols)
     .{ .start = 0x23FC, .end = 0x23FE, .width = 2 }, // film frames, signal strength
     .{ .start = 0x2600, .end = 0x26FF, .width = 2 }, // Miscellaneous Symbols (sun, moon, weather, chess, etc.)
-    .{ .start = 0x2700, .end = 0x27BF, .width = 2 }, // Dingbats (✅ ★ ♥ arrows, etc.)
+    .{ .start = 0x2700, .end = 0x276D, .width = 2 }, // Dingbats (✅ ★ ♥ arrows, etc.)
+    // U+276E (❮) and U+276F (❯) are punctuation ornaments rendered
+    // width 1 by terminals — excluded from the width-2 Dingbats range.
+    .{ .start = 0x2770, .end = 0x27BF, .width = 2 }, // Dingbats cont.
     .{ .start = 0x2B00, .end = 0x2BFF, .width = 2 }, // Miscellaneous Symbols and Arrows
     .{ .start = 0x1F1E6, .end = 0x1F1FF, .width = 2 }, // regional indicators (flags)
     .{ .start = 0x1F300, .end = 0x1F5FF, .width = 2 }, // Symbols & Pictographs
@@ -631,6 +634,17 @@ test "charWidth: emoji-presentation symbols are wide (bug #206)" {
     try std.testing.expectEqual(@as(u2, 2), charWidth(0x2603)); // snowman
     try std.testing.expectEqual(@as(u2, 2), charWidth(0x1F1E6)); // regional indicator A (flag)
     try std.testing.expectEqual(@as(u2, 2), charWidth(0x1F650)); // enclosed A in negative squared
+}
+
+test "charWidth: dingbat ornaments ❮❯ are width 1 (bug #206 follow-up)" {
+    // U+276E (❮) / U+276F (❯) are punctuation ornaments, not wide
+    // symbols; terminals render them width 1, so exclude them from the
+    // Dingbats width-2 range.
+    try std.testing.expectEqual(@as(u2, 1), charWidth(0x276E));
+    try std.testing.expectEqual(@as(u2, 1), charWidth(0x276F));
+    // Neighbours stay width 2.
+    try std.testing.expectEqual(@as(u2, 2), charWidth(0x276D));
+    try std.testing.expectEqual(@as(u2, 2), charWidth(0x2770));
 }
 
 test "charWidth: ZWJ and variation selectors are zero-width" {
