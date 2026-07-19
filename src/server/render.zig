@@ -680,21 +680,18 @@ pub const Display = struct {
     /// All erases happen before all draws so a redraw always restores any
     /// overlay pixels the erase may have cleared.
     fn renderSixelImages(self: Display, bounds: []const PaneBounds) Error!void {
-        // Phase 0 — unconditionally clear the entire sixel graphics layer once
-        // per frame if any pane has sixel images OR if any were drawn last frame.
-        // This is the most robust approach: it eliminates any dependency on
-        // cursor positioning, per-slot tracking, or terminal-specific DECSED
-        // behavior.
+        // Phase 0 — check if any pane has (or had) sixel images. Skip the
+        // entire O(total_cells) per-pane scan when no sixels are present.
         var needs_erase = false;
+        var has_sixel = false;
         for (bounds) |pb| {
-            // Check if this pane has any sixel images in the registry.
             for (pb.pane.screen.sixel_images) |opt_img| {
                 if (opt_img != null) {
                     needs_erase = true;
+                    has_sixel = true;
                     break;
                 }
             }
-            // Check if this pane drew any sixel images last frame.
             for (pb.pane.screen.sixel_last_anchor) |opt_anchor| {
                 if (opt_anchor != null) {
                     needs_erase = true;
@@ -703,6 +700,8 @@ pub const Display = struct {
             }
             if (needs_erase) break;
         }
+
+        if (!has_sixel and !needs_erase) return;
 
         if (needs_erase) {
             try self.writeBytes("\x1bP2q\x1b\\"); // DECSIXEL erase all (Ps=2)
