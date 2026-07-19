@@ -395,11 +395,13 @@ pub const CopyMode = struct {
 
         var line_buf: std.ArrayList(u8) = .empty;
         defer line_buf.deinit(allocator);
+        var offsets: std.ArrayList(usize) = .empty;
+        defer offsets.deinit(allocator);
 
         var li = cursor_logical;
         while (li < total) : (li += 1) {
             const start_col: usize = if (li == cursor_logical) start_x else 0;
-            if (searchLogicalLine(grid, allocator, &line_buf, li, start_col, needle)) |found_x| {
+            if (searchLogicalLine(grid, allocator, &line_buf, &offsets, li, start_col, needle)) |found_x| {
                 self.placeCursorAtLogical(grid, li, found_x);
                 return true;
             }
@@ -417,6 +419,8 @@ pub const CopyMode = struct {
 
         var line_buf: std.ArrayList(u8) = .empty;
         defer line_buf.deinit(allocator);
+        var offsets: std.ArrayList(usize) = .empty;
+        defer offsets.deinit(allocator);
 
         var li = cursor_logical;
         while (true) : ({
@@ -424,7 +428,7 @@ pub const CopyMode = struct {
             li -= 1;
         }) {
             const start_col: usize = if (li == cursor_logical) start_x else grid.width -| 1;
-            if (searchLogicalLineBackward(grid, allocator, &line_buf, li, start_col, needle)) |found_x| {
+            if (searchLogicalLineBackward(grid, allocator, &line_buf, &offsets, li, start_col, needle)) |found_x| {
                 self.placeCursorAtLogical(grid, li, found_x);
                 return true;
             }
@@ -456,41 +460,52 @@ pub const CopyMode = struct {
         grid: *const Grid,
         allocator: std.mem.Allocator,
         out: *std.ArrayList(u8),
+        offsets: *std.ArrayList(usize),
         li: usize,
         start_col: usize,
         needle: []const u8,
     ) ?usize {
-        const bytes = lineBytes(grid, allocator, out, li) orelse return null;
-        if (start_col >= bytes.len) return null;
-        const at = std.mem.indexOf(u8, bytes[start_col..], needle) orelse return null;
-        return start_col + at;
+        const ncell = lineBytes(grid, allocator, out, offsets, li) orelse return null;
+        if (ncell == 0) return null;
+        const bytes = out.items;
+        // Map the start cell column to its byte offset.
+        const byte_start = if (start_col < offsets.items.len) offsets.items[start_col] else bytes.len;
+        if (byte_start + needle.len > bytes.len) return null;
+        const at = std.mem.indexOf(u8, bytes[byte_start..], needle) orelse return null;
+        // Convert the match byte offset back to a cell column.
+        return byteToColumn(offsets.items, byte_start + at);
     }
 
     fn searchLogicalLineBackward(
         grid: *const Grid,
         allocator: std.mem.Allocator,
         out: *std.ArrayList(u8),
+        offsets: *std.ArrayList(usize),
         li: usize,
         start_col: usize,
         needle: []const u8,
     ) ?usize {
-        const bytes = lineBytes(grid, allocator, out, li) orelse return null;
-        if (bytes.len == 0 or needle.len > bytes.len) return null;
-        const limit = @min(start_col, bytes.len - needle.len);
-        var x = limit;
-        while (true) : ({
-            if (x == 0) break;
-            x -= 1;
-        }) {
-            if (std.mem.eql(u8, bytes[x .. x + needle.len], needle)) return x;
-            if (x == 0) break;
+        const ncell = lineBytes(grid, allocator, out, offsets, li) orelse return null;
+        const bytes = out.items;
+        if (ncell == 0 or needle.len > bytes.len) return null;
+        const byte_start = if (start_col < offsets.items.len) offsets.items[start_col] else bytes.len;
+        var byte_pos = @min(byte_start, bytes.len - needle.len);
+        while (true) {
+            if (std.mem.eql(u8, bytes[byte_pos .. byte_pos + needle.len], needle)) {
+                return byteToColumn(offsets.items, byte_pos);
+            }
+            if (byte_pos == 0) break;
+            byte_pos -= 1;
         }
         return null;
     }
 
     /// Render logical line `li` (history or visible) into `out` as UTF-8,
-    /// reusing `out`'s capacity. Returns the slice of `out` holding the line.
-    fn lineBytes(grid: *const Grid, allocator: std.mem.Allocator, out: *std.ArrayList(u8), li: usize) ?[]const u8 {
+    /// reusing `out`'s capacity, and fill `offsets` with the byte offset at
+    /// which each cell's char starts (so a byte position can be mapped back
+    /// to a cell column — needed for 2-width characters). Returns the number
+    /// of cells written.
+    fn lineBytes(grid: *const Grid, allocator: std.mem.Allocator, out: *std.ArrayList(u8), offsets: *std.ArrayList(usize), li: usize) ?usize {
         const hist_len = grid.history.items.len - grid.history_start;
         const line = if (li < hist_len)
             grid.getHistoryLine(li)
@@ -498,15 +513,35 @@ pub const CopyMode = struct {
             grid.getLine(@intCast(li - hist_len));
 
         out.clearRetainingCapacity();
+        offsets.clearRetainingCapacity();
         var x: u32 = 0;
-        while (x < line.cells.items.len) : (x += 1) {
+        while (x < line.cells.items.len and x < grid.width) : (x += 1) {
             const cell = line.cells.items[x];
-            if (cell.char == 0) break;
+            offsets.append(allocator, out.items.len) catch return null;
+            if (cell.char == 0) {
+                // Empty cell: represent as a blank so the rest of the line
+                // stays searchable and cell columns stay aligned.
+                out.append(allocator, ' ') catch return null;
+                continue;
+            }
             var buf: [4]u8 = undefined;
-            const len = std.unicode.utf8Encode(cell.char, &buf) catch continue;
+            const len = std.unicode.utf8Encode(cell.char, &buf) catch {
+                out.append(allocator, ' ') catch return null;
+                continue;
+            };
             out.appendSlice(allocator, buf[0..len]) catch return null;
         }
-        return out.items;
+        return offsets.items.len;
+    }
+
+    /// Map a byte offset (into `bytes`) to the cell column it falls in, using
+    /// the per-cell `offsets` table. `byte_pos` is clamped to the last cell.
+    fn byteToColumn(offsets: []const usize, byte_pos: usize) usize {
+        var col: usize = 0;
+        while (col + 1 < offsets.len and offsets[col + 1] <= byte_pos) {
+            col += 1;
+        }
+        return col;
     }
 
     pub fn handleKey(self: *CopyMode, k: Key, grid: *const Grid) KeyResult {
@@ -1369,6 +1404,25 @@ test "search backward empty needle" {
     cm.cursor_y = 0;
     const found = cm.searchBackward(&g, testing.allocator, "");
     try testing.expect(!found);
+}
+
+test "search respects 2-width characters (byte offset != cell column)" {
+    var cm = CopyMode.init(.vi);
+    var g = try Grid.init(testing.allocator, 10, 1);
+    defer g.deinit();
+
+    // Cell 0 holds a 2-width char '世' (3 UTF-8 bytes, occupies cols 0-1).
+    // Cell 1 is its spacing continuation. Cell 2 holds 'o'.
+    g.writeChar(0, 0, '世');
+    g.writeChar(2, 0, 'o');
+
+    cm.cursor_x = 0;
+    cm.cursor_y = 0;
+    // Search for "o": it sits at cell column 2. A naive byte-offset cursor
+    // would land at byte 3 (wrong cell), so we assert the correct column.
+    const found = cm.searchForward(&g, testing.allocator, "o");
+    try testing.expect(found);
+    try testing.expectEqual(@as(u32, 2), cm.cursor_x);
 }
 
 test "search backward into history" {
