@@ -479,75 +479,62 @@ pub const Display = struct {
                     try self.writeBytes("\x1b[X");
                 }
 
-                if (@as(u32, @bitCast(cell.fg)) != @as(u32, @bitCast(active_fg)) or
-                    @as(u32, @bitCast(cell.bg)) != @as(u32, @bitCast(active_bg)) or
-                    @as(u16, @bitCast(cell.attr)) != @as(u16, @bitCast(active_attr)))
-                {
-                    active_fg = cell.fg;
-                    active_bg = cell.bg;
-                    active_attr = cell.attr;
+                const fg_changed = @as(u32, @bitCast(cell.fg)) != @as(u32, @bitCast(active_fg));
+                const bg_changed = @as(u32, @bitCast(cell.bg)) != @as(u32, @bitCast(active_bg));
+                const attr_changed = @as(u16, @bitCast(cell.attr)) != @as(u16, @bitCast(active_attr));
 
+                if (fg_changed or bg_changed or attr_changed) {
                     var sgr_buf: [256]u8 = undefined;
                     var sgr_pos: usize = 0;
 
-                    if (std.fmt.bufPrint(sgr_buf[sgr_pos..], "\x1b[m", .{})) |reset_str| {
-                        sgr_pos += reset_str.len;
-                    } else |_| {}
+                    if (attr_changed) {
+                        sgr_pos += (std.fmt.bufPrint(sgr_buf[sgr_pos..], "\x1b[m", .{}) catch break).len;
 
-                    const attrFields = comptime blk: {
-                        const all = std.meta.fields(Attr);
-                        break :blk all[0 .. all.len - 2];
-                    };
-                    const attrCodes = [_][]const u8{
-                        "1", // bold
-                        "2", // dim
-                        "3", // italic
-                        "4", // underline
-                        "5", // blink
-                        "7", // reverse
-                        "8", // concealed
-                        "9", // strikethrough
-                        "53", // overline
-                        "4:2", // double_underline
-                        "4:3", // curly_underline
-                    };
-
-                    inline for (attrFields, 0..) |field, idx| {
-                        if (@field(active_attr, field.name)) {
-                            const written = std.fmt.bufPrint(sgr_buf[sgr_pos..], "\x1b[{s}m", .{attrCodes[idx]}) catch break;
-                            sgr_pos += written.len;
+                        const attrFields = comptime blk: {
+                            const all = std.meta.fields(Attr);
+                            break :blk all[0 .. all.len - 2];
+                        };
+                        const attrCodes = [_][]const u8{
+                            "1",   "2",   "3",   "4",   "5",
+                            "7",   "8",   "9",   "53",  "4:2",
+                            "4:3",
+                        };
+                        inline for (attrFields, 0..) |field, idx| {
+                            if (@field(cell.attr, field.name)) {
+                                sgr_pos += (std.fmt.bufPrint(sgr_buf[sgr_pos..], "\x1b[{s}m", .{attrCodes[idx]}) catch break).len;
+                            }
                         }
                     }
 
-                    switch (active_fg.tag) {
-                        .default_, .terminal => {},
-                        .indexed => {
-                            if (std.fmt.bufPrint(sgr_buf[sgr_pos..], "\x1b[38;5;{}m", .{@as(u8, @truncate(active_fg.value))})) |printed| {
-                                sgr_pos += printed.len;
-                            } else |_| {}
-                        },
-                        .rgb => {
-                            const rgb = active_fg.toRgb().?;
-                            if (std.fmt.bufPrint(sgr_buf[sgr_pos..], "\x1b[38;2;{};{};{}m", .{ rgb[0], rgb[1], rgb[2] })) |printed| {
-                                sgr_pos += printed.len;
-                            } else |_| {}
-                        },
+                    if (fg_changed) {
+                        switch (cell.fg.tag) {
+                            .default_, .terminal => {},
+                            .indexed => {
+                                sgr_pos += (std.fmt.bufPrint(sgr_buf[sgr_pos..], "\x1b[38;5;{}m", .{@as(u8, @truncate(cell.fg.value))}) catch break).len;
+                            },
+                            .rgb => {
+                                const rgb = cell.fg.toRgb().?;
+                                sgr_pos += (std.fmt.bufPrint(sgr_buf[sgr_pos..], "\x1b[38;2;{};{};{}m", .{ rgb[0], rgb[1], rgb[2] }) catch break).len;
+                            },
+                        }
                     }
 
-                    switch (active_bg.tag) {
-                        .default_, .terminal => {},
-                        .indexed => {
-                            if (std.fmt.bufPrint(sgr_buf[sgr_pos..], "\x1b[48;5;{}m", .{@as(u8, @truncate(active_bg.value))})) |printed| {
-                                sgr_pos += printed.len;
-                            } else |_| {}
-                        },
-                        .rgb => {
-                            const rgb = active_bg.toRgb().?;
-                            if (std.fmt.bufPrint(sgr_buf[sgr_pos..], "\x1b[48;2;{};{};{}m", .{ rgb[0], rgb[1], rgb[2] })) |printed| {
-                                sgr_pos += printed.len;
-                            } else |_| {}
-                        },
+                    if (bg_changed) {
+                        switch (cell.bg.tag) {
+                            .default_, .terminal => {},
+                            .indexed => {
+                                sgr_pos += (std.fmt.bufPrint(sgr_buf[sgr_pos..], "\x1b[48;5;{}m", .{@as(u8, @truncate(cell.bg.value))}) catch break).len;
+                            },
+                            .rgb => {
+                                const rgb = cell.bg.toRgb().?;
+                                sgr_pos += (std.fmt.bufPrint(sgr_buf[sgr_pos..], "\x1b[48;2;{};{};{}m", .{ rgb[0], rgb[1], rgb[2] }) catch break).len;
+                            },
+                        }
                     }
+
+                    active_fg = cell.fg;
+                    active_bg = cell.bg;
+                    active_attr = cell.attr;
 
                     try self.writeBytes(sgr_buf[0..sgr_pos]);
                 }
