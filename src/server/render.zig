@@ -128,6 +128,7 @@ pub const Display = struct {
         message: ?[]const u8,
         command_mode: bool,
         command_buf: []const u8,
+        search_prefix: u8,
         pane_in_copy_mode: bool,
         full_rebuild: bool,
     ) Error!void {
@@ -289,7 +290,7 @@ pub const Display = struct {
 
         try self.renderContent(merged_screen);
         try self.renderSixelImages(bounds);
-        try self.renderStatusBar(session_name, windows, active_window, theme.status_fg, theme.status_bg, message, command_mode, command_buf, pane_in_copy_mode);
+        try self.renderStatusBar(session_name, windows, active_window, theme.status_fg, theme.status_bg, message, command_mode, command_buf, search_prefix, pane_in_copy_mode);
 
         if (merged_screen.cursor.visible) {
             try self.moveTo(merged_screen.cursor.x, merged_screen.cursor.y);
@@ -586,7 +587,7 @@ pub const Display = struct {
         try self.writeBytes("\x1b[m");
     }
 
-    fn renderStatusBar(self: Display, session_name: []const u8, windows: []const *Window, active_window: ?*Window, fg: Colour, bg: Colour, message: ?[]const u8, command_mode: bool, command_buf: []const u8, in_copy_mode: bool) Error!void {
+    fn renderStatusBar(self: Display, session_name: []const u8, windows: []const *Window, active_window: ?*Window, fg: Colour, bg: Colour, message: ?[]const u8, command_mode: bool, command_buf: []const u8, search_prefix: u8, in_copy_mode: bool) Error!void {
         try self.moveTo(0, self.sy -| 1);
 
         try self.writeColourFg(if (in_copy_mode) Colour.fromIndexed(0) else fg);
@@ -601,9 +602,14 @@ pub const Display = struct {
         }
 
         if (command_mode) {
-            const prompt = ":: ";
+            const prompt: []const u8 = if (search_prefix != 0) blk: {
+                var buf: [2]u8 = undefined;
+                buf[0] = search_prefix;
+                buf[1] = ' ';
+                break :blk buf[0..2];
+            } else ":: ";
             try self.writeBytes(prompt);
-            col += prompt.len;
+            col += @intCast(prompt.len);
             const max_len = self.sx;
             const display_len = @min(command_buf.len, max_len -| col);
             if (display_len > 0) {
@@ -884,7 +890,7 @@ test "renderStatusBar with long window name" {
 
     const windows = [_]*Window{&win1};
 
-    try display.renderStatusBar("my-session", &windows, &win1, Colour.default_(), Colour.default_(), null, false, "", false);
+    try display.renderStatusBar("my-session", &windows, &win1, Colour.default_(), Colour.default_(), null, false, "", 0, false);
 
     try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "very_long_window_name_that_previously_would_have_failed") != null);
 }
@@ -907,7 +913,7 @@ test "renderStatusBar truncates long name to fit terminal width — bug #185" {
 
     const windows = [_]*Window{&win1};
 
-    try display.renderStatusBar("ses", &windows, &win1, Colour.default_(), Colour.default_(), null, false, "", false);
+    try display.renderStatusBar("ses", &windows, &win1, Colour.default_(), Colour.default_(), null, false, "", 0, false);
 
     // Status bar should be exactly sx = 30 visible chars plus ESC sequences.
     // The long name must be truncated so the total emitted content does not
@@ -966,7 +972,7 @@ test "renderAll cursor visibility hide" {
         .status_bg = Colour.default_(),
         .pane_border_fg = Colour.fromIndexed(8),
         .pane_active_border_fg = Colour.fromIndexed(2),
-    }, null, false, "", false, true);
+    }, null, false, "", 0, false, true);
 
     // Verify the cursor was NOT shown at the end
     const has_show_cursor = std.mem.indexOf(u8, capture_buf.items, "\x1b[?25h") != null;
@@ -1009,7 +1015,7 @@ test "renderAll honours force_clear from a non-active pane — bug #196" {
         .status_bg = Colour.default_(),
         .pane_border_fg = Colour.fromIndexed(8),
         .pane_active_border_fg = Colour.fromIndexed(2),
-    }, null, false, "", false, true);
+    }, null, false, "", 0, false, true);
 
     // A full-screen erase must have been emitted because of the non-active pane.
     try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1b[2J") != null);
@@ -1426,7 +1432,7 @@ test "sixel rendering with scrolling" {
         .status_bg = Colour.default_(),
         .pane_border_fg = Colour.fromIndexed(8),
         .pane_active_border_fg = Colour.fromIndexed(2),
-    }, null, false, "", false, true);
+    }, null, false, "", 0, false, true);
 
     // Swap back to free resources correctly in defer
     merged = opt_merged.?;

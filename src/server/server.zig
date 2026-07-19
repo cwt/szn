@@ -2258,6 +2258,7 @@ pub const Server = struct {
                 self.message,
                 self.command_mode,
                 self.command_buf.items,
+                if (self.search_pending) |dir| (if (dir == .forward) '/' else '?') else 0,
                 pane_in_copy_mode,
                 self.dirty,
             ) catch |err| {
