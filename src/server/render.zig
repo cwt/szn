@@ -479,8 +479,8 @@ pub const Display = struct {
                     try self.writeBytes("\x1b[X");
                 }
 
-                const fg_changed = @as(u32, @bitCast(cell.fg)) != @as(u32, @bitCast(active_fg));
-                const bg_changed = @as(u32, @bitCast(cell.bg)) != @as(u32, @bitCast(active_bg));
+                var fg_changed = @as(u32, @bitCast(cell.fg)) != @as(u32, @bitCast(active_fg));
+                var bg_changed = @as(u32, @bitCast(cell.bg)) != @as(u32, @bitCast(active_bg));
                 const attr_changed = @as(u16, @bitCast(cell.attr)) != @as(u16, @bitCast(active_attr));
 
                 if (fg_changed or bg_changed or attr_changed) {
@@ -504,6 +504,11 @@ pub const Display = struct {
                                 sgr_pos += (std.fmt.bufPrint(sgr_buf[sgr_pos..], "\x1b[{s}m", .{attrCodes[idx]}) catch break).len;
                             }
                         }
+
+                        // `\x1b[m` also resets fg/bg to default, so they must
+                        // be re-emitted unconditionally when we reset attrs.
+                        fg_changed = true;
+                        bg_changed = true;
                     }
 
                     if (fg_changed) {
