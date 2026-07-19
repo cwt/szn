@@ -732,9 +732,16 @@ pub const Grid = struct {
         var flat_cells: std.ArrayList(Cell) = .empty;
         defer flat_cells.deinit(self.allocator);
 
+        // Pre-allocate to avoid O(log n) realloc+copies during flatten.
+        // Each line has at most `self.width` cells, and we process at most
+        // `process_limit` lines. Over-estimate is fine — single allocation
+        // beats repeated 2x grows with full copies.
+        try flat_cells.ensureTotalCapacity(self.allocator, process_limit * self.width);
+
         const Span = struct { start: usize, len: usize };
         var logical_spans: std.ArrayList(Span) = .empty;
         defer logical_spans.deinit(self.allocator);
+        try logical_spans.ensureTotalCapacity(self.allocator, process_limit);
 
         const allocator = self.allocator;
         var idx: usize = 0;
