@@ -12,103 +12,9 @@ Sorted by effort-to-impact ratio. All findings from a full codebase audit
 
 ---
 
-## LOW EFFORT, HIGH IMPACT (fix in minutes, save ms per frame)
-
-### 1. Arena allocator not used in hot paths
-
-AGENTS.md says "arena per session/pane lifecycle" but grid ops, input
-parsing, and render all use the general-purpose allocator directly.
-
-**Every PTY read path:**
-- `grid.zig` — `scrollUp`/`scrollDown`/`setCell`/`clearRegion` all use
-  `allocator.resize`/`append` on `ArrayList(Cell)`
-- `input.zig` — `osc_buf.append`, `allocator.dupe` for parsed strings
-- `server.zig` — `esc_buf` created and freed per `processInput` call
-- `render.zig` — `bounds` ArrayList freed per frame
-
-**Fix:** Thread `session.arena.allocator()` through `Grid`, `Screen`,
-`InputParser`, `Term` (tty.zig). All hot-path alloc/free pairs become
-arena bumps — zero-cost teardown on session exit.
-
-**Files:** `src/grid.zig`, `src/input.zig`, `src/server/server.zig`,
-`src/server/render.zig`, `src/window.zig`, `src/screen.zig`
-
----
-
-### 2. `scrollUp()` history trim is O(n) memmove
-
-**`src/grid.zig:213–227`**
-
-When history exceeds `history_limit + 64`, the function shifts ALL remaining
-items forward with `std.mem.copyForwards`. This is O(history_len) memmove on
-every scroll once the threshold is hit.
-
-```zig
-// After trim, shift remaining history forward
-for (remaining, 0..) |*r, j| {
-    r.* = self.history.items[trim_count + j];
-}
-self.history.shrinkRetainingCapacity(self.history.items.len - trim_count);
-```
-
-For a 5000-line scrollback at 60fps with continuous output, that's ~300K
-lines shifted per second.
-
-**Fix:** Use a ring buffer for history (same as visible lines use
-`start_index`). Track `history_start` offset and only compact when the gap
-grows too large.
-
----
-
-### 3. SGR sixel image lookup in cell-render inner loop
-
-**`src/server/render.zig:208–242`**
-
-For every single cell in every pane, the render loop calls
-`pb.pane.screen.findSixelImage(image_id)` which does a linear scan of up
-to 64 sixel slots. For cells without sixel attributes (the common case),
-this is pure waste.
-
-**Fix:** Pre-compute a boolean `has_sixels` per-pane at the start of the
-render loop and skip the sixel lookup entirely for panes without images.
-
----
-
-### 4. `bounds` ArrayList allocated on every render frame
-
-**`src/server/render.zig:2189–2194`**
-
-```zig
-var bounds: std.ArrayList(render.PaneBounds) = .empty;
-defer bounds.deinit(self.allocator);
-self.collectPaneBounds(...)
-```
-
-Heap-allocated and freed per frame. For a typical 2–4 pane layout this is
-small churn, but unnecessary.
-
-**Fix:** Use fixed-size stack array with heap fallback for deeply nested
-layouts, or cache as a field on `DisplayClient`.
-
----
-
-### 5. `yankSelection()` per-line ArrayList allocation
-
-**`src/mode_copy.zig:282–332`**
-
-For every selected line, allocates a `line_buf` ArrayList, appends
-characters one-by-one, then appends to a result buffer. For a 1000-line
-selection, that's 1000 ArrayList allocations + tens of thousands of
-individual `append` calls.
-
-**Fix:** Pre-compute total selection length, allocate once, write trimmed
-content directly to the result buffer.
-
----
-
 ## MODERATE EFFORT, HIGH IMPACT
 
-### 6. Merged grid rebuilt from scratch every frame
+### 1. Merged grid rebuilt from scratch every frame
 
 **`src/server/render.zig:181–252`**
 
@@ -128,7 +34,7 @@ Or keep a per-pane dirty-rect and only recompute that region.
 
 ---
 
-### 7. Full render on any pane dirty, not per-pane
+### 2. Full render on any pane dirty, not per-pane
 
 **`src/server/server.zig:2147–2237`**
 
@@ -142,7 +48,7 @@ can be selective.
 
 ---
 
-### 8. SGR escape sequence rebuilt from scratch on every cell change
+### 3. SGR escape sequence rebuilt from scratch on every cell change
 
 **`src/server/render.zig:469–537`**
 
@@ -159,7 +65,7 @@ If only bg changed, emit just the bg sequence instead of full reset+rebuild.
 
 ---
 
-### 9. `renderSixelImages()` scans every cell of every pane
+### 4. `renderSixelImages()` scans every cell of every pane
 
 **`src/server/render.zig:718–771`**
 
@@ -171,7 +77,7 @@ any pane. Skip entirely if none.
 
 ---
 
-### 10. Format template re-parsed on every `expand()` call
+### 5. Format template re-parsed on every `expand()` call
 
 **`src/format.zig:45–83`**
 
@@ -186,7 +92,7 @@ form. Only re-parse if the template string changes.
 
 ---
 
-### 11. Each format sub-expression allocates via `dupe`
+### 6. Each format sub-expression allocates via `dupe`
 
 **`src/format.zig:190–195`**
 
@@ -209,7 +115,7 @@ allocations are unnecessary.
 
 ---
 
-### 12. `searchLine()` naive O(n*m) substring comparison
+### 7. `searchLine()` naive O(n*m) substring comparison
 
 **`src/mode_copy.zig:601–638`**
 
@@ -223,7 +129,7 @@ Or implement a simple two-byte lookahead skip.
 
 ---
 
-### 13. `usleep(2000)` blocks the event loop
+### 8. `usleep(2000)` blocks the event loop
 
 **`src/server/server.zig:442`**
 
@@ -243,7 +149,7 @@ already buffers the data — no need to busy-wait.
 
 ## SIGNIFICANT REFACTOR
 
-### 14. `reflowCursorInternal()` flattens every line, even untouched ones
+### 9. `reflowCursorInternal()` flattens every line, even untouched ones
 
 **`src/grid.zig:697–764`**
 
@@ -258,7 +164,7 @@ instead of flattening to a new contiguous buffer. Or pre-allocate
 
 ---
 
-### 15. `splitArgs()` dupes each argument in format expressions
+### 10. `splitArgs()` dupes each argument in format expressions
 
 **`src/format.zig:450–459`**
 
@@ -374,3 +280,60 @@ try line_cells.resize(allocator, new_width);
 
 Replaced while-append with `resize` + `@memset` — single realloc instead of
 O(n) reallocations.
+
+---
+
+### Arena allocator already threaded through hot paths
+
+`src/session.zig` → `Window.init` → `Pane.init` → `Screen.init` → `Grid.init`
+
+`Session.init` wraps the backing allocator in `std.heap.ArenaAllocator` and
+passes `self.arena.allocator()` through the entire chain. Grid, Screen, and
+InputParser already receive the arena allocator in production code. No
+change needed — the infrastructure was already in place.
+
+---
+
+### Fixed: `scrollUp()` history trim — O(n) memmove eliminated
+
+`src/grid.zig`
+
+History now uses a ring buffer via `history_start: usize` offset. Instead
+of shifting items forward with `std.mem.copyForwards` on each batch trim,
+the oldest entry is deinitialized in-place and `history_start` advances.
+Only compaction occurs when `history_start > 256`, keeping the gap bounded.
+
+All external indexers in `render.zig`, `mode_copy.zig`, `screen.zig`, and
+`server.zig` updated to use `items.len - history_start` for logical length
+and `history_start + idx` for element access.
+
+---
+
+### Fixed: SGR sixel image lookup in cell-render inner loop
+
+`src/server/render.zig`
+
+Per-pane `pane_has_sixels` flag computed once per pane before the y/x
+render loops. Guards the `findSixelImage` call — skipped entirely for
+panes without any sixel images in the 64-slot registry.
+
+---
+
+### Fixed: `bounds` ArrayList allocated on every render frame
+
+`src/server/server.zig`
+
+Moved to `DisplayClient.bounds_buf` field with `clearRetainingCapacity()`
+between frames. The backing buffer is retained across render cycles
+instead of being freed and re-allocated per frame.
+
+---
+
+### Fixed: `yankSelection()` per-line ArrayList allocation
+
+`src/mode_copy.zig`
+
+Per-line `line_buf` ArrayList eliminated. Cell content is written directly
+into the `result` buffer. Trailing spaces are trimmed by shrinking
+`result.items.len` at line boundaries. Single growing buffer replaces
+N+1 (result + per-line) ArrayList allocations per yank.

@@ -186,16 +186,24 @@ pub const Display = struct {
 
         for (bounds) |pb| {
             const pane_grid = &pb.pane.screen.grid;
+            const pane_has_sixels = blk: {
+                var found = false;
+                for (&pb.pane.screen.sixel_images) |opt| {
+                    if (opt != null) { found = true; break; }
+                }
+                break :blk found;
+            };
             for (0..pb.h) |y| {
                 if (pb.y + y >= merged_h) break;
 
-                const combined_idx = (@as(isize, @intCast(pane_grid.history.items.len)) - @as(isize, @intCast(if (pb.pane.screen.copy_mode) |cm| cm.scroll_offset else 0))) + @as(isize, @intCast(y));
+                const hist_len = pane_grid.history.items.len - pane_grid.history_start;
+                const combined_idx = (@as(isize, @intCast(hist_len)) - @as(isize, @intCast(if (pb.pane.screen.copy_mode) |cm| cm.scroll_offset else 0))) + @as(isize, @intCast(y));
                 const cells = if (combined_idx < 0)
                     @as(?*const std.ArrayList(Cell), null)
-                else if (combined_idx < pane_grid.history.items.len)
-                    &pane_grid.history.items[@intCast(combined_idx)].cells
+                else if (combined_idx < hist_len)
+                    &pane_grid.history.items[pane_grid.history_start + @as(usize, @intCast(combined_idx))].cells
                 else blk: {
-                    const visible_y = combined_idx - @as(isize, @intCast(pane_grid.history.items.len));
+                    const visible_y = combined_idx - @as(isize, @intCast(hist_len));
                     break :blk if (visible_y < pane_grid.height)
                         &pane_grid.getLine(@intCast(visible_y)).cells
                     else
@@ -205,7 +213,7 @@ pub const Display = struct {
                 for (0..pb.w) |x| {
                     if (pb.x + x >= merged_w) break;
                     var cell = if (cells) |cls| (if (x < cls.items.len) cls.items[x] else Cell.empty()) else Cell.empty();
-                    if (cell.attr.sixel) {
+                    if (pane_has_sixels and cell.attr.sixel) {
                         const image_id = cell.char;
                         if (pb.pane.screen.findSixelImage(image_id)) |img| {
                             const cell_rows = if (img.px_height > 0) (img.px_height + pb.pane.screen.cell_px_height - 1) / pb.pane.screen.cell_px_height else 1;
@@ -411,13 +419,14 @@ pub const Display = struct {
         try self.writeBytes("\x1b[m");
 
         for (0..h) |y| {
-            const combined_idx = (@as(isize, @intCast(screen.grid.history.items.len)) - @as(isize, @intCast(if (screen.copy_mode) |cm| cm.scroll_offset else 0))) + @as(isize, @intCast(y));
+            const hist_len = screen.grid.history.items.len - screen.grid.history_start;
+            const combined_idx = (@as(isize, @intCast(hist_len)) - @as(isize, @intCast(if (screen.copy_mode) |cm| cm.scroll_offset else 0))) + @as(isize, @intCast(y));
             const cells = if (combined_idx < 0)
                 @as(?*const std.ArrayList(Cell), null)
-            else if (combined_idx < screen.grid.history.items.len)
-                &screen.grid.history.items[@intCast(combined_idx)].cells
+            else if (combined_idx < hist_len)
+                &screen.grid.history.items[screen.grid.history_start + @as(usize, @intCast(combined_idx))].cells
             else blk: {
-                const visible_y = combined_idx - @as(isize, @intCast(screen.grid.history.items.len));
+                const visible_y = combined_idx - @as(isize, @intCast(hist_len));
                 break :blk if (visible_y < screen.grid.height)
                     &screen.grid.getLine(@intCast(visible_y)).cells
                 else
@@ -717,14 +726,15 @@ pub const Display = struct {
 
             var y: u32 = 0;
             while (y < pane_h) : (y += 1) {
-                const combined_idx = (@as(isize, @intCast(screen.grid.history.items.len)) - @as(isize, @intCast(if (screen.copy_mode) |cm| cm.scroll_offset else 0))) + @as(isize, @intCast(y));
+                const hist_len = screen.grid.history.items.len - screen.grid.history_start;
+                const combined_idx = (@as(isize, @intCast(hist_len)) - @as(isize, @intCast(if (screen.copy_mode) |cm| cm.scroll_offset else 0))) + @as(isize, @intCast(y));
 
                 const cells = if (combined_idx < 0)
                     @as(?*const std.ArrayList(Cell), null)
-                else if (combined_idx < screen.grid.history.items.len)
-                    &screen.grid.history.items[@intCast(combined_idx)].cells
+                else if (combined_idx < hist_len)
+                    &screen.grid.history.items[screen.grid.history_start + @as(usize, @intCast(combined_idx))].cells
                 else blk: {
-                    const visible_y = combined_idx - @as(isize, @intCast(screen.grid.history.items.len));
+                    const visible_y = combined_idx - @as(isize, @intCast(hist_len));
                     break :blk if (visible_y < screen.grid.height)
                         &screen.grid.getLine(@intCast(visible_y)).cells
                     else

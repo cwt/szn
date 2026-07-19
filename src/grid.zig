@@ -73,6 +73,7 @@ pub const Grid = struct {
     lines: std.ArrayList(GridLine) = .empty,
     history: std.ArrayList(GridLine) = .empty,
     history_limit: u32 = 2000,
+    history_start: usize = 0,
     start_index: u32 = 0,
 
     pub fn init(allocator: std.mem.Allocator, width: u32, height: u32) Error!Grid {
@@ -102,6 +103,21 @@ pub const Grid = struct {
         return &self.lines.items[idx];
     }
 
+    /// Number of live history lines (ring-buffered via history_start offset).
+    pub fn historyLen(self: *const Grid) usize {
+        return self.history.items.len - self.history_start;
+    }
+
+    /// Access a live history line by logical index (0 = oldest, historyLen-1 = newest).
+    pub fn getHistoryLine(self: *const Grid, idx: usize) *const GridLine {
+        return &self.history.items[self.history_start + idx];
+    }
+
+    /// Mutable access to a live history line by logical index.
+    pub fn getHistoryLineMut(self: *Grid, idx: usize) *GridLine {
+        return &self.history.items[self.history_start + idx];
+    }
+
     pub fn normalize(self: *Grid) !void {
         if (self.start_index == 0 or self.height == 0) return;
         std.mem.rotate(GridLine, self.lines.items[0..self.height], self.start_index);
@@ -111,7 +127,7 @@ pub const Grid = struct {
     pub fn deinit(self: *Grid) void {
         for (self.lines.items) |*line| line.deinit(self.allocator);
         self.lines.deinit(self.allocator);
-        for (self.history.items) |*line| line.deinit(self.allocator);
+        for (self.history.items[self.history_start..]) |*line| line.deinit(self.allocator);
         self.history.deinit(self.allocator);
     }
 
@@ -121,6 +137,7 @@ pub const Grid = struct {
             .width = self.width,
             .height = self.height,
             .history_limit = self.history_limit,
+            .history_start = self.history_start,
             .start_index = self.start_index,
         };
         try copy.lines.ensureTotalCapacity(allocator, self.lines.items.len);
@@ -133,12 +150,12 @@ pub const Grid = struct {
             try new_line.cells.appendSlice(allocator, line.cells.items);
             try copy.lines.append(allocator, new_line);
         }
-        try copy.history.ensureTotalCapacity(allocator, self.history.items.len);
+        try copy.history.ensureTotalCapacity(allocator, self.history.items.len - self.history_start);
         errdefer {
             for (copy.history.items) |*l| l.deinit(allocator);
             copy.history.deinit(allocator);
         }
-        for (self.history.items) |line| {
+        for (self.history.items[self.history_start..]) |line| {
             var new_line = GridLine{ .dirty = line.dirty, .wrapped = line.wrapped };
             try new_line.cells.appendSlice(allocator, line.cells.items);
             try copy.history.append(allocator, new_line);
@@ -210,19 +227,16 @@ pub const Grid = struct {
 
         errdefer old_line.deinit(self.allocator);
         try self.history.append(self.allocator, old_line);
-        if (self.history.items.len > self.history_limit) {
-            if (self.history_limit > 64) {
-                if (self.history.items.len > self.history_limit + 64) {
-                    const num_to_remove = self.history.items.len - self.history_limit;
-                    for (self.history.items[0..num_to_remove]) |*old| {
-                        old.deinit(self.allocator);
-                    }
-                    std.mem.copyForwards(GridLine, self.history.items[0 .. self.history.items.len - num_to_remove], self.history.items[num_to_remove..]);
-                    self.history.items.len -= num_to_remove;
-                }
-            } else {
-                var old = self.history.orderedRemove(0);
-                old.deinit(self.allocator);
+        if (self.history.items.len - self.history_start > self.history_limit) {
+            self.history.items[self.history_start].deinit(self.allocator);
+            self.history_start += 1;
+
+            // Compact periodically to keep the gap bounded
+            if (self.history_start > 256) {
+                const alive = self.history.items[self.history_start..];
+                for (alive, 0..) |*l, j| self.history.items[j] = l.*;
+                self.history.items.len = alive.len;
+                self.history_start = 0;
             }
         }
 
@@ -230,7 +244,7 @@ pub const Grid = struct {
     }
 
     pub fn scrollDown(self: *Grid) Error!void {
-        if (self.height == 0 or self.history.items.len == 0) return;
+        if (self.height == 0 or self.history.items.len - self.history_start == 0) return;
         var line = self.history.pop().?;
         errdefer line.deinit(self.allocator);
 
@@ -672,7 +686,8 @@ pub const Grid = struct {
 
         try self.normalize();
 
-        const total = self.history.items.len + self.lines.items.len;
+        const hist_len = self.history.items.len - self.history_start;
+        const total = hist_len + self.lines.items.len;
 
         // Find the last non-empty line to avoid treating trailing empty lines as content.
         var last_non_empty: usize = 0;
@@ -680,10 +695,10 @@ pub const Grid = struct {
         var j = total;
         while (j > 0) {
             j -= 1;
-            const line = if (j < self.history.items.len)
-                &self.history.items[j]
+            const line = if (j < hist_len)
+                &self.history.items[self.history_start + j]
             else
-                &self.lines.items[j - self.history.items.len];
+                &self.lines.items[j - hist_len];
 
             if (line.wrapped) {
                 last_non_empty = j;
@@ -705,7 +720,7 @@ pub const Grid = struct {
         }
         var process_limit = if (found_non_empty) last_non_empty + 1 else 0;
         if (cursor_y) |cy| {
-            const cursor_logical_y = cy + self.history.items.len;
+            const cursor_logical_y = cy + hist_len;
             if (cursor_logical_y < total) {
                 if (process_limit < cursor_logical_y + 1) {
                     process_limit = cursor_logical_y + 1;
@@ -735,10 +750,10 @@ pub const Grid = struct {
             var current_offset: usize = 0;
 
             while (line_idx < total) : (line_idx += 1) {
-                const line = if (line_idx < self.history.items.len)
-                    &self.history.items[line_idx]
+                const line = if (line_idx < hist_len)
+                    &self.history.items[self.history_start + line_idx]
                 else
-                    &self.lines.items[line_idx - self.history.items.len];
+                    &self.lines.items[line_idx - hist_len];
 
                 var cells_to_add = line.cells.items;
                 // Trim trailing unwritten cells from all lines to remove padding
@@ -749,7 +764,7 @@ pub const Grid = struct {
                     } else break;
                 }
 
-                if (cursor_y != null and line_idx == cursor_y.? + self.history.items.len) {
+                if (cursor_y != null and line_idx == cursor_y.? + hist_len) {
                     is_cursor_logical_line = true;
                     cursor_offset_in_this_logical = current_offset + @min(cursor_x.?, cells_to_add.len);
                 }
@@ -969,7 +984,7 @@ test "history respects limit" {
         try grid.scrollUp();
     }
 
-    try testing.expectEqual(@as(usize, 3), grid.history.items.len);
+    try testing.expectEqual(@as(usize, 3), grid.history.items.len - grid.history_start);
 }
 
 test "clear line" {

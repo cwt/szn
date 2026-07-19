@@ -10,7 +10,7 @@ timestamp: 2026-07-03T03:57:05Z
 Track progress toward a fully functional tmux clone.
 Based on code audit as of 2026-06-21.
 
-## Current State: 762 tests passing, all MVP commands fully implemented, copy-mode fully integrated, all unit tests verified, and initial performance optimizations completed.
+## Current State: 762 tests passing, all MVP commands fully implemented, copy-mode fully integrated, all unit tests verified, and 10 performance optimizations completed (arena plumbed, ring-buffer history, sixel pre-check, cached bounds buf, single-buffer yank, rewrap direct-write, padding @memset, Thai word-break skip, osc_buf retain, esc_buf field).
 
 ---
 

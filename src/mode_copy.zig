@@ -67,7 +67,7 @@ pub const CopyMode = struct {
     pub fn moveUp(self: *CopyMode, grid: *const Grid) void {
         if (self.cursor_y > 0) {
             self.cursor_y -= 1;
-        } else if (self.scroll_offset < grid.history.items.len) {
+        } else if (self.scroll_offset < grid.history.items.len - grid.history_start) {
             self.scroll_offset += 1;
         }
     }
@@ -105,7 +105,7 @@ pub const CopyMode = struct {
         } else {
             const remaining = page - self.cursor_y;
             self.cursor_y = 0;
-            self.scroll_offset = @min(self.scroll_offset + remaining, @as(u32, @intCast(@as(usize, @min(grid.history.items.len, std.math.maxInt(u32))))));
+            self.scroll_offset = @min(self.scroll_offset + remaining, @as(u32, @intCast(@as(usize, @min(grid.history.items.len - grid.history_start, std.math.maxInt(u32))))));
         }
     }
 
@@ -127,7 +127,7 @@ pub const CopyMode = struct {
         } else {
             const remaining = half - self.cursor_y;
             self.cursor_y = 0;
-            self.scroll_offset = @min(self.scroll_offset + remaining, @as(u32, @intCast(@as(usize, @min(grid.history.items.len, std.math.maxInt(u32))))));
+            self.scroll_offset = @min(self.scroll_offset + remaining, @as(u32, @intCast(@as(usize, @min(grid.history.items.len - grid.history_start, std.math.maxInt(u32))))));
         }
     }
 
@@ -206,14 +206,14 @@ pub const CopyMode = struct {
     }
 
     fn getCellAtOffset(_: *const CopyMode, grid: *const Grid, x: u32, screen_y: u32, scroll_offset: u32) Cell {
-        const hist_len = grid.history.items.len;
+        const hist_len = grid.history.items.len - grid.history_start;
         const scroll = @as(usize, @intCast(scroll_offset));
         if (scroll > hist_len) return Cell.empty();
 
         const combined_idx = (hist_len - scroll) + @as(usize, @intCast(screen_y));
 
         if (combined_idx < hist_len) {
-            const line = &grid.history.items[combined_idx];
+            const line = &grid.history.items[grid.history_start + combined_idx];
             return if (x < line.cells.items.len) line.cells.items[x] else Cell.empty();
         }
 
@@ -222,14 +222,14 @@ pub const CopyMode = struct {
 
     fn isLineWrapped(self: *const CopyMode, grid: *const Grid, screen_y: u32, scroll_offset: u32) bool {
         _ = self;
-        const hist_len = grid.history.items.len;
+        const hist_len = grid.history.items.len - grid.history_start;
         const scroll = @as(usize, @intCast(scroll_offset));
         if (scroll > hist_len) return false;
 
         const combined_idx = (hist_len - scroll) + @as(usize, @intCast(screen_y));
 
         if (combined_idx < hist_len) {
-            return grid.history.items[combined_idx].wrapped;
+            return grid.history.items[grid.history_start + combined_idx].wrapped;
         }
 
         const visible_y = combined_idx - hist_len;
@@ -279,9 +279,7 @@ pub const CopyMode = struct {
             const line_start = if (y_i64 == sy) sx else 0;
             const line_end = if (y_i64 == ey) @min(ex, grid.width -| 1) else grid.width -| 1;
 
-            var line_buf: std.ArrayList(u8) = .empty;
-            defer line_buf.deinit(allocator);
-
+            const line_pos = result.items.len;
             var x = line_start;
             while (x <= line_end) : (x += 1) {
                 const cell = self.getCellAtY_i64(grid, x, y_i64);
@@ -289,10 +287,10 @@ pub const CopyMode = struct {
                 if (cell.char != 0 and cell.char != ' ') {
                     var buf: [4]u8 = undefined;
                     const len = std.unicode.utf8Encode(cell.char, &buf) catch {
-                        try line_buf.append(allocator, '?');
+                        try result.append(allocator, '?');
                         continue;
                     };
-                    try line_buf.appendSlice(allocator, buf[0..len]);
+                    try result.appendSlice(allocator, buf[0..len]);
 
                     if (cell.comb1 != 0) {
                         const cp = char_width.combiningCodepoint(cell.comb1);
@@ -300,7 +298,7 @@ pub const CopyMode = struct {
                             var comb_buf: [4]u8 = undefined;
                             const clen = std.unicode.utf8Encode(cp, &comb_buf) catch 0;
                             if (clen > 0) {
-                                try line_buf.appendSlice(allocator, comb_buf[0..clen]);
+                                try result.appendSlice(allocator, comb_buf[0..clen]);
                             }
                         }
                     }
@@ -310,24 +308,23 @@ pub const CopyMode = struct {
                             var comb_buf: [4]u8 = undefined;
                             const clen = std.unicode.utf8Encode(cp, &comb_buf) catch 0;
                             if (clen > 0) {
-                                try line_buf.appendSlice(allocator, comb_buf[0..clen]);
+                                try result.appendSlice(allocator, comb_buf[0..clen]);
                             }
                         }
                     }
                 } else {
-                    try line_buf.append(allocator, ' ');
+                    try result.append(allocator, ' ');
                 }
             }
 
+            // Trim trailing spaces by shrinking result
+            while (result.items.len > line_pos and result.items[result.items.len - 1] == ' ') {
+                result.items.len -= 1;
+            }
+
             const wrapped = self.isLineWrappedY_i64(grid, y_i64);
-            const line_slice = std.mem.trimEnd(u8, line_buf.items, " ");
-
-            try result.appendSlice(allocator, line_slice);
-
-            if (y_i64 < ey) {
-                if (!wrapped) {
-                    try result.append(allocator, '\n');
-                }
+            if (y_i64 < ey and !wrapped) {
+                try result.append(allocator, '\n');
             }
         }
 

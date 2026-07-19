@@ -390,7 +390,7 @@ pub const Screen = struct {
         }
 
         // Check main grid history
-        for (self.grid.history.items) |line| {
+        for (self.grid.history.items[self.grid.history_start..]) |line| {
             for (line.cells.items) |cell| {
                 if (cell.attr.sixel and cell.char == target_id) {
                     return true;
@@ -407,7 +407,7 @@ pub const Screen = struct {
                     }
                 }
             }
-            for (alt.history.items) |line| {
+            for (alt.history.items[alt.history_start..]) |line| {
                 for (line.cells.items) |cell| {
                     if (cell.attr.sixel and cell.char == target_id) {
                         return true;
@@ -912,7 +912,7 @@ pub const Screen = struct {
                 return;
             }
         } else if (self.cursor.y == 0) {
-            if (self.grid.history.items.len > 0) {
+            if (self.grid.history.items.len - self.grid.history_start > 0) {
                 try self.grid.scrollDown();
                 const top_line = self.grid.getLineMut(0);
                 @memset(top_line.cells.items, self.eraseCell());
@@ -983,7 +983,7 @@ pub const Screen = struct {
             const fill = self.eraseCell();
             var i: u32 = 0;
             while (i < count) : (i += 1) {
-                if (self.grid.history.items.len > 0) {
+                if (self.grid.history.items.len - self.grid.history_start > 0) {
                     try self.grid.scrollDown();
                     self.shiftSixelAnchors(1);
                     const top_line = self.grid.getLineMut(0);

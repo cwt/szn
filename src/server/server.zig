@@ -85,10 +85,12 @@ pub const DisplayClient = struct {
     /// frame currently buffered is fully flushed, so the client always receives
     /// a complete, consistent screen image.
     out_buf: std.ArrayList(u8) = .empty,
+    bounds_buf: std.ArrayList(render.PaneBounds) = .empty,
 
     pub fn deinit(self: *DisplayClient, allocator: std.mem.Allocator) void {
         self.last_cells.deinit(allocator);
         self.out_buf.deinit(allocator);
+        self.bounds_buf.deinit(allocator);
         if (self.merged_screen) |*ms| {
             ms.deinit();
         }
@@ -302,7 +304,7 @@ pub const Server = struct {
         if (pane.screen.copy_mode) |*cm| {
             if (cm.selection.active) {
                 const grid = &pane.screen.grid;
-                const hist_len: u32 = @intCast(grid.history.items.len);
+                const hist_len: u32 = @intCast(grid.history.items.len - grid.history_start);
                 if (dir == .up and cm.scroll_offset < hist_len) {
                     cm.scroll_offset += 1;
                     cm.adjustSelectionForAutoScroll(1);
@@ -1234,7 +1236,7 @@ pub const Server = struct {
                                     } else {
                                         if (target_pane.screen.copy_mode) |*target_cm| {
                                             if (m.button == .scroll_up) {
-                                                target_cm.scroll_offset = @min(target_cm.scroll_offset + 3, @as(u32, @intCast(target_pane.screen.grid.history.items.len)));
+                                                target_cm.scroll_offset = @min(target_cm.scroll_offset + 3, @as(u32, @intCast(target_pane.screen.grid.history.items.len - target_pane.screen.grid.history_start)));
                                             } else {
                                                 if (target_cm.scroll_offset == 0) {
                                                     target_pane.screen.copy_mode = null;
@@ -1247,7 +1249,7 @@ pub const Server = struct {
                                             if (m.button == .scroll_up) {
                                                 target_pane.enterCopyMode() catch {};
                                                 if (target_pane.screen.copy_mode) |*target_cm| {
-                                                    target_cm.scroll_offset = @min(3, @as(u32, @intCast(target_pane.screen.grid.history.items.len)));
+                                                    target_cm.scroll_offset = @min(3, @as(u32, @intCast(target_pane.screen.grid.history.items.len - target_pane.screen.grid.history_start)));
                                                 }
                                                 target_pane.dirty = true;
                                             }
@@ -1273,7 +1275,7 @@ pub const Server = struct {
                                                     cm.updateSelection();
                                                 }
                                             }
-                                            const hist_len: u32 = @intCast(current_active_pane.screen.grid.history.items.len);
+                                            const hist_len: u32 = @intCast(current_active_pane.screen.grid.history.items.len - current_active_pane.screen.grid.history_start);
                                             const at_top_edge = (local_y == 0 and inside) or m.y < pb.y;
                                             const at_bottom_edge = (local_y >= grid_h -| 1 and grid_h > 0 and inside) or m.y >= pb.y + pb.h;
                                             if (at_top_edge and cm.scroll_offset < hist_len) {
@@ -1366,11 +1368,11 @@ pub const Server = struct {
                                         handled = true;
                                         if (m.button == .scroll_up) {
                                             if (active_pane.screen.copy_mode) |*target_cm| {
-                                                target_cm.scroll_offset = @min(target_cm.scroll_offset + 3, @as(u32, @intCast(active_pane.screen.grid.history.items.len)));
+                                                target_cm.scroll_offset = @min(target_cm.scroll_offset + 3, @as(u32, @intCast(active_pane.screen.grid.history.items.len - active_pane.screen.grid.history_start)));
                                             } else {
                                                 active_pane.enterCopyMode() catch {};
                                                 if (active_pane.screen.copy_mode) |*target_cm| {
-                                                    target_cm.scroll_offset = @min(3, @as(u32, @intCast(active_pane.screen.grid.history.items.len)));
+                                                    target_cm.scroll_offset = @min(3, @as(u32, @intCast(active_pane.screen.grid.history.items.len - active_pane.screen.grid.history_start)));
                                                 }
                                             }
                                             active_pane.dirty = true;
@@ -1407,7 +1409,7 @@ pub const Server = struct {
                                                             cm.cursor_y = @min(local_y, grid_h -| 1);
                                                             cm.updateSelection();
                                                         }
-                                                        const hist_len: u32 = @intCast(press_pane.screen.grid.history.items.len);
+                                                        const hist_len: u32 = @intCast(press_pane.screen.grid.history.items.len - press_pane.screen.grid.history_start);
                                                         const at_top_edge = (local_y == 0 and inside) or m.y < pb.y;
                                                         const at_bottom_edge = (local_y >= grid_h -| 1 and grid_h > 0 and inside) or m.y >= pb.y + pb.h;
                                                         if (at_top_edge and cm.scroll_offset < hist_len) {
@@ -2187,9 +2189,8 @@ pub const Server = struct {
                 .last_paste = &dc.last_paste,
             };
 
-            var bounds: std.ArrayList(render.PaneBounds) = .empty;
-            defer bounds.deinit(self.allocator);
-            self.collectPaneBounds(window.layout.root, 0, 0, dc.sx, dc.sy - 1, &bounds) catch |err| {
+            dc.bounds_buf.clearRetainingCapacity();
+            self.collectPaneBounds(window.layout.root, 0, 0, dc.sx, dc.sy - 1, &dc.bounds_buf) catch |err| {
                 std.log.warn("collectPaneBounds error: {any}", .{err});
                 continue;
             };
@@ -2197,7 +2198,7 @@ pub const Server = struct {
             const pane_in_copy_mode = pane.screen.copy_mode != null;
             display.renderAll(
                 self.allocator,
-                bounds.items,
+                dc.bounds_buf.items,
                 pane,
                 session.name,
                 session.windows.items,
