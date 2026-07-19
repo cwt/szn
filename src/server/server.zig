@@ -439,12 +439,9 @@ pub const Server = struct {
                     // the pane.
                     pane.screen.flushPendingSixel();
                     self.cell_size_pending_since = 0;
-                } else {
-                    const c_usleep = struct {
-                        extern "c" fn usleep(usec: c_uint) c_int;
-                    }.usleep;
-                    _ = c_usleep(2000);
                 }
+                // Don't block — PTY data stays in the kernel buffer and the
+                // event loop will re-poll with a 1 ms timeout.
                 return .handled;
             }
             self.cell_size_pending_since = 0;
