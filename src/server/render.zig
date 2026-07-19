@@ -129,6 +129,7 @@ pub const Display = struct {
         command_mode: bool,
         command_buf: []const u8,
         pane_in_copy_mode: bool,
+        full_rebuild: bool,
     ) Error!void {
         try self.writeBytes("\x1b[?25l");
         try self.writeBytes("\x1b[?2026h");
@@ -178,13 +179,16 @@ pub const Display = struct {
             local_merged_screen.deinit();
         };
 
-        for (merged_screen.grid.lines.items) |*line| {
-            @memset(line.cells.items, Cell.empty());
-            line.wrapped = false;
-            line.dirty = true;
+        if (full_rebuild) {
+            for (merged_screen.grid.lines.items) |*line| {
+                @memset(line.cells.items, Cell.empty());
+                line.wrapped = false;
+                line.dirty = true;
+            }
         }
 
         for (bounds) |pb| {
+            if (!full_rebuild and !pb.pane.dirty) continue;
             const pane_grid = &pb.pane.screen.grid;
             const pane_has_sixels = blk: {
                 var found = false;
@@ -971,7 +975,7 @@ test "renderAll cursor visibility hide" {
         .status_bg = Colour.default_(),
         .pane_border_fg = Colour.fromIndexed(8),
         .pane_active_border_fg = Colour.fromIndexed(2),
-    }, null, false, "", false);
+    }, null, false, "", false, true);
 
     // Verify the cursor was NOT shown at the end
     const has_show_cursor = std.mem.indexOf(u8, capture_buf.items, "\x1b[?25h") != null;
@@ -1014,7 +1018,7 @@ test "renderAll honours force_clear from a non-active pane — bug #196" {
         .status_bg = Colour.default_(),
         .pane_border_fg = Colour.fromIndexed(8),
         .pane_active_border_fg = Colour.fromIndexed(2),
-    }, null, false, "", false);
+    }, null, false, "", false, true);
 
     // A full-screen erase must have been emitted because of the non-active pane.
     try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1b[2J") != null);
@@ -1431,7 +1435,7 @@ test "sixel rendering with scrolling" {
         .status_bg = Colour.default_(),
         .pane_border_fg = Colour.fromIndexed(8),
         .pane_active_border_fg = Colour.fromIndexed(2),
-    }, null, false, "", false);
+    }, null, false, "", false, true);
 
     // Swap back to free resources correctly in defer
     merged = opt_merged.?;

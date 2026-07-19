@@ -2214,6 +2214,7 @@ pub const Server = struct {
                 self.command_mode,
                 self.command_buf.items,
                 pane_in_copy_mode,
+                self.dirty,
             ) catch |err| {
                 std.log.warn("render error: {any}", .{err});
                 continue;
