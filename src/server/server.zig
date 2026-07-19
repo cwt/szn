@@ -125,6 +125,7 @@ pub const Server = struct {
     message_time: i64 = 0,
     command_mode: bool = false,
     command_buf: std.ArrayList(u8) = .empty,
+    esc_buf: std.ArrayList(u8) = .empty,
     mouse_press_x: u32 = 0,
     mouse_press_y: u32 = 0,
     mouse_press_pane: ?*Pane = null,
@@ -196,6 +197,7 @@ pub const Server = struct {
         self.log_messages.deinit(self.allocator);
         if (self.message) |m| self.allocator.free(m);
         self.command_buf.deinit(self.allocator);
+        self.esc_buf.deinit(self.allocator);
         self.buffers.deinit();
         self.render_buf.deinit(self.allocator);
         self.response_buf.deinit(self.allocator);
@@ -973,8 +975,7 @@ pub const Server = struct {
         const pane = window.active_pane orelse return;
 
         var i: usize = 0;
-        var esc_buf: std.ArrayList(u8) = .empty;
-        defer esc_buf.deinit(self.allocator);
+        self.esc_buf.clearRetainingCapacity();
 
         while (i < buf.len) : (i += 1) {
             const byte = buf[i];
@@ -1309,12 +1310,12 @@ pub const Server = struct {
                 }
             } else {
                 if (self.input_reader.state != .ground or byte == 0x1b or byte < 0x20) {
-                    if (esc_buf.items.len >= 1024) {
+                    if (self.esc_buf.items.len >= 1024) {
                         std.log.warn("processInput: esc_buf exceeded limit, resetting input reader", .{});
-                        esc_buf.clearRetainingCapacity();
+                        self.esc_buf.clearRetainingCapacity();
                         self.input_reader.state = .ground;
                     } else {
-                        try esc_buf.append(self.allocator, byte);
+                        try self.esc_buf.append(self.allocator, byte);
                     }
                     if (self.input_reader.feed(byte)) |event| {
                         var handled = false;
@@ -1458,13 +1459,13 @@ pub const Server = struct {
                         if (!handled) {
                             switch (event) {
                                 .key => |k| writeKeyToPty(pane, k),
-                                else => pane.writeInput(esc_buf.items) catch {},
+                                else => pane.writeInput(self.esc_buf.items) catch {},
                             }
                         }
-                        esc_buf.clearRetainingCapacity();
+                        self.esc_buf.clearRetainingCapacity();
                     } else if (self.input_reader.state == .ground) {
-                        pane.writeInput(esc_buf.items) catch {};
-                        esc_buf.clearRetainingCapacity();
+                        pane.writeInput(self.esc_buf.items) catch {};
+                        self.esc_buf.clearRetainingCapacity();
                     }
                 } else {
                     if (self.dispatcher.prefix_state == .normal) {

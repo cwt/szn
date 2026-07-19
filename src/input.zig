@@ -179,10 +179,7 @@ pub const InputParser = struct {
         self.clearParams();
         self.intermediate = 0;
         self.private_marker = 0;
-        if (self.osc_buf.capacity > 0) {
-            self.osc_buf.deinit(self.screen.allocator);
-        }
-        self.osc_buf = .empty;
+        self.osc_buf.clearRetainingCapacity();
     }
 
     fn advanceGround(self: *InputParser, byte: u8) Error!void {
@@ -867,8 +864,7 @@ pub const InputParser = struct {
 
     fn dispatchOsc(self: *InputParser) Error!void {
         defer {
-            self.osc_buf.deinit(self.screen.allocator);
-            self.osc_buf = .empty;
+            self.osc_buf.clearRetainingCapacity();
         }
         const osc_len = self.osc_buf.items.len;
         // Find first semicolon to separate command
@@ -1326,6 +1322,7 @@ test "osc title ignored no crash" {
     var screen = try Screen.init(testing.allocator, 80, 24);
     defer screen.deinit();
     var parser = InputParser.init(&screen);
+    defer parser.deinit(testing.allocator);
     try parser.feed("\x1b]0;my title\x07");
     // Just verify no crash and parser returns to ground
     try testing.expectEqual(@as(u8, @intFromEnum(InputParser.State.ground)), @intFromEnum(parser.state));
@@ -1545,6 +1542,7 @@ test "OSC 52 clipboard ignored no crash" {
     var screen = try Screen.init(testing.allocator, 80, 24);
     defer screen.deinit();
     var parser = InputParser.init(&screen);
+    defer parser.deinit(testing.allocator);
     try parser.feed("\x1b]52;c;dGVzdA==\x07");
     try testing.expectEqual(@as(u8, @intFromEnum(InputParser.State.ground)), @intFromEnum(parser.state));
 }
@@ -1553,6 +1551,7 @@ test "OSC with ST terminator" {
     var screen = try Screen.init(testing.allocator, 80, 24);
     defer screen.deinit();
     var parser = InputParser.init(&screen);
+    defer parser.deinit(testing.allocator);
     try parser.feed("\x1b]0;test\x1b\\");
     try testing.expectEqual(@as(u8, @intFromEnum(InputParser.State.ground)), @intFromEnum(parser.state));
 }
@@ -1561,6 +1560,7 @@ test "OSC with ST terminator invokes title callback" {
     var screen = try Screen.init(testing.allocator, 80, 24);
     defer screen.deinit();
     var parser = InputParser.init(&screen);
+    defer parser.deinit(testing.allocator);
     var mock = TitleMock{};
     parser.title_cb = TitleMock.callback;
     parser.title_ctx = &mock;
@@ -1573,6 +1573,7 @@ test "OSC with BEL terminator still works" {
     var screen = try Screen.init(testing.allocator, 80, 24);
     defer screen.deinit();
     var parser = InputParser.init(&screen);
+    defer parser.deinit(testing.allocator);
     var mock = TitleMock{};
     parser.title_cb = TitleMock.callback;
     parser.title_ctx = &mock;
@@ -1623,6 +1624,7 @@ test "OSC 2 window title parsing" {
     var screen = try Screen.init(testing.allocator, 80, 24);
     defer screen.deinit();
     var parser = InputParser.init(&screen);
+    defer parser.deinit(testing.allocator);
     var mock = TitleMock{};
     parser.title_cb = TitleMock.callback;
     parser.title_ctx = &mock;

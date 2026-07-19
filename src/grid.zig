@@ -389,15 +389,25 @@ pub const Grid = struct {
         allocator: std.mem.Allocator,
         cursor_offset: ?usize,
         out_cursor_pos: ?*CursorPos,
-    ) ![]GridLine {
+        out_lines: *std.ArrayList(GridLine),
+    ) !void {
         var lines: std.ArrayList(GridLine) = .empty;
         errdefer {
             for (lines.items) |*l| l.deinit(allocator);
             lines.deinit(allocator);
         }
 
-        const word_breaks = try thai.findWordBreaks(allocator, cells);
-        defer allocator.free(word_breaks);
+        const has_thai = blk: {
+            for (cells) |c| {
+                if (c.char >= 0x0E00 and c.char <= 0x0E7F) break :blk true;
+            }
+            break :blk false;
+        };
+        const word_breaks = if (has_thai)
+            try thai.findWordBreaks(allocator, cells)
+        else
+            &[_]usize{};
+        defer if (has_thai) allocator.free(word_breaks);
 
         if (cells.len == 0) {
             var line_cells: std.ArrayList(Cell) = .empty;
@@ -414,7 +424,11 @@ pub const Grid = struct {
                     }
                 }
             }
-            return lines.toOwnedSlice(allocator);
+            try out_lines.ensureUnusedCapacity(allocator, lines.items.len);
+            for (lines.items) |l| out_lines.appendAssumeCapacity(l);
+            lines.items.len = 0;
+            lines.deinit(allocator);
+            return;
         }
 
         var i: usize = 0;
@@ -598,16 +612,22 @@ pub const Grid = struct {
             }
 
             // Pad to new_width
-            while (line_cells.items.len < new_width) {
-                try line_cells.append(allocator, Cell.empty());
+            const pad_start = line_cells.items.len;
+            if (pad_start < new_width) {
+                try line_cells.resize(allocator, new_width);
+                @memset(line_cells.items[pad_start..], Cell.empty());
             }
 
             var gl = GridLine{ .dirty = true, .wrapped = did_break };
             try gl.cells.appendSlice(allocator, line_cells.items);
+            errdefer gl.cells.deinit(allocator);
             try lines.append(allocator, gl);
         }
 
-        return lines.toOwnedSlice(allocator);
+        try out_lines.ensureUnusedCapacity(allocator, lines.items.len);
+        for (lines.items) |l| out_lines.appendAssumeCapacity(l);
+        lines.items.len = 0;
+        lines.deinit(allocator);
     }
 
     /// Reflow the grid content to `new_width`, respecting Thai cluster, CJK
@@ -785,24 +805,20 @@ pub const Grid = struct {
 
             const flat = flat_cells.items[span.start .. span.start + span.len];
 
-            const rewrapped = try rewrap(
+            const before = new_lines.items.len;
+            try rewrap(
                 flat,
                 new_width,
                 allocator,
                 if (has_cursor) cursor_offset_in_logical else null,
                 if (has_cursor) &rewrap_cursor_pos else null,
+                &new_lines,
             );
 
             if (has_cursor) {
-                new_cursor_logical_line = new_lines.items.len + rewrap_cursor_pos.line_idx;
+                new_cursor_logical_line = before + rewrap_cursor_pos.line_idx;
                 new_cursor_offset_on_line = rewrap_cursor_pos.col_idx;
             }
-
-            try new_lines.ensureUnusedCapacity(allocator, rewrapped.len);
-            for (rewrapped) |rl| {
-                new_lines.appendAssumeCapacity(rl);
-            }
-            allocator.free(rewrapped);
         }
 
         // ── Deinit old lines ──
