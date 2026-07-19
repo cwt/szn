@@ -16,6 +16,9 @@ pub const ModeKeys = enum(u8) {
     emacs,
 };
 
+/// Direction for a copy-mode incremental search.
+pub const SearchDir = enum { forward, backward };
+
 pub const Selection = struct {
     start_x: u32 = 0,
     start_y: u32 = 0,
@@ -36,8 +39,15 @@ pub const CopyMode = struct {
     scroll_offset: u32 = 0,
     selection: Selection = .{},
     mode_keys: ModeKeys = .vi,
-    search_direction: enum(u8) { forward, backward } = .forward,
     active: bool = false,
+    /// True while the search prompt is open and accepting input. The actual
+    /// query buffer lives in the server's command_buf so it reuses the same
+    /// rendering/input path as the command prompt.
+    search_active: bool = false,
+    /// Direction of the in-progress search prompt.
+    search_pending_dir: SearchDir = .forward,
+    /// Direction of the last completed search, used by repeat (`n`/`N`).
+    last_search_dir: SearchDir = .forward,
 
     pub fn init(mode_keys: ModeKeys) CopyMode {
         return .{ .mode_keys = mode_keys };
@@ -54,6 +64,50 @@ pub const CopyMode = struct {
     pub fn exit(self: *CopyMode) void {
         self.active = false;
         self.selection.active = false;
+        self.search_active = false;
+    }
+
+    /// Open the search prompt in the given direction. The query itself is
+    /// collected by the server into its command_buf; CopyMode only tracks
+    /// that a search is pending and which way it should go.
+    pub fn enterSearch(self: *CopyMode, dir: SearchDir) void {
+        self.search_active = true;
+        self.search_pending_dir = dir;
+    }
+
+    /// Run a search for `query` in `dir` across the full scrollback (history
+    /// + visible grid), starting just past the current cursor position.
+    /// Returns true if a match was found (cursor is moved to it).
+    pub fn submitSearch(self: *CopyMode, grid: *const Grid, allocator: std.mem.Allocator, query: []const u8, dir: SearchDir) bool {
+        self.search_active = false;
+        self.last_search_dir = dir;
+        if (query.len == 0) return false;
+
+        const found = if (dir == .forward)
+            self.searchForward(grid, allocator, query)
+        else
+            self.searchBackward(grid, allocator, query);
+        if (found) {
+            self.selection = .{};
+        }
+        return found;
+    }
+
+    /// Repeat the last search (used by `n`/`N`). `reverse` flips the
+    /// direction relative to the original search. The query is supplied by
+    /// the caller (the server keeps the last search string).
+    pub fn repeatSearch(self: *CopyMode, grid: *const Grid, allocator: std.mem.Allocator, query: []const u8, reverse: bool) bool {
+        if (query.len == 0) return false;
+        const dir: SearchDir = if (reverse)
+            (if (self.last_search_dir == .forward) .backward else .forward)
+        else
+            self.last_search_dir;
+        const found = if (dir == .forward)
+            self.searchForward(grid, allocator, query)
+        else
+            self.searchBackward(grid, allocator, query);
+        if (found) self.selection = .{};
+        return found;
     }
 
     pub fn moveLeft(self: *CopyMode) void {
@@ -331,17 +385,22 @@ pub const CopyMode = struct {
         return try result.toOwnedSlice(allocator);
     }
 
-    pub fn searchForward(self: *CopyMode, grid: *const Grid, needle: []const u8) bool {
+    pub fn searchForward(self: *CopyMode, grid: *const Grid, allocator: std.mem.Allocator, needle: []const u8) bool {
         if (needle.len == 0) return false;
 
-        var y = self.cursor_y;
-        const x = self.cursor_x + 1;
+        const hist_len = grid.history.items.len - grid.history_start;
+        const total = hist_len + grid.height;
+        const cursor_logical = (hist_len -| self.scroll_offset) + self.cursor_y;
+        const start_x: usize = self.cursor_x + 1;
 
-        while (y < grid.height) : (y += 1) {
-            const start_x = if (y == self.cursor_y) x else 0;
-            if (searchLine(grid, y, start_x, needle)) |found_x| {
-                self.cursor_x = found_x;
-                self.cursor_y = y;
+        var line_buf: std.ArrayList(u8) = .empty;
+        defer line_buf.deinit(allocator);
+
+        var li = cursor_logical;
+        while (li < total) : (li += 1) {
+            const start_col: usize = if (li == cursor_logical) start_x else 0;
+            if (searchLogicalLine(grid, allocator, &line_buf, li, start_col, needle)) |found_x| {
+                self.placeCursorAtLogical(grid, li, found_x);
                 return true;
             }
         }
@@ -349,22 +408,105 @@ pub const CopyMode = struct {
         return false;
     }
 
-    pub fn searchBackward(self: *CopyMode, grid: *const Grid, needle: []const u8) bool {
+    pub fn searchBackward(self: *CopyMode, grid: *const Grid, allocator: std.mem.Allocator, needle: []const u8) bool {
         if (needle.len == 0) return false;
 
-        var y = self.cursor_y;
-        while (true) {
-            const start_x = if (y == self.cursor_y) self.cursor_x -| 1 else grid.width -| 1;
-            if (searchLineBackward(grid, y, start_x, needle)) |found_x| {
-                self.cursor_x = found_x;
-                self.cursor_y = y;
+        const hist_len = grid.history.items.len - grid.history_start;
+        const cursor_logical = (hist_len -| self.scroll_offset) + self.cursor_y;
+        const start_x: usize = if (self.cursor_x == 0) 0 else self.cursor_x - 1;
+
+        var line_buf: std.ArrayList(u8) = .empty;
+        defer line_buf.deinit(allocator);
+
+        var li = cursor_logical;
+        while (true) : ({
+            if (li == 0) break;
+            li -= 1;
+        }) {
+            const start_col: usize = if (li == cursor_logical) start_x else grid.width -| 1;
+            if (searchLogicalLineBackward(grid, allocator, &line_buf, li, start_col, needle)) |found_x| {
+                self.placeCursorAtLogical(grid, li, found_x);
                 return true;
             }
-            if (y == 0) break;
-            y -= 1;
+            if (li == 0) break;
         }
 
         return false;
+    }
+
+    /// Map a logical line index + column back to scroll_offset/cursor_y so
+    /// the match is visible (history matches pinned to the top of the screen).
+    fn placeCursorAtLogical(self: *CopyMode, grid: *const Grid, logical: usize, x: usize) void {
+        const hist_len = grid.history.items.len - grid.history_start;
+        if (logical < hist_len) {
+            self.scroll_offset = @intCast(hist_len - logical);
+            self.cursor_y = 0;
+        } else {
+            self.scroll_offset = 0;
+            self.cursor_y = @intCast(logical - hist_len);
+        }
+        self.cursor_x = @intCast(x);
+    }
+
+    /// Build the UTF-8 text of logical line `li` into `out`, then return the
+    /// first column >= `start_col` where `needle` occurs, or null. Uses
+    /// `std.mem.indexOf` over the line bytes (improvement #3) instead of an
+    /// O(n*m) per-cell comparison.
+    fn searchLogicalLine(
+        grid: *const Grid,
+        allocator: std.mem.Allocator,
+        out: *std.ArrayList(u8),
+        li: usize,
+        start_col: usize,
+        needle: []const u8,
+    ) ?usize {
+        const bytes = lineBytes(grid, allocator, out, li) orelse return null;
+        if (start_col >= bytes.len) return null;
+        const at = std.mem.indexOf(u8, bytes[start_col..], needle) orelse return null;
+        return start_col + at;
+    }
+
+    fn searchLogicalLineBackward(
+        grid: *const Grid,
+        allocator: std.mem.Allocator,
+        out: *std.ArrayList(u8),
+        li: usize,
+        start_col: usize,
+        needle: []const u8,
+    ) ?usize {
+        const bytes = lineBytes(grid, allocator, out, li) orelse return null;
+        if (bytes.len == 0 or needle.len > bytes.len) return null;
+        const limit = @min(start_col, bytes.len - needle.len);
+        var x = limit;
+        while (true) : ({
+            if (x == 0) break;
+            x -= 1;
+        }) {
+            if (std.mem.eql(u8, bytes[x .. x + needle.len], needle)) return x;
+            if (x == 0) break;
+        }
+        return null;
+    }
+
+    /// Render logical line `li` (history or visible) into `out` as UTF-8,
+    /// reusing `out`'s capacity. Returns the slice of `out` holding the line.
+    fn lineBytes(grid: *const Grid, allocator: std.mem.Allocator, out: *std.ArrayList(u8), li: usize) ?[]const u8 {
+        const hist_len = grid.history.items.len - grid.history_start;
+        const line = if (li < hist_len)
+            grid.getHistoryLine(li)
+        else
+            grid.getLine(@intCast(li - hist_len));
+
+        out.clearRetainingCapacity();
+        var x: u32 = 0;
+        while (x < line.cells.items.len) : (x += 1) {
+            const cell = line.cells.items[x];
+            if (cell.char == 0) break;
+            var buf: [4]u8 = undefined;
+            const len = std.unicode.utf8Encode(cell.char, &buf) catch continue;
+            out.appendSlice(allocator, buf[0..len]) catch return null;
+        }
+        return out.items;
     }
 
     pub fn handleKey(self: *CopyMode, k: Key, grid: *const Grid) KeyResult {
@@ -594,46 +736,6 @@ pub const CopyMode = struct {
         return .ignored;
     }
 };
-
-fn searchLine(grid: *const Grid, y: u32, start_x: u32, needle: []const u8) ?u32 {
-    if (needle.len == 0) return null;
-
-    var x = start_x;
-    while (x + needle.len <= grid.width) : (x += 1) {
-        var match = true;
-        for (needle, 0..) |nc, ni| {
-            const cell = grid.getCell(@intCast(x + ni), y);
-            if (cell.char != nc) {
-                match = false;
-                break;
-            }
-        }
-        if (match) return x;
-    }
-    return null;
-}
-
-fn searchLineBackward(grid: *const Grid, y: u32, start_x: u32, needle: []const u8) ?u32 {
-    if (needle.len == 0) return null;
-
-    var x = start_x;
-    while (true) {
-        if (x + needle.len <= grid.width) {
-            var match = true;
-            for (needle, 0..) |nc, ni| {
-                const cell = grid.getCell(@intCast(x + ni), y);
-                if (cell.char != nc) {
-                    match = false;
-                    break;
-                }
-            }
-            if (match) return x;
-        }
-        if (x == 0) break;
-        x -= 1;
-    }
-    return null;
-}
 
 test "copy mode init" {
     const cm = CopyMode.init(.vi);
@@ -936,7 +1038,7 @@ test "search forward found" {
 
     cm.cursor_x = 0;
     cm.cursor_y = 0;
-    const found = cm.searchForward(&g, "ello");
+    const found = cm.searchForward(&g, testing.allocator, "ello");
     try testing.expect(found);
     try testing.expectEqual(@as(u32, 1), cm.cursor_x);
 }
@@ -948,7 +1050,7 @@ test "search forward not found" {
 
     cm.cursor_x = 0;
     cm.cursor_y = 0;
-    const found = cm.searchForward(&g, "xyz");
+    const found = cm.searchForward(&g, testing.allocator, "xyz");
     try testing.expect(!found);
 }
 
@@ -965,7 +1067,7 @@ test "search backward found" {
 
     cm.cursor_x = 4;
     cm.cursor_y = 0;
-    const found = cm.searchBackward(&g, "Hel");
+    const found = cm.searchBackward(&g, testing.allocator, "Hel");
     try testing.expect(found);
     try testing.expectEqual(@as(u32, 0), cm.cursor_x);
 }
@@ -1254,7 +1356,7 @@ test "search forward empty needle" {
 
     cm.cursor_x = 0;
     cm.cursor_y = 0;
-    const found = cm.searchForward(&g, "");
+    const found = cm.searchForward(&g, testing.allocator, "");
     try testing.expect(!found);
 }
 
@@ -1265,6 +1367,32 @@ test "search backward empty needle" {
 
     cm.cursor_x = 0;
     cm.cursor_y = 0;
-    const found = cm.searchBackward(&g, "");
+    const found = cm.searchBackward(&g, testing.allocator, "");
     try testing.expect(!found);
+}
+
+test "search backward into history" {
+    var cm = CopyMode.init(.vi);
+    var g = try Grid.init(testing.allocator, 10, 3);
+    defer g.deinit();
+
+    // Fill three rows with distinct markers, then scroll them into history
+    // by scrolling up twice (each scrollUp moves the top visible line to
+    // history and reveals a fresh empty line at the bottom).
+    g.writeChar(0, 0, 'A');
+    g.writeChar(1, 0, 'B');
+    g.writeChar(2, 0, 'C');
+    g.writeChar(0, 1, 'D');
+    g.writeChar(0, 2, 'E');
+
+    try g.scrollUp();
+    try g.scrollUp();
+
+    // Cursor sits on the freshly revealed bottom line; search backward should
+    // reach into the history lines that now hold A/B/C/D.
+    cm.cursor_x = 0;
+    cm.cursor_y = 0;
+    const found = cm.searchBackward(&g, testing.allocator, "ABC");
+    try testing.expect(found);
+    try testing.expectEqual(@as(u32, 0), cm.cursor_x);
 }

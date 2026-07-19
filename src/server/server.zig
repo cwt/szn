@@ -127,6 +127,13 @@ pub const Server = struct {
     message_time: i64 = 0,
     command_mode: bool = false,
     command_buf: std.ArrayList(u8) = .empty,
+    /// Set while a copy-mode search prompt is open; remembers the search
+    /// direction. The query itself is collected in `command_buf` like the
+    /// command prompt, but on enter we dispatch to the active pane's
+    /// CopyMode rather than the command dispatcher.
+    search_pending: ?@import("../mode_copy.zig").SearchDir = null,
+    /// Last completed copy-mode search string, used to repeat with `n`/`N`.
+    last_search: std.ArrayList(u8) = .empty,
     esc_buf: std.ArrayList(u8) = .empty,
     mouse_press_x: u32 = 0,
     mouse_press_y: u32 = 0,
@@ -199,6 +206,7 @@ pub const Server = struct {
         self.log_messages.deinit(self.allocator);
         if (self.message) |m| self.allocator.free(m);
         self.command_buf.deinit(self.allocator);
+        self.last_search.deinit(self.allocator);
         self.esc_buf.deinit(self.allocator);
         self.buffers.deinit();
         self.render_buf.deinit(self.allocator);
@@ -1023,6 +1031,21 @@ pub const Server = struct {
                             }
 
                             if (is_enter) {
+                                if (self.search_pending) |dir| {
+                                    // Copy-mode search: run the query against
+                                    // the active pane's scrollback.
+                                    self.search_pending = null;
+                                    if (pane.screen.copy_mode) |*cm| {
+                                        const query = self.command_buf.items;
+                                        self.last_search.clearRetainingCapacity();
+                                        self.last_search.appendSlice(self.allocator, query) catch {};
+                                        _ = cm.submitSearch(&pane.screen.grid, self.allocator, query, dir);
+                                        pane.dirty = true;
+                                    }
+                                    self.command_mode = false;
+                                    self.command_buf.clearRetainingCapacity();
+                                    self.dirty = true;
+                                } else {
                                 const cmd = self.command_buf.items;
                                 if (cmd.len > 0) {
                                     const dispatch = @import("dispatch.zig");
@@ -1034,6 +1057,7 @@ pub const Server = struct {
                                 self.command_mode = false;
                                 self.command_buf.clearRetainingCapacity();
                                 self.dirty = true;
+                                }
                             } else if (is_tab) {
                                 const prefix = self.command_buf.items;
                                 var matches: std.ArrayList(@import("../choose.zig").ChooseItem) = .empty;
@@ -1070,6 +1094,7 @@ pub const Server = struct {
                             } else if (is_cancel) {
                                 self.command_mode = false;
                                 self.command_buf.clearRetainingCapacity();
+                                self.search_pending = null;
                                 self.dirty = true;
                             } else if (is_backspace) {
                                 if (self.command_buf.items.len > 0) {
@@ -1179,6 +1204,29 @@ pub const Server = struct {
                     switch (event) {
                         .key => |k| {
                             if (self.dispatcher.prefix_state == .normal) {
+                                // Copy-mode search entry / repeat, handled
+                                // here (before the prefix check) so they work
+                                // while in copy mode without the prefix.
+                                if (k == .char) {
+                                    const kc = k.char;
+                                    const is_search_key = (cm.mode_keys == .vi and (kc.code == '/' or kc.code == '?') and !kc.mod.ctrl and !kc.mod.alt) or
+                                        (cm.mode_keys == .emacs and ((kc.code == 'S' and kc.mod.ctrl) or (kc.code == 'R' and kc.mod.ctrl)));
+                                    if (is_search_key and self.search_pending == null) {
+                                        const dir: @import("../mode_copy.zig").SearchDir = if (kc.code == '/' or kc.code == 'S') .forward else .backward;
+                                        self.search_pending = dir;
+                                        cm.enterSearch(dir);
+                                        self.command_mode = true;
+                                        self.command_buf.clearRetainingCapacity();
+                                        pane.dirty = true;
+                                        break;
+                                    }
+                                    if ((kc.code == 'n' or kc.code == 'N') and !kc.mod.ctrl and !kc.mod.alt and self.search_pending == null) {
+                                        const reverse = kc.code == 'N';
+                                        _ = cm.repeatSearch(&pane.screen.grid, self.allocator, self.last_search.items, reverse);
+                                        pane.dirty = true;
+                                        break;
+                                    }
+                                }
                                 if (@import("../key_binding.zig").keysEqual(k, self.dispatcher.prefix)) {
                                     self.dispatcher.prefix_state = .prefix_seen;
                                 } else {

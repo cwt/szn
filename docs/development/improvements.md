@@ -53,23 +53,9 @@ allocations are unnecessary.
 
 ---
 
-### 3. `searchLine()` naive O(n*m) substring comparison
-
-**`src/mode_copy.zig:601–638`**
-
-For every starting position, compares `needle.len` cells byte-by-byte.
-No skip table, no memchr equivalent. For a 200-column line searching for
-a 5-char string: up to 200 × 5 = 1000 cell reads per line. For a 1000-line
-scrollback: 1M cell reads per search.
-
-**Fix:** Pre-convert line to UTF-8 bytes once, use `std.mem.indexOf(u8)`.
-Or implement a simple two-byte lookahead skip.
-
----
-
 ## SIGNIFICANT REFACTOR
 
-### 4. `splitArgs()` dupes each argument in format expressions
+### 3. `splitArgs()` dupes each argument in format expressions
 
 **`src/format.zig:450–459`**
 
@@ -84,24 +70,40 @@ duplicating. Pass `[]const u8` slices of the original content.
 
 ## KNOWN BUG-LIKE LIMITATIONS — REMAINING (documented here, not functional bugs)
 
-### Copy mode search only scans visible grid, not history
-
-`src/mode_copy.zig:337–371`
-
-`searchForward` and `searchBackward` only iterate `y < grid.height`
-(visible grid lines). When copy mode has `scroll_offset > 0` (user has
-scrolled back), search will not find content in history lines.
-
-Additionally, search is not yet wired to the key handlers — the `searchForward`
-and `searchBackward` functions exist but are only called from unit tests.
-There are no `/` or `?` bindings in vi mode, and no `C-s`/`C-r` bindings
-in emacs mode.
-
-**Status:** Incomplete feature, not a regression.
+_(none currently open — see Fixed entries below)_
 
 ---
 
 ## PREVIOUS OPTIMIZATIONS (already done, noted for posterity)
+
+### Fixed: copy-mode incremental search wired up + scans history (rev 378)
+
+`src/mode_copy.zig`, `src/server/server.zig`
+
+Copy-mode search is now reachable from the keyboard:
+- vi mode: `/` → search forward, `?` → search backward, `n`/`N` repeat.
+- emacs mode: `C-s` → search forward, `C-r` → search backward.
+
+The query is collected through the existing command-prompt input path
+(`command_buf` / `command_mode`), and on Enter dispatched to
+`CopyMode.submitSearch`. `last_search` is retained on the server so `n`/`N`
+can repeat without retyping.
+
+`searchForward`/`searchBackward` now walk the **entire** scrollback
+(history ring + visible grid) using a combined logical-line index, so
+matches in scrolled-back history are found. Matches in history are pinned
+to the top of the screen; visible matches keep their position.
+
+### Fixed: `searchLine()` O(n*m) → `std.mem.indexOf` over UTF-8 line bytes (rev 378)
+
+`src/mode_copy.zig`
+
+The old `searchLine` compared the needle cell-by-cell for every start
+position. The new `searchLogicalLine` renders each logical line once into a
+reused UTF-8 byte buffer (`lineBytes`) and uses `std.mem.indexOf(u8, ...)`
+over the whole line, then adjusts the start column. Backward search does a
+single right-to-left scan. This is the improvement previously logged as
+item #3; it is now implemented and no longer a hotspot.
 
 ### Fixed: incremental merged grid — skip clear + non-dirty panes (rev 372)
 
