@@ -2,82 +2,20 @@
 type: improvements
 title: "Performance & Optimization Opportunities — szn"
 description: "Catalog of performance bottlenecks, memory churn, and optimization targets sorted by effort-to-impact."
-timestamp: 2026-07-20T10:00:00Z
+timestamp: 2026-07-20T16:00:00Z
 ---
 
 # Performance & Optimization Opportunities — szn
 
-Sorted by effort-to-impact ratio. All findings from a full codebase audit
-(2026-07-20).
+Sorted by effort-to-impact ratio. Findings from a full codebase audit
+(2026-07-20), with completion status reconciled against the current code
+at revision 377.
 
 ---
 
-## MODERATE EFFORT, HIGH IMPACT
+## MODERATE EFFORT, HIGH IMPACT — REMAINING
 
-### 1. Merged grid rebuilt from scratch every frame
-
-**`src/server/render.zig:181–252`**
-
-Every render frame:
-1. `@memset` clears ALL merged screen cells (O(total_cells))
-2. Copies ALL pane cells into merged screen (O(total_cells))
-3. Draws borders over the full merged screen
-
-This is a full recompute — NOT incremental. The per-client render diff
-only helps with escape emission, not the merged grid construction.
-
-For a 200×100 terminal (20K cells), every frame does 20K cell operations
-even if NOTHING changed.
-
-**Fix:** Use `dirty` flag on individual grid lines. Only copy dirty lines.
-Or keep a per-pane dirty-rect and only recompute that region.
-
----
-
-### 2. Full render on any pane dirty, not per-pane
-
-**`src/server/server.zig:2147–2237`**
-
-When any pane is dirty, a FULL render pass runs for every display client:
-collecting bounds, rendering all panes, drawing all borders. Wasteful when
-only one pane in a 6-pane layout changed.
-
-**Fix:** Track dirty panes individually. Only copy/emit changed panes in
-the merged screen. Border redraw still needs full pass, but pane content
-can be selective.
-
----
-
-### 3. SGR escape sequence rebuilt from scratch on every cell change
-
-**`src/server/render.zig:469–537`**
-
-When a cell's fg/bg/attr changes, the renderer:
-1. Emits `\x1b[m` (full reset)
-2. Iterates through ALL attribute fields emitting each SGR code
-3. Emits fg colour
-4. Emits bg colour
-
-Adjacent cells with the same style emit redundant sequences.
-
-**Fix:** Track last-emitted SGR state per render pass. Only emit delta.
-If only bg changed, emit just the bg sequence instead of full reset+rebuild.
-
----
-
-### 4. `renderSixelImages()` scans every cell of every pane
-
-**`src/server/render.zig:718–771`**
-
-For each pane, each row, each column — checks `cell.attr.sixel`.
-O(total_cells) per frame even when no sixel is present.
-
-**Fix:** Gate sixel-render section on whether any sixel image exists in
-any pane. Skip entirely if none.
-
----
-
-### 5. Format template re-parsed on every `expand()` call
+### 1. Format template re-parsed on every `expand()` call
 
 **`src/format.zig:45–83`**
 
@@ -92,7 +30,7 @@ form. Only re-parse if the template string changes.
 
 ---
 
-### 6. Each format sub-expression allocates via `dupe`
+### 2. Each format sub-expression allocates via `dupe`
 
 **`src/format.zig:190–195`**
 
@@ -115,7 +53,7 @@ allocations are unnecessary.
 
 ---
 
-### 7. `searchLine()` naive O(n*m) substring comparison
+### 3. `searchLine()` naive O(n*m) substring comparison
 
 **`src/mode_copy.zig:601–638`**
 
@@ -129,42 +67,9 @@ Or implement a simple two-byte lookahead skip.
 
 ---
 
-### 8. `usleep(2000)` blocks the event loop
-
-**`src/server/server.zig:442`**
-
-```zig
-_ = c_usleep(2000);
-```
-
-When a sixel is pending (awaiting cell size measurement), the event loop
-thread sleeps for 2ms per iteration — blocking ALL other processing (other
-panes, clients). 2ms stall on every poll iteration when any pane has a
-pending sixel.
-
-**Fix:** Use a timer fd, or skip the PTY poll for that pane. The kernel
-already buffers the data — no need to busy-wait.
-
----
-
 ## SIGNIFICANT REFACTOR
 
-### 9. `reflowCursorInternal()` flattens every line, even untouched ones
-
-**`src/grid.zig:697–764`**
-
-The flattening phase creates `flat_cells` (ArrayList of Cell) and
-`logical_spans` by iterating through ALL lines, trimming trailing empties,
-checking cursor position, etc. For a 5000-line × 200-cell history = 1M
-cells re-allocated during reflow.
-
-**Fix:** Represent logical lines as slices into existing grid lines
-instead of flattening to a new contiguous buffer. Or pre-allocate
-`flat_cells` to the estimated total size.
-
----
-
-### 10. `splitArgs()` dupes each argument in format expressions
+### 4. `splitArgs()` dupes each argument in format expressions
 
 **`src/format.zig:450–459`**
 
@@ -177,7 +82,7 @@ duplicating. Pass `[]const u8` slices of the original content.
 
 ---
 
-## KNOWN BUG-LIKE LIMITATIONS (documented here, not functional bugs)
+## KNOWN BUG-LIKE LIMITATIONS — REMAINING (documented here, not functional bugs)
 
 ### Copy mode search only scans visible grid, not history
 
@@ -197,6 +102,61 @@ in emacs mode.
 ---
 
 ## PREVIOUS OPTIMIZATIONS (already done, noted for posterity)
+
+### Fixed: incremental merged grid — skip clear + non-dirty panes (rev 372)
+
+`src/server/render.zig`
+
+`renderAll` now takes a `full_rebuild` parameter. When only content changed
+(not layout/structure), the merged-screen `@memset` is skipped and only
+dirty panes (`pb.pane.dirty`) are copied into the merged screen. Non-dirty
+panes retain their previous frame's content. Borrowed from the session's
+`dirty` flag (set on layout/size changes, cleared once the frame flushes).
+
+### Fixed: SGR escape sequence delta emission (rev 373, color-loss fix rev 377)
+
+`src/server/render.zig`
+
+Instead of emitting `\x1b[m` + full attribute rebuild on every style change,
+only the changed components are emitted: fg-only, bg-only, or (rare) attr
+reset + rebuild. A follow-up fix ensures that when an attribute-only change
+emits `\x1b[m` (which resets fg/bg to default), fg and bg are re-emitted
+unconditionally so colored text keeps its color across an attribute-only
+style change.
+
+### Fixed: `renderSixelImages()` early-return when no sixels present (rev 374)
+
+`src/server/render.zig`
+
+Skips the O(total_cells) pane scan entirely when no pane in the frame has
+any sixel images (neither current sixel_images nor last-frame anchors).
+
+### Fixed: `usleep(2000)` blocking the event loop during sixel cell-size wait (rev 375)
+
+`src/server/server.zig`
+
+Removed the 2 ms artificial stall. PTY data stays buffered in the kernel
+and the event loop already polls with a 1 ms timeout, so other panes and
+clients are no longer blocked during the cell-size measurement window.
+
+### Fixed: `scrollUp()` history trim — O(n) memmove eliminated (rev 371)
+
+`src/grid.zig`
+
+History now uses a ring buffer via `history_start: usize` offset; the
+oldest entry is deinitialized in-place and `history_start` advances, with
+periodic compaction when the gap exceeds 256. All external indexers in
+`render.zig`, `mode_copy.zig`, `screen.zig`, and `server.zig` updated to use
+`items.len - history_start` for logical length and `history_start + idx`
+for element access.
+
+### Fixed: `reflowCursorInternal()` pre-allocates flat buffers (rev 376)
+
+`src/grid.zig`
+
+`flat_cells` is pre-allocated to `process_limit * self.width` and
+`logical_spans` to `process_limit` in a single allocation each, avoiding
+O(log n) realloc + copies during the flattening phase.
 
 ### Fixed: `deleteLine()` / `insertLine()` struct-copy aliasing
 
@@ -291,21 +251,6 @@ O(n) reallocations.
 passes `self.arena.allocator()` through the entire chain. Grid, Screen, and
 InputParser already receive the arena allocator in production code. No
 change needed — the infrastructure was already in place.
-
----
-
-### Fixed: `scrollUp()` history trim — O(n) memmove eliminated
-
-`src/grid.zig`
-
-History now uses a ring buffer via `history_start: usize` offset. Instead
-of shifting items forward with `std.mem.copyForwards` on each batch trim,
-the oldest entry is deinitialized in-place and `history_start` advances.
-Only compaction occurs when `history_start > 256`, keeping the gap bounded.
-
-All external indexers in `render.zig`, `mode_copy.zig`, `screen.zig`, and
-`server.zig` updated to use `items.len - history_start` for logical length
-and `history_start + idx` for element access.
 
 ---
 
