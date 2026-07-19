@@ -89,10 +89,13 @@ The query is collected through the existing command-prompt input path
 `CopyMode.submitSearch`. `last_search` is retained on the server so `n`/`N`
 can repeat without retyping.
 
-`searchForward`/`searchBackward` now walk the **entire** scrollback
-(history ring + visible grid) using a combined logical-line index, so
-matches in scrolled-back history are found. Matches in history are pinned
-to the top of the screen; visible matches keep their position.
+ `searchForward`/`searchBackward` now walk the **entire** scrollback
+ (history ring + visible grid) using a combined logical-line index, so
+ matches in scrolled-back history are found. Matches in history are pinned
+ to the top of the screen; visible matches keep their position. Search is
+ **cyclic**: if no match is found from the cursor to the end (forward) or
+ start (backward), it wraps around and continues from the opposite end up
+ to the cursor, so `/foo` from the bottom line still finds `foo` at the top.
 
 ### Fixed: `searchLine()` O(n*m) → `std.mem.indexOf` over UTF-8 line bytes (rev 378)
 

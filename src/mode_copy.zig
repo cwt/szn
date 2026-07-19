@@ -398,10 +398,21 @@ pub const CopyMode = struct {
         var offsets: std.ArrayList(usize) = .empty;
         defer offsets.deinit(allocator);
 
+        // Pass 1: from just past the cursor to the end of the scrollback.
         var li = cursor_logical;
         while (li < total) : (li += 1) {
             const start_col: usize = if (li == cursor_logical) start_x else 0;
             if (searchLogicalLine(grid, allocator, &line_buf, &offsets, li, start_col, needle)) |found_x| {
+                self.placeCursorAtLogical(grid, li, found_x);
+                return true;
+            }
+        }
+
+        // Pass 2 (cyclic wrap): from the top down to just before the cursor
+        // line. Logical lines are disjoint from pass 1, so no re-match.
+        li = 0;
+        while (li < cursor_logical) : (li += 1) {
+            if (searchLogicalLine(grid, allocator, &line_buf, &offsets, li, 0, needle)) |found_x| {
                 self.placeCursorAtLogical(grid, li, found_x);
                 return true;
             }
@@ -414,6 +425,7 @@ pub const CopyMode = struct {
         if (needle.len == 0) return false;
 
         const hist_len = grid.history.items.len - grid.history_start;
+        const total = hist_len + grid.height;
         const cursor_logical = (hist_len -| self.scroll_offset) + self.cursor_y;
         const start_x: usize = if (self.cursor_x == 0) 0 else self.cursor_x - 1;
 
@@ -422,6 +434,7 @@ pub const CopyMode = struct {
         var offsets: std.ArrayList(usize) = .empty;
         defer offsets.deinit(allocator);
 
+        // Pass 1: from just before the cursor back to the start.
         var li = cursor_logical;
         while (true) : ({
             if (li == 0) break;
@@ -433,6 +446,17 @@ pub const CopyMode = struct {
                 return true;
             }
             if (li == 0) break;
+        }
+
+        // Pass 2 (cyclic wrap): from the bottom of the scrollback up to the
+        // cursor line, not past the cursor's own column.
+        li = total -| 1;
+        while (li > cursor_logical) : (li -= 1) {
+            const start_col: usize = if (li == cursor_logical) start_x else grid.width -| 1;
+            if (searchLogicalLineBackward(grid, allocator, &line_buf, &offsets, li, start_col, needle)) |found_x| {
+                self.placeCursorAtLogical(grid, li, found_x);
+                return true;
+            }
         }
 
         return false;
@@ -1448,5 +1472,25 @@ test "search backward into history" {
     cm.cursor_y = 0;
     const found = cm.searchBackward(&g, testing.allocator, "ABC");
     try testing.expect(found);
+    try testing.expectEqual(@as(u32, 0), cm.cursor_x);
+}
+
+test "forward search wraps cyclically from the bottom" {
+    var cm = CopyMode.init(.vi);
+    var g = try Grid.init(testing.allocator, 10, 3);
+    defer g.deinit();
+
+    // "foo" only exists on the top line; cursor starts at the bottom line
+    // (copy mode default), so a non-cyclic search would fail. It must wrap
+    // to the top.
+    g.writeChar(0, 0, 'f');
+    g.writeChar(1, 0, 'o');
+    g.writeChar(2, 0, 'o');
+
+    cm.enter(&g); // cursor at bottom line, cursor_y == height-1
+    try testing.expectEqual(@as(u32, 2), cm.cursor_y);
+    const found = cm.searchForward(&g, testing.allocator, "foo");
+    try testing.expect(found);
+    try testing.expectEqual(@as(u32, 0), cm.cursor_y);
     try testing.expectEqual(@as(u32, 0), cm.cursor_x);
 }
