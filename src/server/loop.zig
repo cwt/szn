@@ -59,6 +59,26 @@ pub const Loop = struct {
         }
     }
 
+    /// Add event bits to an already-watched fd without touching udata.
+    pub fn addFdEvents(self: *Loop, fd: i32, events: i16) void {
+        for (self.fds.items) |*f| {
+            if (f.fd == fd) {
+                f.events |= events;
+                return;
+            }
+        }
+    }
+
+    /// Remove event bits from a watched fd, leaving other bits intact.
+    pub fn removeFdEvents(self: *Loop, fd: i32, events: i16) void {
+        for (self.fds.items) |*f| {
+            if (f.fd == fd) {
+                f.events &= ~events;
+                return;
+            }
+        }
+    }
+
     pub fn pollOnce(self: *Loop, allocator: std.mem.Allocator, timeout: i32) Error![]PollEvent {
         if (self.fds.items.len == 0) return &[0]PollEvent{};
 
@@ -141,4 +161,28 @@ test "addFd updates existing fd events and udata — bug #132" {
     try testing.expectEqual(@as(usize, 1), loop.fds.items.len); // no duplicate
     try testing.expectEqual(@as(i16, @intCast(std.posix.POLL.OUT)), loop.fds.items[0].events);
     try testing.expectEqual(@as(?*anyopaque, @ptrFromInt(@as(usize, 2))), loop.fds.items[0].udata);
+}
+
+test "addFdEvents / removeFdEvents toggle bits without dropping others — bug #260" {
+    var loop = Loop.init();
+    defer loop.deinit(testing.allocator);
+
+    try loop.addFd(testing.allocator, 7, @as(i16, @intCast(std.posix.POLL.IN)), null);
+    try testing.expectEqual(@as(i16, @intCast(std.posix.POLL.IN)), loop.fds.items[0].events);
+
+    loop.addFdEvents(7, std.posix.POLL.OUT);
+    try testing.expectEqual(
+        @as(i16, @intCast(std.posix.POLL.IN | std.posix.POLL.OUT)),
+        loop.fds.items[0].events,
+    );
+
+    // Removing a bit not present is a no-op.
+    loop.removeFdEvents(7, std.posix.POLL.HUP);
+    try testing.expectEqual(
+        @as(i16, @intCast(std.posix.POLL.IN | std.posix.POLL.OUT)),
+        loop.fds.items[0].events,
+    );
+
+    loop.removeFdEvents(7, std.posix.POLL.OUT);
+    try testing.expectEqual(@as(i16, @intCast(std.posix.POLL.IN)), loop.fds.items[0].events);
 }

@@ -79,9 +79,16 @@ pub const DisplayClient = struct {
     last_sy: u32 = 0,
     merged_screen: ?@import("../screen.zig").Screen = null,
     last_paste: ?bool = null,
+    /// Bytes of a render frame that could not be written to the (non-blocking)
+    /// socket yet, awaiting POLLOUT. While non-empty we must NOT regenerate a
+    /// new frame: the per-client diff state (last_cells) only advances when the
+    /// frame currently buffered is fully flushed, so the client always receives
+    /// a complete, consistent screen image.
+    out_buf: std.ArrayList(u8) = .empty,
 
     pub fn deinit(self: *DisplayClient, allocator: std.mem.Allocator) void {
         self.last_cells.deinit(allocator);
+        self.out_buf.deinit(allocator);
         if (self.merged_screen) |*ms| {
             ms.deinit();
         }
@@ -354,6 +361,16 @@ pub const Server = struct {
             for (self.client_fds.items) |cfd| {
                 if (ev.fd == cfd) {
                     is_client = true;
+                    if (ev.revents & @as(i16, @intCast(std.posix.POLL.OUT)) != 0) {
+                        // Socket became writable again — drain any queued
+                        // render backlog so a slow link can't stall the loop.
+                        for (self.display_clients.items) |*dc| {
+                            if (dc.fd == cfd) {
+                                _ = self.flushDisplayClient(dc);
+                                break;
+                            }
+                        }
+                    }
                     if (has_in) {
                         self.handleClient(cfd) catch |err| {
                             std.log.err("client {d} error: {any}", .{ cfd, err });
@@ -1771,30 +1788,9 @@ pub const Server = struct {
         var hdr: [5]u8 = undefined;
         pkt.header.encode(&hdr);
 
-        for (self.display_clients.items) |dc| {
-            var hdr_remaining: []const u8 = hdr[0..];
-            var write_ok = true;
-            while (hdr_remaining.len > 0) {
-                const written = std.c.write(dc.fd, hdr_remaining.ptr, hdr_remaining.len);
-                if (written < 0) {
-                    if (std.c.errno(written) == .INTR) continue;
-                    write_ok = false;
-                    break;
-                }
-                hdr_remaining = hdr_remaining[@intCast(written)..];
-            }
-
-            if (!write_ok) continue;
-
-            var body_remaining: []const u8 = raw_buf;
-            while (body_remaining.len > 0) {
-                const written = std.c.write(dc.fd, body_remaining.ptr, body_remaining.len);
-                if (written < 0) {
-                    if (std.c.errno(written) == .INTR) continue;
-                    break;
-                }
-                body_remaining = body_remaining[@intCast(written)..];
-            }
+        for (self.display_clients.items) |*dc| {
+            self.queueToClient(dc.fd, hdr[0..]);
+            self.queueToClient(dc.fd, raw_buf);
         }
 
         // 2. Decode base64 and push to self.buffers
@@ -1835,6 +1831,26 @@ pub const Server = struct {
         try self.loop.addFd(self.allocator, fd, @as(i16, @intCast(std.posix.POLL.IN)), @ptrCast(self));
     }
 
+    /// Register a client fd as a display client. The socket is switched to
+    /// non-blocking so that render writes can never stall the event loop when a
+    /// slow link (e.g. ssh) cannot keep up with the child's output volume.
+    fn registerDisplayClient(self: *Server, fd: i32) !void {
+        const c_fcntl = struct {
+            extern "c" fn fcntl(fd: c_int, cmd: c_int, ...) c_int;
+        }.fcntl;
+        const F_GETFL: c_int = 3;
+        const F_SETFL: c_int = 4;
+        const O_NONBLOCK: c_int = comptime switch (@import("builtin").os.tag) {
+            .linux => @as(c_int, 0o4000),
+            else => @as(c_int, 0x0004),
+        };
+        const flags = c_fcntl(fd, F_GETFL, @as(c_int, 0));
+        if (flags >= 0) {
+            _ = c_fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+        }
+        try self.display_clients.append(self.allocator, .{ .fd = fd });
+    }
+
     fn handleClient(self: *Server, fd: i32) ServerError!void {
         var buf: [4096]u8 = undefined;
         const n = std.posix.read(fd, &buf) catch |err| {
@@ -1862,7 +1878,10 @@ pub const Server = struct {
                     var result = dispatch.dispatchCommand(self.allocator, self, pkt.data);
                     self.dirty = true;
                     defer result.deinit();
-                    try dispatch.sendResponse(fd, &result);
+                    const resp_pkt = protocol.Packet.make(result.response_type, result.data);
+                    var resp_buf: [1024]u8 = undefined;
+                    const resp_ser = resp_pkt.serialize(&resp_buf);
+                    self.queueToClient(fd, resp_ser);
                 },
                 .identify_term => {
                     var exists = false;
@@ -1873,15 +1892,15 @@ pub const Server = struct {
                         }
                     }
                     if (!exists) {
-                        try self.display_clients.append(self.allocator, .{ .fd = fd });
+                        self.registerDisplayClient(fd) catch {
+                            std.log.err("failed to register display client {d}", .{fd});
+                            return error.WriteFailed;
+                        };
                     }
                     const reply = protocol.Packet.make(.ready, "ok");
                     var reply_buf: [128]u8 = undefined;
                     const serialized = reply.serialize(&reply_buf);
-                    const written = c.write(fd, serialized.ptr, serialized.len);
-                    if (written < 0) {
-                        return error.WriteFailed;
-                    }
+                    self.queueToClient(fd, serialized);
                     if (self.activeSession()) |s| {
                         if (s.active_window) |w| {
                             if (w.active_pane) |ap| {
@@ -1993,9 +2012,82 @@ pub const Server = struct {
         var hdr: [5]u8 = undefined;
         pkt.header.encode(&hdr);
         const hdr_slice: []const u8 = hdr[0..];
-        for (self.display_clients.items) |dc| {
-            _ = c.write(dc.fd, hdr_slice.ptr, hdr_slice.len);
+        for (self.display_clients.items) |*dc| {
+            // Queue onto the pending buffer and let the non-blocking flush
+            // deliver it.  A bare c.write could EAGAIN on the now
+            // non-blocking socket and lose the query.
+            if (dc.out_buf.items.len > 0) {
+                dc.out_buf.appendSlice(self.allocator, hdr_slice) catch continue;
+                _ = self.flushDisplayClient(dc);
+                continue;
+            }
+            const n = c.write(dc.fd, hdr_slice.ptr, hdr_slice.len);
+            if (n < 0) {
+                if (std.c.errno(n) == .AGAIN) {
+                    dc.out_buf.appendSlice(self.allocator, hdr_slice) catch continue;
+                    self.loop.addFdEvents(dc.fd, std.posix.POLL.OUT);
+                }
+            }
         }
+    }
+
+    /// Queue an already-serialized packet for a display client on its pending
+    /// output buffer and flush. Used for out-of-band output (clipboard paste,
+    /// command responses) that is not part of the per-frame render path but
+    /// must still survive a momentarily unwritable non-blocking socket.
+    fn queueToClient(self: *Server, fd: i32, data: []const u8) void {
+        for (self.display_clients.items) |*dc| {
+            if (dc.fd != fd) continue;
+            if (dc.out_buf.items.len > 0) {
+                dc.out_buf.appendSlice(self.allocator, data) catch return;
+                _ = self.flushDisplayClient(dc);
+                return;
+            }
+            const n = c.write(dc.fd, data.ptr, data.len);
+            if (n < 0) {
+                if (std.c.errno(n) == .AGAIN) {
+                    dc.out_buf.appendSlice(self.allocator, data) catch return;
+                    self.loop.addFdEvents(dc.fd, std.posix.POLL.OUT);
+                }
+                return;
+            }
+            if (@as(usize, @intCast(n)) < data.len) {
+                dc.out_buf.appendSlice(self.allocator, data[@as(usize, @intCast(n))..]) catch return;
+                self.loop.addFdEvents(dc.fd, std.posix.POLL.OUT);
+            }
+            return;
+        }
+    }
+
+    /// Non-blocking flush of a display client's pending output buffer. Returns
+    /// true if every buffered byte was written. On EAGAIN the remainder stays
+    /// in out_buf and POLLOUT is armed so flushDisplayClient is retried by the
+    /// event loop when the socket becomes writable again.
+    fn flushDisplayClient(self: *Server, dc: *DisplayClient) bool {
+        if (dc.out_buf.items.len == 0) return true;
+        var off: usize = 0;
+        while (off < dc.out_buf.items.len) {
+            const n = c.write(dc.fd, dc.out_buf.items.ptr + off, dc.out_buf.items.len - off);
+            if (n < 0) {
+                const err = std.c.errno(n);
+                if (err == .INTR) continue;
+                if (err == .AGAIN) break;
+                // Broken pipe / fatal — give up on this client's backlog.
+                dc.out_buf.clearRetainingCapacity();
+                self.loop.removeFdEvents(dc.fd, std.posix.POLL.OUT);
+                return true;
+            }
+            if (n == 0) break;
+            off += @as(usize, @intCast(n));
+        }
+        if (off >= dc.out_buf.items.len) {
+            dc.out_buf.clearRetainingCapacity();
+            self.loop.removeFdEvents(dc.fd, std.posix.POLL.OUT);
+            return true;
+        }
+        dc.out_buf.items.len = off;
+        self.loop.addFdEvents(dc.fd, std.posix.POLL.OUT);
+        return false;
     }
 
     pub fn renderToDisplayClient(self: *Server) void {
@@ -2063,12 +2155,22 @@ pub const Server = struct {
         }
         if (!any_dirty) return;
 
-        self.dirty = false;
-        for (window.panes.items) |p| {
-            p.dirty = false;
-        }
+        // Track whether every client received its frame. If any client is
+        // behind (slow link / full socket buffer) we must NOT clear the dirty
+        // flags, so the next loop iteration regenerates and finishes the
+        // backlog instead of dropping a frame.
+        var all_flushed = true;
 
         for (self.display_clients.items) |*dc| {
+            // First, try to push out anything still queued from a previous
+            // render. While a frame is partially sent we must not regenerate a
+            // new one: the diff state (last_cells) only advances once the
+            // buffered frame is fully flushed, keeping the client in sync.
+            if (dc.out_buf.items.len > 0) {
+                if (!self.flushDisplayClient(dc)) all_flushed = false;
+                continue;
+            }
+
             self.render_buf.clearRetainingCapacity();
 
             var display = Display{
@@ -2115,36 +2217,22 @@ pub const Server = struct {
                 continue;
             };
 
-            if (self.render_buf.items.len > 0) {
-                const pkt = protocol.Packet.make(.output, self.render_buf.items);
-                var hdr: [5]u8 = undefined;
-                pkt.header.encode(&hdr);
+            if (self.render_buf.items.len == 0) continue;
 
-                // Write header — retry partial writes
-                var hdr_remaining: []const u8 = hdr[0..];
-                var write_ok = true;
-                while (hdr_remaining.len > 0) {
-                    const written_bytes = c.write(dc.fd, hdr_remaining.ptr, hdr_remaining.len);
-                    if (written_bytes < 0) {
-                        if (std.c.errno(written_bytes) == .INTR) continue;
-                        write_ok = false;
-                        break;
-                    }
-                    hdr_remaining = hdr_remaining[@intCast(written_bytes)..];
-                }
+            const pkt = protocol.Packet.make(.output, self.render_buf.items);
+            var hdr: [5]u8 = undefined;
+            pkt.header.encode(&hdr);
+            dc.out_buf.clearRetainingCapacity();
+            dc.out_buf.appendSlice(self.allocator, hdr[0..]) catch continue;
+            dc.out_buf.appendSlice(self.allocator, self.render_buf.items) catch continue;
 
-                if (!write_ok) continue;
+            if (!self.flushDisplayClient(dc)) all_flushed = false;
+        }
 
-                // Write body — retry partial writes
-                var body_remaining: []const u8 = self.render_buf.items;
-                while (body_remaining.len > 0) {
-                    const written_bytes = c.write(dc.fd, body_remaining.ptr, body_remaining.len);
-                    if (written_bytes < 0) {
-                        if (std.c.errno(written_bytes) == .INTR) continue;
-                        break;
-                    }
-                    body_remaining = body_remaining[@intCast(written_bytes)..];
-                }
+        if (all_flushed) {
+            self.dirty = false;
+            for (window.panes.items) |p| {
+                p.dirty = false;
             }
         }
     }
