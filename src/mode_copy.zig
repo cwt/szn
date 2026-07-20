@@ -554,6 +554,24 @@ pub const CopyMode = struct {
                 continue;
             };
             out.appendSlice(allocator, buf[0..len]) catch return null;
+            // Append combining marks (tone marks, vowel signs) so a query
+            // that includes them matches the grid's stored form. They share
+            // this cell's column, so they sit between offsets[x] and
+            // offsets[x+1] and still map back to column x on a hit.
+            if (cell.comb1 != 0) {
+                const cp1 = char_width.combiningCodepoint(cell.comb1);
+                if (cp1 != 0) {
+                    const l1 = std.unicode.utf8Encode(cp1, &buf) catch 0;
+                    if (l1 > 0) out.appendSlice(allocator, buf[0..l1]) catch return null;
+                }
+            }
+            if (cell.comb2 != 0) {
+                const cp2 = char_width.combiningCodepoint(cell.comb2);
+                if (cp2 != 0) {
+                    const l2 = std.unicode.utf8Encode(cp2, &buf) catch 0;
+                    if (l2 > 0) out.appendSlice(allocator, buf[0..l2]) catch return null;
+                }
+            }
         }
         return offsets.items.len;
     }
@@ -1493,4 +1511,66 @@ test "forward search wraps cyclically from the bottom" {
     try testing.expect(found);
     try testing.expectEqual(@as(u32, 0), cm.cursor_y);
     try testing.expectEqual(@as(u32, 0), cm.cursor_x);
+}
+
+test "search matches Thai base + tone mark (combining mark)" {
+    var cm = CopyMode.init(.vi);
+    var g = try Grid.init(testing.allocator, 10, 3);
+    defer g.deinit();
+
+    // 'ที่' = THO THAHAN (U+0E17) with MAI EK tone mark (U+0E48), which the
+    // grid stores as cell.char = 0x0E17, cell.comb1 = combiningIndex(0x0E48).
+    // lineBytes must emit the combining mark too, or a query that includes it
+    // (as a Thai IME produces) would never match.
+    g.writeChar(0, 0, 0x0E17);
+    g.getLine(0).cells.items[0].comb1 = char_width.combiningIndex(0x0E48);
+
+    // Place the cursor on the bottom line so forward search wraps to the top.
+    cm.enter(&g);
+    try testing.expectEqual(@as(u32, 2), cm.cursor_y);
+
+    var needle: [8]u8 = undefined;
+    var npos: usize = 0;
+    for ([_]u21{ 0x0E17, 0x0E48 }) |cp| {
+        var tmp: [4]u8 = undefined;
+        const l = std.unicode.utf8Encode(cp, &tmp) catch unreachable;
+        @memcpy(needle[npos..][0..l], tmp[0..l]);
+        npos += l;
+    }
+    const found = cm.searchForward(&g, testing.allocator, needle[0..npos]);
+    try testing.expect(found);
+    try testing.expectEqual(@as(u32, 0), cm.cursor_x);
+    try testing.expectEqual(@as(u32, 0), cm.cursor_y);
+}
+
+test "search matches Thai word with vowel + tone marks" {
+    var cm = CopyMode.init(.vi);
+    var g = try Grid.init(testing.allocator, 10, 3);
+    defer g.deinit();
+
+    // 'สวัสดี' = ส(0E2A) วั(0E27+0E31) ส(0E2A) ดี(0E14+0E35)
+    // Vowel signs are stored in comb1 of their base cell.
+    g.writeChar(0, 0, 0x0E2A);
+    g.writeChar(1, 0, 0x0E27);
+    g.getLine(0).cells.items[1].comb1 = char_width.combiningIndex(0x0E31);
+    g.writeChar(2, 0, 0x0E2A);
+    g.writeChar(3, 0, 0x0E14);
+    g.getLine(0).cells.items[3].comb1 = char_width.combiningIndex(0x0E35);
+
+    cm.enter(&g); // cursor at bottom line
+    try testing.expectEqual(@as(u32, 2), cm.cursor_y);
+
+    // Build the UTF-8 query exactly as a Thai IME would: base + combining.
+    var needle: [40]u8 = undefined;
+    var npos: usize = 0;
+    for ([_]u21{ 0x0E2A, 0x0E27, 0x0E31, 0x0E2A, 0x0E14, 0x0E35 }) |cp| {
+        var tmp: [4]u8 = undefined;
+        const l = std.unicode.utf8Encode(cp, &tmp) catch unreachable;
+        @memcpy(needle[npos..][0..l], tmp[0..l]);
+        npos += l;
+    }
+    const found = cm.searchForward(&g, testing.allocator, needle[0..npos]);
+    try testing.expect(found);
+    try testing.expectEqual(@as(u32, 0), cm.cursor_x);
+    try testing.expectEqual(@as(u32, 0), cm.cursor_y);
 }

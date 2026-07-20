@@ -1098,14 +1098,30 @@ pub const Server = struct {
                                 self.dirty = true;
                             } else if (is_backspace) {
                                 if (self.command_buf.items.len > 0) {
-                                    self.command_buf.items.len -= 1;
+                                    // Delete one whole UTF-8 codepoint (1–4 bytes),
+                                    // not a single byte, so multi-byte input (e.g. Thai)
+                                    // is not corrupted by a partial erase.
+                                    var n: usize = 1;
+                                    while (n < self.command_buf.items.len and
+                                        self.command_buf.items[self.command_buf.items.len - n] & 0xC0 == 0x80)
+                                    {
+                                        n += 1;
+                                    }
+                                    self.command_buf.items.len -= n;
                                 }
                                 self.dirty = true;
                             } else if (k == .char) {
                                 const code = k.char.code;
-                                if (code >= 0x20 and code <= 0x7e and !k.char.mod.ctrl and !k.char.mod.alt) {
-                                    try self.command_buf.append(self.allocator, @intCast(code));
-                                    self.dirty = true;
+                                // Accept any printable codepoint — including non-ASCII
+                                // scripts like Thai — by UTF-8 encoding it. Control
+                                // chars and ctrl/alt-modified keys are still rejected.
+                                if (code >= 0x20 and code != 0x7f and !k.char.mod.ctrl and !k.char.mod.alt) {
+                                    var enc: [4]u8 = undefined;
+                                    const len = std.unicode.utf8Encode(code, &enc) catch 0;
+                                    if (len > 0) {
+                                        try self.command_buf.appendSlice(self.allocator, enc[0..len]);
+                                        self.dirty = true;
+                                    }
                                 }
                             }
                         },
@@ -3110,6 +3126,31 @@ test "command prompt keys validation" {
     try server.processInput("\r");
     try testing.expect(!server.command_mode);
     try testing.expectEqual(@as(usize, 0), server.command_buf.items.len);
+}
+
+test "command prompt accepts Thai (non-ASCII) input" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+    _ = try server.newSession("thai", 80, 24);
+
+    server.command_mode = true;
+    server.command_buf.clearRetainingCapacity();
+
+    // Feed two Thai codepoints the way a real terminal does — one UTF-8
+    // byte at a time — so the input reader assembles each 3-byte sequence
+    // into a single Key event.
+    var buf: [4]u8 = undefined;
+    const thai1 = try std.unicode.utf8Encode(0x0E17, &buf); // THO THAHAN  ท
+    for (buf[0..thai1]) |b| try server.processInput(&[_]u8{b});
+    const thai2 = try std.unicode.utf8Encode(0x0E22, &buf); // YO YAK      ย
+    for (buf[0..thai2]) |b| try server.processInput(&[_]u8{b});
+
+    // Both codepoints must be stored as valid UTF-8, not dropped.
+    try testing.expectEqualStrings("ทย", server.command_buf.items);
+
+    // Backspace must erase a whole codepoint (3 bytes), not one byte.
+    try server.processInput("\x7f");
+    try testing.expectEqualStrings("ท", server.command_buf.items);
 }
 
 test "command prompt tab completion" {
