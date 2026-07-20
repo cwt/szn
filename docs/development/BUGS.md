@@ -2,7 +2,7 @@
 type: bug_tracker
 title: "Bugs — szn"
 description: "Known bugs sorted by severity (Critical to Low)."
-timestamp: 2026-06-30T04:57:33Z
+timestamp: 2026-07-20T03:25:00Z
 ---
 
 # Bugs — szn
@@ -2616,10 +2616,10 @@ When a session or window is killed, its panes are deinitialized, closing their P
 | Severity | Count | Fixed | False Positive | Unresolved |
 |----------|-------|-------|----------------|------------|
 | Critical | 25 | 22 | 3 | **0** |
-| High | 45 (43+2) | 44 | 1 | **0** |
+| High | 48 (43+5) | 47 | 1 | **0** |
 | Medium | 69 (65+4) | 67 | 2 | **0** |
 | Low | 63 (61+2) | 60 | 3 | **0** |
-| Total | 205 (194+11) | **196** | **9** | **0** |
+| Total | 208 (194+14) | **196** | **9** | **0** |
 
 ---
 
@@ -2674,5 +2674,23 @@ set -g codepoint-widths ""                  # clear → back to szn defaults
 ```
 
 This mirrors `tmux`'s `utf8_default_width_cache` + `codepoint-widths` design. The default szn table assumes width 2 (correct for iTerm2/Ghostty/kitty/WezTerm/macOS Terminal), so most users need no override.
+
+---
+
+### 207. Non-blocking display socket buffer truncation on EAGAIN — server event-loop spin (freeze + 100% CPU)
+**File:** `src/server/server.zig:2152`
+**Severity:** HIGH
+**Status:** ✅ FIXED — updated `flushDisplayClient` to shift the remaining unwritten buffer bytes to the front using `std.mem.copyForwards` and adjust the length, instead of truncating the buffer length to the written bytes. Added unit test.
+
+When a display client socket returned `EAGAIN` during a write (occurring frequently on macOS due to smaller default UNIX domain socket buffers under heavy child output like `bat`), `flushDisplayClient` incorrectly set the buffer's length to the number of bytes written (`dc.out_buf.items.len = off`). This truncated and discarded all the remaining unwritten bytes, and if `off` was `0`, set the length to `0`. On the next event-loop tick, the server bypassed the queued buffer check, regenerated a new frame, hit `EAGAIN` again, truncated to `0`, and entered an infinite 100% CPU spin, freezing the tmux session.
+
+---
+
+### 208. renderToDisplayClient skips frame generation on successful display backlog flush
+**File:** `src/server/server.zig:2236–2239`
+**Severity:** HIGH
+**Status:** ✅ FIXED — wrapped the `continue` statement in `renderToDisplayClient` inside the conditional block, so the event loop only skips frame generation if the flush was incomplete (returned `false`).
+
+When a display client socket had pending bytes in its output buffer, `renderToDisplayClient` attempted to flush the backlog. However, even if `flushDisplayClient` fully wrote all pending bytes (returning `true` and clearing the buffer), the loop executed an unconditional `continue`, skipping the generation and transmission of the current frame (e.g., the second line of the shell prompt) for that client. Because the backlog was fully cleared, the server then cleared the dirty flags, putting the render loop to sleep without ever rendering/sending the new frame until the user typed a key.
 
 ---

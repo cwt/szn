@@ -2,7 +2,7 @@
 type: index
 title: "Development"
 description: "Development notes: bugs, lessons, migration plan, and progress."
-timestamp: 2026-07-07T18:51:04Z
+timestamp: 2026-07-20T03:25:00Z
 ---
 
 # Development

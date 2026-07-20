@@ -2,7 +2,7 @@
 type: project_priority
 title: "szn Functional Clone Progress"
 description: "Progress tracker toward a fully functional tmux clone."
-timestamp: 2026-07-03T03:57:05Z
+timestamp: 2026-07-20T03:25:00Z
 ---
 
 # szn — Functional Clone Progress
@@ -10,7 +10,7 @@ timestamp: 2026-07-03T03:57:05Z
 Track progress toward a fully functional tmux clone.
 Based on code audit as of 2026-06-21.
 
-## Current State: 762 tests passing, all MVP commands fully implemented, copy-mode fully integrated, all unit tests verified, and 10 performance optimizations completed (arena plumbed, ring-buffer history, sixel pre-check, cached bounds buf, single-buffer yank, rewrap direct-write, padding @memset, Thai word-break skip, osc_buf retain, esc_buf field).
+## Current State: 769 tests passing, all MVP commands fully implemented, copy-mode fully integrated, all unit tests verified, and 10 performance optimizations completed (arena plumbed, ring-buffer history, sixel pre-check, cached bounds buf, single-buffer yank, rewrap direct-write, padding @memset, Thai word-break skip, osc_buf retain, esc_buf field).
 
 ---
 
@@ -31,7 +31,7 @@ Based on code audit as of 2026-06-21.
 | 10 | Commands | ✅ Done | ~73 | All 33+ MVP commands functional (including copy-mode, paste-buffer, find-window, show-messages, and list-keys) |
 | 11 | Full Integration | ✅ Done | ~30 | integration.zig integration test suite complete |
 
-**Total: 730 / 730 tests passing. All Phases 0–11 fully complete.**
+**Total: 769 / 769 tests passing. All Phases 0–11 fully complete.**
 
 ---
 
