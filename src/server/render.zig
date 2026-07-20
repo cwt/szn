@@ -276,18 +276,30 @@ pub const Display = struct {
         for (bounds) |pb| {
             const fmt = pb.border_format;
             if (fmt.len == 0) continue;
-            const top_y = if (pb.y > 0) pb.y - 1 else pb.y;
+            // The topmost pane (pb.y == 0) has no border row above it; drawing
+            // there would clobber its first content line. Only draw on the split
+            // border row at pb.y - 1.
+            if (pb.y == 0) continue;
+            const top_y = pb.y - 1;
             if (top_y >= merged_screen.grid.height) continue;
-            const max_w = @min(fmt.len, pb.w);
-            for (0..max_w) |i| {
-                if (pb.x + i >= merged_screen.grid.width) break;
-                var cell = &merged_screen.grid.getLineMut(top_y).cells.items[pb.x + i];
-                cell.char = fmt[i];
+            var i: usize = 0;
+            var col: u32 = 0;
+            while (i < fmt.len and col < pb.w) {
+                // Decode UTF-8 so each cell receives a full codepoint (cell.char
+                // is u21), not a raw UTF-8 byte.
+                const cp_len = std.unicode.utf8ByteSequenceLength(fmt[i]) catch 1;
+                if (i + cp_len > fmt.len) break;
+                const cp = std.unicode.utf8Decode(fmt[i .. i + cp_len]) catch 0;
+                if (pb.x + col >= merged_screen.grid.width) break;
+                var cell = &merged_screen.grid.getLineMut(top_y).cells.items[pb.x + col];
+                cell.char = cp;
                 if (pb.pane == active_pane) {
                     cell.fg = mode_border_fg;
                 } else {
                     cell.fg = theme.pane_border_fg;
                 }
+                i += cp_len;
+                col += 1;
             }
         }
 

@@ -2392,10 +2392,14 @@ pub const Server = struct {
                 var pane_idx_buf: [32]u8 = undefined;
                 const pane_idx_str = std.fmt.bufPrint(&pane_idx_buf, "{d}", .{pane_idx}) catch "0";
 
+                var win_idx_buf: [32]u8 = undefined;
+                const win_idx_str = std.fmt.bufPrint(&win_idx_buf, "{d}", .{window.id}) catch "0";
+
                 var ctx = format_mod.Context.init(self.allocator);
                 defer ctx.deinit();
                 ctx.set("session_name", session.name) catch {};
                 ctx.set("pane_index", pane_idx_str) catch {};
+                ctx.set("window_index", win_idx_str) catch {};
                 ctx.set("pane_title", window.name) catch {};
                 ctx.set("window_name", window.name) catch {};
                 ctx.set("host", self.host_name) catch {};

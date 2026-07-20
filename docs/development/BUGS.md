@@ -2719,3 +2719,74 @@ When characters (or spaces) are written to the bottom-right corner (last column 
 **Status:** ✅ FIXED — split the broad `0x2600-0x26FF` (Miscellaneous Symbols), `0x2700-0x27BF` (Dingbats), and `0x2B00-0x2BFF` (Miscellaneous Symbols and Arrows) blocks in `emoji_presentation_ranges` into precise, sorted sub-ranges containing only actual wide/emoji characters. This prevents U+2713 (`✓`), U+2714 (`✔`), and other standard text symbols from drifting the cursor. Added test coverage.
 
 When a coding/build tool (like Svelte/Vite PWA builder during `ninja build`) outputs a standard U+2713 checkmark (`✓`) or a U+2714 heavy checkmark (`✔`), `szn` was classifying it as width-2 due to the broad range `0x2700-0x276D`. Because the host terminal renders it as width-1, the host cursor ended up 1 column behind `szn`'s virtual cursor tracking (`cur_cx`). During subsequent line-clearing operations, `szn` wrote spaces to the host terminal offset by 1 column, leaving the actual rightmost characters (like double quotes `"` and dots `.`) untouched on the host screen. These remnants then persisted even after window switching because `szn`'s diff renderer (`last_cells`) believed they had already been successfully cleared to spaces.
+
+---
+
+## NEW BUGS (2026-07-21 — status-bar / pane-border rework audit)
+
+Found while re-checking commit `255f0ac8ba13` ("status bar: tmux-compatible configurable bar + format rework"). Four correctness bugs introduced by that commit, all now fixed.
+
+---
+
+### 212. Pane-border loop clobbers the topmost pane's first content line
+**File:** `src/server/render.zig:276–292`
+**Severity:** MEDIUM
+**Status:** ✅ FIXED — loop now `continue`s when `pb.y == 0` and only draws on the split border row `pb.y - 1`.
+
+```zig
+const top_y = if (pb.y > 0) pb.y - 1 else pb.y;
+```
+
+The branch is inverted. `drawLayoutBorders` only draws borders at split boundaries, never at the outer top edge, so the topmost pane's content genuinely starts at `pb.y == 0`. For that pane the `else pb.y` branch writes `border_format` into row `0` — its first *content* line — corrupting it. Border text should only be written on the row *above* a pane (`pb.y - 1`), and the topmost pane has no such row, so it must be skipped.
+
+**Fix:** `if (pb.y == 0) continue; const top_y = pb.y - 1;`
+
+---
+
+### 213. Default `pane-border-format "#I"` renders blank
+**File:** `src/server/server.zig:2395–2408` (pane-border format ctx)
+**Severity:** MEDIUM
+**Status:** ✅ FIXED — added `window_index` to the border format context.
+
+The border format ctx set `session_name, pane_index, pane_title, window_name, host, host_short` but **not `window_index`**. `#I` resolves to the `window_index` alias, which was absent, so `appendVariable` silently emitted nothing. The shipped default `pane-border-format "#I"` therefore drew an empty border for every pane.
+
+**Fix:** `ctx.set("window_index", win_idx_str)` (from `window.id`) added alongside the other keys.
+
+---
+
+### 214. `status.buildLine` left/right templates resolve to the LAST window, not the active one
+**File:** `src/status.zig:271–313`
+**Severity:** MEDIUM
+**Status:** ✅ FIXED — active-window vars are re-applied after the centre (window-list) loop.
+
+`buildLine` first sets `window_index`/`window_name`/`window_flags`/`window_active` to the active window's values. The centre loop then overwrites those same four keys for *every* window, leaving the **last** window's values in the ctx. `renderWithCache` then expands the user's `status-left`/`status-right` (which may reference `#I`, `#W`, `#F`, `#{window_active}`) against that last-window state. The default templates dodge this (`status-left` uses `#{session_name}`, `status-right` uses `#{pane_title}`), but any user template referencing window vars shows the wrong window.
+
+**Fix:** After the centre loop, re-scan for the active window and re-set the four keys before `renderWithCache`.
+
+---
+
+### 215. Pane-border format written byte-by-byte — corrupts UTF-8 / invalid codepoints
+**File:** `src/server/render.zig:285`
+**Severity:** LOW
+**Status:** ✅ FIXED — loop now decodes UTF-8 into full codepoints and assigns `cell.char` (a `u21`) per display column.
+
+```zig
+cell.char = fmt[i];
+```
+
+`fmt` is the expanded border string and `cell.char` is `u21` (a full Unicode codepoint). Indexing the string byte-by-byte and assigning each raw UTF-8 byte into a `u21` is wrong for any multi-byte border content: it scatters UTF-8 continuation bytes across separate cells and stores invalid codepoint values. Harmless for the default ASCII `"#I"`, but corrupts non-ASCII border formats.
+
+**Fix:** Iterate the string by decoded codepoint (`std.unicode.utf8Decode`), advance one display column per codepoint, and assign the decoded `u21` to `cell.char`.
+
+---
+
+## Updated Summary
+
+| Severity | Count | Fixed | False Positive | Unresolved |
+|----------|-------|-------|----------------|------------|
+| Critical | 25 | 22 | 3 | **0** |
+| High | 48 | 47 | 1 | **0** |
+| Medium | 73 (70+3) | 71 | 2 | **0** |
+| Low | 64 (63+1) | 61 | 3 | **0** |
+| Total | 210 (206+4) | **201** | **9** | **0** |
+

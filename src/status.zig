@@ -298,6 +298,21 @@ pub fn buildLine(allocator: std.mem.Allocator, input: BuildInput) Error!Rendered
         try centre_buf.appendSlice(allocator, piece);
     }
 
+    // The centre loop (above) overwrote window_index/name/flags/active for every
+    // window, leaving the LAST window's values in the ctx. The active-window vars
+    // used by the left/right templates must be restored before we expand them.
+    for (input.windows) |w| {
+        if (w.is_active) {
+            var idx_buf: [16]u8 = undefined;
+            const idx_str = std.fmt.bufPrint(&idx_buf, "{d}", .{w.index}) catch "0";
+            try ctx.set("window_index", idx_str);
+            try ctx.set("window_name", w.name);
+            try ctx.set("window_flags", w.flags);
+            try ctx.set("window_active", "1");
+            break;
+        }
+    }
+
     var sb = StatusBar.init();
     sb.left = input.left;
     sb.right = input.right;
