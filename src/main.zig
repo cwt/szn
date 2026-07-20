@@ -1,4 +1,5 @@
 const std = @import("std");
+const build_options = @import("build_options");
 const c = std.c;
 const server_mod = @import("server/server.zig");
 const Server = server_mod.Server;
@@ -61,6 +62,10 @@ pub fn main(init: std.process.Init) void {
     };
 }
 
+fn getVersionComptime() []const u8 {
+    return build_options.version;
+}
+
 fn mainInner(init: std.process.Init) Error!void {
     const allocator = init.gpa;
 
@@ -83,6 +88,12 @@ fn mainInner(init: std.process.Init) Error!void {
         for (args.items) |arg| {
             allocator.free(arg);
         }
+    }
+
+    if (args.items.len > 1 and std.mem.eql(u8, args.items[1], "-V")) {
+        const version = getVersionComptime();
+        std.debug.print("szn {s}\n", .{version});
+        std.process.exit(0);
     }
 
     if (args.items.len > 1) {
