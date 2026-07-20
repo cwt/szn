@@ -87,13 +87,19 @@ pub const Options = struct {
     /// Set an option value. The value is **cloned** internally (strings are
     /// `allocator.dupe`'d). The caller retains ownership of the passed value
     /// and may free it immediately after this call.
+    ///
+    /// Coercions (tmux-friendly):
+    /// - flag on/off → choice "on"/"off" when the option is a choice
+    /// - string matching a choice → choice
+    /// - string colour name/hex → colour when the option is a colour
     pub fn set(self: *Options, name: []const u8, value: OptionValue) Error!void {
         const idx = self.findDef(name) orelse return error.UnknownOption;
         const def = self.table[idx];
-        try validateType(def, value);
+        const coerced = try coerceValue(def, value);
+        try validateType(def, coerced);
 
         const old_value = self.values[idx];
-        const cloned = try cloneValue(self.allocator, value);
+        const cloned = try cloneValue(self.allocator, coerced);
         self.values[idx] = cloned;
         freeValue(self.allocator, old_value);
     }
@@ -142,6 +148,34 @@ pub const Options = struct {
         return null;
     }
 };
+
+fn coerceValue(def: OptionDef, value: OptionValue) Error!OptionValue {
+    switch (def.type) {
+        .choice => {
+            switch (value) {
+                .flag => |b| return OptionValue{ .choice = if (b) "on" else "off" },
+                .string => |s| {
+                    if (def.choices) |choices| {
+                        for (choices) |c| {
+                            if (std.mem.eql(u8, s, c)) return OptionValue{ .choice = s };
+                        }
+                    }
+                    return value;
+                },
+                else => return value,
+            }
+        },
+        .colour => {
+            switch (value) {
+                .string => |s| {
+                    if (colour.parse(s)) |c| return OptionValue{ .colour = c } else |_| return value;
+                },
+                else => return value,
+            }
+        },
+        else => return value,
+    }
+}
 
 fn validateType(def: OptionDef, value: OptionValue) Error!void {
     const tag = switch (value) {
@@ -194,8 +228,14 @@ pub const SESSION_OPTIONS = &[_]OptionDef{
     .{ .name = "status-interval", .type = .number, .default = OptionValue{ .number = 15 }, .min = 0, .max = 86400 },
     .{ .name = "status-fg", .type = .colour, .default = OptionValue{ .colour = Colour.default_() } },
     .{ .name = "status-bg", .type = .colour, .default = OptionValue{ .colour = Colour.fromRgb(0x00, 0x5f, 0xaf) } },
+    .{ .name = "status-left", .type = .string, .default = OptionValue{ .string = "[#{session_name}] " } },
+    .{ .name = "status-right", .type = .string, .default = OptionValue{ .string = "\"#{=21:pane_title}\" %H:%M %d-%b-%y" } },
+    .{ .name = "status-left-length", .type = .number, .default = OptionValue{ .number = 10 }, .min = 0, .max = 1024 },
+    .{ .name = "status-right-length", .type = .number, .default = OptionValue{ .number = 40 }, .min = 0, .max = 1024 },
+    .{ .name = "status-justify", .type = .choice, .default = OptionValue{ .choice = "left" }, .choices = &[_][]const u8{ "left", "centre", "center", "right" } },
     .{ .name = "pane-border-fg", .type = .colour, .default = OptionValue{ .colour = Colour.fromRgb(0x55, 0x55, 0x55) } },
     .{ .name = "pane-active-border-fg", .type = .colour, .default = OptionValue{ .colour = Colour.fromRgb(0x00, 0x5f, 0xaf) } },
+    .{ .name = "pane-border-format", .type = .string, .default = OptionValue{ .string = "#I" } },
     .{ .name = "history-limit", .type = .number, .default = OptionValue{ .number = 2000 }, .min = 0, .max = 1000000 },
     .{ .name = "mouse", .type = .flag, .default = OptionValue{ .flag = true } },
     .{ .name = "prefix", .type = .key, .default = OptionValue{ .key = Key{ .char = .{ .code = 'b', .mod = .{ .ctrl = true } } } } }, // C-b
@@ -228,6 +268,8 @@ pub const WINDOW_OPTIONS = &[_]OptionDef{
     .{ .name = "synchronize-panes", .type = .flag, .default = OptionValue{ .flag = false } },
     .{ .name = "word-separators", .type = .string, .default = OptionValue{ .string = " -_@" } },
     .{ .name = "fill-character", .type = .string, .default = OptionValue{ .string = " " } },
+    .{ .name = "window-status-format", .type = .string, .default = OptionValue{ .string = "#I:#W#{?window_flags,#{window_flags}, }" } },
+    .{ .name = "window-status-current-format", .type = .string, .default = OptionValue{ .string = "#I:#W#{?window_flags,#{window_flags}, }" } },
 };
 
 // ── Tests ──

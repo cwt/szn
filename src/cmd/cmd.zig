@@ -867,6 +867,18 @@ fn cmdSetOption(server: *Server, args: []const []const u8) CmdResult {
     if (std.mem.eql(u8, option_name, "codepoint-widths") and parsed_val == .string) {
         char_width.applyCodepointWidths(server.allocator, parsed_val.string) catch return .err;
     }
+    // Status-related options need a redraw.
+    if (std.mem.startsWith(u8, option_name, "status") or
+        std.mem.startsWith(u8, option_name, "window-status"))
+    {
+        server.dirty = true;
+    }
+    // -g updates should also land on the active session so live config works.
+    if (is_global and !is_window) {
+        if (server.activeSession()) |session| {
+            session.options.set(option_name, parsed_val) catch {};
+        }
+    }
     return .ok;
 }
 

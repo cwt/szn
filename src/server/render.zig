@@ -10,6 +10,7 @@ const Window = @import("../window.zig").Window;
 const Pane = @import("../window.zig").Pane;
 const tty = @import("../tty/tty.zig");
 const char_width = @import("../char_width.zig");
+const status_mod = @import("../status.zig");
 
 pub const PaneBounds = struct {
     pane: *Pane,
@@ -17,6 +18,7 @@ pub const PaneBounds = struct {
     y: u32,
     w: u32,
     h: u32,
+    border_format: []const u8 = "",
 };
 
 pub const Error = tty.Error || error{OutOfMemory};
@@ -133,6 +135,8 @@ pub const Display = struct {
         search_prefix: u8,
         pane_in_copy_mode: bool,
         full_rebuild: bool,
+        status_line: ?[]const u8,
+        status_enabled: bool,
     ) Error!void {
         try self.writeBytes("\x1b[?25l");
         try self.writeBytes("\x1b[?2026h");
@@ -153,7 +157,7 @@ pub const Display = struct {
         }
 
         const merged_w = self.sx;
-        const merged_h = self.sy -| 1;
+        const merged_h = if (status_enabled) self.sy -| 1 else self.sy;
 
         var local_merged_screen: Screen = undefined;
         var merged_screen = &local_merged_screen;
@@ -269,6 +273,24 @@ pub const Display = struct {
         const mode_border_fg = if (pane_in_copy_mode) Colour.fromIndexed(11) else theme.pane_active_border_fg;
         try drawLayoutBorders(layout_root, 0, 0, merged_w, merged_h, merged_screen, active_pane, bounds, theme.pane_border_fg, mode_border_fg);
 
+        for (bounds) |pb| {
+            const fmt = pb.border_format;
+            if (fmt.len == 0) continue;
+            const top_y = if (pb.y > 0) pb.y - 1 else pb.y;
+            if (top_y >= merged_screen.grid.height) continue;
+            const max_w = @min(fmt.len, pb.w);
+            for (0..max_w) |i| {
+                if (pb.x + i >= merged_screen.grid.width) break;
+                var cell = &merged_screen.grid.getLineMut(top_y).cells.items[pb.x + i];
+                cell.char = fmt[i];
+                if (pb.pane == active_pane) {
+                    cell.fg = mode_border_fg;
+                } else {
+                    cell.fg = theme.pane_border_fg;
+                }
+            }
+        }
+
         var active_bounds: ?PaneBounds = null;
         for (bounds) |pb| {
             if (pb.pane == active_pane) {
@@ -292,7 +314,12 @@ pub const Display = struct {
 
         try self.renderContent(merged_screen);
         try self.renderSixelImages(bounds);
-        try self.renderStatusBar(session_name, windows, active_window, theme.status_fg, theme.status_bg, message, command_mode, command_buf, search_prefix, pane_in_copy_mode);
+        if (status_enabled) {
+            try self.renderStatusBar(status_line, theme.status_fg, theme.status_bg, message, command_mode, command_buf, search_prefix, pane_in_copy_mode);
+        }
+        _ = session_name;
+        _ = windows;
+        _ = active_window;
 
         if (merged_screen.cursor.visible) {
             try self.moveTo(merged_screen.cursor.x, merged_screen.cursor.y);
@@ -597,7 +624,17 @@ pub const Display = struct {
         try self.writeBytes("\x1b[m");
     }
 
-    fn renderStatusBar(self: Display, session_name: []const u8, windows: []const *Window, active_window: ?*Window, fg: Colour, bg: Colour, message: ?[]const u8, command_mode: bool, command_buf: []const u8, search_prefix: u8, in_copy_mode: bool) Error!void {
+    fn renderStatusBar(
+        self: Display,
+        status_line: ?[]const u8,
+        fg: Colour,
+        bg: Colour,
+        message: ?[]const u8,
+        command_mode: bool,
+        command_buf: []const u8,
+        search_prefix: u8,
+        in_copy_mode: bool,
+    ) Error!void {
         try self.moveTo(0, self.sy -| 1);
 
         try self.writeColourFg(if (in_copy_mode) Colour.fromIndexed(0) else fg);
@@ -631,40 +668,9 @@ pub const Display = struct {
             const display_len = @min(msg.len, max_len);
             try self.writeBytes(msg[0..display_len]);
             col = display_len;
-        } else {
-            try self.writeBytes(" [");
-            try self.writeBytes(session_name);
-            try self.writeBytes("]");
-            col +|= 3 + @as(u32, @intCast(session_name.len));
-
-            for (windows, 0..) |win, idx| {
-                const is_active = (win == active_window);
-                const suffix = if (is_active) "*" else "";
-
-                if (is_active) {
-                    try self.writeBytes("\x1b[4m");
-                }
-
-                var win_idx_buf: [32]u8 = undefined;
-                const win_idx_str = std.fmt.bufPrint(&win_idx_buf, " {d}:", .{idx}) catch " win:";
-                try self.writeBytes(win_idx_str);
-                col +|= @intCast(win_idx_str.len);
-
-                const remaining = (self.sx) -| col;
-                const suffix_len: u32 = if (is_active) 1 else 0;
-                const name_len = @min(win.name.len, remaining -| suffix_len);
-                try self.writeBytes(win.name[0..name_len]);
-                col +|= name_len;
-
-                if (suffix.len > 0) {
-                    try self.writeBytes(suffix);
-                    col +|= @intCast(suffix.len);
-                }
-
-                if (is_active) {
-                    try self.writeBytes("\x1b[24m");
-                }
-            }
+        } else if (status_line) |line| {
+            try self.writeBytes(line);
+            col = @intCast(@min(status_mod.visibleLen(line), self.sx));
         }
 
         const max_len = self.sx;
@@ -930,12 +936,25 @@ test "renderStatusBar with long window name" {
         .capture_allocator = allocator,
     };
 
-    var win1 = try Window.init(allocator, 1, "very_long_window_name_that_previously_would_have_failed_bufprint_because_it_exceeds_the_stack_buffer_limit_and_caused_overflow_or_fallback_to_win", 80, 24, null);
-    defer win1.deinit(allocator);
+    const long_name = "very_long_window_name_that_previously_would_have_failed_bufprint_because_it_exceeds_the_stack_buffer_limit_and_caused_overflow_or_fallback_to_win";
+    const line = try status_mod.buildLine(allocator, .{
+        .session_name = "my-session",
+        .windows = &[_]status_mod.WindowInfo{.{
+            .index = 0,
+            .name = long_name,
+            .flags = "*",
+            .is_active = true,
+        }},
+        .left = "[#{session_name}] ",
+        .right = "",
+        .left_length = 200,
+        .right_length = 0,
+        .window_status_current_format = "#I:#W",
+        .width = 200,
+    });
+    defer line.deinit(allocator);
 
-    const windows = [_]*Window{&win1};
-
-    try display.renderStatusBar("my-session", &windows, &win1, Colour.default_(), Colour.default_(), null, false, "", 0, false);
+    try display.renderStatusBar(line.line, Colour.default_(), Colour.default_(), null, false, "", 0, false);
 
     try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "very_long_window_name_that_previously_would_have_failed") != null);
 }
@@ -953,16 +972,26 @@ test "renderStatusBar truncates long name to fit terminal width — bug #185" {
         .capture_allocator = allocator,
     };
 
-    var win1 = try Window.init(allocator, 1, "abcdefghijklmnopqrstuvwxyz0123456789", 80, 24, null);
-    defer win1.deinit(allocator);
+    const line = try status_mod.buildLine(allocator, .{
+        .session_name = "ses",
+        .windows = &[_]status_mod.WindowInfo{.{
+            .index = 0,
+            .name = "abcdefghijklmnopqrstuvwxyz0123456789",
+            .flags = "*",
+            .is_active = true,
+        }},
+        .left = "[#S] ",
+        .right = "",
+        .left_length = 10,
+        .right_length = 0,
+        .window_status_current_format = "#I:#W#F",
+        .width = 30,
+    });
+    defer line.deinit(allocator);
 
-    const windows = [_]*Window{&win1};
+    try display.renderStatusBar(line.line, Colour.default_(), Colour.default_(), null, false, "", 0, false);
 
-    try display.renderStatusBar("ses", &windows, &win1, Colour.default_(), Colour.default_(), null, false, "", 0, false);
-
-    // Status bar should be exactly sx = 30 visible chars plus ESC sequences.
-    // The long name must be truncated so the total emitted content does not
-    // exceed 29 visible columns.
+    // Status bar should be at most sx visible chars plus ESC sequences.
     const max_visible: usize = display.sx;
     var visible_cols: u32 = 0;
     var in_esc = false;
@@ -1017,7 +1046,7 @@ test "renderAll cursor visibility hide" {
         .status_bg = Colour.default_(),
         .pane_border_fg = Colour.fromIndexed(8),
         .pane_active_border_fg = Colour.fromIndexed(2),
-    }, null, false, "", 0, false, true);
+    }, null, false, "", 0, false, true, null, true);
 
     // Verify the cursor was NOT shown at the end
     const has_show_cursor = std.mem.indexOf(u8, capture_buf.items, "\x1b[?25h") != null;
@@ -1060,7 +1089,7 @@ test "renderAll honours force_clear from a non-active pane — bug #196" {
         .status_bg = Colour.default_(),
         .pane_border_fg = Colour.fromIndexed(8),
         .pane_active_border_fg = Colour.fromIndexed(2),
-    }, null, false, "", 0, false, true);
+    }, null, false, "", 0, false, true, null, true);
 
     // A full-screen erase must have been emitted because of the non-active pane.
     try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1b[2J") != null);
@@ -1477,7 +1506,7 @@ test "sixel rendering with scrolling" {
         .status_bg = Colour.default_(),
         .pane_border_fg = Colour.fromIndexed(8),
         .pane_active_border_fg = Colour.fromIndexed(2),
-    }, null, false, "", 0, false, true);
+    }, null, false, "", 0, false, true, null, true);
 
     // Swap back to free resources correctly in defer
     merged = opt_merged.?;

@@ -33,6 +33,9 @@ const cfg = @import("../cfg.zig");
 const options = @import("../options.zig");
 const Colour = @import("../colour.zig").Colour;
 const buffer_mod = @import("../buffer.zig");
+const format_mod = @import("../format.zig");
+const status_mod = @import("../status.zig");
+const TemplateCache = format_mod.TemplateCache;
 
 extern "c" fn fopen(filename: [*c]const u8, modes: [*c]const u8) ?*anyopaque;
 extern "c" fn fclose(stream: ?*anyopaque) c_int;
@@ -125,6 +128,16 @@ pub const Server = struct {
     dirty: bool = true,
     message: ?[]const u8 = null,
     message_time: i64 = 0,
+    /// Last wall-clock second the status bar was force-refreshed (clock).
+    last_status_tick: i64 = 0,
+    status_left_cache: TemplateCache = .{},
+    status_right_cache: TemplateCache = .{},
+    window_status_fmt_cache: TemplateCache = .{},
+    window_status_cur_cache: TemplateCache = .{},
+    pane_border_fmt_cache: TemplateCache = .{},
+    status_win_infos: std.ArrayList(status_mod.WindowInfo) = .empty,
+    host_name: []const u8 = "",
+    host_short: []const u8 = "",
     command_mode: bool = false,
     command_buf: std.ArrayList(u8) = .empty,
     /// Set while a copy-mode search prompt is open; remembers the search
@@ -184,6 +197,12 @@ pub const Server = struct {
         var render_buf: std.ArrayList(u8) = .empty;
         errdefer render_buf.deinit(allocator);
 
+        var host_buf: [std.posix.HOST_NAME_MAX]u8 = undefined;
+        const host_slice: []const u8 = std.posix.gethostname(&host_buf) catch "";
+        const host_owned = allocator.dupe(u8, host_slice) catch "";
+        const short_src = if (std.mem.indexOfScalar(u8, host_owned, '.')) |dot| host_owned[0..dot] else host_owned;
+        const host_short_owned = allocator.dupe(u8, short_src) catch "";
+
         return Server{
             .allocator = allocator,
             .client_readers = std.AutoHashMap(i32, *MessageReader).init(allocator),
@@ -196,6 +215,8 @@ pub const Server = struct {
             .log_messages = .empty,
             .dirty = true,
             .ignore_unknown_msg_warn = false,
+            .host_name = host_owned,
+            .host_short = host_short_owned,
         };
     }
 
@@ -236,6 +257,14 @@ pub const Server = struct {
         self.dispatcher.deinit();
         self.global_options.deinit();
         self.global_window_options.deinit();
+        self.status_left_cache.deinit(self.allocator);
+        self.status_right_cache.deinit(self.allocator);
+        self.window_status_fmt_cache.deinit(self.allocator);
+        self.window_status_cur_cache.deinit(self.allocator);
+        self.pane_border_fmt_cache.deinit(self.allocator);
+        self.status_win_infos.deinit(self.allocator);
+        if (self.host_name.len > 0) self.allocator.free(self.host_name);
+        if (self.host_short.len > 0) self.allocator.free(self.host_short);
         @import("../thai.zig").deinitLibThai();
     }
 
@@ -306,6 +335,80 @@ pub const Server = struct {
         }
     }
 
+    fn tickStatusInterval(self: *Server) void {
+        const session = self.activeSession() orelse return;
+        const interval = session.options.asNumber("status-interval") orelse 15;
+        if (interval <= 0) return;
+        const now = time(null);
+        if (now - self.last_status_tick >= interval) {
+            self.last_status_tick = now;
+            self.dirty = true;
+        }
+    }
+
+    fn buildStatusLine(self: *Server, session: *Session, width: u32) ![]const u8 {
+        const base_index: i64 = session.options.asNumber("base-index") orelse 0;
+        self.status_win_infos.clearRetainingCapacity();
+        for (session.windows.items, 0..) |win, i| {
+            const is_active = (win == session.active_window);
+            const flags: []const u8 = if (is_active) "*" else "";
+            try self.status_win_infos.append(self.allocator, .{
+                .index = @intCast(base_index + @as(i64, @intCast(i))),
+                .name = win.name,
+                .flags = flags,
+                .is_active = is_active,
+            });
+        }
+
+        // Pane title falls back to the active window name (OSC title not stored separately).
+        const pane_title: []const u8 = if (session.active_window) |aw| aw.name else "";
+        var pane_idx_buf: [16]u8 = undefined;
+        const pane_idx_str: []const u8 = if (session.active_window) |aw|
+            if (aw.active_pane) |ap|
+                std.fmt.bufPrint(&pane_idx_buf, "{d}", .{ap.id}) catch "0"
+            else
+                "0"
+        else
+            "0";
+
+        const left = session.options.asString("status-left") orelse "[#{session_name}] ";
+        const right = session.options.asString("status-right") orelse "\"#{=21:pane_title}\" %H:%M %d-%b-%y";
+        const left_len: u32 = @intCast(@max(session.options.asNumber("status-left-length") orelse 10, 0));
+        const right_len: u32 = @intCast(@max(session.options.asNumber("status-right-length") orelse 40, 0));
+        const justify = status_mod.Alignment.fromString(session.options.asString("status-justify") orelse "left");
+
+        // window-status formats are window options (fall back to global)
+        const win_opts = if (session.active_window) |aw| &aw.options else &self.global_window_options;
+        const win_fmt = win_opts.asString("window-status-format") orelse
+            self.global_window_options.asString("window-status-format") orelse
+            "#I:#W#{?window_flags,#{window_flags}, }";
+        const win_cur = win_opts.asString("window-status-current-format") orelse
+            self.global_window_options.asString("window-status-current-format") orelse
+            "#I:#W#{?window_flags,#{window_flags}, }";
+
+        const rendered = try status_mod.buildLine(self.allocator, .{
+            .session_name = session.name,
+            .windows = self.status_win_infos.items,
+            .pane_title = pane_title,
+            .pane_index = pane_idx_str,
+            .host = self.host_name,
+            .host_short = self.host_short,
+            .left = left,
+            .right = right,
+            .left_length = left_len,
+            .right_length = right_len,
+            .justify = justify,
+            .window_status_format = win_fmt,
+            .window_status_current_format = win_cur,
+            .width = width,
+            .left_cache = &self.status_left_cache,
+            .right_cache = &self.status_right_cache,
+            .win_fmt_cache = &self.window_status_fmt_cache,
+            .win_cur_cache = &self.window_status_cur_cache,
+        });
+        return rendered.line;
+    }
+
     fn tickAutoscroll(self: *Server) void {
         const pane = self.mouse_autoscroll_pane orelse return;
         const dir = self.mouse_autoscroll_dir orelse return;
@@ -329,6 +432,7 @@ pub const Server = struct {
     pub fn run(self: *Server, timeout_ms: i32) ServerError!void {
         reapZombies();
         self.tickAutoscroll();
+        self.tickStatusInterval();
         const auto_timeout: i32 = if (self.mouse_autoscroll_pane != null) @min(timeout_ms, 50) else timeout_ms;
         const events = try self.loop.pollOnce(self.allocator, auto_timeout);
         for (events) |ev| {
@@ -2255,11 +2359,65 @@ pub const Server = struct {
                 .last_paste = &dc.last_paste,
             };
 
+            const status_choice = session.options.asString("status") orelse "on";
+            const status_enabled = !std.mem.eql(u8, status_choice, "off");
+            const content_h = if (status_enabled) dc.sy -| 1 else dc.sy;
+
             dc.bounds_buf.clearRetainingCapacity();
-            self.collectPaneBounds(window.layout.root, 0, 0, dc.sx, dc.sy - 1, &dc.bounds_buf) catch |err| {
+            self.collectPaneBounds(window.layout.root, 0, 0, dc.sx, content_h, &dc.bounds_buf) catch |err| {
                 std.log.warn("collectPaneBounds error: {any}", .{err});
                 continue;
             };
+
+            const pane_base_index: i64 = session.options.asNumber("pane-base-index") orelse 0;
+
+            var pane_border_owned: std.ArrayList([]const u8) = .empty;
+            defer {
+                for (pane_border_owned.items) |f| self.allocator.free(f);
+                pane_border_owned.deinit(self.allocator);
+            }
+            const pane_border_fmt_str = session.options.asString("pane-border-format") orelse "";
+            for (dc.bounds_buf.items) |*pb| {
+                if (pane_border_fmt_str.len == 0) {
+                    pane_border_owned.append(self.allocator, "") catch {};
+                    continue;
+                }
+                var pane_idx: i64 = pane_base_index;
+                for (window.panes.items, 0..) |wp, pi| {
+                    if (wp == pb.pane) {
+                        pane_idx += @as(i64, @intCast(pi));
+                        break;
+                    }
+                }
+                var pane_idx_buf: [32]u8 = undefined;
+                const pane_idx_str = std.fmt.bufPrint(&pane_idx_buf, "{d}", .{pane_idx}) catch "0";
+
+                var ctx = format_mod.Context.init(self.allocator);
+                defer ctx.deinit();
+                ctx.set("session_name", session.name) catch {};
+                ctx.set("pane_index", pane_idx_str) catch {};
+                ctx.set("pane_title", window.name) catch {};
+                ctx.set("window_name", window.name) catch {};
+                ctx.set("host", self.host_name) catch {};
+                ctx.set("host_short", self.host_short) catch {};
+
+                const expanded = format_mod.expand(self.allocator, pane_border_fmt_str, &ctx) catch |err| blk: {
+                    std.log.warn("pane-border-format expand error: {any}", .{err});
+                    break :blk "";
+                };
+                pane_border_owned.append(self.allocator, expanded) catch {};
+                pb.border_format = expanded;
+            }
+
+            var status_line_owned: ?[]const u8 = null;
+            defer if (status_line_owned) |sl| self.allocator.free(sl);
+
+            if (status_enabled and self.message == null and !self.command_mode) {
+                status_line_owned = self.buildStatusLine(session, dc.sx) catch |err| blk: {
+                    std.log.warn("buildStatusLine error: {any}", .{err});
+                    break :blk null;
+                };
+            }
 
             const pane_in_copy_mode = pane.screen.copy_mode != null;
             display.renderAll(
@@ -2282,6 +2440,8 @@ pub const Server = struct {
                 if (self.search_pending) |dir| (if (dir == .forward) '/' else '?') else 0,
                 pane_in_copy_mode,
                 self.dirty,
+                status_line_owned,
+                status_enabled,
             ) catch |err| {
                 std.log.warn("render error: {any}", .{err});
                 continue;

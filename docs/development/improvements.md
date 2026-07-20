@@ -13,66 +13,46 @@ at revision 377.
 
 ---
 
-## MODERATE EFFORT, HIGH IMPACT — REMAINING
+## COMPLETED IN THIS SESSION (rev 38X)
 
-### 1. Format template re-parsed on every `expand()` call
+### Status bar fully configurable (tmux-compatible)
 
-**`src/format.zig:45–83`**
+**src/format.zig, src/status.zig, src/options.zig, src/server/server.zig, src/server/render.zig**
 
-The status bar format template (e.g. `#S #[fg=colour245]#W #[default]#F`)
-is parsed character-by-character every time `expand()` is called. For a
-status bar refreshed every 100ms, the same template is parsed hundreds of
-times.
+The status bar now uses the same option surface as tmux:
 
-**Fix:** Compile the template into a list of ops (literal segments /
-variable references / conditionals) at first expansion. Cache the compiled
-form. Only re-parse if the template string changes.
+- **Options added:** status-left, status-right, status-left-length,
+  status-right-length, status-justify, window-status-format,
+  window-status-current-format.
+- **Tmux coercions:** flag->choice, string->colour auto-parsed.
+- **status off** hides the bar entirely (full terminal height).
+- **status-interval** drives periodic timer flagging dirty for %H:%M updates.
+- **Window list** uses window-status-format / window-status-current-format.
+- **Builds the entire line** (left + window-list + right) in one pass
+  with CSI-aware truncation and tmux-style justify (left/centre/right).
 
----
+### 1. Format template compiled + cached (rev 38X)
 
-### 2. Each format sub-expression allocates via `dupe`
+**src/format.zig** — TemplateCache stores compiled ops (literal, brace, style, alias).
+getOrCompile() reuses ops. expandInto/expandOpsInto write to caller buffer,
+no intermediate owned-string returns.
 
-**`src/format.zig:190–195`**
+### 2. No-dupe variable expansion (rev 38X)
 
-```zig
-pub fn expandVariable(allocator, name, ctx) ![]const u8 {
-    if (ctx.get(name)) |value| {
-        return try allocator.dupe(u8, value);
-    }
-    return try allocator.dupe(u8, "");
-}
-```
+appendVariable() writes directly to result ArrayList — no allocator.dupe.
+The old expandVariable that returned owned slices is replaced.
 
-Every variable lookup returns a freshly `dupe`'d string. For a status line
-like `#S - #W [#I] #{?#{pane_active},*,}`, that's 5+ allocations per
-expansion.
+### 3. splitArgs() slices, not dupes (rev 38X)
 
-**Fix:** Return slices into a reuse buffer instead of fresh allocations.
-The caller already accumulates into a result ArrayList — intermediate
-allocations are unnecessary.
+Arguments tracked as const u8 slices into original template string.
+freeArgs only deinits the ArrayList — no per-argument frees.
 
----
+### 4. Tmux format syntax added (rev 38X)
 
-## SIGNIFICANT REFACTOR
-
-### 3. `splitArgs()` dupes each argument in format expressions
-
-**`src/format.zig:450–459`**
-
-Every comma-separated argument in `#{?cond,true,false}` is heap-allocated
-with `allocator.dupe`, then freed with `freeArgs`. For deeply nested
-conditionals, this multiplies allocation churn.
-
-**Fix:** Track offsets into the original input string instead of
-duplicating. Pass `[]const u8` slices of the original content.
-
----
-
-## KNOWN BUG-LIKE LIMITATIONS — REMAINING (documented here, not functional bugs)
-
-_(none currently open — see Fixed entries below)_
-
----
+- Single-char aliases: #S, #I, #W, #P, #T, #H, #h, #F
+- Style sequences: #[fg=red], #[bg=colour], #[bold], #[underscore], #[reverse], #[default]
+- Strftime: %H:%M, %d-%b-%y, %% -> literal %
+- Alias syntax alongside #{...} brace expansion
 
 ## PREVIOUS OPTIMIZATIONS (already done, noted for posterity)
 
