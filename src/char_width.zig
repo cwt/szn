@@ -517,32 +517,135 @@ const zero_width_ranges = [_]WidthRange{
 
 const wide_ranges = [_]WidthRange{
     .{ .start = 0x1100, .end = 0x115F, .width = 2 },
+    .{ .start = 0x231A, .end = 0x231B, .width = 2 },
     .{ .start = 0x2329, .end = 0x232A, .width = 2 },
-    .{ .start = 0x2E80, .end = 0x303E, .width = 2 },
-    .{ .start = 0x3041, .end = 0x33BF, .width = 2 },
-    .{ .start = 0x3400, .end = 0x4DBF, .width = 2 },
-    .{ .start = 0x4E00, .end = 0xA4CF, .width = 2 },
+    .{ .start = 0x23E9, .end = 0x23EC, .width = 2 },
+    .{ .start = 0x23F0, .end = 0x23F0, .width = 2 },
+    .{ .start = 0x23F3, .end = 0x23F3, .width = 2 },
+    .{ .start = 0x25FD, .end = 0x25FE, .width = 2 },
+    .{ .start = 0x2614, .end = 0x2615, .width = 2 },
+    .{ .start = 0x2630, .end = 0x2637, .width = 2 },
+    .{ .start = 0x2648, .end = 0x2653, .width = 2 },
+    .{ .start = 0x267F, .end = 0x267F, .width = 2 },
+    .{ .start = 0x268A, .end = 0x268F, .width = 2 },
+    .{ .start = 0x2693, .end = 0x2693, .width = 2 },
+    .{ .start = 0x26A1, .end = 0x26A1, .width = 2 },
+    .{ .start = 0x26AA, .end = 0x26AB, .width = 2 },
+    .{ .start = 0x26BD, .end = 0x26BE, .width = 2 },
+    .{ .start = 0x26C4, .end = 0x26C5, .width = 2 },
+    .{ .start = 0x26CE, .end = 0x26CE, .width = 2 },
+    .{ .start = 0x26D4, .end = 0x26D4, .width = 2 },
+    .{ .start = 0x26EA, .end = 0x26EA, .width = 2 },
+    .{ .start = 0x26F2, .end = 0x26F3, .width = 2 },
+    .{ .start = 0x26F5, .end = 0x26F5, .width = 2 },
+    .{ .start = 0x26FA, .end = 0x26FA, .width = 2 },
+    .{ .start = 0x26FD, .end = 0x26FD, .width = 2 },
+    .{ .start = 0x2705, .end = 0x2705, .width = 2 },
+    .{ .start = 0x270A, .end = 0x270B, .width = 2 },
+    .{ .start = 0x2728, .end = 0x2728, .width = 2 },
+    .{ .start = 0x274C, .end = 0x274C, .width = 2 },
+    .{ .start = 0x274E, .end = 0x274E, .width = 2 },
+    .{ .start = 0x2753, .end = 0x2755, .width = 2 },
+    .{ .start = 0x2757, .end = 0x2757, .width = 2 },
+    .{ .start = 0x2795, .end = 0x2797, .width = 2 },
+    .{ .start = 0x27B0, .end = 0x27B0, .width = 2 },
+    .{ .start = 0x27BF, .end = 0x27BF, .width = 2 },
+    .{ .start = 0x2B1B, .end = 0x2B1C, .width = 2 },
+    .{ .start = 0x2B50, .end = 0x2B50, .width = 2 },
+    .{ .start = 0x2B55, .end = 0x2B55, .width = 2 },
+    .{ .start = 0x2E80, .end = 0x2E99, .width = 2 },
+    .{ .start = 0x2E9B, .end = 0x2EF3, .width = 2 },
+    .{ .start = 0x2F00, .end = 0x2FD5, .width = 2 },
+    .{ .start = 0x2FF0, .end = 0x303E, .width = 2 },
+    .{ .start = 0x3041, .end = 0x3096, .width = 2 },
+    .{ .start = 0x3099, .end = 0x30FF, .width = 2 },
+    .{ .start = 0x3105, .end = 0x312F, .width = 2 },
+    .{ .start = 0x3131, .end = 0x318E, .width = 2 },
+    .{ .start = 0x3190, .end = 0x31E5, .width = 2 },
+    .{ .start = 0x31EF, .end = 0x321E, .width = 2 },
+    .{ .start = 0x3220, .end = 0x3247, .width = 2 },
+    .{ .start = 0x3250, .end = 0xA48C, .width = 2 },
+    .{ .start = 0xA490, .end = 0xA4C6, .width = 2 },
     .{ .start = 0xA960, .end = 0xA97C, .width = 2 },
     .{ .start = 0xAC00, .end = 0xD7A3, .width = 2 },
-    .{ .start = 0xF900, .end = 0xFAFF, .width = 2 },
+    .{ .start = 0xF900, .end = 0xFA6D, .width = 2 },
+    .{ .start = 0xFA70, .end = 0xFAD9, .width = 2 },
     .{ .start = 0xFE10, .end = 0xFE19, .width = 2 },
-    .{ .start = 0xFE30, .end = 0xFE6F, .width = 2 },
+    .{ .start = 0xFE30, .end = 0xFE52, .width = 2 },
+    .{ .start = 0xFE54, .end = 0xFE66, .width = 2 },
+    .{ .start = 0xFE68, .end = 0xFE6B, .width = 2 },
     .{ .start = 0xFF01, .end = 0xFF60, .width = 2 },
     .{ .start = 0xFFE0, .end = 0xFFE6, .width = 2 },
-    .{ .start = 0x1B000, .end = 0x1B2FF, .width = 2 },
-    .{ .start = 0x1F000, .end = 0x1F02F, .width = 2 },
-    .{ .start = 0x1F030, .end = 0x1F09F, .width = 2 },
-    .{ .start = 0x1F0A0, .end = 0x1F0FF, .width = 2 },
-    .{ .start = 0x1F100, .end = 0x1F64F, .width = 2 },
-    .{ .start = 0x1F680, .end = 0x1F6FF, .width = 2 },
-    .{ .start = 0x1F780, .end = 0x1F7FF, .width = 2 },
-    .{ .start = 0x1F800, .end = 0x1F8FF, .width = 2 },
-    .{ .start = 0x1F900, .end = 0x1F9FF, .width = 2 },
-    .{ .start = 0x1FA00, .end = 0x1FA6F, .width = 2 },
-    .{ .start = 0x1FA70, .end = 0x1FAFF, .width = 2 },
-    .{ .start = 0x1FB00, .end = 0x1FBFF, .width = 2 },
-    .{ .start = 0x20000, .end = 0x2FFFD, .width = 2 },
-    .{ .start = 0x30000, .end = 0x3FFFD, .width = 2 },
+    .{ .start = 0x16FE0, .end = 0x16FE4, .width = 2 },
+    .{ .start = 0x16FF0, .end = 0x16FF6, .width = 2 },
+    .{ .start = 0x17000, .end = 0x18CD5, .width = 2 },
+    .{ .start = 0x18CFF, .end = 0x18D1E, .width = 2 },
+    .{ .start = 0x18D80, .end = 0x18DF2, .width = 2 },
+    .{ .start = 0x1AFF0, .end = 0x1AFF3, .width = 2 },
+    .{ .start = 0x1AFF5, .end = 0x1AFFB, .width = 2 },
+    .{ .start = 0x1AFFD, .end = 0x1AFFE, .width = 2 },
+    .{ .start = 0x1B000, .end = 0x1B122, .width = 2 },
+    .{ .start = 0x1B132, .end = 0x1B132, .width = 2 },
+    .{ .start = 0x1B150, .end = 0x1B152, .width = 2 },
+    .{ .start = 0x1B155, .end = 0x1B155, .width = 2 },
+    .{ .start = 0x1B164, .end = 0x1B167, .width = 2 },
+    .{ .start = 0x1B170, .end = 0x1B2FB, .width = 2 },
+    .{ .start = 0x1D300, .end = 0x1D356, .width = 2 },
+    .{ .start = 0x1D360, .end = 0x1D376, .width = 2 },
+    .{ .start = 0x1F004, .end = 0x1F004, .width = 2 },
+    .{ .start = 0x1F0CF, .end = 0x1F0CF, .width = 2 },
+    .{ .start = 0x1F18E, .end = 0x1F18E, .width = 2 },
+    .{ .start = 0x1F191, .end = 0x1F19A, .width = 2 },
+    .{ .start = 0x1F200, .end = 0x1F202, .width = 2 },
+    .{ .start = 0x1F210, .end = 0x1F23B, .width = 2 },
+    .{ .start = 0x1F240, .end = 0x1F248, .width = 2 },
+    .{ .start = 0x1F250, .end = 0x1F251, .width = 2 },
+    .{ .start = 0x1F260, .end = 0x1F265, .width = 2 },
+    .{ .start = 0x1F300, .end = 0x1F320, .width = 2 },
+    .{ .start = 0x1F32D, .end = 0x1F335, .width = 2 },
+    .{ .start = 0x1F337, .end = 0x1F37C, .width = 2 },
+    .{ .start = 0x1F37E, .end = 0x1F393, .width = 2 },
+    .{ .start = 0x1F3A0, .end = 0x1F3CA, .width = 2 },
+    .{ .start = 0x1F3CF, .end = 0x1F3D3, .width = 2 },
+    .{ .start = 0x1F3E0, .end = 0x1F3F0, .width = 2 },
+    .{ .start = 0x1F3F4, .end = 0x1F3F4, .width = 2 },
+    .{ .start = 0x1F3F8, .end = 0x1F43E, .width = 2 },
+    .{ .start = 0x1F440, .end = 0x1F440, .width = 2 },
+    .{ .start = 0x1F442, .end = 0x1F4FC, .width = 2 },
+    .{ .start = 0x1F4FF, .end = 0x1F53D, .width = 2 },
+    .{ .start = 0x1F54B, .end = 0x1F54E, .width = 2 },
+    .{ .start = 0x1F550, .end = 0x1F567, .width = 2 },
+    .{ .start = 0x1F57A, .end = 0x1F57A, .width = 2 },
+    .{ .start = 0x1F595, .end = 0x1F596, .width = 2 },
+    .{ .start = 0x1F5A4, .end = 0x1F5A4, .width = 2 },
+    .{ .start = 0x1F5FB, .end = 0x1F64F, .width = 2 },
+    .{ .start = 0x1F680, .end = 0x1F6C5, .width = 2 },
+    .{ .start = 0x1F6CC, .end = 0x1F6CC, .width = 2 },
+    .{ .start = 0x1F6D0, .end = 0x1F6D2, .width = 2 },
+    .{ .start = 0x1F6D5, .end = 0x1F6D8, .width = 2 },
+    .{ .start = 0x1F6DC, .end = 0x1F6DF, .width = 2 },
+    .{ .start = 0x1F6EB, .end = 0x1F6EC, .width = 2 },
+    .{ .start = 0x1F6F4, .end = 0x1F6FC, .width = 2 },
+    .{ .start = 0x1F7E0, .end = 0x1F7EB, .width = 2 },
+    .{ .start = 0x1F7F0, .end = 0x1F7F0, .width = 2 },
+    .{ .start = 0x1F90C, .end = 0x1F93A, .width = 2 },
+    .{ .start = 0x1F93C, .end = 0x1F945, .width = 2 },
+    .{ .start = 0x1F947, .end = 0x1F9FF, .width = 2 },
+    .{ .start = 0x1FA70, .end = 0x1FA7C, .width = 2 },
+    .{ .start = 0x1FA80, .end = 0x1FA8A, .width = 2 },
+    .{ .start = 0x1FA8E, .end = 0x1FAC6, .width = 2 },
+    .{ .start = 0x1FAC8, .end = 0x1FAC8, .width = 2 },
+    .{ .start = 0x1FACD, .end = 0x1FADC, .width = 2 },
+    .{ .start = 0x1FADF, .end = 0x1FAEA, .width = 2 },
+    .{ .start = 0x1FAEF, .end = 0x1FAF8, .width = 2 },
+    .{ .start = 0x20000, .end = 0x2A6DF, .width = 2 },
+    .{ .start = 0x2A700, .end = 0x2B81D, .width = 2 },
+    .{ .start = 0x2B820, .end = 0x2CEAD, .width = 2 },
+    .{ .start = 0x2CEB0, .end = 0x2EBE0, .width = 2 },
+    .{ .start = 0x2EBF0, .end = 0x2EE5D, .width = 2 },
+    .{ .start = 0x2F800, .end = 0x2FA1D, .width = 2 },
+    .{ .start = 0x30000, .end = 0x3134A, .width = 2 },
+    .{ .start = 0x31350, .end = 0x33479, .width = 2 },
 };
 
 // Codepoints that have emoji presentation and are rendered width 2 by
@@ -553,20 +656,7 @@ const wide_ranges = [_]WidthRange{
 // selectors (U+FE0F) and skin-tone modifiers (U+1F3FB–U+1F3FF) are zero-width
 // and handled by zero_width_ranges; here we list the base emoji themselves.
 const emoji_presentation_ranges = [_]WidthRange{
-    .{ .start = 0x231A, .end = 0x231B, .width = 2 }, // watch, hourglass
-    .{ .start = 0x23E9, .end = 0x23FA, .width = 2 }, // various emoji symbols (shuffle, recycle, symbols)
-    .{ .start = 0x23FC, .end = 0x23FE, .width = 2 }, // film frames, signal strength
-    .{ .start = 0x2600, .end = 0x26FF, .width = 2 }, // Miscellaneous Symbols (sun, moon, weather, chess, etc.)
-    .{ .start = 0x2700, .end = 0x276D, .width = 2 }, // Dingbats (✅ ★ ♥ arrows, etc.)
-    // U+276E (❮) and U+276F (❯) are punctuation ornaments rendered
-    // width 1 by terminals — excluded from the width-2 Dingbats range.
-    .{ .start = 0x2770, .end = 0x27BF, .width = 2 }, // Dingbats cont.
-    .{ .start = 0x2B00, .end = 0x2BFF, .width = 2 }, // Miscellaneous Symbols and Arrows
-    .{ .start = 0x1F1E6, .end = 0x1F1FF, .width = 2 }, // regional indicators (flags)
-    .{ .start = 0x1F300, .end = 0x1F5FF, .width = 2 }, // Symbols & Pictographs
-    .{ .start = 0x1F650, .end = 0x1F67F, .width = 2 }, // enclosed-alphanum ext. pictographs
-    .{ .start = 0x1F900, .end = 0x1F9FF, .width = 2 }, // Supplemental Symbols and Pictographs
-    .{ .start = 0x1FA70, .end = 0x1FAFF, .width = 2 }, // Symbols and Pictographs Extended-A
+    .{ .start = 0x1F1E6, .end = 0x1F1FF, .width = 2 },
 };
 
 test "charWidth: ASCII" {
@@ -624,16 +714,16 @@ test "charWidth: emoji are wide" {
 
 test "charWidth: emoji-presentation symbols are wide (bug #206)" {
     try std.testing.expectEqual(@as(u2, 2), charWidth(0x2705)); // white heavy check mark
-    try std.testing.expectEqual(@as(u2, 2), charWidth(0x2714)); // heavy check mark
+    try std.testing.expectEqual(@as(u2, 1), charWidth(0x2714)); // heavy check mark
     try std.testing.expectEqual(@as(u2, 2), charWidth(0x2B50)); // star
-    try std.testing.expectEqual(@as(u2, 2), charWidth(0x2764)); // heavy black heart
-    try std.testing.expectEqual(@as(u2, 2), charWidth(0x2600)); // black sun with rays
-    try std.testing.expectEqual(@as(u2, 2), charWidth(0x2601)); // cloud
+    try std.testing.expectEqual(@as(u2, 1), charWidth(0x2764)); // heavy black heart
+    try std.testing.expectEqual(@as(u2, 1), charWidth(0x2600)); // black sun with rays
+    try std.testing.expectEqual(@as(u2, 1), charWidth(0x2601)); // cloud
     try std.testing.expectEqual(@as(u2, 2), charWidth(0x231A)); // wristwatch
     try std.testing.expectEqual(@as(u2, 2), charWidth(0x23E9)); // reverse button
-    try std.testing.expectEqual(@as(u2, 2), charWidth(0x2603)); // snowman
+    try std.testing.expectEqual(@as(u2, 1), charWidth(0x2603)); // snowman
     try std.testing.expectEqual(@as(u2, 2), charWidth(0x1F1E6)); // regional indicator A (flag)
-    try std.testing.expectEqual(@as(u2, 2), charWidth(0x1F650)); // enclosed A in negative squared
+    try std.testing.expectEqual(@as(u2, 1), charWidth(0x1F650)); // enclosed A in negative squared
 }
 
 test "charWidth: dingbat ornaments ❮❯ are width 1 (bug #206 follow-up)" {
@@ -642,9 +732,11 @@ test "charWidth: dingbat ornaments ❮❯ are width 1 (bug #206 follow-up)" {
     // Dingbats width-2 range.
     try std.testing.expectEqual(@as(u2, 1), charWidth(0x276E));
     try std.testing.expectEqual(@as(u2, 1), charWidth(0x276F));
-    // Neighbours stay width 2.
-    try std.testing.expectEqual(@as(u2, 2), charWidth(0x276D));
-    try std.testing.expectEqual(@as(u2, 2), charWidth(0x2770));
+    // Neighbours are also brackets and stay width 1.
+    try std.testing.expectEqual(@as(u2, 1), charWidth(0x276D));
+    try std.testing.expectEqual(@as(u2, 1), charWidth(0x2770));
+    // Standard checkmark ✓ (U+2713) is width 1.
+    try std.testing.expectEqual(@as(u2, 1), charWidth(0x2713));
 }
 
 test "charWidth: ZWJ and variation selectors are zero-width" {
@@ -678,12 +770,14 @@ test "charWidth: codepoint-widths override (bug #206)" {
     // A terminal that renders it as width 1 can override it.
     try applyCodepointWidths(std.testing.allocator, "U+2705=1");
     try std.testing.expectEqual(@as(u2, 1), charWidth(0x2705));
-    // Ranges work too.
-    try applyCodepointWidths(std.testing.allocator, "U+2600-U+26FF=1");
-    try std.testing.expectEqual(@as(u2, 1), charWidth(0x2600));
-    try std.testing.expectEqual(@as(u2, 1), charWidth(0x26FF));
+    // Ranges work too (U+2E80-U+2E99 are CJK Radicals, wide by default).
+    try std.testing.expectEqual(@as(u2, 2), charWidth(0x2E80));
+    try std.testing.expectEqual(@as(u2, 2), charWidth(0x2E99));
+    try applyCodepointWidths(std.testing.allocator, "U+2E80-U+2E99=1");
+    try std.testing.expectEqual(@as(u2, 1), charWidth(0x2E80));
+    try std.testing.expectEqual(@as(u2, 1), charWidth(0x2E99));
     // And we can restore the default by clearing.
     try applyCodepointWidths(std.testing.allocator, "");
     try std.testing.expectEqual(@as(u2, 2), charWidth(0x2705));
-    try std.testing.expectEqual(@as(u2, 2), charWidth(0x2600));
+    try std.testing.expectEqual(@as(u2, 2), charWidth(0x2E80));
 }

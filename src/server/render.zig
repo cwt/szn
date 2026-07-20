@@ -105,9 +105,11 @@ pub const Display = struct {
         try self.writeBytes("\x1b[>1u");
         try self.writeBytes("\x1b[?1000h\x1b[?1002h\x1b[?1006h");
         try self.writeBytes("\x1b[?25l");
+        try self.writeBytes("\x1b[?7l");
     }
 
     pub fn exitAltScreen(self: Display) Error!void {
+        try self.writeBytes("\x1b[?7h");
         try self.writeBytes("\x1b[<1u");
         try self.writeBytes("\x1b[?1000l\x1b[?1002l\x1b[?1006l");
         try self.writeBytes("\x1b[?2004l");

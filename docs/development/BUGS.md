@@ -2703,3 +2703,19 @@ When a display client socket had pending bytes in its output buffer, `renderToDi
 In the delta SGR emission optimization (commit `1f7f37d`), the renderer only emits SGR sequences when colors change. However, when a color changed back to `.default_` or `.terminal`, the switch statement did nothing (`.default_, .terminal => {}`). This meant no color reset sequence was sent to the terminal, leaving the active foreground/background colors set to their previous values and causing colors to bleed into subsequent default-colored characters (most visible in the color block grids of tools like `fastfetch`).
 
 ---
+
+### 210. Host terminal auto-wrap (DECAWM) causes screen scrolling on bottom-right cell writes — scattered text and color remnants
+**File:** `src/server/render.zig:103–116`, `src/input.zig:837`
+**Severity:** HIGH
+**Status:** ✅ FIXED — disabled auto-wrap (`\x1b[?7l`) on alternative screen entry and re-enabled it (`\x1b[?7h`) on exit. Also added support for private mode 7 (DECAWM) DECSET/DECRST parsing in `InputParser`. Added unit test.
+
+When characters (or spaces) are written to the bottom-right corner (last column of the last line) on a terminal with auto-wrap (DECAWM) enabled, the terminal automatically wraps/scrolls up the entire screen by one line. Because the renderer's diff tracking (`last_cells`) is unaware of this scroll, it gets out of sync with the host terminal. Subsequent updates only rewrite what the renderer believes are changed cells relative to the pre-scrolled state, resulting in scattered text and color bleeding/remnants on screen (most visible during heavy and scrolling PTY output like `ninja` builds). Disabling auto-wrap on the host terminal prevents unexpected scrolling.
+
+---
+
+### 211. Overly broad emoji-presentation symbol width ranges in char_width.zig classify standard width-1 characters (✓, ✔, ★, ♥) as width-2, causing cursor drift and character remnants
+**File:** `src/char_width.zig:555–570`
+**Severity:** HIGH
+**Status:** ✅ FIXED — split the broad `0x2600-0x26FF` (Miscellaneous Symbols), `0x2700-0x27BF` (Dingbats), and `0x2B00-0x2BFF` (Miscellaneous Symbols and Arrows) blocks in `emoji_presentation_ranges` into precise, sorted sub-ranges containing only actual wide/emoji characters. This prevents U+2713 (`✓`), U+2714 (`✔`), and other standard text symbols from drifting the cursor. Added test coverage.
+
+When a coding/build tool (like Svelte/Vite PWA builder during `ninja build`) outputs a standard U+2713 checkmark (`✓`) or a U+2714 heavy checkmark (`✔`), `szn` was classifying it as width-2 due to the broad range `0x2700-0x276D`. Because the host terminal renders it as width-1, the host cursor ended up 1 column behind `szn`'s virtual cursor tracking (`cur_cx`). During subsequent line-clearing operations, `szn` wrote spaces to the host terminal offset by 1 column, leaving the actual rightmost characters (like double quotes `"` and dots `.`) untouched on the host screen. These remnants then persisted even after window switching because `szn`'s diff renderer (`last_cells`) believed they had already been successfully cleared to spaces.

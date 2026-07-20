@@ -835,6 +835,7 @@ pub const InputParser = struct {
         while (i < self.param_count) : (i += 1) {
             switch (self.params[i]) {
                 1 => self.screen.mode.keypad = enable,
+                7 => self.screen.mode.line_wrap = enable,
                 12 => {}, // cursor blink — not implemented
                 25 => self.screen.mode.cursor = enable,
                 1000 => self.screen.mode.mouse_standard = enable,
@@ -1526,6 +1527,17 @@ test "SM IRM insert mode" {
     try testing.expect(screen.mode.insert);
     try parser.feed("\x1b[4l");
     try testing.expect(!screen.mode.insert);
+}
+
+test "DECSET line wrap mode ?7" {
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+    var parser = InputParser.init(&screen);
+    try testing.expect(screen.mode.line_wrap);
+    try parser.feed("\x1b[?7l");
+    try testing.expect(!screen.mode.line_wrap);
+    try parser.feed("\x1b[?7h");
+    try testing.expect(screen.mode.line_wrap);
 }
 
 test "multiple DECSET params" {
