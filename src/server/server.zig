@@ -2149,7 +2149,10 @@ pub const Server = struct {
             self.loop.removeFdEvents(dc.fd, std.posix.POLL.OUT);
             return true;
         }
-        dc.out_buf.items.len = off;
+        if (off > 0) {
+            std.mem.copyForwards(u8, dc.out_buf.items[0 .. dc.out_buf.items.len - off], dc.out_buf.items[off..]);
+            dc.out_buf.items.len -= off;
+        }
         self.loop.addFdEvents(dc.fd, std.posix.POLL.OUT);
         return false;
     }
@@ -2231,8 +2234,10 @@ pub const Server = struct {
             // new one: the diff state (last_cells) only advances once the
             // buffered frame is fully flushed, keeping the client in sync.
             if (dc.out_buf.items.len > 0) {
-                if (!self.flushDisplayClient(dc)) all_flushed = false;
-                continue;
+                if (!self.flushDisplayClient(dc)) {
+                    all_flushed = false;
+                    continue;
+                }
             }
 
             self.render_buf.clearRetainingCapacity();
@@ -3281,6 +3286,84 @@ test "multiple display clients attached simultaneously" {
     const read_res = std.c.read(client_a, &temp_buf, temp_buf.len);
     try testing.expect(read_res < 0);
     try testing.expect(std.c.errno(read_res) == .AGAIN);
+}
+
+test "flushDisplayClient correctly handles partial writes and buffers remaining data" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    var fds: [2]i32 = undefined;
+    if (std.c.socketpair(std.c.AF.UNIX, std.c.SOCK.STREAM, 0, &fds) != 0) return error.Unexpected;
+    const server_fd = fds[0];
+    const client_fd = fds[1];
+    defer _ = std.c.close(server_fd);
+    defer _ = std.c.close(client_fd);
+
+    // Make both non-blocking
+    const c_fcntl = struct {
+        extern "c" fn fcntl(fd: i32, cmd: i32, ...) i32;
+    }.fcntl;
+    const O_NONBLOCK = comptime switch (@import("builtin").os.tag) {
+        .macos, .ios, .watchos, .tvos => 0x0004,
+        .freebsd, .netbsd, .openbsd, .dragonfly => 0x0004,
+        else => 0x0800,
+    };
+    const flags_s = c_fcntl(server_fd, 3, @as(i32, 0));
+    _ = c_fcntl(server_fd, 4, flags_s | O_NONBLOCK);
+    const flags_c = c_fcntl(client_fd, 3, @as(i32, 0));
+    _ = c_fcntl(client_fd, 4, flags_c | O_NONBLOCK);
+
+    // Register server_fd in loop so removeFdEvents doesn't crash or skip
+    try server.loop.addFd(server.allocator, server_fd, @as(i16, @intCast(std.posix.POLL.OUT)), null);
+
+    // Create a DisplayClient manually
+    try server.display_clients.append(server.allocator, .{ .fd = server_fd });
+    const dc = &server.display_clients.items[0];
+
+    // Fill up socket buffer until write blocks (EAGAIN)
+    var fill_buf: [1024]u8 = undefined;
+    @memset(&fill_buf, 'A');
+    while (true) {
+        const n = std.c.write(server_fd, &fill_buf, fill_buf.len);
+        if (n < 0) {
+            const err = std.c.errno(n);
+            if (err == .AGAIN) break;
+            return error.Unexpected;
+        }
+    }
+
+    // Now socket buffer is full. Append test data to dc.out_buf
+    const test_data = "hello world! this is a test of non-blocking output buffering in szn.";
+    try dc.out_buf.appendSlice(server.allocator, test_data);
+
+    // Try to flush. Since the socket is full, it should not fully drain.
+    // It will return false, but should NOT lose/discard the unwritten data!
+    const flushed = server.flushDisplayClient(dc);
+    try testing.expect(!flushed);
+    try testing.expect(dc.out_buf.items.len > 0);
+
+    // Read everything currently in client socket buffer to drain it
+    var drain_buf: [4096]u8 = undefined;
+    while (true) {
+        const n = std.c.read(client_fd, &drain_buf, drain_buf.len);
+        if (n < 0) {
+            const err = std.c.errno(n);
+            if (err == .AGAIN) break;
+            return error.Unexpected;
+        }
+    }
+
+    // Now the socket is writable again. Flush again.
+    // This time it should successfully write the rest of the data and return true.
+    const flushed_again = server.flushDisplayClient(dc);
+    try testing.expect(flushed_again);
+    try testing.expectEqual(@as(usize, 0), dc.out_buf.items.len);
+
+    // Read from client end and verify it received the exact test_data
+    var read_buf: [128]u8 = undefined;
+    const bytes_read = std.c.read(client_fd, &read_buf, read_buf.len);
+    try testing.expect(bytes_read > 0);
+    try testing.expectEqualStrings(test_data, read_buf[0..@intCast(bytes_read)]);
 }
 
 test "mouse click and drag selection" {
