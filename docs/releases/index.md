@@ -2,7 +2,7 @@
 type: index
 title: "Releases"
 description: "szn release notes."
-timestamp: 2026-07-07T18:51:04Z
+timestamp: 2026-07-20T03:33:00Z
 ---
 
 # Releases
@@ -15,3 +15,4 @@ timestamp: 2026-07-07T18:51:04Z
 - [v0.4.2](v0.4.2.md)
 - [v0.5.0](v0.5.0.md)
 - [v0.5.1](v0.5.1.md)
+- [v0.6.0](v0.6.0.md)
