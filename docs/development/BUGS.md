@@ -2,7 +2,7 @@
 type: bug_tracker
 title: "Bugs — szn"
 description: "Known bugs sorted by severity (Critical to Low)."
-timestamp: 2026-07-20T03:25:00Z
+timestamp: 2026-07-20T03:40:00Z
 ---
 
 # Bugs — szn
@@ -2617,9 +2617,9 @@ When a session or window is killed, its panes are deinitialized, closing their P
 |----------|-------|-------|----------------|------------|
 | Critical | 25 | 22 | 3 | **0** |
 | High | 48 (43+5) | 47 | 1 | **0** |
-| Medium | 69 (65+4) | 67 | 2 | **0** |
+| Medium | 70 (65+5) | 68 | 2 | **0** |
 | Low | 63 (61+2) | 60 | 3 | **0** |
-| Total | 208 (194+14) | **196** | **9** | **0** |
+| Total | 206 (197+9) | **197** | **9** | **0** |
 
 ---
 
@@ -2692,5 +2692,14 @@ When a display client socket returned `EAGAIN` during a write (occurring frequen
 **Status:** ✅ FIXED — wrapped the `continue` statement in `renderToDisplayClient` inside the conditional block, so the event loop only skips frame generation if the flush was incomplete (returned `false`).
 
 When a display client socket had pending bytes in its output buffer, `renderToDisplayClient` attempted to flush the backlog. However, even if `flushDisplayClient` fully wrote all pending bytes (returning `true` and clearing the buffer), the loop executed an unconditional `continue`, skipping the generation and transmission of the current frame (e.g., the second line of the shell prompt) for that client. Because the backlog was fully cleared, the server then cleared the dirty flags, putting the render loop to sleep without ever rendering/sending the new frame until the user typed a key.
+
+---
+
+### 209. SGR delta emission ignores default color resets — color bleeding on fastfetch / neofetch
+**File:** `src/server/render.zig:515–539`
+**Severity:** MEDIUM
+**Status:** ✅ FIXED — updated SGR color switch cases to emit `\x1b[39m` (for default foreground) and `\x1b[49m` (for default background) if `attr_changed` is false. Added unit test.
+
+In the delta SGR emission optimization (commit `1f7f37d`), the renderer only emits SGR sequences when colors change. However, when a color changed back to `.default_` or `.terminal`, the switch statement did nothing (`.default_, .terminal => {}`). This meant no color reset sequence was sent to the terminal, leaving the active foreground/background colors set to their previous values and causing colors to bleed into subsequent default-colored characters (most visible in the color block grids of tools like `fastfetch`).
 
 ---

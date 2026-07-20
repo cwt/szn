@@ -514,7 +514,11 @@ pub const Display = struct {
 
                     if (fg_changed) {
                         switch (cell.fg.tag) {
-                            .default_, .terminal => {},
+                            .default_, .terminal => {
+                                if (!attr_changed) {
+                                    sgr_pos += (std.fmt.bufPrint(sgr_buf[sgr_pos..], "\x1b[39m", .{}) catch break).len;
+                                }
+                            },
                             .indexed => {
                                 sgr_pos += (std.fmt.bufPrint(sgr_buf[sgr_pos..], "\x1b[38;5;{}m", .{@as(u8, @truncate(cell.fg.value))}) catch break).len;
                             },
@@ -527,7 +531,11 @@ pub const Display = struct {
 
                     if (bg_changed) {
                         switch (cell.bg.tag) {
-                            .default_, .terminal => {},
+                            .default_, .terminal => {
+                                if (!attr_changed) {
+                                    sgr_pos += (std.fmt.bufPrint(sgr_buf[sgr_pos..], "\x1b[49m", .{}) catch break).len;
+                                }
+                            },
                             .indexed => {
                                 sgr_pos += (std.fmt.bufPrint(sgr_buf[sgr_pos..], "\x1b[48;5;{}m", .{@as(u8, @truncate(cell.bg.value))}) catch break).len;
                             },
@@ -830,6 +838,41 @@ test "renderContent double and curly underline" {
     // Verify SGR escape sequences are in the output
     try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1b[4:2m") != null);
     try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1b[4:3m") != null);
+}
+
+test "renderContent delta SGR emissions emit 39 and 49 default resets" {
+    const allocator = std.testing.allocator;
+    var screen = try Screen.init(allocator, 5, 1);
+    defer screen.deinit();
+
+    // Cell 0: colored bg/fg
+    var cell0 = Cell.withChar('A');
+    cell0.fg = Colour.fromIndexed(1);
+    cell0.bg = Colour.fromIndexed(2);
+    screen.grid.setCell(0, 0, cell0);
+
+    // Cell 1: default bg/fg
+    var cell1 = Cell.withChar('B');
+    cell1.fg = Colour.default_();
+    cell1.bg = Colour.default_();
+    screen.grid.setCell(1, 0, cell1);
+
+    var capture_buf: std.ArrayList(u8) = .empty;
+    defer capture_buf.deinit(allocator);
+
+    const display = Display{
+        .fd = -1,
+        .sx = 5,
+        .sy = 2,
+        .capture = &capture_buf,
+        .capture_allocator = allocator,
+    };
+
+    try display.renderContent(&screen);
+
+    // Verify SGR escape sequences 39 and 49 are in the output to reset color
+    try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1b[39m") != null);
+    try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1b[49m") != null);
 }
 
 test "renderContent all attributes + RGB colours — no SGR buffer overflow — bug #164" {
