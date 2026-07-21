@@ -2046,10 +2046,32 @@ pub const Server = struct {
                     var result = dispatch.dispatchCommand(self.allocator, self, pkt.data);
                     self.dirty = true;
                     defer result.deinit();
-                    const resp_pkt = protocol.Packet.make(result.response_type, result.data);
-                    var resp_buf: [1024]u8 = undefined;
-                    const resp_ser = resp_pkt.serialize(&resp_buf);
-                    self.queueToClient(fd, resp_ser);
+
+                    var is_display = false;
+                    for (self.display_clients.items) |dc| {
+                        if (dc.fd == fd) {
+                            is_display = true;
+                            break;
+                        }
+                    }
+
+                    if (is_display) {
+                        const resp_pkt = protocol.Packet.make(result.response_type, result.data);
+                        const resp_len = 5 + result.data.len;
+                        const resp_buf = try self.allocator.alloc(u8, resp_len);
+                        defer self.allocator.free(resp_buf);
+                        const resp_ser = resp_pkt.serialize(resp_buf);
+                        self.queueToClient(fd, resp_ser);
+                    } else {
+                        dispatch.sendResponse(fd, &result) catch |err| {
+                            std.log.err("failed to send command response to fd {d}: {s}", .{ fd, @errorName(err) });
+                        };
+                    }
+
+                    if (self.sessions.items.len == 0) {
+                        std.log.info("no sessions left, stopping server loop", .{});
+                        self.loop.running = false;
+                    }
                 },
                 .identify_term => {
                     var exists = false;
