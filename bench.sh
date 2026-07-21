@@ -60,18 +60,21 @@ hyperfine --warmup 5 --min-runs 20 \
     "$SZN new-session -d b 2>/dev/null && $SZN kill-session"
 
 # =========================================================================
+# Clean slate — section 2 leaves a dying server (kill-session removed the
+# last session, server is shutting down but socket may linger).
+cleanup
 header "3. Memory: idle (1 session, 1 pane)"
 # -------------------------------------------------------------------------
 echo -e "${CYAN}szn${RESET}"
 $SZN new-session -d bench
-SZN_PID=$(pgrep -x szn || echo "")
 sleep 0.5
-rss_kb $SZN_PID "1 session, 1 pane"
+SZN_PID=$(pgrep -x -n szn || echo "")
+rss_kb "$SZN_PID" "1 session, 1 pane"
 
 echo -e "${CYAN}tmux${RESET}"
 $TMUX new -d -s bench
 TMUX_PID=$($TMUX display -p '#{pid}' 2>/dev/null)
-rss_kb $TMUX_PID "1 session, 1 pane"
+rss_kb "$TMUX_PID" "1 session, 1 pane"
 
 # =========================================================================
 header "4. Memory: 10 panes"
@@ -81,14 +84,14 @@ for _ in $(seq 1 9); do
     $SZN split-window -v 2>/dev/null || break
 done
 sleep 0.5
-rss_kb $SZN_PID "1 window, 10 panes"
+rss_kb "$SZN_PID" "1 window, 10 panes"
 
 echo -e "${CYAN}tmux${RESET}"
 for _ in $(seq 1 9); do
     $TMUX split-window -t bench 2>/dev/null || break
 done
 sleep 0.5
-rss_kb $TMUX_PID "1 window, 10 panes"
+rss_kb "$TMUX_PID" "1 window, 10 panes"
 
 # =========================================================================
 header "5. Memory: 5 windows × ~10 panes"
@@ -101,7 +104,7 @@ for i in $(seq 2 5); do
     done
 done
 sleep 0.5
-rss_kb $SZN_PID "5 windows, ~50 panes"
+rss_kb "$SZN_PID" "5 windows, ~50 panes"
 
 echo -e "${CYAN}tmux${RESET}"
 for i in $(seq 2 5); do
@@ -111,7 +114,7 @@ for i in $(seq 2 5); do
     done
 done
 sleep 0.5
-rss_kb $TMUX_PID "5 windows, ~50 panes"
+rss_kb "$TMUX_PID" "5 windows, ~50 panes"
 
 # =========================================================================
 header "6. Session create/destroy throughput"
