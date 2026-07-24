@@ -1192,7 +1192,8 @@ pub const Server = struct {
                                     const cmd = self.command_buf.items;
                                     if (cmd.len > 0) {
                                         const dispatch = @import("dispatch.zig");
-                                        const result = dispatch.dispatchCommand(self.allocator, self, cmd);
+                                        var result = dispatch.dispatchCommand(self.allocator, self, cmd);
+                                        defer result.deinit();
                                         if (result.response_type == .ready or result.response_type == .err) {
                                             if (result.data.len > 0) self.setMessage(result.data) catch {};
                                         }
@@ -3854,4 +3855,19 @@ test "server handleClient handles unknown message types gracefully" {
 
     // Call handleClient: it should not fail/return error, it should log and ignore
     try server.handleClient(server_fd);
+}
+
+test "prompt command execution frees DispatchResult — bug #237" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    _ = try server.newSession("test", 80, 24);
+
+    server.command_mode = true;
+    try server.command_buf.appendSlice(testing.allocator, "display-message test");
+
+    // Process '\r' in command mode
+    try server.processInput("\r");
+
+    try testing.expect(!server.command_mode);
 }

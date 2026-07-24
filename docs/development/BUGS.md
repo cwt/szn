@@ -3164,7 +3164,7 @@ Signal handlers for `SIGWINCH` and `SIGCHLD` pass `flags = 0` to `std.posix.siga
 ### 237. Memory leak of `DispatchResult` in prompt input processing
 **File:** `src/server/server.zig:1198–1204`
 **Severity:** HIGH
-**Status:** ❌ OPEN
+**Status:** ✅ FIXED
 
 In `processInput`, when evaluating a command from the prompt, `dispatch.dispatchCommand` returns `DispatchResult`, but `result.deinit()` is never called.
 
