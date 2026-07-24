@@ -1020,20 +1020,9 @@ pub const Screen = struct {
     }
 
     pub fn reverseIndex(self: *Screen) Error!void {
-        if (self.scroll_region) |r| {
-            if (self.cursor.y == r[0]) {
-                try self.scrollDownInRegion();
-                return;
-            }
-        } else if (self.cursor.y == 0) {
-            if (self.grid.history.items.len - self.grid.history_start > 0) {
-                try self.grid.scrollDown();
-                const top_line = self.grid.getLineMut(0);
-                // bug #225: decrement refcounts for the fill cells.
-                self.decrementLineRefs(top_line.cells.items);
-                @memset(top_line.cells.items, self.eraseCell());
-                top_line.dirty = true;
-            }
+        const top = if (self.scroll_region) |r| r[0] else 0;
+        if (self.cursor.y == top) {
+            try self.scrollDown(1);
             return;
         }
         self.cursor.y -|= 1;
@@ -1087,14 +1076,13 @@ pub const Screen = struct {
             const fill = self.eraseCell();
             var i: u32 = 0;
             while (i < count) : (i += 1) {
-                var row = bottom;
-                const temp = self.grid.getLine(bottom).*;
-                while (row > top) : (row -= 1) {
-                    self.grid.getLineMut(row).* = self.grid.getLine(row - 1).*;
+                var y = bottom;
+                while (y > top) : (y -= 1) {
+                    const line = self.grid.getLineMut(y);
+                    const prev = self.grid.getLineMut(y - 1);
+                    std.mem.swap(GridLine, line, prev);
                 }
-                self.grid.getLineMut(top).* = temp;
                 const first = self.grid.getLineMut(top);
-                // bug #225: decrement refcounts for the fill cells.
                 self.decrementLineRefs(first.cells.items);
                 @memset(first.cells.items, fill);
                 first.dirty = true;
@@ -1105,16 +1093,14 @@ pub const Screen = struct {
             const fill = self.eraseCell();
             var i: u32 = 0;
             while (i < count) : (i += 1) {
-                if (self.grid.history.items.len - self.grid.history_start > 0) {
-                    try self.grid.scrollDown();
-                    self.shiftSixelAnchors(1);
-                    const top_line = self.grid.getLineMut(0);
-                    // bug #225: decrement refcounts for the fill cells.
-                    self.decrementLineRefs(top_line.cells.items);
-                    @memset(top_line.cells.items, fill);
-                    top_line.dirty = true;
-                }
+                self.grid.shiftDown();
+                self.shiftSixelAnchors(1);
+                const top_line = self.grid.getLineMut(0);
+                self.decrementLineRefs(top_line.cells.items);
+                @memset(top_line.cells.items, fill);
+                top_line.dirty = true;
             }
+            self.dirty = true;
         }
     }
 
@@ -2270,4 +2256,27 @@ test "sixel refcount tracks cell writes and erases — bug #225" {
     // eraseDisplay(2) clears everything including the sixel.
     screen.eraseDisplay(2);
     try testing.expectEqual(@as(usize, 0), screen.sixel_refcounts[1]);
+}
+
+test "scrollDown and reverseIndex work with empty history — bug #229" {
+    const allocator = std.testing.allocator;
+    var screen = try Screen.init(allocator, 10, 3);
+    defer screen.deinit();
+
+    screen.grid.setCell(0, 0, Cell.withChar('A'));
+    screen.grid.setCell(0, 1, Cell.withChar('B'));
+
+    // Top of screen, empty history
+    screen.cursor.x = 0;
+    screen.cursor.y = 0;
+    try screen.reverseIndex();
+
+    // Line 0 should now be empty (scrolled down), Line 1 should have 'A'
+    try testing.expectEqual(@as(u21, 0), screen.grid.getCell(0, 0).char);
+    try testing.expectEqual(@as(u21, 'A'), screen.grid.getCell(0, 1).char);
+
+    // scrollDown(1) on screen with empty history
+    try screen.scrollDown(1);
+    // Line 2 should now have 'A'
+    try testing.expectEqual(@as(u21, 'A'), screen.grid.getCell(0, 2).char);
 }

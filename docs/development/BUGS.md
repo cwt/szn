@@ -3056,7 +3056,7 @@ The loops writing `hdr_remaining` and `body_remaining` to the file descriptor ch
 ### 229. Terminal scrolling logic destroys scrollback history & fails on empty history
 **File:** `src/screen.zig:1082–1119`, `src/grid.zig:246–260`
 **Severity:** CRITICAL
-**Status:** ❌ OPEN
+**Status:** ✅ FIXED
 
 Reverse Index (`RI`) and Scroll Down (`CSI T`) in `Screen` invoke `self.grid.scrollDown()` and `@memset` the result line to blank. `Grid.scrollDown()` incorrectly pops the *oldest* history line (`history[history_start]`) instead of shifting lines in the active screen. Furthermore, `if (history.len - history_start > 0)` causes scroll commands to be silently ignored when history is empty.
 

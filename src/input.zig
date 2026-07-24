@@ -1116,8 +1116,9 @@ test "SD scroll down" {
     var parser = InputParser.init(&screen);
     try screen.writeStr("line1\nline2\nline3");
     try parser.feed("\x1b[T");
-    // SD moves content down, line3 moves to line 2, bottom lines clear
-    try testing.expectEqual(@as(u21, 'l'), screen.grid.getCell(0, 0).char);
+    // SD moves content down: line1 moves from line 0 to line 1, line 0 is cleared
+    try testing.expectEqual(@as(u21, 0), screen.grid.getCell(0, 0).char);
+    try testing.expectEqual(@as(u21, 'l'), screen.grid.getCell(0, 1).char);
 }
 
 test "DECSC DECRC save restore cursor" {

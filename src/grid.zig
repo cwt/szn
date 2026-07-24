@@ -243,6 +243,11 @@ pub const Grid = struct {
         self.start_index = (self.start_index + 1) % self.height;
     }
 
+    pub fn shiftDown(self: *Grid) void {
+        if (self.height == 0) return;
+        self.start_index = (self.start_index + self.height - 1) % self.height;
+    }
+
     pub fn scrollDown(self: *Grid) Error!void {
         if (self.height == 0 or self.history.items.len - self.history_start == 0) return;
 
