@@ -325,6 +325,7 @@ pub const Screen = struct {
         const slot = target_slot.?;
         if (self.sixel_images[slot]) |*old| {
             old.deinit(self.allocator);
+            self.sixel_refcounts[slot] = 0;
         }
 
         self.sixel_images[slot] = SixelImage{
@@ -2373,4 +2374,26 @@ test "hasSixelImages returns false when no Sixel images placed — bug #240" {
     try screen.addSixelImage(dcs, 10, 20);
 
     try testing.expect(screen.hasSixelImages());
+}
+
+test "sixel_refcounts resets to 0 on slot eviction — bug #253" {
+    const allocator = std.testing.allocator;
+    var screen = try Screen.init(allocator, 10, 5);
+    defer screen.deinit();
+
+    screen.cell_size_known = true;
+    screen.cell_px_width = 10;
+    screen.cell_px_height = 20;
+
+    // Fill slot 0
+    const dcs1 = try allocator.dupe(u8, "\x1bPqIMG1\x1b\\");
+    try screen.placeSixelImage(dcs1, 10, 20);
+    try testing.expect(screen.sixel_refcounts[0] > 0);
+
+    // Force slot 0 eviction by placing another image into slot 0
+    const dcs2 = try allocator.dupe(u8, "\x1bPqIMG2\x1b\\");
+    try screen.placeSixelImage(dcs2, 10, 20);
+
+    // Refcount of slot 0 should reflect only the new image (1 cell * 1 row = 1)
+    try testing.expectEqual(@as(usize, 1), screen.sixel_refcounts[0]);
 }

@@ -3481,7 +3481,7 @@ Bug #234 updated `lineBytes` to concatenate contiguous soft-wrapped physical lin
 ### 253. Sixel refcount residual leak on slot eviction in `placeSixelImage`
 **File:** `src/screen.zig:326–330`
 **Severity:** MEDIUM
-**Status:** 🚨 UNRESOLVED
+**Status:** ✅ FIXED — reset `sixel_refcounts[slot] = 0` when evicting an existing slot in `placeSixelImage`. Added unit test.
 
 When `placeSixelImage` evicts an existing image from a slot via Step 4b (all slots full), it frees the old image struct but does not reset `self.sixel_refcounts[slot] = 0`. The new image's cell reference count is added on top of the leftover refcount of the evicted image (`self.sixel_refcounts[slot] += ref_inc`). When the new image's cells are later erased, `sixel_refcounts[slot]` remains above 0 due to the old residual count, permanently preventing Step 3 from reusing that slot.
 

@@ -772,7 +772,6 @@ pub const Display = struct {
 
             for (&screen.sixel_images, 0..) |*opt_img, slot| {
                 const img = opt_img.* orelse continue;
-                if (!screen.isImageReferenced(img.id)) continue;
 
                 const cell_rows = if (img.px_height > 0) (img.px_height + screen.cell_px_height - 1) / screen.cell_px_height else 1;
                 const cell_cols = if (img.px_width > 0) (img.px_width + screen.cell_px_width - 1) / screen.cell_px_width else 1;
