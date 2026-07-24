@@ -3291,4 +3291,17 @@ The `lookup` function retrieves `cmdTable()` (comptime table) but iterates over 
 
 **Re-analysis:** The AGENTS.md rule (*"Only SGR mouse (1006). No X10, no UTF-8 mouse (1005), no button-mode."*) governs the outer client TTY emission wire format. However, inner applications running in panes (such as `vim`, `less`, `htop`) request standard DECSM mouse modes 1000/1002/1003. Parsing these DECSM sequences in `input.zig` is intentionally required so szn can track when inner PTY applications request mouse events and forward mouse inputs to them. Therefore, this behavior is intentional and compliant.
 
+---
+
+### 248. pane-border-format defaults to window index (#I) instead of pane index (#P)
+**File:** `src/options.zig:238`, `src/server/render.zig:287–318`
+**Severity:** LOW (cosmetic)
+**Status:** ✅ FIXED
+
+The default value for `pane-border-format` was `"#I"` which expands to `window_index` — always `0` for the first window. This caused every pane border to display `0` followed by the border line (`0─────`), making it look like a rendering glitch rather than a pane index indicator.
+
+In tmux, `pane-border-format` defaults to `"#{pane_index}"` which corresponds to `"#P"` in szn's single-character alias format (`#I` = window index, `#P` = pane index).
+
+**Fix:** Change default from `"#I"` to `"#P"` so each pane shows its own index on the top border. Also added vertical-border format rendering: when a pane has no top border (y == 0) but has a left border (x > 0, i.e. side-by-side split), the format is drawn vertically down the left border column, one codepoint per row.
+
 

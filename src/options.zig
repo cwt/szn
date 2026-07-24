@@ -235,7 +235,7 @@ pub const SESSION_OPTIONS = &[_]OptionDef{
     .{ .name = "status-justify", .type = .choice, .default = OptionValue{ .choice = "left" }, .choices = &[_][]const u8{ "left", "centre", "center", "right" } },
     .{ .name = "pane-border-fg", .type = .colour, .default = OptionValue{ .colour = Colour.fromRgb(0x55, 0x55, 0x55) } },
     .{ .name = "pane-active-border-fg", .type = .colour, .default = OptionValue{ .colour = Colour.fromRgb(0x00, 0x5f, 0xaf) } },
-    .{ .name = "pane-border-format", .type = .string, .default = OptionValue{ .string = "#I" } },
+    .{ .name = "pane-border-format", .type = .string, .default = OptionValue{ .string = "#P" } },
     .{ .name = "history-limit", .type = .number, .default = OptionValue{ .number = 2000 }, .min = 0, .max = 1000000 },
     .{ .name = "mouse", .type = .flag, .default = OptionValue{ .flag = true } },
     .{ .name = "prefix", .type = .key, .default = OptionValue{ .key = Key{ .char = .{ .code = 'b', .mod = .{ .ctrl = true } } } } }, // C-b
