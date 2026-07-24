@@ -465,15 +465,18 @@ pub const CopyMode = struct {
     /// Map a logical line index + column back to scroll_offset/cursor_y so
     /// the match is visible (history matches pinned to the top of the screen).
     fn placeCursorAtLogical(self: *CopyMode, grid: *const Grid, logical: usize, x: usize) void {
-        const hist_len = grid.history.items.len - grid.history_start;
-        if (logical < hist_len) {
-            self.scroll_offset = @intCast(hist_len - logical);
+        const hist_len = grid.historyLen();
+        const physical_line = logical + (if (grid.width > 0) x / grid.width else 0);
+        const phys_x = if (grid.width > 0) x % grid.width else 0;
+
+        if (physical_line < hist_len) {
+            self.scroll_offset = @intCast(hist_len - physical_line);
             self.cursor_y = 0;
         } else {
             self.scroll_offset = 0;
-            self.cursor_y = @intCast(logical - hist_len);
+            self.cursor_y = @intCast(physical_line - hist_len);
         }
-        self.cursor_x = @intCast(x);
+        self.cursor_x = @intCast(phys_x);
     }
 
     /// Build the UTF-8 text of logical line `li` into `out`, then return the
@@ -1606,4 +1609,35 @@ test "searchForward across soft-wrapped line boundaries — bug #234" {
     const found = cm.searchForward(&g, testing.allocator, "lowo");
     try testing.expect(found);
     try testing.expectEqual(@as(u32, 3), cm.cursor_x);
+}
+
+test "searchForward on wrapped continuation line maps cursor_x within physical width — bug #251" {
+    var cm = CopyMode.init(.vi);
+    var g = try Grid.init(testing.allocator, 5, 3);
+    defer g.deinit();
+
+    // Line 0 (wrapped=true): "hello"
+    // Line 1: "world"
+    g.writeChar(0, 0, 'h');
+    g.writeChar(1, 0, 'e');
+    g.writeChar(2, 0, 'l');
+    g.writeChar(3, 0, 'l');
+    g.writeChar(4, 0, 'o');
+    g.getLineMut(0).wrapped = true;
+
+    g.writeChar(0, 1, 'w');
+    g.writeChar(1, 1, 'o');
+    g.writeChar(2, 1, 'r');
+    g.writeChar(3, 1, 'l');
+    g.writeChar(4, 1, 'd');
+
+    cm.cursor_x = 0;
+    cm.cursor_y = 0;
+
+    // Search for "world" which is on continuation line 1
+    const found = cm.searchForward(&g, testing.allocator, "world");
+    try testing.expect(found);
+    // cursor_x should be 0 (column 0 on line 1), NOT 5 (out of bounds)
+    try testing.expectEqual(@as(u32, 0), cm.cursor_x);
+    try testing.expectEqual(@as(u32, 1), cm.cursor_y);
 }

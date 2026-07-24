@@ -3459,7 +3459,7 @@ Since `node1.leaf` was already updated to `dest_pane` and `node2.leaf` to `pane`
 ### 251. Out-of-bounds `cursor_x` in soft-wrapped copy mode search
 **File:** `src/mode_copy.zig:402–422`, `src/mode_copy.zig:467–477`, `src/mode_copy.zig:532–582`
 **Severity:** HIGH
-**Status:** 🚨 UNRESOLVED
+**Status:** ✅ FIXED — updated `placeCursorAtLogical` to map column offsets greater than grid width to physical line offsets (`x / width`) and physical column (`x % width`). Added test coverage.
 
 Bug #234 updated `lineBytes` to concatenate contiguous soft-wrapped physical lines into a single logical line buffer. When a search match occurs on a wrapped continuation line, `searchLogicalLine` returns a cell column index `found_x >= grid.width`. `placeCursorAtLogical` assigns `self.cursor_x = @intCast(x)` directly, setting `cursor_x` past the physical width of the terminal grid (`cursor_x >= grid.width`). Additionally, `searchForward` loops over physical line indices (`li += 1`), causing soft-wrapped lines to be redundantly re-searched on subsequent iterations.
 
