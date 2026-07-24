@@ -94,167 +94,274 @@ return std.mem.sliceTo(buf, 0);           // scans for null byte
 
 Frees the old value FIRST (`allocator.free(entry.value_ptr.*)`), then duplicates the new one. If `dupe` fails, the map entry holds a dangling pointer to freed memory.
 
-### 13. Copy mode broken for scrolled content  ✅ Fixed
+### 13. Copy mode broken for scrolled content
 **File:** `src/mode_copy.zig:181–218`
+**Severity:** HIGH
+**Status:** ✅ FIXED
+
 `yankSelection()` only reads from `grid.getCell(x, y)` which accesses the visible grid. The `scroll_offset` field is tracked but **never used** to index into `grid.history`. Copying/yanking scrolled-back content is impossible.
 
 **Fix:** Added `getCellAt()` helper that maps (x, screen_y) to the correct source (history or visible grid) using scroll_offset. Test added.
 
-### 14. Emacs alt-key bindings are dead code  ❌ FALSE POSITIVE
+### 14. Emacs alt-key bindings are dead code
 **File:** `src/mode_copy.zig:399–450`
+**Severity:** HIGH
+**Status:** ❌ FALSE POSITIVE
+
 All Emacs-style bindings check `c.mod.alt`. The key parser (`src/tty/tty_key.zig`) emits escape-prefixed chars as `char.code = code, mod = .{}` — no alt flag set. So `c.mod.alt` is always false. Every `M-v`, `M-<`, `M->` binding is unreachable.
 
 **Verdict:** Key parser DOES set `mod.alt = true` for escape-prefixed chars (tty_key.zig:105). Verified with unit tests that pass.
 
-### 15. Key value parsing in config is a stub  ✅ Fixed
+### 15. Key value parsing in config is a stub
 **File:** `src/cfg.zig:191–225`
+**Severity:** MEDIUM
+**Status:** ✅ FIXED
+
 `parseValue` now tries `key.parseKeyName()` before defaulting to string. Key-type options like `prefix` parse correctly from config files and `set-option`. Test added.
 
-### 16. Unsafe union access on OptionValue  ✅ Fixed
+### 16. Unsafe union access on OptionValue
 **File:** `src/server/server.zig:75–76`
+**Severity:** MEDIUM
+**Status:** ✅ FIXED
+
 Added `== .key` guard before reading `prefix_val.key`. Two test tag checks also added.
 
-### 17. Child uses parent allocator after fork  ✅ Fixed
+### 17. Child uses parent allocator after fork
 **File:** `src/server/pty.zig:40–72`
+**Severity:** CRITICAL
+**Status:** ✅ FIXED
+
 All C-string allocations moved before `fork()`. The child only reads the pre-populated argv array and never touches the parent's allocator.
 
-### 18. OSC ST terminator (ESC \) broken  ✅ Fixed
+### 18. OSC ST terminator (ESC \) broken
 **File:** `src/input.zig:273–298`
+**Severity:** HIGH
+**Status:** ✅ FIXED
+
 Added `osc_esc` state. On `0x1B` during OSC, go to `osc_esc`. If next byte is `\` (ST), dispatch the OSC. Tests verify callback is invoked for both ST and BEL.
 
-### 19. No bounds check on CSI input buffer  ✅ Fixed
+### 19. No bounds check on CSI input buffer
 **File:** `src/tty/tty_key.zig:108–164`
+**Severity:** MEDIUM
+**Status:** ✅ FIXED
+
 Added `if (rd.pos >= rd.buf.len) { state = .ground; return null; }` in `feedCsi`, `feedSgrMouse`, and `feedUtf8`.
 
-### 20. EAGAIN treated as EOF in interactive client  ✅ Fixed
+### 20. EAGAIN treated as EOF in interactive client
 **File:** `src/main.zig:285–319`
+**Severity:** HIGH
+**Status:** ✅ FIXED
+
 Check `std.posix.errno(-1)` for `.AGAIN` and `.INTR` in both stdin and server read paths; only detach on true EOF/error.
 
-### 21. CSI dispatch warn floods logs  ✅ Fixed
+### 21. CSI dispatch warn floods logs
 **File:** `src/input.zig:357`
+**Severity:** LOW
+**Status:** ✅ FIXED
+
 Changed `std.log.warn` → `std.log.debug`.
 
-### 22. cmdRenameWindow use-after-free  ✅ Fixed
+### 22. cmdRenameWindow use-after-free
 **File:** `src/cmd/cmd.zig:138–145`
+**Severity:** CRITICAL
+**Status:** ✅ FIXED
+
 Dupe first, free after — same pattern as Session.rename fix.
 
 ---
 
 ## MEDIUM (wrong behavior, missing features, fragility)
 
-### 23. No SIGCHLD handler — zombie window ✅ Fixed
+### 23. No SIGCHLD handler — zombie window
 **File:** `src/server/server.zig:146–199`
+**Severity:** MEDIUM
+**Status:** ✅ FIXED
+
 Child processes are only reaped via `Pty.reap()` when the pty fd signals HUP. Between child exit and the next poll cycle, a zombie exists. No `SIGCHLD` handler to reap promptly.
 
-### 24. processReadStdin leaks the input buffer on each call ✅ Fixed
+### 24. processReadStdin leaks the input buffer on each call
 **File:** `src/server/server.zig`
+**Severity:** MEDIUM
+**Status:** ✅ FIXED
+
 Every call allocates a buffer for stdin data. On error paths, the buffer leaks. Now catches errors instead of propagating.
 
-### 25. handleMouseFocus can use freed Pane pointer ✅ Fixed
+### 25. handleMouseFocus can use freed Pane pointer
 **File:** `src/server/server.zig`
+**Severity:** HIGH
+**Status:** ✅ FIXED
+
 `handleMouseFocus` gets a `*Pane` from the layout tree, then calls `setActivePane` which may destroy the pane. Now validates pane is still alive after operations.
 
-### 26. paneList doesn't filter by session ✅ Fixed
+### 26. paneList doesn't filter by session
 **File:** `src/cmd/cmd.zig:790`
+**Severity:** MEDIUM
+**Status:** ✅ FIXED
+
 `list-panes -s` flag exists but `cmdListPanes` ignores it. The `-s` flag should limit to target session only.
 
-### 27. FdWriter.writeByte ignores zero-write ✅ Fixed
+### 27. FdWriter.writeByte ignores zero-write
 **File:** `src/tty/fd_writer.zig:17–21`
+**Severity:** MEDIUM
+**Status:** ✅ FIXED
+
 ```zig
 const n = c.write(self.fd, &b, 1);  // n unused
 if (n < 0) return error.WriteFailed;
 ```
 If `write` returns 0 (fd closed or error without errno), it silently succeeds. Missing `if (n == 0) return error.WriteZero`.
 
-### 28. No bounds check in client.sendIdentify ✅ Fixed
+### 28. No bounds check in client.sendIdentify
 **File:** `src/client/client.zig:34`
+**Severity:** HIGH
+**Status:** ✅ FIXED
+
 ```zig
 @memcpy(it.term[0..term.len], term);
 ```
 If `term.len > 64`, this overwrites memory past the `term` array. The `term_len: u8` field silently truncates the length but the memcpy still overflows.
 
-### 29. Log file opened/closed on every log call ✅ Fixed
+### 29. Log file opened/closed on every log call
 **File:** `src/main.zig:29–39`
+**Severity:** LOW
+**Status:** ✅ FIXED
+
 `logFn` does `fopen("/tmp/szn.log", "a")` and `fclose` on every single log call. Extremely slow under load. Should keep the file handle open or buffer writes.
 
-### 30. Unimplemented config directives ✅ Fixed
+### 30. Unimplemented config directives
 **File:** `src/server/server.zig:906,910`
+**Severity:** MEDIUM
+**Status:** ✅ FIXED
+
 ```zig
 .set_environment => {},  // TODO
 .if_shell => {},         // TODO
 ```
 Both stubs. `set_environment` is needed for `set-environment DISPLAY :0`.
 
-### 31. Directional pane selection is actually circular ✅ Fixed
+### 31. Directional pane selection is actually circular
 **File:** `src/server/server.zig:373–383`
+**Severity:** MEDIUM
+**Status:** ✅ FIXED
+
 All four directions (up/down/left/right) do `(idx + 1) % len` — pure circular next-pane. The layout tree is not consulted (unlike mouse focus which uses `findPaneAtNode` correctly).
 
-### 32. .last_window doesn't track actual last window ✅ Fixed
+### 32. .last_window doesn't track actual last window
 **File:** `src/server/server.zig:354–363`
+**Severity:** MEDIUM
+**Status:** ✅ FIXED
+
 Selects the first window that is not current — does not store/restore the "last previously active" window index per session.
 
-### 33. Kitty keyboard protocol incomplete ✅ Fixed
+### 33. Kitty keyboard protocol incomplete
 **File:** `src/tty/tty_key.zig` → `src/key.zig:124–132`
+**Severity:** MEDIUM
+**Status:** ✅ FIXED
+
 Handles basic `CSI codepoint ; modifier u` but was missing: keypad disambiguation (`>codepoint`), shifted keys (`>codepoint`), and key events (`=codepoint;mod;event`).
 
-### 34. split-window direction flag only works as first arg ✅ Fixed
+### 34. split-window direction flag only works as first arg
 **File:** `src/cmd/cmd.zig:112`
+**Severity:** MEDIUM
+**Status:** ✅ FIXED
+
 `-v` / `-h` is checked only at `args[1]`. If the proportion comes first (e.g., `split-window 0.3 -v`), the flag is silently ignored.
 
 ---
 
 ## LOW (style, minor edge cases, future-proofing)
 
-### 35. Hardcoded log path `/tmp/szn.log` ✅ Fixed
+### 35. Hardcoded log path `/tmp/szn.log`
 **File:** `src/main.zig:29`
+**Severity:** LOW
+**Status:** ✅ FIXED
+
 Should use `$XDG_STATE_HOME/szn/` or similar for proper filesystem hierarchy compliance.
 
-### 36. Error set is a single catch-all ✅ Fixed
+### 36. Error set is a single catch-all
 **File:** Removed `src/err.zig` — `SznError` was dead code.
+**Severity:** LOW
+**Status:** ✅ FIXED
+
 Every subsystem now has its own `pub const Error` set: grid, screen, tty, fd_writer, layout, options, cfg, key_binding, input, pty, render, loop, protocol, socket, dispatch, client, connect, raw, window, session, server, main, cmd (ParseError), status, mode_copy, socket_path.
 
-### 37. Arena allocation not used  ✅ Fixed
-AGENTS.md requirement: "Always use arena allocators per session/pane lifecycle." `Session` now owns a `std.heap.ArenaAllocator`. All window/grid/screen/layout/option allocations go through the session arena. Individual `allocator.free`/`allocator.destroy` calls for arena-owned memory removed.
+### 37. Arena allocation not used
+AGENTS.md requirement: "Always use arena allocators per session/pane lifecycle."
+**Severity:** MEDIUM
+**Status:** ✅ FIXED
 
-### 38. Duplicate fd registration allowed in event loop ✅ Fixed
+`Session` now owns a `std.heap.ArenaAllocator`. All window/grid/screen/layout/option allocations go through the session arena. Individual `allocator.free`/`allocator.destroy` calls for arena-owned memory removed.
+
+### 38. Duplicate fd registration allowed in event loop
 **File:** `src/server/loop.zig:29`
+**Severity:** MEDIUM
+**Status:** ✅ FIXED
+
 `addFd` appends without checking for existing fd. `removeFd` only removes the first match. Stale entries can cause spurious events on reused fd numbers.
 
-### 39. cmdPrevWindow has duplicate dead code ✅ Fixed
+### 39. cmdPrevWindow has duplicate dead code
 **File:** `src/cmd/cmd.zig:606–621`
+**Severity:** LOW
+**Status:** ✅ FIXED
+
 Identical loop appears twice — copy-paste artifact. Second loop is unreachable.
 
-### 40. attrFields/attrCodes parallel arrays fragile ✅ Fixed
+### 40. attrFields/attrCodes parallel arrays fragile
 **File:** `src/tty/tty.zig:12–16`
+**Severity:** LOW
+**Status:** ✅ FIXED
+
 If `Attr` fields are reordered, the `attrCodes` array silently mismatches, applying wrong SGR parameters.
 
-### 41. Tab stop hardcoded to 8 ✅ Fixed
+### 41. Tab stop hardcoded to 8
 **File:** `src/screen.zig:119`
+**Severity:** LOW
+**Status:** ✅ FIXED
+
 `tab_stop: u32 = 8` should be configurable (tmux `tab-stop` option).
 
-### 42. History limit hardcoded to 2000 ✅ Fixed
+### 42. History limit hardcoded to 2000
 **File:** `src/grid.zig`
+**Severity:** LOW
+**Status:** ✅ FIXED
+
 `history_limit: u32 = 2000` should come from session options.
 
-### 43. cmdCopyMode overwrites previous copy mode without deinit ❌ FALSE POSITIVE
+### 43. cmdCopyMode overwrites previous copy mode without deinit
 **File:** `src/cmd/cmd.zig:392–393`
+**Severity:** LOW
+**Status:** ❌ FALSE POSITIVE
+
 Setting `pane.screen.copy_mode = CopyMode.init(...)` discards the previous copy mode if one exists. Should set to null or call deinit first.
+
 **Verdict:** `CopyMode` is a plain struct with no heap-allocated resources and no `deinit`. Overwriting the field does not leak memory.
 
-### 44. resize-pane can't set size below 1 ✅ Fixed
+### 44. resize-pane can't set size below 1
 **File:** `src/cmd/cmd.zig:786–789`
+**Severity:** LOW
+**Status:** ✅ FIXED
+
 `@max(1, ...)` clamps negative calculated sizes to 1 instead of reporting an error.
 
-### 45. sockaddr_un path size hardcoded to 104 ✅ Fixed
+### 45. sockaddr_un path size hardcoded to 104
 **File:** `src/server/socket.zig:32`, `src/socket_path.zig:6`
+**Severity:** LOW
+**Status:** ✅ FIXED
+
 Linux uses 108, macOS 104. Should use `@sizeOf(@TypeOf(addr.path))` for portability.
 
-### 46. message_reader silently truncates on buffer full ✅ Fixed
+### 46. message_reader silently truncates on buffer full
 **File:** `src/server/message_reader.zig:22–26`
+**Severity:** LOW
+**Status:** ✅ FIXED
+
 If data exceeds remaining buffer space, excess bytes are silently dropped. Caller has no way to detect truncation.
 
-### 47. mapCommandToAction can match substrings ✅ Fixed
+### 47. mapCommandToAction can match substrings
 **File:** `src/key_binding.zig:433`
+**Severity:** MEDIUM
+**Status:** ✅ FIXED
+
 `containsAtLeast(u8, trimmed, 1, "-h")` matches `-h` anywhere in the string. Flags like `-horizontal` or paths containing `-h` would incorrectly trigger.
 
 ---
@@ -2374,6 +2481,10 @@ Two complementary changes:
 
 ### 185. `renderStatusBar` doesn't truncate long window names — writes past terminal width
 **File:** `src/server/render.zig:498–499`
+**Severity:** MEDIUM
+**Status:** ✅ FIXED
+
+The original `renderStatusBar` used a fixed-size stack buffer to format the status line. Long window names could overflow the buffer and write past the terminal width instead of being truncated. Rewrote `renderStatusBar` to write pieces directly to the output stream without a fixed-size buffer, and added truncation logic to cap visible output at `self.sx`. Unit test added (`renderStatusBar truncates long name to fit terminal width — bug #185`).
 
 ---
 
