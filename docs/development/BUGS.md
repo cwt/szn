@@ -3492,7 +3492,7 @@ When `placeSixelImage` evicts an existing image from a slot via Step 4b (all slo
 ### 254. Parent pane dimensions un-restored on split allocation failure
 **File:** `src/layout.zig:125`
 **Severity:** MEDIUM
-**Status:** 🚨 UNRESOLVED
+**Status:** ✅ FIXED — moved node allocations before `pane.resizeTerminal` in `Layout.splitPane` so allocation failure leaves parent pane dimensions intact. Added unit test.
 
 `Layout.splitPane` calls `try pane.resizeTerminal(child_w1, child_h1);` before creating the layout nodes `Split` and `Node`. If subsequent allocations fail, the `errdefer` block cleans up `new_pane` but leaves `pane` shrunk to `child_w1, child_h1`.
 

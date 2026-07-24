@@ -122,14 +122,14 @@ pub const Layout = struct {
             a.destroy(new_pane);
         }
 
-        try pane.resizeTerminal(child_w1, child_h1);
-
         const split = try a.create(Split);
         errdefer a.destroy(split);
         const a_node = try a.create(Node);
         errdefer a.destroy(a_node);
         const b_node = try a.create(Node);
         errdefer a.destroy(b_node);
+
+        try pane.resizeTerminal(child_w1, child_h1);
 
         a_node.* = Node{ .leaf = leaf_node.leaf };
         b_node.* = Node{ .leaf = new_pane };
@@ -587,4 +587,15 @@ test "findPaneBounds calculates bounds correctly — bug #243" {
     const pb2 = layout.findPaneBounds(pane2).?;
     try testing.expectEqual(@as(u32, 40), pb2.x);
     try testing.expectEqual(@as(u32, 0), pb2.y);
+}
+
+test "splitPane resizes parent pane after node allocations succeed — bug #254" {
+    const pane1 = try createTestPane(testing.allocator, 0);
+    var layout = try Layout.init(testing.allocator, pane1, 80, 24);
+    defer layout.deinit();
+
+    try testing.expectEqual(@as(u32, 80), pane1.screen.grid.width);
+    const pane2 = try layout.splitPane(testing.allocator, pane1, .horizontal, 0.5);
+    try testing.expectEqual(@as(u32, 39), pane1.screen.grid.width);
+    try testing.expectEqual(@as(u32, 40), pane2.screen.grid.width);
 }
