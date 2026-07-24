@@ -289,22 +289,6 @@ pub const Screen = struct {
             }
         }
 
-        // 4. All slots are full and every image is referenced — evict the
-        // oldest *unreferenced* image first.  If none are unreferenced we
-        // fall back to the minimum-id slot but only after confirming it is
-        // no longer referenced at this moment (a race window in multi-pane
-        // rendering).  This avoids the double-free / dangling-cell crash
-        // described in bug #218.
-        if (target_slot == null) {
-            for (self.sixel_images, 0..) |opt_img, idx| {
-                if (opt_img) |img| {
-                    if (!self.isImageReferenced(img.id)) {
-                        target_slot = idx;
-                        break;
-                    }
-                }
-            }
-        }
         // 4b. Absolute last resort: evict oldest by ID even if referenced.
         // The caller must ensure cells are cleaned up; we accept the risk
         // here because all 64 slots are full and every image is live.

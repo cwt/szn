@@ -3525,7 +3525,7 @@ Lines 353–360 populate `default_pane` from `server.sessions`. Immediately foll
 ### 257. Duplicated slot eviction loop in `placeSixelImage`
 **File:** `src/screen.zig:298–307`
 **Severity:** LOW (code quality)
-**Status:** 🚨 UNRESOLVED
+**Status:** ✅ FIXED — removed duplicated Step 4 eviction loop in `placeSixelImage`.
 
 Step 4 in `placeSixelImage` contains an exact copy of the loop in Step 3 (`if (!self.isImageReferenced(img.id)) target_slot = idx`). Since Step 4 is executed only when `target_slot == null` (which Step 3 just checked), Step 4 will never find a matching slot if Step 3 returned `null`.
 
