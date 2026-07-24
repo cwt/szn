@@ -426,6 +426,15 @@ pub const Screen = struct {
         return false;
     }
 
+    /// Returns true if any sixel image is registered or pending.
+    pub fn hasSixelImages(self: *const Screen) bool {
+        if (self.pending_sixel != null) return true;
+        for (self.sixel_images) |opt_img| {
+            if (opt_img != null) return true;
+        }
+        return false;
+    }
+
     /// Finds a sixel image in the registry by its absolute ID.
     pub fn findSixelImage(self: *const Screen, image_id: u32) ?SixelImage {
         for (self.sixel_images) |opt_img| {
@@ -2351,4 +2360,17 @@ test "wide character 2-col wrap clears ghost character and combining mark across
     const cell_c = screen2.grid.getCell(2, 0);
     try testing.expectEqual(@as(u21, 'C'), cell_c.char);
     try testing.expect(cell_c.comb1 != 0);
+}
+
+test "hasSixelImages returns false when no Sixel images placed — bug #240" {
+    const allocator = std.testing.allocator;
+    var screen = try Screen.init(allocator, 10, 5);
+    defer screen.deinit();
+
+    try testing.expect(!screen.hasSixelImages());
+
+    const dcs = try allocator.dupe(u8, "\x1bPqX\x1b\\");
+    try screen.addSixelImage(dcs, 10, 20);
+
+    try testing.expect(screen.hasSixelImages());
 }

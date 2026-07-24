@@ -751,6 +751,7 @@ pub const Display = struct {
 
         for (bounds) |pb| {
             const screen = &pb.pane.screen;
+            if (!screen.hasSixelImages()) continue;
             const pane_h = pb.h;
             const pane_w = pb.w;
 

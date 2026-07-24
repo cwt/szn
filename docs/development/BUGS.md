@@ -3202,7 +3202,7 @@ In `processInput`, when evaluating a command from the prompt, `dispatch.dispatch
 ### 240. O(W×H) matrix scanning for Sixel images during rendering
 **File:** `src/server/render.zig:757–782`
 **Severity:** MEDIUM (performance)
-**Status:** ❌ OPEN
+**Status:** ✅ FIXED
 
 `renderSixelImages` loops over every cell in the grid (Width × Height) of every pane just to locate Sixel image anchors.
 
