@@ -293,7 +293,20 @@ pub const Window = struct {
         self.height = new_height;
         self.layout.width = new_width;
         self.layout.height = new_height;
+        if (self.panes.items.len == 0) return;
         try self.resizeNode(self.layout.root, new_width, new_height);
+    }
+
+    pub fn rotatePanes(self: *Window) Error!void {
+        if (self.panes.items.len > 1) {
+            const first = self.panes.items[0];
+            for (0..self.panes.items.len - 1) |i| {
+                self.panes.items[i] = self.panes.items[i + 1];
+            }
+            self.panes.items[self.panes.items.len - 1] = first;
+            self.layout.rotatePanes();
+            try self.resize(self.width, self.height);
+        }
     }
 
     fn resizeNode(self: *Window, root: *const @import("layout.zig").Node, root_lw: u32, root_lh: u32) Error!void {
@@ -370,11 +383,15 @@ pub const Window = struct {
         _ = self.panes.swapRemove(idx);
         self.layout.removePane(pane);
 
-        if (self.active_pane == pane) {
-            self.active_pane = sibling orelse (if (self.panes.items.len > 0) self.panes.items[0] else null);
-            if (self.active_pane) |p| p.active = true;
+        if (self.panes.items.len == 0) {
+            self.active_pane = null;
+        } else {
+            if (self.active_pane == pane) {
+                self.active_pane = sibling orelse (if (self.panes.items.len > 0) self.panes.items[0] else null);
+                if (self.active_pane) |p| p.active = true;
+            }
+            self.resize(self.width, self.height) catch {};
         }
-        self.resize(self.width, self.height) catch {};
     }
 
     pub fn extractPane(self: *Window, allocator: std.mem.Allocator, pane: *Pane) void {
@@ -545,4 +562,20 @@ test "pane double deinit is safe" {
     try pane.spawn(testing.allocator, &argv, null);
     pane.deinit(); // first deinit: closes pty, sets pty = null
     pane.deinit(); // second deinit: pty is null, skips pty.deinit()
+}
+
+test "rotatePanes rotates layout tree leaves — bug #232" {
+    var window = try Window.init(testing.allocator, 1, "test", 80, 24, null, null);
+    defer window.deinit(testing.allocator);
+
+    const pane1 = window.panes.items[0];
+    const pane2 = try window.splitPane(testing.allocator, pane1, false, 0.5);
+
+    // Rotate panes
+    try window.rotatePanes();
+
+    try testing.expectEqual(pane2, window.panes.items[0]);
+    try testing.expectEqual(pane1, window.panes.items[1]);
+    try testing.expectEqual(pane2, window.layout.root.split.a.leaf);
+    try testing.expectEqual(pane1, window.layout.root.split.b.leaf);
 }

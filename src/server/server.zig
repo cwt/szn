@@ -789,13 +789,7 @@ pub const Server = struct {
                 }
             },
             .rotate_window => {
-                if (window.panes.items.len > 1) {
-                    const first = window.panes.items[0];
-                    for (0..window.panes.items.len - 1) |i| {
-                        window.panes.items[i] = window.panes.items[i + 1];
-                    }
-                    window.panes.items[window.panes.items.len - 1] = first;
-                }
+                try window.rotatePanes();
             },
             .select_pane_left => {
                 if (window.panes.items.len > 1) {

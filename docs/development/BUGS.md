@@ -3097,7 +3097,7 @@ Reverse Index (`RI`) and Scroll Down (`CSI T`) in `Screen` invoke `self.grid.scr
 ### 232. Window/layout tree desync on last pane removal & window rotation
 **File:** `src/window.zig:110–140`, `src/layout.zig:220–240`, `src/server/server.zig:791`
 **Severity:** CRITICAL
-**Status:** ❌ OPEN
+**Status:** ✅ FIXED
 
 1. In `Window.removePane`, if the last pane is removed, `Layout.removePane` early-returns if root is a leaf (`if (self.root.* == .leaf) return;`), leaving the removed pane in `layout.root`.
 2. `rotate_window` in `server.zig` rotates `window.panes.items` but fails to update layout tree nodes or call `resizePaneToNode`.

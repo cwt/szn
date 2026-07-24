@@ -188,6 +188,29 @@ pub const Layout = struct {
         }
     }
 
+    pub fn rotatePanes(self: *Layout) void {
+        var leaves: std.ArrayList(*Node) = .empty;
+        defer leaves.deinit(self.allocator);
+        self.collectLeafNodes(self.root, &leaves) catch return;
+        if (leaves.items.len < 2) return;
+
+        const first_pane = leaves.items[0].leaf;
+        for (0..leaves.items.len - 1) |i| {
+            leaves.items[i].leaf = leaves.items[i + 1].leaf;
+        }
+        leaves.items[leaves.items.len - 1].leaf = first_pane;
+    }
+
+    fn collectLeafNodes(self: *Layout, node: *Node, out: *std.ArrayList(*Node)) !void {
+        switch (node.*) {
+            .leaf => try out.append(self.allocator, node),
+            .split => |s| {
+                try self.collectLeafNodes(s.a, out);
+                try self.collectLeafNodes(s.b, out);
+            },
+        }
+    }
+
     pub fn removePane(self: *Layout, pane: *Pane) void {
         if (self.root.* == .leaf) return;
         _ = self.removeFromNode(self.root, null, pane);
