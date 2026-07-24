@@ -3069,7 +3069,7 @@ Reverse Index (`RI`) and Scroll Down (`CSI T`) in `Screen` invoke `self.grid.scr
 ### 230. `reflowCursorInternal` double-frees history, leaks memory, and corrupts ring buffer index
 **File:** `src/grid.zig:820–895`
 **Severity:** CRITICAL
-**Status:** ❌ OPEN
+**Status:** ✅ FIXED
 
 1. `for (old_history.items) |*l| l.deinit(allocator);` frees all history slots, including evicted elements before `old_history_start`.
 2. If `rewrap` or `allocator.dupe` fails, `errdefer` cleans up `new_lines` but leaks `old_lines` and `old_history`.

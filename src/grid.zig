@@ -825,14 +825,20 @@ pub const Grid = struct {
         // ── Save and replace old lines ──
         var old_lines = self.lines;
         var old_history = self.history;
+        const old_history_start = self.history_start;
         self.lines = .empty;
         self.history = .empty;
+        self.start_index = 0;
+        self.history_start = 0;
 
         // ── Rewrap each logical line and build new line set ──
         var new_lines: std.ArrayList(GridLine) = .empty;
         errdefer {
             for (new_lines.items) |*l| l.deinit(allocator);
             new_lines.deinit(allocator);
+            self.lines = old_lines;
+            self.history = old_history;
+            self.history_start = old_history_start;
         }
 
         var new_cursor_logical_line: ?usize = null;
@@ -883,24 +889,24 @@ pub const Grid = struct {
             const h_count = total_len - height;
 
             // Allocate visible portion (last `height` lines)
-            self.lines.items = try allocator.dupe(GridLine, new_lines.items[h_count..]);
-            self.lines.capacity = @intCast(height);
-            errdefer self.lines.deinit(allocator);
+            var vis_list = try std.ArrayList(GridLine).initCapacity(allocator, height);
+            vis_list.appendSliceAssumeCapacity(new_lines.items[h_count..]);
+            self.lines = vis_list;
 
             // Allocate history portion (first `h_count` lines)
-            self.history.items = try allocator.dupe(GridLine, new_lines.items[0..h_count]);
-            self.history.capacity = @intCast(h_count);
-            errdefer self.history.deinit(allocator);
+            var hist_list = try std.ArrayList(GridLine).initCapacity(allocator, h_count);
+            hist_list.appendSliceAssumeCapacity(new_lines.items[0..h_count]);
+            self.history = hist_list;
 
             // Free new_lines backing array
             new_lines.deinit(allocator);
             new_lines = .empty;
         }
 
-        // ── Deinit old lines AFTER split succeeds — bug #217 fix ──
+        // ── Deinit old lines AFTER split succeeds — bug #217/#230 fix ──
         for (old_lines.items) |*l| l.deinit(allocator);
         old_lines.deinit(allocator);
-        for (old_history.items) |*l| l.deinit(allocator);
+        for (old_history.items[old_history_start..]) |*l| l.deinit(allocator);
         old_history.deinit(allocator);
 
         if (cursor_x != null and cursor_y != null) {
@@ -1772,4 +1778,23 @@ test "setSize reflow Thai word trailing space bug" {
     try testing.expectEqual(@as(u21, 0x0E23), grid.getCell(23, 0).char); // ร
     // Cell 27 should be ย
     try testing.expectEqual(@as(u21, 0x0E22), grid.getCell(27, 0).char); // ย
+}
+
+test "reflowCursorInternal with history_start offset — bug #230" {
+    var grid = try Grid.init(testing.allocator, 10, 2);
+    defer grid.deinit();
+
+    // Push 3 lines to create history and advance history_start
+    grid.writeChar(0, 0, '1');
+    try grid.scrollUp();
+    grid.writeChar(0, 0, '2');
+    try grid.scrollUp();
+    grid.writeChar(0, 0, '3');
+    try grid.scrollUp();
+
+    // Resize screen to trigger reflow with non-zero history_start
+    try grid.setSize(20, 4);
+
+    try testing.expectEqual(@as(usize, 0), grid.history_start);
+    try testing.expect(grid.historyLen() <= grid.history.items.len);
 }
