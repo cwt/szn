@@ -3009,7 +3009,7 @@ Called from `runInteractiveClient` (line 333). This blocks the single-threaded c
 ### 226. Dangling pointer in status bar prompt rendering
 **File:** `src/server/render.zig:667–671`
 **Severity:** CRITICAL
-**Status:** ❌ OPEN
+**Status:** ✅ FIXED
 
 ```zig
 if (...) {

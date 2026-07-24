@@ -664,11 +664,11 @@ pub const Display = struct {
         }
 
         if (command_mode) {
+            var prompt_buf: [2]u8 = undefined;
             const prompt: []const u8 = if (search_prefix != 0) blk: {
-                var buf: [2]u8 = undefined;
-                buf[0] = search_prefix;
-                buf[1] = ' ';
-                break :blk buf[0..2];
+                prompt_buf[0] = search_prefix;
+                prompt_buf[1] = ' ';
+                break :blk &prompt_buf;
             } else ":: ";
             try self.writeBytes(prompt);
             col += @intCast(prompt.len);
@@ -1532,4 +1532,21 @@ test "sixel rendering with scrolling" {
 
     // Verify output: DCS bytes should NOT be in the output
     try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1bPqTEST\x1b\\") == null);
+}
+
+test "renderStatusBar with search_prefix prompt — bug #226" {
+    const allocator = std.testing.allocator;
+    var capture_buf: std.ArrayList(u8) = .empty;
+    defer capture_buf.deinit(allocator);
+
+    const display = Display{
+        .fd = -1,
+        .sx = 80,
+        .sy = 24,
+        .capture = &capture_buf,
+        .capture_allocator = allocator,
+    };
+
+    try display.renderStatusBar("", Colour.default_(), Colour.default_(), null, true, "query", '/', false);
+    try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "/ query") != null);
 }
