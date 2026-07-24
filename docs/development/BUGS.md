@@ -3274,7 +3274,7 @@ The layout node lookup, pointer swapping, and terminal resizing logic is copy-pa
 ### 246. Non-compliance with AGENTS.md comptime command table dispatch rule
 **File:** `src/cmd/cmd.zig:1502`
 **Severity:** LOW (architecture)
-**Status:** ❌ OPEN
+**Status:** ✅ FIXED
 
 The `lookup` function retrieves `cmdTable()` (comptime table) but iterates over it using a runtime `for` loop. AGENTS.md mandates: *"Use `inline for` for dispatch loops instead of function pointer tables."*
 

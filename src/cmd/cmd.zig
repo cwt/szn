@@ -1442,65 +1442,63 @@ pub const commands = struct {
     };
 };
 
+pub const CMD_TABLE = [_]*const CmdEntry{
+    &commands.new_session,
+    &commands.list_sessions,
+    &commands.kill_session,
+    &commands.rename_session,
+    &commands.new_window,
+    &commands.kill_window,
+    &commands.rename_window,
+    &commands.select_window,
+    &commands.move_window,
+    &commands.swap_window,
+    &commands.next_window,
+    &commands.prev_window,
+    &commands.last_window,
+    &commands.send_keys,
+    &commands.split_window,
+    &commands.select_pane,
+    &commands.kill_pane,
+    &commands.rotate_window,
+    &commands.capture_pane,
+    &commands.list_windows,
+    &commands.list_panes,
+    &commands.list_commands,
+    &commands.detach_client,
+    &commands.set_option,
+    &commands.show_options,
+    &commands.bind_key,
+    &commands.unbind_key,
+    &commands.source_file,
+    &commands.resize_pane,
+    &commands.reflow_pane,
+    &commands.attach_session,
+    &commands.switch_client,
+    &commands.swap_pane,
+    &commands.join_pane,
+    &commands.break_pane,
+    &commands.paste_buffer,
+    &commands.choose_buffer,
+    &commands.clock_mode,
+    &commands.display_message,
+    &commands.list_buffers,
+    &commands.delete_buffer,
+    &commands.save_buffer,
+    &commands.load_buffer,
+    &commands.copy_mode,
+    &commands.find_window,
+    &commands.show_messages,
+    &commands.list_keys,
+    &commands.help,
+};
+
 pub fn cmdTable() []const *const CmdEntry {
-    return comptime blk: {
-        const entries = [_]*const CmdEntry{
-            &commands.new_session,
-            &commands.list_sessions,
-            &commands.kill_session,
-            &commands.rename_session,
-            &commands.new_window,
-            &commands.kill_window,
-            &commands.rename_window,
-            &commands.select_window,
-            &commands.move_window,
-            &commands.swap_window,
-            &commands.next_window,
-            &commands.prev_window,
-            &commands.last_window,
-            &commands.send_keys,
-            &commands.split_window,
-            &commands.select_pane,
-            &commands.kill_pane,
-            &commands.rotate_window,
-            &commands.capture_pane,
-            &commands.list_windows,
-            &commands.list_panes,
-            &commands.list_commands,
-            &commands.detach_client,
-            &commands.set_option,
-            &commands.show_options,
-            &commands.bind_key,
-            &commands.unbind_key,
-            &commands.source_file,
-            &commands.resize_pane,
-            &commands.reflow_pane,
-            &commands.attach_session,
-            &commands.switch_client,
-            &commands.swap_pane,
-            &commands.join_pane,
-            &commands.break_pane,
-            &commands.paste_buffer,
-            &commands.choose_buffer,
-            &commands.clock_mode,
-            &commands.display_message,
-            &commands.list_buffers,
-            &commands.delete_buffer,
-            &commands.save_buffer,
-            &commands.load_buffer,
-            &commands.copy_mode,
-            &commands.find_window,
-            &commands.show_messages,
-            &commands.list_keys,
-            &commands.help,
-        };
-        break :blk &entries;
-    };
+    return &CMD_TABLE;
 }
 
 pub fn lookup(name: []const u8) ?*const CmdEntry {
-    const table = cmdTable();
-    for (table) |entry| {
+    inline for (CMD_TABLE) |entry| {
         if (std.mem.eql(u8, entry.name, name)) return entry;
         if (entry.alias) |a| {
             if (std.mem.eql(u8, a, name)) return entry;
@@ -2370,4 +2368,19 @@ test "list-keys exec" {
 
     // Verify response buffer contains default key bindings
     try testing.expect(std.mem.indexOf(u8, server.response_buf.items, "bind-key -T prefix") != null);
+}
+
+test "lookup uses comptime inline for dispatch — bug #246" {
+    // Lookup by exact name
+    const entry1 = lookup("split-window");
+    try testing.expect(entry1 != null);
+    try testing.expectEqualStrings("split-window", entry1.?.name);
+
+    // Lookup by alias
+    const entry2 = lookup("splitw");
+    try testing.expect(entry2 != null);
+    try testing.expectEqualStrings("split-window", entry2.?.name);
+
+    // Lookup non-existent command
+    try testing.expect(lookup("nonexistent-command") == null);
 }
