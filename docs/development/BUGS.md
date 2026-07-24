@@ -3547,7 +3547,7 @@ Step 4 in `placeSixelImage` contains an exact copy of the loop in Step 3 (`if (!
 ### 259. Escaped backslash handling hazard in `unescapeQuoted`
 **File:** `src/cfg.zig:376`
 **Severity:** LOW (correctness)
-**Status:** 🚨 UNRESOLVED
+**Status:** ✅ FIXED — unescaped `\\` to `\` in `unescapeQuoted`. Added unit test.
 
 `unescapeQuoted` only unescapes `"`, ignoring `\`. Consequently, `\"` (an escaped backslash followed by a quote) is parsed as an escaped quote `"`, converting `\"` into `"`.
 

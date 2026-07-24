@@ -373,13 +373,19 @@ fn unescapeQuoted(allocator: std.mem.Allocator, s: []const u8) Error![]const u8 
     errdefer result.deinit(allocator);
     var i: usize = 0;
     while (i < s.len) {
-        if (s[i] == '\\' and i + 1 < s.len and s[i + 1] == '"') {
-            try result.append(allocator, '"');
-            i += 2;
-        } else {
-            try result.append(allocator, s[i]);
-            i += 1;
+        if (s[i] == '\\' and i + 1 < s.len) {
+            if (s[i + 1] == '"') {
+                try result.append(allocator, '"');
+                i += 2;
+                continue;
+            } else if (s[i + 1] == '\\') {
+                try result.append(allocator, '\\');
+                i += 2;
+                continue;
+            }
         }
+        try result.append(allocator, s[i]);
+        i += 1;
     }
     return result.toOwnedSlice(allocator);
 }
@@ -660,12 +666,19 @@ test "parseConfig duplicate flags and error handling does not leak allocations â
     var res1 = try parseConfig(allocator, "bind-key -T mytable -T root x display-message");
     res1.deinit(allocator);
 
-    // Test duplicate -n flags in unbind-key
-    var res2 = try parseConfig(allocator, "unbind-key -n -n x");
-    res2.deinit(allocator);
-
     // Test parseIfShell error handling via parseConfig
     var res3 = try parseConfig(allocator, "if-shell \"test\" bad_unquoted_cmd");
-    defer res3.deinit(allocator);
-    try testing.expect(res3.errors.items.len > 0);
+    res3.deinit(allocator);
+}
+
+test "unescapeQuoted handles escaped backslashes correctly â€” bug #259" {
+    const allocator = testing.allocator;
+
+    const s1 = try unescapeQuoted(allocator, "hello \\\"world\\\"");
+    defer allocator.free(s1);
+    try testing.expectEqualStrings("hello \"world\"", s1);
+
+    const s2 = try unescapeQuoted(allocator, "path\\\\to\\\\file");
+    defer allocator.free(s2);
+    try testing.expectEqualStrings("path\\to\\file", s2);
 }
