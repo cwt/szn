@@ -3263,7 +3263,7 @@ The layout node lookup, pointer swapping, and terminal resizing logic is copy-pa
 ### 245. Non-compliance with AGENTS.md arena allocator lifecycle rule
 **File:** `src/server/server.zig:2542, 2577`
 **Severity:** LOW (architecture)
-**Status:** ❌ OPEN
+**Status:** ✅ FIXED
 
 `Server.newSession` uses standard `self.allocator.create(Session)`, and `killSession`/`killAllSessions` call `self.allocator.destroy(session)`. AGENTS.md mandates: *"Always use arena allocators per session/pane lifecycle. Never `gpa.alloc`. Never call `allocator.destroy` — arena reset handles everything."*
 

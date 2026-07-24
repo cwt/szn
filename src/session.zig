@@ -214,3 +214,15 @@ test "window IDs are unique after kills — bug #137" {
     try testing.expect(w3.id != w1.id);
     try testing.expect(w3.id > w1.id);
 }
+
+test "session arena allocator manages window and pane memory — bug #245" {
+    var session: Session = undefined;
+    try session.init(testing.allocator, 1, "test-arena", 80, 24, null, null);
+    defer session.deinit(testing.allocator);
+
+    const win = try session.newWindow(testing.allocator, "win2");
+    _ = try win.addPane(testing.allocator);
+
+    try testing.expectEqual(2, session.windows.items.len);
+    try testing.expectEqual(2, win.panes.items.len);
+}
