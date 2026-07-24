@@ -117,6 +117,10 @@ pub const Screen = struct {
     /// Sixel images received from child processes, stored in a ring buffer registry.
     sixel_images: [64]?SixelImage = [_]?SixelImage{null} ** 64,
     next_sixel_id: u32 = 0,
+    /// Per-slot reference count: number of grid cells currently referencing
+    /// this sixel image (bug #225). Replaces the O(n) cell-scan in
+    /// `isImageReferenced` with an O(1) array lookup.
+    sixel_refcounts: [64]usize = [_]usize{0} ** 64,
     /// Anchor (pane-relative top-left cell, clamped to >= 0) each registry
     /// slot's sixel image was last drawn at during the previous render frame.
     /// The renderer uses this to erase a moved/removed image's overlay pixels
@@ -384,6 +388,11 @@ pub const Screen = struct {
         }
 
         self.cursor.x = 0;
+
+        // bug #225: increment refcount for each marker cell placed.
+        const ref_inc = @as(usize, cell_rows) * @as(usize, cell_cols);
+        self.sixel_refcounts[slot] += ref_inc;
+
         self.dirty = true;
     }
 
@@ -405,46 +414,15 @@ pub const Screen = struct {
     }
 
     /// Returns true if the sixel image with the given absolute ID is referenced
-    /// by any cell in the main grid, main history, or alt grid/history.
+    /// by any cell.  Uses the per-slot refcount for O(1) lookup (bug #225).
     pub fn isImageReferenced(self: *const Screen, id: u32) bool {
-        const target_id = @as(u21, @intCast(id & 0x1FFFFF));
-
-        // Check main grid lines
-        for (self.grid.lines.items) |line| {
-            for (line.cells.items) |cell| {
-                if (cell.attr.sixel and cell.char == target_id) {
-                    return true;
+        for (self.sixel_images, 0..) |opt_img, idx| {
+            if (opt_img) |img| {
+                if ((img.id & 0x1FFFFF) == id) {
+                    return self.sixel_refcounts[idx] > 0;
                 }
             }
         }
-
-        // Check main grid history
-        for (self.grid.history.items[self.grid.history_start..]) |line| {
-            for (line.cells.items) |cell| {
-                if (cell.attr.sixel and cell.char == target_id) {
-                    return true;
-                }
-            }
-        }
-
-        // Check alt grid if it exists
-        if (self.alt_grid) |alt| {
-            for (alt.lines.items) |line| {
-                for (line.cells.items) |cell| {
-                    if (cell.attr.sixel and cell.char == target_id) {
-                        return true;
-                    }
-                }
-            }
-            for (alt.history.items[alt.history_start..]) |line| {
-                for (line.cells.items) |cell| {
-                    if (cell.attr.sixel and cell.char == target_id) {
-                        return true;
-                    }
-                }
-            }
-        }
-
         return false;
     }
 
@@ -470,6 +448,54 @@ pub const Screen = struct {
             }
         }
         return null;
+    }
+
+    // ── Refcount helpers (bug #225) ──
+
+    /// Decrement the refcount for the sixel image occupying cell (x, y) on the
+    /// main grid.  If the cell has no sixel marker the call is a no-op.
+    fn decrementMainGridRef(self: *Screen, x: u32, y: u32) void {
+        if (x >= self.grid.width or y >= self.grid.height) return;
+        const cell = self.grid.getCell(x, y);
+        if (!cell.attr.sixel) return;
+        const id = @as(u32, cell.char & 0x1FFFFF);
+        if (self.findSixelImageSlot(id)) |slot| {
+            if (self.sixel_refcounts[slot] > 0) {
+                self.sixel_refcounts[slot] -= 1;
+            }
+        }
+    }
+
+    /// Decrement the refcount for the sixel image occupying cell (x, y) on the
+    /// alt grid (if active).  No-op when no alt grid exists.
+    fn decrementAltGridRef(self: *Screen, x: u32, y: u32) void {
+        if (self.alt_grid) |alt| {
+            if (x < alt.width and y < alt.height) {
+                const cell = alt.getCell(x, y);
+                if (!cell.attr.sixel) return;
+                const id = @as(u32, cell.char & 0x1FFFFF);
+                if (self.findSixelImageSlot(id)) |slot| {
+                    if (self.sixel_refcounts[slot] > 0) {
+                        self.sixel_refcounts[slot] -= 1;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Decrement refcount for every cell in the given line's cells slice.
+    fn decrementLineRefs(self: *Screen, cells: []const Cell) void {
+        for (cells, 0..) |cell, x| {
+            if (cell.attr.sixel) {
+                const id = @as(u32, cell.char & 0x1FFFFF);
+                if (self.findSixelImageSlot(id)) |slot| {
+                    if (self.sixel_refcounts[slot] > 0) {
+                        self.sixel_refcounts[slot] -= 1;
+                    }
+                }
+            }
+            _ = x;
+        }
     }
 
     pub fn eraseCell(self: *const Screen) Cell {
@@ -519,6 +545,8 @@ pub const Screen = struct {
             std.mem.swap(GridLine, line, next);
         }
         const last = self.grid.getLineMut(bottom);
+        // bug #225: decrement refcounts for the fill cells.
+        self.decrementLineRefs(last.cells.items);
         @memset(last.cells.items, self.eraseCell());
         last.dirty = true;
     }
@@ -534,6 +562,8 @@ pub const Screen = struct {
             std.mem.swap(GridLine, line, prev);
         }
         const first = self.grid.getLineMut(top);
+        // bug #225: decrement refcounts for the fill cells.
+        self.decrementLineRefs(first.cells.items);
         @memset(first.cells.items, self.eraseCell());
         first.dirty = true;
     }
@@ -547,6 +577,8 @@ pub const Screen = struct {
                 try self.grid.scrollUp();
                 self.shiftSixelAnchors(-1);
                 const bottom_line = self.grid.getLineMut(self.grid.height - 1);
+                // bug #225: decrement refcounts for fill cells.
+                self.decrementLineRefs(bottom_line.cells.items);
                 @memset(bottom_line.cells.items, self.eraseCell());
                 bottom_line.dirty = true;
             } else if (self.scroll_region != null and self.cursor.y == self.scroll_region.?[1]) {
@@ -605,6 +637,8 @@ pub const Screen = struct {
             } else if (prev_cell.comb2 == 0) {
                 prev_cell.comb2 = cidx;
             }
+            // bug #225: don't decrement refcount for combining chars
+            // (they modify in-place without erasing the sixel marker).
             self.grid.setCell(base_x, self.cursor.y, prev_cell);
             self.dirty = true;
             return;
@@ -618,6 +652,8 @@ pub const Screen = struct {
                     try self.grid.scrollUp();
                     self.shiftSixelAnchors(-1);
                     const bottom_line = self.grid.getLineMut(self.grid.height - 1);
+                    // bug #225: decrement refcounts for fill cells.
+                    self.decrementLineRefs(bottom_line.cells.items);
                     @memset(bottom_line.cells.items, self.eraseCell());
                     bottom_line.dirty = true;
                 } else if (self.scroll_region != null and self.cursor.y == self.scroll_region.?[1]) {
@@ -628,6 +664,12 @@ pub const Screen = struct {
             }
             if (self.cursor.x + 1 >= self.grid.width and !self.mode.line_wrap) return;
             if (self.cursor.x >= self.grid.width) return;
+
+            // bug #225: decrement refcounts before overwriting cells.
+            self.decrementMainGridRef(self.cursor.x, self.cursor.y);
+            if (self.cursor.x + 1 < self.grid.width) {
+                self.decrementMainGridRef(self.cursor.x + 1, self.cursor.y);
+            }
 
             var cell = self.cur_cell;
             cell.char = char;
@@ -657,6 +699,8 @@ pub const Screen = struct {
                     try self.grid.scrollUp();
                     self.shiftSixelAnchors(-1);
                     const bottom_line = self.grid.getLineMut(self.grid.height - 1);
+                    // bug #225: decrement refcounts for fill cells.
+                    self.decrementLineRefs(bottom_line.cells.items);
                     @memset(bottom_line.cells.items, self.eraseCell());
                     bottom_line.dirty = true;
                 } else if (self.scroll_region != null and self.cursor.y == self.scroll_region.?[1]) {
@@ -670,10 +714,15 @@ pub const Screen = struct {
         if (self.mode.insert) {
             var x = self.grid.width - 1;
             while (x > self.cursor.x) : (x -= 1) {
+                // bug #225: decrement refcount for the overwritten cell.
+                self.decrementMainGridRef(x, self.cursor.y);
                 const prev = self.grid.getCell(x - 1, self.cursor.y);
                 self.grid.setCell(x, self.cursor.y, prev);
             }
         }
+
+        // bug #225: decrement refcount before overwriting.
+        self.decrementMainGridRef(self.cursor.x, self.cursor.y);
 
         var cell = self.cur_cell;
         cell.char = char;
@@ -768,17 +817,23 @@ pub const Screen = struct {
             0 => {
                 var x = self.cursor.x;
                 while (x < self.grid.width) : (x += 1) {
+                    // bug #225: decrement refcount before erasing.
+                    self.decrementMainGridRef(x, self.cursor.y);
                     self.grid.setCell(x, self.cursor.y, fill);
                 }
             },
             1 => {
                 var x: u32 = 0;
                 while (x <= self.cursor.x) : (x += 1) {
+                    // bug #225: decrement refcount before erasing.
+                    self.decrementMainGridRef(x, self.cursor.y);
                     self.grid.setCell(x, self.cursor.y, fill);
                 }
             },
             2 => {
                 const line = self.grid.getLineMut(self.cursor.y);
+                // bug #225: decrement refcounts for all cells in this line.
+                self.decrementLineRefs(line.cells.items);
                 @memset(line.cells.items, fill);
                 line.dirty = true;
             },
@@ -797,6 +852,8 @@ pub const Screen = struct {
                         self.eraseLine(0);
                     } else {
                         const line = self.grid.getLineMut(y);
+                        // bug #225: decrement refcounts for all cells in this line.
+                        self.decrementLineRefs(line.cells.items);
                         @memset(line.cells.items, fill);
                         line.dirty = true;
                     }
@@ -809,6 +866,8 @@ pub const Screen = struct {
                         self.eraseLine(1);
                     } else {
                         const line = self.grid.getLineMut(y);
+                        // bug #225: decrement refcounts for all cells in this line.
+                        self.decrementLineRefs(line.cells.items);
                         @memset(line.cells.items, fill);
                         line.dirty = true;
                     }
@@ -817,6 +876,8 @@ pub const Screen = struct {
             2 => {
                 for (0..self.grid.height) |y| {
                     const line = self.grid.getLineMut(@intCast(y));
+                    // bug #225: decrement refcounts for all cells in this line.
+                    self.decrementLineRefs(line.cells.items);
                     @memset(line.cells.items, fill);
                     line.dirty = true;
                 }
@@ -825,8 +886,8 @@ pub const Screen = struct {
         }
 
         var removed_sixel = false;
-        for (&self.sixel_images) |*opt_img| {
-            if (opt_img.*) |img| {
+        for (self.sixel_images, 0..) |opt_img, idx| {
+            if (opt_img) |img| {
                 const cell_rows = if (img.px_height > 0) (img.px_height + 19) / 20 else 1;
                 const remove = switch (mode) {
                     0 => (img.row + @as(i32, @intCast(cell_rows))) > @as(i32, @intCast(self.cursor.y)),
@@ -836,9 +897,13 @@ pub const Screen = struct {
                 };
                 if (remove) {
                     removed_sixel = true;
-                    var to_deinit = opt_img.*;
-                    opt_img.* = null;
-                    if (to_deinit) |*ti| ti.deinit(self.allocator);
+                    // bug #225: zero refcount for evicted image.
+                    self.sixel_refcounts[idx] = 0;
+                    const slot = &self.sixel_images[idx];
+                    if (slot.*) |*img_ptr| {
+                        img_ptr.deinit(self.allocator);
+                    }
+                    slot.* = null;
                 }
             }
         }
@@ -857,6 +922,8 @@ pub const Screen = struct {
         const end = @min(self.cursor.x + n, self.grid.width);
         if (self.cursor.x < end) {
             const line = self.grid.getLineMut(self.cursor.y);
+            // bug #225: decrement refcounts for erased cells.
+            self.decrementLineRefs(line.cells.items[self.cursor.x..end]);
             @memset(line.cells.items[self.cursor.x..end], fill);
             line.dirty = true;
         }
@@ -874,11 +941,15 @@ pub const Screen = struct {
         while (i < count) : (i += 1) {
             var row = bottom;
             const temp = self.grid.getLine(bottom).*;
+            // bug #225: decrement refcounts for the target row before overwriting.
+            self.decrementLineRefs(self.grid.getLineMut(row).cells.items);
             while (row > y) : (row -= 1) {
                 self.grid.getLineMut(row).* = self.grid.getLine(row - 1).*;
             }
             self.grid.getLineMut(y).* = temp;
             const line = self.grid.getLineMut(y);
+            // bug #225: zero refcount for fill cells.
+            self.decrementLineRefs(line.cells.items);
             @memset(line.cells.items, fill);
             line.dirty = true;
         }
@@ -894,6 +965,8 @@ pub const Screen = struct {
         const fill = self.eraseCell();
         var i: u32 = 0;
         while (i < count) : (i += 1) {
+            // bug #225: decrement refcount for the bottom row before overwrite.
+            self.decrementLineRefs(self.grid.getLineMut(bottom).cells.items);
             const temp = self.grid.getLine(y).*;
             var row = y;
             while (row < bottom) : (row += 1) {
@@ -901,6 +974,8 @@ pub const Screen = struct {
             }
             self.grid.getLineMut(bottom).* = temp;
             const line = self.grid.getLineMut(bottom);
+            // bug #225: zero refcount for fill cells.
+            self.decrementLineRefs(line.cells.items);
             @memset(line.cells.items, fill);
             line.dirty = true;
         }
@@ -908,11 +983,20 @@ pub const Screen = struct {
     }
 
     pub fn insertChars(self: *Screen, n: u32) void {
+        // bug #225: decrement refcount for the overwritten cell at width-1.
+        if (self.grid.width > 0) {
+            self.decrementMainGridRef(self.grid.width - 1, self.cursor.y);
+        }
         self.grid.insertChars(self.cursor.x, self.cursor.y, n);
         self.dirty = true;
     }
 
     pub fn deleteChars(self: *Screen, n: u32) void {
+        // bug #225: decrement refcounts for the padding cells at the end.
+        var x: u32 = self.grid.width -| n;
+        while (x < self.grid.width) : (x += 1) {
+            self.decrementMainGridRef(x, self.cursor.y);
+        }
         self.grid.deleteChars(self.cursor.x, self.cursor.y, n);
         self.dirty = true;
     }
@@ -926,6 +1010,8 @@ pub const Screen = struct {
         } else if (self.cursor.y + 1 >= self.grid.height) {
             try self.grid.scrollUp();
             const bottom_line = self.grid.getLineMut(self.grid.height - 1);
+            // bug #225: decrement refcounts for the fill cells.
+            self.decrementLineRefs(bottom_line.cells.items);
             @memset(bottom_line.cells.items, self.eraseCell());
             bottom_line.dirty = true;
             return;
@@ -943,6 +1029,8 @@ pub const Screen = struct {
             if (self.grid.history.items.len - self.grid.history_start > 0) {
                 try self.grid.scrollDown();
                 const top_line = self.grid.getLineMut(0);
+                // bug #225: decrement refcounts for the fill cells.
+                self.decrementLineRefs(top_line.cells.items);
                 @memset(top_line.cells.items, self.eraseCell());
                 top_line.dirty = true;
             }
@@ -966,6 +1054,8 @@ pub const Screen = struct {
                 }
                 self.grid.getLineMut(bottom).* = temp;
                 const last = self.grid.getLineMut(bottom);
+                // bug #225: decrement refcounts for the fill cells.
+                self.decrementLineRefs(last.cells.items);
                 @memset(last.cells.items, fill);
                 last.dirty = true;
             }
@@ -981,6 +1071,8 @@ pub const Screen = struct {
                 try self.grid.scrollUp();
                 self.shiftSixelAnchors(-1);
                 const bottom_line = self.grid.getLineMut(self.grid.height - 1);
+                // bug #225: decrement refcounts for the fill cells.
+                self.decrementLineRefs(bottom_line.cells.items);
                 @memset(bottom_line.cells.items, fill);
                 bottom_line.dirty = true;
             }
@@ -1002,6 +1094,8 @@ pub const Screen = struct {
                 }
                 self.grid.getLineMut(top).* = temp;
                 const first = self.grid.getLineMut(top);
+                // bug #225: decrement refcounts for the fill cells.
+                self.decrementLineRefs(first.cells.items);
                 @memset(first.cells.items, fill);
                 first.dirty = true;
             }
@@ -1015,6 +1109,8 @@ pub const Screen = struct {
                     try self.grid.scrollDown();
                     self.shiftSixelAnchors(1);
                     const top_line = self.grid.getLineMut(0);
+                    // bug #225: decrement refcounts for the fill cells.
+                    self.decrementLineRefs(top_line.cells.items);
                     @memset(top_line.cells.items, fill);
                     top_line.dirty = true;
                 }
@@ -1181,6 +1277,8 @@ pub const Screen = struct {
         self.kitty_kbd_flags = 0;
         self.kitty_kbd_stack_len = 0;
         self.grid.clear();
+        // bug #225: zero all refcounts before clearing images.
+        @memset(&self.sixel_refcounts, 0);
         for (&self.sixel_images) |*opt_img| {
             if (opt_img.*) |*img| {
                 img.deinit(self.allocator);
@@ -1194,12 +1292,19 @@ pub const Screen = struct {
     }
 
     pub fn clearLine(self: *Screen, y: u32) void {
+        if (y < self.grid.height) {
+            const line = self.grid.getLineMut(y);
+            // bug #225: decrement refcounts for all cells in the cleared line.
+            self.decrementLineRefs(line.cells.items);
+        }
         self.grid.clearLine(y);
         self.dirty = true;
     }
 
     pub fn clearScreen(self: *Screen) void {
         self.grid.clear();
+        // bug #225: zero refcounts.
+        @memset(&self.sixel_refcounts, 0);
         for (&self.sixel_images) |*opt_img| {
             if (opt_img.*) |*img| {
                 img.deinit(self.allocator);
@@ -2101,8 +2206,10 @@ test "sixel registry wrapping keeps referenced images — bug #198" {
         const dcs = try testing.allocator.dupe(u8, "\x1bPqX\x1b\\");
         try screen.addSixelImage(dcs, 10, 20); // goes to slot i, ID i
 
-        // Clear the cells at row 2 to make the image unreferenced
+        // Clear the cells at row 2 to make the image unreferenced.
+        // Must also decrement refcounts to keep the invariant consistent.
         const line = screen.grid.getLineMut(2);
+        screen.decrementLineRefs(line.cells.items);
         @memset(line.cells.items, Cell.empty());
     }
 
@@ -2127,4 +2234,40 @@ test "sixel registry wrapping keeps referenced images — bug #198" {
     try testing.expect(slot64.? != 0);
     try testing.expect(screen.sixel_images[slot64.?] != null);
     try testing.expectEqual(@as(u32, 64), screen.sixel_images[slot64.?].?.id);
+}
+
+test "sixel refcount tracks cell writes and erases — bug #225" {
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+    screen.cell_size_known = true;
+
+    // Place a sixel (10px × 20px = 1 row × 1 col = 1 marker cell).
+    screen.cursor.y = 5;
+    screen.cursor.x = 10;
+    const dcs = try testing.allocator.dupe(u8, "\x1bPqX\x1b\\");
+    try screen.addSixelImage(dcs, 10, 20);
+
+    // Refcount should be 1 (one marker cell placed).
+    try testing.expectEqual(@as(usize, 1), screen.sixel_refcounts[0]);
+    try testing.expect(screen.isImageReferenced(0));
+
+    // Overwrite the sixel cell with a regular character.
+    screen.cursor.x = 10;
+    screen.cursor.y = 5;
+    try screen.writeChar('A');
+
+    // Refcount should now be 0; image is no longer referenced.
+    try testing.expectEqual(@as(usize, 0), screen.sixel_refcounts[0]);
+    try testing.expect(!screen.isImageReferenced(0));
+
+    // Place another sixel at row 3.
+    screen.cursor.y = 3;
+    screen.cursor.x = 0;
+    const dcs2 = try testing.allocator.dupe(u8, "\x1bPqY\x1b\\");
+    try screen.addSixelImage(dcs2, 10, 20);
+    try testing.expectEqual(@as(usize, 1), screen.sixel_refcounts[1]);
+
+    // eraseDisplay(2) clears everything including the sixel.
+    screen.eraseDisplay(2);
+    try testing.expectEqual(@as(usize, 0), screen.sixel_refcounts[1]);
 }

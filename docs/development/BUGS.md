@@ -2787,8 +2787,8 @@ cell.char = fmt[i];
 | Critical | 25 | 23 | 3 | **0** |
 | High | 48 | 48 | 1 | **0** |
 | Medium | 73 (70+3) | 72 | 2 | **0** |
-| Low | 64 (63+1) | 61 | 3 | **0** |
-| Total | 210 (206+4) | **204** | **9** | **0** |
+| Low | 64 (63+1) | 62 | 3 | **0** |
+| Total | 210 (206+4) | **205** | **9** | **0** |
 
 ---
 
@@ -2994,7 +2994,7 @@ Called from `runInteractiveClient` (line 333). This blocks the single-threaded c
 ### 225. `isImageReferenced` performs O(total_cells × num_slots) scanning — linear search per sixel placement
 **File:** `src/screen.zig:307–340`
 **Severity:** LOW (performance)
-**Status:** ⏳ Deferred — this is a performance optimization, not a correctness bug. Would require adding reference counts per slot.
+**Status:** ✅ FIXED — added `sixel_refcounts: [64]usize` to `Screen`. Every cell-write path (`writeChar`, `eraseLine`, `eraseDisplay`, `insertLines`, `deleteLines`, `insertChars`, `deleteChars`, `scrollUp`, `scrollDown`, `clearScreen`, `resetHard`) now decrements the appropriate refcount before overwriting cells. `isImageReferenced` reduced from O(cells) to O(1) array lookup.
 
 `isImageReferenced` is called up to three times per sixel placement (slot-selection steps 1, 2, and 3), and each call scans every cell in the main grid, main history, alt grid, and alt history. For a grid of 80×24 with 2000 history lines, that is ~160,000 cell comparisons per call. With step 3 looping over 64 slots, the worst case is 64 × 160K = ~10 million cell comparisons per sixel image.
 
