@@ -69,18 +69,21 @@ pub const Packet = struct {
     }
 
     pub fn serialize(self: Packet, buf: []u8) []u8 {
+        const required = 5 + self.data.len;
+        if (buf.len < required) return buf[0..0];
         var hdr_buf: [5]u8 = undefined;
         self.header.encode(&hdr_buf);
         @memcpy(buf[0..5], &hdr_buf);
         if (self.data.len > 0) {
             @memcpy(buf[5..][0..self.data.len], self.data);
         }
-        return buf[0 .. 5 + self.data.len];
+        return buf[0..required];
     }
 
     pub fn deserialize(buf: []const u8) Error!Packet {
         if (buf.len < 5) return error.InvalidPacket;
         const len = std.mem.readInt(u32, buf[0..4], .little);
+        if (len < 5) return error.InvalidPacket;
         if (buf.len < len) return error.SizeMismatch;
         return Packet{
             .header = .{
@@ -184,4 +187,16 @@ test "packet deserialize works with trailing data" {
     try testing.expectEqual(MessageType.command, @as(MessageType, @enumFromInt(parsed.header.msg_type)));
     try testing.expectEqual(@as(u32, 10), parsed.header.length);
     try testing.expectEqualStrings("hello", parsed.data);
+}
+
+test "packet serialize handles small buffer safely — bug #228" {
+    const pkt = Packet.make(.command, "hello");
+    var small_buf: [4]u8 = undefined;
+    const res = pkt.serialize(&small_buf);
+    try testing.expectEqual(@as(usize, 0), res.len);
+}
+
+test "packet deserialize handles malformed len < 5 — bug #228" {
+    const bad_pkt = [_]u8{ 0x03, 0x00, 0x00, 0x00, 0x01 }; // len = 3 (< 5)
+    try testing.expectError(error.InvalidPacket, Packet.deserialize(&bad_pkt));
 }

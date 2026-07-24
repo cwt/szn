@@ -3042,7 +3042,7 @@ The loops writing `hdr_remaining` and `body_remaining` to the file descriptor ch
 ### 228. `Packet.deserialize` and `Packet.serialize` buffer panic hazards
 **File:** `src/server/protocol.zig:71, 83–92`
 **Severity:** CRITICAL
-**Status:** ❌ OPEN
+**Status:** ✅ FIXED
 
 1. `Packet.deserialize` reads `len` from header and checks `if (buf.len < len)`. If a malformed packet specifies `len < 5` (e.g. `len = 3`), `buf[5..len]` triggers a Zig slice bounds panic (`start > end`).
 2. `Packet.serialize` executes `@memcpy(buf[5..], self.data)` without validating `buf.len >= 5 + self.data.len`.
