@@ -267,19 +267,6 @@ pub fn buildLine(allocator: std.mem.Allocator, input: BuildInput) Error!Rendered
     try ctx.set("host", input.host);
     try ctx.set("host_short", input.host_short);
 
-    // Active window vars for left/right templates.
-    for (input.windows) |w| {
-        if (w.is_active) {
-            var idx_buf: [16]u8 = undefined;
-            const idx_str = std.fmt.bufPrint(&idx_buf, "{d}", .{w.index}) catch "0";
-            try ctx.set("window_index", idx_str);
-            try ctx.set("window_name", w.name);
-            try ctx.set("window_flags", w.flags);
-            try ctx.set("window_active", "1");
-            break;
-        }
-    }
-
     var centre_buf: std.ArrayList(u8) = .empty;
     defer centre_buf.deinit(allocator);
 

@@ -3503,7 +3503,7 @@ When `placeSixelImage` evicts an existing image from a slot via Step 4b (all slo
 ### 255. Dead active-window variable loop in `status.buildLine`
 **File:** `src/status.zig:271–281`
 **Severity:** LOW (code quality)
-**Status:** 🚨 UNRESOLVED
+**Status:** ✅ FIXED — removed dead initial active-window variable loop.
 
 Lines 271–281 set active window variables on `ctx` prior to the window list loop (lines 286–299). The window list loop immediately overwrites these variables for every window. Lines 304–314 (added in bug #214) re-apply active window variables after the loop, leaving lines 271–281 as dead code.
 
