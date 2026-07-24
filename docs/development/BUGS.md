@@ -3416,3 +3416,139 @@ In tmux, `pane-border-format` defaults to `"#{pane_index}"` which corresponds to
 **Fix:** Change default from `"#I"` to `"#P"` so each pane shows its own index on the top border. Also added vertical-border format rendering: when a pane has no top border (y == 0) but has a left border (x > 0, i.e. side-by-side split), the format is drawn vertically down the left border column, one codepoint per row.
 
 
+
+
+---
+
+## NEW BUGS (2026-07-25 post-v0.7.0 code audit)
+
+Found during an audit of bugs fixed between v0.6.0 and v0.7.0, hunting for follow-up regressions, dead code, duplicated logic, and unoptimized algorithms.
+
+---
+
+### 249. History restoration order inversion in `Grid.scrollDown`
+**File:** `src/grid.zig:255–275`
+**Severity:** CRITICAL
+**Status:** 🚨 UNRESOLVED
+
+`Grid.scrollDown` was modified in bug #216 to take `history.items[history_start]` (FIFO queue, oldest line first) instead of `history.pop()` (LIFO stack, newest line first). Because `scrollUp` appends lines to `history` sequentially, `history_start` contains the oldest line while `pop()` yields the newest (most recently scrolled off) line. Restoring multiple scrolled-off lines back into the active visible grid restores them in reverse order (oldest first instead of newest first), scrambling scrollback lines.
+
+**Fix:** Restore `pop()` behavior (taking `history.items[history.items.len - 1]`) while guarding with `if (self.history.items.len <= self.history_start) return;`.
+
+---
+
+### 250. Inverted dimension assignment in `swapPaneRelative`
+**File:** `src/server/server.zig:1071–1080`
+**Severity:** HIGH
+**Status:** 🚨 UNRESOLVED
+
+Bug #220 added `resizePaneToNode` calls to update terminal sizes after swapping pane slots:
+```zig
+node1.leaf = dest_pane;
+node2.leaf = pane;
+// ...
+resizePaneToNode(pane, node1, &window.layout);
+resizePaneToNode(dest_pane, node2, &window.layout);
+```
+Since `node1.leaf` was already updated to `dest_pane` and `node2.leaf` to `pane`, calling `resizePaneToNode(pane, node1)` looks up `node1` (which is `dest_pane`'s slot) and resizes `pane` to `dest_pane`'s dimensions. When swapping two panes of unequal sizes, each pane is resized to the *other* pane's target slot, causing both swapped panes to render with mismatched layout bounds.
+
+**Fix:** Swap the node arguments in the calls: `resizePaneToNode(pane, node2, ...)` and `resizePaneToNode(dest_pane, node1, ...)`.
+
+---
+
+### 251. Out-of-bounds `cursor_x` in soft-wrapped copy mode search
+**File:** `src/mode_copy.zig:402–422`, `src/mode_copy.zig:467–477`, `src/mode_copy.zig:532–582`
+**Severity:** HIGH
+**Status:** 🚨 UNRESOLVED
+
+Bug #234 updated `lineBytes` to concatenate contiguous soft-wrapped physical lines into a single logical line buffer. When a search match occurs on a wrapped continuation line, `searchLogicalLine` returns a cell column index `found_x >= grid.width`. `placeCursorAtLogical` assigns `self.cursor_x = @intCast(x)` directly, setting `cursor_x` past the physical width of the terminal grid (`cursor_x >= grid.width`). Additionally, `searchForward` loops over physical line indices (`li += 1`), causing soft-wrapped lines to be redundantly re-searched on subsequent iterations.
+
+**Fix:** In `placeCursorAtLogical`, map `logical` and `x` to their exact physical line offset (`logical + x / grid.width`) and physical column (`x % grid.width`). Skip wrapped continuation lines in `searchForward`/`searchBackward`.
+
+---
+
+### 252. Unimplemented Sixel matrix scanning optimization in `renderSixelImages`
+**File:** `src/server/render.zig:773–827`
+**Severity:** MEDIUM (performance)
+**Status:** 🚨 UNRESOLVED
+
+`BUGS.md` (bug #240) notes that `renderSixelImages` was optimized to iterate over `screen.sixel_images` (max 64 items) instead of scanning the full O(W×H) grid matrix. However, the actual implementation in `render.zig` still performs nested loops over `y < pane_h` and `x < pane_w` per pane.
+
+**Fix:** Replace the nested matrix iteration (`y < pane_h` and `x < pane_w`) with a direct loop over `screen.sixel_images` using stored anchor coordinates.
+
+---
+
+### 253. Sixel refcount residual leak on slot eviction in `placeSixelImage`
+**File:** `src/screen.zig:326–330`
+**Severity:** MEDIUM
+**Status:** 🚨 UNRESOLVED
+
+When `placeSixelImage` evicts an existing image from a slot via Step 4b (all slots full), it frees the old image struct but does not reset `self.sixel_refcounts[slot] = 0`. The new image's cell reference count is added on top of the leftover refcount of the evicted image (`self.sixel_refcounts[slot] += ref_inc`). When the new image's cells are later erased, `sixel_refcounts[slot]` remains above 0 due to the old residual count, permanently preventing Step 3 from reusing that slot.
+
+**Fix:** Add `self.sixel_refcounts[slot] = 0;` when evicting an existing slot.
+
+---
+
+### 254. Parent pane dimensions un-restored on split allocation failure
+**File:** `src/layout.zig:125`
+**Severity:** MEDIUM
+**Status:** 🚨 UNRESOLVED
+
+`Layout.splitPane` calls `try pane.resizeTerminal(child_w1, child_h1);` before creating the layout nodes `Split` and `Node`. If subsequent allocations fail, the `errdefer` block cleans up `new_pane` but leaves `pane` shrunk to `child_w1, child_h1`.
+
+**Fix:** Defer `pane.resizeTerminal(child_w1, child_h1)` until all node allocations succeed, or add an `errdefer` to restore `pane.resizeTerminal(parent_w, parent_h)`.
+
+---
+
+### 255. Dead active-window variable loop in `status.buildLine`
+**File:** `src/status.zig:271–281`
+**Severity:** LOW (code quality)
+**Status:** 🚨 UNRESOLVED
+
+Lines 271–281 set active window variables on `ctx` prior to the window list loop (lines 286–299). The window list loop immediately overwrites these variables for every window. Lines 304–314 (added in bug #214) re-apply active window variables after the loop, leaving lines 271–281 as dead code.
+
+**Fix:** Remove lines 271–281.
+
+---
+
+### 256. Dead session list re-validation loop in `runServerDaemon`
+**File:** `src/main.zig:361–376`
+**Severity:** LOW (code quality)
+**Status:** 🚨 UNRESOLVED
+
+Lines 353–360 populate `default_pane` from `server.sessions`. Immediately following (lines 361–376), without any intervening code or async execution, the code performs the exact same loop a second time to verify if `default_pane` is still alive.
+
+**Fix:** Remove lines 361–376.
+
+---
+
+### 257. Duplicated slot eviction loop in `placeSixelImage`
+**File:** `src/screen.zig:298–307`
+**Severity:** LOW (code quality)
+**Status:** 🚨 UNRESOLVED
+
+Step 4 in `placeSixelImage` contains an exact copy of the loop in Step 3 (`if (!self.isImageReferenced(img.id)) target_slot = idx`). Since Step 4 is executed only when `target_slot == null` (which Step 3 just checked), Step 4 will never find a matching slot if Step 3 returned `null`.
+
+**Fix:** Remove redundant Step 4 loop.
+
+---
+
+### 258. `Packet.make` integer overflow risk on `5 + data.len`
+**File:** `src/server/protocol.zig:98`
+**Severity:** LOW (safety)
+**Status:** 🚨 UNRESOLVED
+
+`const total_len = 5 + data.len;` can overflow `usize` if `data.len` is near `maxInt(usize)`, wrapping around to a small integer and creating a corrupted packet header length.
+
+**Fix:** Check `if (data.len > std.math.maxInt(u32) - 5)` before calculating `total_len`.
+
+---
+
+### 259. Escaped backslash handling hazard in `unescapeQuoted`
+**File:** `src/cfg.zig:376`
+**Severity:** LOW (correctness)
+**Status:** 🚨 UNRESOLVED
+
+`unescapeQuoted` only unescapes `"`, ignoring `\`. Consequently, `\"` (an escaped backslash followed by a quote) is parsed as an escaped quote `"`, converting `\"` into `"`.
+
+**Fix:** Check for `\` and convert it to `\`.
