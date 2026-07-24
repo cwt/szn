@@ -3252,7 +3252,7 @@ In `processInput`, when evaluating a command from the prompt, `dispatch.dispatch
 ### 244. Duplicated pane swapping logic between up/down actions
 **File:** `src/server/server.zig:884–924`
 **Severity:** LOW (code quality)
-**Status:** ❌ OPEN
+**Status:** ✅ FIXED
 
 The layout node lookup, pointer swapping, and terminal resizing logic is copy-pasted between `.swap_pane_up` and `.swap_pane_down`.
 

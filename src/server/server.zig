@@ -875,48 +875,8 @@ pub const Server = struct {
                     }
                 }
             },
-            .swap_pane_up => {
-                if (window.panes.items.len > 1) {
-                    const active_idx = for (window.panes.items, 0..) |p, idx| {
-                        if (p == pane) break idx;
-                    } else return;
-                    const dest_idx = if (active_idx == 0) window.panes.items.len - 1 else active_idx - 1;
-                    const dest_pane = window.panes.items[dest_idx];
-
-                    const node1 = window.layout.findLeafParent(window.layout.root, pane) orelse return;
-                    const node2 = window.layout.findLeafParent(window.layout.root, dest_pane) orelse return;
-                    node1.leaf = dest_pane;
-                    node2.leaf = pane;
-
-                    window.panes.items[active_idx] = dest_pane;
-                    window.panes.items[dest_idx] = pane;
-
-                    // bug #220: resize panes to their new slot dimensions after swap.
-                    _ = resizePaneToNode(pane, node1, &window.layout);
-                    _ = resizePaneToNode(dest_pane, node2, &window.layout);
-                }
-            },
-            .swap_pane_down => {
-                if (window.panes.items.len > 1) {
-                    const active_idx = for (window.panes.items, 0..) |p, idx| {
-                        if (p == pane) break idx;
-                    } else return;
-                    const dest_idx = (active_idx + 1) % window.panes.items.len;
-                    const dest_pane = window.panes.items[dest_idx];
-
-                    const node1 = window.layout.findLeafParent(window.layout.root, pane) orelse return;
-                    const node2 = window.layout.findLeafParent(window.layout.root, dest_pane) orelse return;
-                    node1.leaf = dest_pane;
-                    node2.leaf = pane;
-
-                    window.panes.items[active_idx] = dest_pane;
-                    window.panes.items[dest_idx] = pane;
-
-                    // bug #220: resize panes to their new slot dimensions after swap.
-                    _ = resizePaneToNode(pane, node1, &window.layout);
-                    _ = resizePaneToNode(dest_pane, node2, &window.layout);
-                }
-            },
+            .swap_pane_up => swapPaneRelative(window, pane, -1),
+            .swap_pane_down => swapPaneRelative(window, pane, 1),
             .resize_left => {
                 const current_w = pane.screen.grid.width;
                 const current_h = pane.screen.grid.height;
@@ -1092,6 +1052,31 @@ pub const Server = struct {
         };
         const bounds = layout_tree.findPaneBounds(target_pane) orelse return;
         _ = pane.resizeTerminal(bounds.w, bounds.h) catch {};
+    }
+
+    fn swapPaneRelative(window: *Window, pane: *Pane, dir: i2) void {
+        if (window.panes.items.len <= 1) return;
+        const active_idx = for (window.panes.items, 0..) |p, idx| {
+            if (p == pane) break idx;
+        } else return;
+        const count = window.panes.items.len;
+        const dest_idx = if (dir < 0)
+            (if (active_idx == 0) count - 1 else active_idx - 1)
+        else
+            (active_idx + 1) % count;
+        const dest_pane = window.panes.items[dest_idx];
+
+        const node1 = window.layout.findLeafParent(window.layout.root, pane) orelse return;
+        const node2 = window.layout.findLeafParent(window.layout.root, dest_pane) orelse return;
+        node1.leaf = dest_pane;
+        node2.leaf = pane;
+
+        window.panes.items[active_idx] = dest_pane;
+        window.panes.items[dest_idx] = pane;
+
+        // bug #220: resize panes to their new slot dimensions after swap.
+        resizePaneToNode(pane, node1, &window.layout);
+        resizePaneToNode(dest_pane, node2, &window.layout);
     }
 
     pub fn processInput(self: *Server, buf: []const u8) ServerError!void {
@@ -3822,4 +3807,27 @@ test "prompt command execution frees DispatchResult — bug #237" {
     try server.processInput("\r");
 
     try testing.expect(!server.command_mode);
+}
+
+test "swap_pane_up and swap_pane_down swap panes in window — bug #244" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    const session = try server.newSession("test", 80, 24);
+    const win = session.active_window.?;
+    const pane1 = win.active_pane.?;
+    const pane2 = try win.addPane(testing.allocator);
+
+    try testing.expectEqual(pane1, win.panes.items[0]);
+    try testing.expectEqual(pane2, win.panes.items[1]);
+
+    // Execute swapPaneRelative down
+    Server.swapPaneRelative(win, pane1, 1);
+    try testing.expectEqual(pane2, win.panes.items[0]);
+    try testing.expectEqual(pane1, win.panes.items[1]);
+
+    // Execute swapPaneRelative up
+    Server.swapPaneRelative(win, pane1, -1);
+    try testing.expectEqual(pane1, win.panes.items[0]);
+    try testing.expectEqual(pane2, win.panes.items[1]);
 }
