@@ -3241,7 +3241,7 @@ In `processInput`, when evaluating a command from the prompt, `dispatch.dispatch
 ### 243. Duplicated layout tree traversal logic in server
 **File:** `src/server/server.zig:1099, 1964`
 **Severity:** LOW (code quality)
-**Status:** ❌ OPEN
+**Status:** ✅ FIXED
 
 `layoutFindNodeBounds` and `findPaneBounds` perform the exact same layout tree traversal logic.
 

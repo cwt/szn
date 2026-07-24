@@ -203,6 +203,47 @@ pub const Layout = struct {
         leaves.items[leaves.items.len - 1].leaf = first_pane;
     }
 
+    pub const PaneBounds = struct {
+        pane: *Pane,
+        x: u32,
+        y: u32,
+        w: u32,
+        h: u32,
+    };
+
+    pub fn findPaneBounds(self: *const Layout, target: *const Pane) ?PaneBounds {
+        return findNodeBounds(self.root, target, 0, 0, self.width, self.height);
+    }
+
+    fn findNodeBounds(node: *const Node, target: *const Pane, lx: u32, ly: u32, lw: u32, lh: u32) ?PaneBounds {
+        switch (node.*) {
+            .leaf => |pane| {
+                if (pane == target) {
+                    return PaneBounds{ .pane = pane, .x = lx, .y = ly, .w = lw, .h = lh };
+                }
+                return null;
+            },
+            .split => |s| {
+                if (s.direction == .horizontal) {
+                    const available_w = lw -| 1;
+                    const split_w = @as(u32, @intFromFloat(@as(f64, @floatFromInt(available_w)) * s.proportion));
+                    const w1 = @max(1, split_w);
+                    const w2 = @max(1, available_w -| w1);
+                    if (findNodeBounds(s.a, target, lx, ly, w1, lh)) |b| return b;
+                    if (findNodeBounds(s.b, target, lx + w1 + 1, ly, w2, lh)) |b| return b;
+                } else {
+                    const available_h = lh -| 1;
+                    const split_h = @as(u32, @intFromFloat(@as(f64, @floatFromInt(available_h)) * s.proportion));
+                    const h1 = @max(1, split_h);
+                    const h2 = @max(1, available_h -| h1);
+                    if (findNodeBounds(s.a, target, lx, ly, lw, h1)) |b| return b;
+                    if (findNodeBounds(s.b, target, lx, ly + h1 + 1, lw, h2)) |b| return b;
+                }
+                return null;
+            },
+        }
+    }
+
     fn collectLeafNodes(self: *Layout, node: *Node, out: *std.ArrayList(*Node)) !void {
         switch (node.*) {
             .leaf => try out.append(self.allocator, node),
@@ -530,4 +571,20 @@ test "splitPane rejects parent smaller than 3 cells — bug #233" {
     defer layout.deinit();
 
     try testing.expectError(error.PaneTooSmall, layout.splitPane(testing.allocator, pane1, .horizontal, 0.5));
+}
+
+test "findPaneBounds calculates bounds correctly — bug #243" {
+    const pane1 = try createTestPane(testing.allocator, 0);
+    var layout = try Layout.init(testing.allocator, pane1, 80, 24);
+    defer layout.deinit();
+
+    const pane2 = try layout.splitPane(testing.allocator, pane1, .horizontal, 0.5);
+
+    const pb1 = layout.findPaneBounds(pane1).?;
+    try testing.expectEqual(@as(u32, 0), pb1.x);
+    try testing.expectEqual(@as(u32, 0), pb1.y);
+
+    const pb2 = layout.findPaneBounds(pane2).?;
+    try testing.expectEqual(@as(u32, 40), pb2.x);
+    try testing.expectEqual(@as(u32, 0), pb2.y);
 }

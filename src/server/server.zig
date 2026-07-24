@@ -1086,37 +1086,12 @@ pub const Server = struct {
     /// Resize a pane to match its layout node's dimensions. Used after pane swaps
     /// so each pane fills its new slot (bug #220).
     fn resizePaneToNode(pane: *Pane, node: *const layout.Node, layout_tree: *const layout.Layout) void {
-        const bounds = layoutFindNodeBounds(layout_tree.root, layout_tree.width, layout_tree.height, node) orelse return;
+        const target_pane = switch (node.*) {
+            .leaf => |p| p,
+            else => return,
+        };
+        const bounds = layout_tree.findPaneBounds(target_pane) orelse return;
         _ = pane.resizeTerminal(bounds.w, bounds.h) catch {};
-    }
-
-    fn layoutFindNodeBounds(
-        root: *const layout.Node,
-        lw: u32,
-        lh: u32,
-        target: *const layout.Node,
-    ) ?struct { w: u32, h: u32 } {
-        if (root == target) return .{ .w = lw, .h = lh };
-        switch (root.*) {
-            .leaf => return null,
-            .split => |s| {
-                if (s.direction == .horizontal) {
-                    const avail = lw -| 1;
-                    const split_w = @as(u32, @intFromFloat(@as(f64, @floatFromInt(avail)) * s.proportion));
-                    const w_a = @max(1, split_w);
-                    const w_b = @max(1, avail -| w_a);
-                    if (layoutFindNodeBounds(s.a, w_a, lh, target)) |r| return r;
-                    return layoutFindNodeBounds(s.b, w_b, lh, target);
-                } else {
-                    const avail = lh -| 1;
-                    const split_h = @as(u32, @intFromFloat(@as(f64, @floatFromInt(avail)) * s.proportion));
-                    const h_a = @max(1, split_h);
-                    const h_b = @max(1, avail -| h_a);
-                    if (layoutFindNodeBounds(s.a, lw, h_a, target)) |r| return r;
-                    return layoutFindNodeBounds(s.b, lw, h_b, target);
-                }
-            },
-        }
     }
 
     pub fn processInput(self: *Server, buf: []const u8) ServerError!void {
@@ -1465,7 +1440,7 @@ pub const Server = struct {
                                     self.handleMouseFocus(m.x, m.y) catch {};
                                     const current_active_pane = window.active_pane orelse return;
                                     if (current_active_pane == old_active_pane) {
-                                        if (self.findPaneBounds(window.layout.root, current_active_pane, 0, 0, window.layout.width, window.layout.height)) |pb| {
+                                        if (self.findPaneBounds(window, current_active_pane)) |pb| {
                                             const local_x = m.x -| pb.x;
                                             const local_y = m.y -| pb.y;
                                             const grid_w = current_active_pane.screen.grid.width;
@@ -1592,7 +1567,7 @@ pub const Server = struct {
                                             }
                                         } else if (m.button == .left and m.drag) {
                                             if (self.mouse_press_pane) |press_pane| {
-                                                if (self.findPaneBounds(window.layout.root, press_pane, 0, 0, window.layout.width, window.layout.height)) |pb| {
+                                                if (self.findPaneBounds(window, press_pane)) |pb| {
                                                     if (press_pane.screen.copy_mode == null) {
                                                         press_pane.enterCopyMode() catch {};
                                                     }
@@ -1771,7 +1746,7 @@ pub const Server = struct {
             pane.screen.mode.mouse_button or
             pane.screen.mode.mouse_sgr;
         if (!wants_mouse) return;
-        if (self.findPaneBounds(window.layout.root, pane, 0, 0, window.layout.width, window.layout.height)) |pb| {
+        if (self.findPaneBounds(window, pane)) |pb| {
             if (m.x >= pb.x and m.x < pb.x + pb.w and m.y >= pb.y and m.y < pb.y + pb.h) {
                 const local_x = m.x - pb.x;
                 const local_y = m.y - pb.y;
@@ -1956,33 +1931,10 @@ pub const Server = struct {
         }
     }
 
-    fn findPaneBounds(self: *Server, node: *const @import("../layout.zig").Node, target: *Pane, lx: u32, ly: u32, lw: u32, lh: u32) ?render.PaneBounds {
-        switch (node.*) {
-            .leaf => |pane| {
-                if (pane == target) {
-                    return render.PaneBounds{ .pane = pane, .x = lx, .y = ly, .w = lw, .h = lh };
-                }
-                return null;
-            },
-            .split => |s| {
-                if (s.direction == .horizontal) {
-                    const available_w = lw -| 1;
-                    const split_w = @as(u32, @intFromFloat(@as(f64, @floatFromInt(available_w)) * s.proportion));
-                    const w1 = @max(1, split_w);
-                    const w2 = @max(1, available_w -| w1);
-                    if (self.findPaneBounds(s.a, target, lx, ly, w1, lh)) |b| return b;
-                    if (self.findPaneBounds(s.b, target, lx + w1 + 1, ly, w2, lh)) |b| return b;
-                } else {
-                    const available_h = lh -| 1;
-                    const split_h = @as(u32, @intFromFloat(@as(f64, @floatFromInt(available_h)) * s.proportion));
-                    const h1 = @max(1, split_h);
-                    const h2 = @max(1, available_h -| h1);
-                    if (self.findPaneBounds(s.a, target, lx, ly, lw, h1)) |b| return b;
-                    if (self.findPaneBounds(s.b, target, lx, ly + h1 + 1, lw, h2)) |b| return b;
-                }
-                return null;
-            },
-        }
+    fn findPaneBounds(self: *Server, window: *const Window, target: *Pane) ?render.PaneBounds {
+        _ = self;
+        const b = window.layout.findPaneBounds(target) orelse return null;
+        return render.PaneBounds{ .pane = b.pane, .x = b.x, .y = b.y, .w = b.w, .h = b.h };
     }
 
     fn paneClipboardCallback(ctx: ?*anyopaque, target: []const u8, base64: []const u8) void {
@@ -3278,7 +3230,7 @@ test "findPaneAtNode and findPaneBounds vertical split layout mismatch" {
     const pane2 = try win.splitPane(testing.allocator, pane1, true, 0.5);
 
     // Let's test findPaneBounds for pane2:
-    const pb2 = server.findPaneBounds(win.layout.root, pane2, 0, 0, 80, 5).?;
+    const pb2 = server.findPaneBounds(win, pane2).?;
     try testing.expectEqual(@as(u32, 3), pb2.y); // Should start at row 3
     try testing.expectEqual(@as(u32, 2), pb2.h); // Should have height 2
 
