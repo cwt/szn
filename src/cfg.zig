@@ -195,10 +195,12 @@ fn parseSet(allocator: std.mem.Allocator, args: []const u8, result: *ParseResult
     // Parse option name
     const space_pos = std.mem.indexOfAny(u8, remaining, " \t") orelse return error.MissingValue;
     flags.option = try allocator.dupe(u8, remaining[0..space_pos]);
+    errdefer allocator.free(flags.option);
     const val_str = std.mem.trim(u8, remaining[space_pos + 1 ..], " \t");
 
     // Parse value based on content
     flags.value = try parseValue(allocator, val_str);
+    errdefer if (flags.value == .string) allocator.free(flags.value.string);
 
     try result.directives.append(allocator, Directive{ .set = flags });
 }
@@ -254,17 +256,20 @@ fn trimLeft(slice: []const u8, chars: []const u8) []const u8 {
 fn parseBindKey(allocator: std.mem.Allocator, args: []const u8, result: *ParseResult) Error!void {
     const trimmed = std.mem.trim(u8, args, " \t");
     var remaining = trimmed;
-    var key_table: ?[]const u8 = null;
     var reverse = false;
+    var key_table: ?[]const u8 = null;
+    errdefer if (key_table) |kt| allocator.free(kt);
 
     // Parse flags
     while (remaining.len > 0 and remaining[0] == '-') {
         if (std.mem.startsWith(u8, remaining, "-T")) {
             remaining = trimLeft(remaining[2..], " \t");
             const space = std.mem.indexOfAny(u8, remaining, " \t") orelse return error.InvalidBind;
+            if (key_table) |kt| allocator.free(kt);
             key_table = try allocator.dupe(u8, remaining[0..space]);
             remaining = trimLeft(remaining[space..], " \t");
         } else if (std.mem.startsWith(u8, remaining, "-n")) {
+            if (key_table) |kt| allocator.free(kt);
             key_table = try allocator.dupe(u8, "root");
             remaining = trimLeft(remaining[2..], " \t");
         } else if (std.mem.startsWith(u8, remaining, "-r")) {
@@ -282,6 +287,7 @@ fn parseBindKey(allocator: std.mem.Allocator, args: []const u8, result: *ParseRe
 
     const parsed_key = try key.parseKeyName(key_str);
     const command = try allocator.dupe(u8, cmd_str);
+    errdefer allocator.free(command);
 
     try result.directives.append(allocator, Directive{
         .bind_key = BindKey{
@@ -299,15 +305,18 @@ fn parseUnbindKey(allocator: std.mem.Allocator, args: []const u8, result: *Parse
     const trimmed = std.mem.trim(u8, args, " \t");
     var remaining = trimmed;
     var key_table: ?[]const u8 = null;
+    errdefer if (key_table) |kt| allocator.free(kt);
 
     // Parse flags
     while (remaining.len > 0 and remaining[0] == '-') {
         if (std.mem.startsWith(u8, remaining, "-T")) {
             remaining = trimLeft(remaining[2..], " \t");
             const space = std.mem.indexOfAny(u8, remaining, " \t") orelse return error.InvalidBind;
+            if (key_table) |kt| allocator.free(kt);
             key_table = try allocator.dupe(u8, remaining[0..space]);
             remaining = trimLeft(remaining[space..], " \t");
         } else if (std.mem.startsWith(u8, remaining, "-n")) {
+            if (key_table) |kt| allocator.free(kt);
             key_table = try allocator.dupe(u8, "root");
             remaining = trimLeft(remaining[2..], " \t");
         } else {
@@ -339,16 +348,21 @@ fn parseSetEnv(allocator: std.mem.Allocator, args: []const u8, result: *ParseRes
 
     if (std.mem.indexOfScalar(u8, remaining, '=')) |eq_pos| {
         const name = try allocator.dupe(u8, remaining[0..eq_pos]);
+        errdefer allocator.free(name);
         const val_str = remaining[eq_pos + 1 ..];
         const value = try allocator.dupe(u8, val_str);
+        errdefer allocator.free(value);
         try result.directives.append(allocator, Directive{ .set_environment = SetEnv{ .flags = .{ .global = global }, .name = name, .value = value } });
     } else if (std.mem.indexOfAny(u8, remaining, " \t")) |sp_pos| {
         const name = try allocator.dupe(u8, remaining[0..sp_pos]);
+        errdefer allocator.free(name);
         const val_str = std.mem.trim(u8, remaining[sp_pos + 1 ..], " \t");
         const value = try allocator.dupe(u8, val_str);
+        errdefer allocator.free(value);
         try result.directives.append(allocator, Directive{ .set_environment = SetEnv{ .flags = .{ .global = global }, .name = name, .value = value } });
     } else {
         const name = try allocator.dupe(u8, remaining);
+        errdefer allocator.free(name);
         try result.directives.append(allocator, Directive{ .set_environment = SetEnv{ .flags = .{ .global = global }, .name = name, .value = null } });
     }
 }
@@ -390,11 +404,13 @@ fn parseIfShell(allocator: std.mem.Allocator, args: []const u8, result: *ParseRe
     const first_q = findUnescapedQuote(args, 0) orelse return error.MissingQuotes;
     const second_q = findUnescapedQuote(args, first_q + 1) orelse return error.MissingQuotes;
     const condition = try unescapeQuoted(allocator, args[first_q + 1 .. second_q]);
+    errdefer allocator.free(condition);
 
     const rest = std.mem.trim(u8, args[second_q + 1 ..], " \t");
     if (rest.len == 0 or rest[0] != '"') return error.MissingQuotes;
     const third_q = findUnescapedQuote(rest, 1) orelse return error.MissingQuotes;
     const command = try unescapeQuoted(allocator, rest[1..third_q]);
+    errdefer allocator.free(command);
 
     try result.directives.append(allocator, Directive{ .if_shell = IfShell{ .condition = condition, .command = command } });
 }
@@ -635,4 +651,21 @@ test "parseValue quoted string rejects missing closing quote — bug #117" {
     defer if (v3 == .string) allocator.free(v3.string);
     try testing.expect(v3 == .string);
     try testing.expectEqualStrings("", v3.string);
+}
+
+test "parseConfig duplicate flags and error handling does not leak allocations — bug #238" {
+    const allocator = testing.allocator;
+
+    // Test duplicate -T flags in bind-key
+    var res1 = try parseConfig(allocator, "bind-key -T mytable -T root x display-message");
+    res1.deinit(allocator);
+
+    // Test duplicate -n flags in unbind-key
+    var res2 = try parseConfig(allocator, "unbind-key -n -n x");
+    res2.deinit(allocator);
+
+    // Test parseIfShell error handling via parseConfig
+    var res3 = try parseConfig(allocator, "if-shell \"test\" bad_unquoted_cmd");
+    defer res3.deinit(allocator);
+    try testing.expect(res3.errors.items.len > 0);
 }

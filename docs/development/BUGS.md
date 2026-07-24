@@ -3177,7 +3177,7 @@ In `processInput`, when evaluating a command from the prompt, `dispatch.dispatch
 ### 238. Memory leaks in configuration directive parsing
 **File:** `src/cfg.zig:197, 263–311, 340–349, 392–395`
 **Severity:** HIGH
-**Status:** ❌ OPEN
+**Status:** ✅ FIXED
 
 - **`parseSet` (L197):** `flags.option` is duplicated; if `parseValue` fails, `flags.option` leaks. Add `errdefer allocator.free(flags.option);`.
 - **`parseBindKey` & `parseUnbindKey` (L263–311):** Duplicate `-T`/`-n` flags overwrite `key_table` without freeing previous allocations. If `parseKeyName` fails, `key_table` leaks. Add prior `free` and `errdefer` guards.
