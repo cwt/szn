@@ -189,9 +189,7 @@ pub const Pty = struct {
             return try allocator.dupe(u8, path_bytes[0..path_end]);
         } else if (builtin.os.tag == .linux) {
             var proc_path_buf: [64]u8 = undefined;
-            const proc_path = std.fmt.bufPrint(&proc_path_buf, "/proc/{d}/cwd", .{pgrp}) catch return error.ProcessExited;
-            const proc_path_z = try allocator.dupeZ(u8, proc_path);
-            defer allocator.free(proc_path_z);
+            const proc_path_z = std.fmt.bufPrintZ(&proc_path_buf, "/proc/{d}/cwd", .{pgrp}) catch return error.ProcessExited;
 
             var path_buf: [MAXPATHLEN]u8 = undefined;
             const n = readlink(proc_path_z, &path_buf, path_buf.len);
@@ -340,4 +338,18 @@ test "reap only clears pid on actual child exit — bug #125" {
     pty.reap();
     // pid should either be >0 (still running) or -1 (reaped).
     // The key invariant: reap only clears pid after waitpid succeeds.
+}
+
+test "getCwd with zero-terminated stack buffer — bug #242" {
+    var pty = try Pty.open();
+    defer pty.deinit();
+
+    const argv = [_][]const u8{"true"};
+    try pty.spawn(testing.allocator, &argv, "", "", null);
+
+    // Call getCwd: should return duplicated cwd or ProcessExited
+    if (pty.getCwd(testing.allocator)) |cwd| {
+        defer testing.allocator.free(cwd);
+        try testing.expect(cwd.len > 0);
+    } else |_| {}
 }

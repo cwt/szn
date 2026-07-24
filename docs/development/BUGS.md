@@ -3228,7 +3228,7 @@ In `processInput`, when evaluating a command from the prompt, `dispatch.dispatch
 ### 242. Heap allocation in `getCwd` PTY path resolution
 **File:** `src/server/pty.zig:193–195`
 **Severity:** MEDIUM (performance)
-**Status:** ❌ OPEN
+**Status:** ✅ FIXED
 
 `getCwd` allocates a heap string using `allocator.dupeZ(u8, proc_path)` before calling `readlink`.
 
