@@ -273,8 +273,16 @@ pub const Display = struct {
             }
         }
 
+        var active_bounds: ?PaneBounds = null;
+        for (bounds) |pb| {
+            if (pb.pane == active_pane) {
+                active_bounds = pb;
+                break;
+            }
+        }
+
         const mode_border_fg = if (pane_in_copy_mode) Colour.fromIndexed(11) else theme.pane_active_border_fg;
-        try drawLayoutBorders(layout_root, 0, 0, merged_w, merged_h, merged_screen, active_pane, bounds, theme.pane_border_fg, mode_border_fg);
+        try drawLayoutBorders(layout_root, 0, 0, merged_w, merged_h, merged_screen, active_bounds, theme.pane_border_fg, mode_border_fg);
 
         for (bounds) |pb| {
             const fmt = pb.border_format;
@@ -303,14 +311,6 @@ pub const Display = struct {
                 }
                 i += cp_len;
                 col += 1;
-            }
-        }
-
-        var active_bounds: ?PaneBounds = null;
-        for (bounds) |pb| {
-            if (pb.pane == active_pane) {
-                active_bounds = pb;
-                break;
             }
         }
 
@@ -350,8 +350,7 @@ pub const Display = struct {
         lw: u32,
         lh: u32,
         merged_screen: *Screen,
-        active_pane: *Pane,
-        bounds: []const PaneBounds,
+        active_bound: ?PaneBounds,
         border_fg: Colour,
         active_border_fg: Colour,
     ) !void {
@@ -369,7 +368,7 @@ pub const Display = struct {
                         var y: u32 = ly;
                         while (y < ly + lh) : (y += 1) {
                             if (y >= merged_screen.grid.height) break;
-                            const is_active = isBorderActiveAt(border_x, y, true, active_pane, bounds);
+                            const is_active = isBorderActiveAt(border_x, y, true, active_bound);
                             const border_col = if (is_active) active_border_fg else border_fg;
                             var cell = &merged_screen.grid.getLineMut(y).cells.items[border_x];
                             if (cell.char == 0x2500) {
@@ -380,8 +379,8 @@ pub const Display = struct {
                             cell.fg = border_col;
                         }
                     }
-                    try drawLayoutBorders(s.a, lx, ly, w1, lh, merged_screen, active_pane, bounds, border_fg, active_border_fg);
-                    try drawLayoutBorders(s.b, lx + w1 + 1, ly, w2, lh, merged_screen, active_pane, bounds, border_fg, active_border_fg);
+                    try drawLayoutBorders(s.a, lx, ly, w1, lh, merged_screen, active_bound, border_fg, active_border_fg);
+                    try drawLayoutBorders(s.b, lx + w1 + 1, ly, w2, lh, merged_screen, active_bound, border_fg, active_border_fg);
                 } else {
                     const available_h = lh -| 1;
                     const split_h = @as(u32, @intFromFloat(@as(f64, @floatFromInt(available_h)) * s.proportion));
@@ -393,7 +392,7 @@ pub const Display = struct {
                         var x: u32 = lx;
                         while (x < lx + lw) : (x += 1) {
                             if (x >= merged_screen.grid.width) break;
-                            const is_active = isBorderActiveAt(x, border_y, false, active_pane, bounds);
+                            const is_active = isBorderActiveAt(x, border_y, false, active_bound);
                             const border_col = if (is_active) active_border_fg else border_fg;
                             var cell = &merged_screen.grid.getLineMut(border_y).cells.items[x];
                             if (cell.char == 0x2502) {
@@ -404,21 +403,14 @@ pub const Display = struct {
                             cell.fg = border_col;
                         }
                     }
-                    try drawLayoutBorders(s.a, lx, ly, lw, h1, merged_screen, active_pane, bounds, border_fg, active_border_fg);
-                    try drawLayoutBorders(s.b, lx, ly + h1 + 1, lw, h2, merged_screen, active_pane, bounds, border_fg, active_border_fg);
+                    try drawLayoutBorders(s.a, lx, ly, lw, h1, merged_screen, active_bound, border_fg, active_border_fg);
+                    try drawLayoutBorders(s.b, lx, ly + h1 + 1, lw, h2, merged_screen, active_bound, border_fg, active_border_fg);
                 }
             },
         }
     }
 
-    fn isBorderActiveAt(bx: u32, by: u32, is_vertical: bool, active_pane: *Pane, bounds: []const PaneBounds) bool {
-        var active_bound: ?PaneBounds = null;
-        for (bounds) |pb| {
-            if (pb.pane == active_pane) {
-                active_bound = pb;
-                break;
-            }
-        }
+    fn isBorderActiveAt(bx: u32, by: u32, is_vertical: bool, active_bound: ?PaneBounds) bool {
         const ab = active_bound orelse return false;
 
         if (is_vertical) {
@@ -1550,4 +1542,28 @@ test "renderStatusBar with search_prefix prompt — bug #226" {
 
     try display.renderStatusBar("", Colour.default_(), Colour.default_(), null, true, "query", '/', false);
     try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "/ query") != null);
+}
+
+test "isBorderActiveAt uses pre-calculated active_bound — bug #241" {
+    const pane1 = try std.testing.allocator.create(Pane);
+    pane1.* = try Pane.init(std.testing.allocator, 1, 40, 24);
+    defer {
+        pane1.deinit();
+        std.testing.allocator.destroy(pane1);
+    }
+
+    const pb = PaneBounds{
+        .pane = pane1,
+        .x = 0,
+        .y = 0,
+        .w = 40,
+        .h = 24,
+    };
+
+    // Border at x=40 (right of pane 1) is active vertically
+    try std.testing.expect(Display.isBorderActiveAt(40, 10, true, pb));
+    // Border at x=50 is not active
+    try std.testing.expect(!Display.isBorderActiveAt(50, 10, true, pb));
+    // Border with null active_bound returns false
+    try std.testing.expect(!Display.isBorderActiveAt(40, 10, true, null));
 }

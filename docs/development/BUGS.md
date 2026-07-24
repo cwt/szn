@@ -3215,7 +3215,7 @@ In `processInput`, when evaluating a command from the prompt, `dispatch.dispatch
 ### 241. O(N) pixel-level border active checks inside render loop
 **File:** `src/server/render.zig:372, 414`
 **Severity:** MEDIUM (performance)
-**Status:** ❌ OPEN
+**Status:** ✅ FIXED
 
 `isBorderActiveAt` is called for every single pixel of split layout borders, iterating over all pane bounds to find `active_bound` every time.
 
