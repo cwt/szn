@@ -1074,9 +1074,11 @@ pub const Server = struct {
         window.panes.items[active_idx] = dest_pane;
         window.panes.items[dest_idx] = pane;
 
-        // bug #220: resize panes to their new slot dimensions after swap.
-        resizePaneToNode(pane, node1, &window.layout);
-        resizePaneToNode(dest_pane, node2, &window.layout);
+        // bug #220 & bug #250: resize panes to their new slot dimensions after swap.
+        // node1 now holds dest_pane, so node1's bounds are dest_pane's new slot.
+        // node2 now holds pane, so node2's bounds are pane's new slot.
+        resizePaneToNode(pane, node2, &window.layout);
+        resizePaneToNode(dest_pane, node1, &window.layout);
     }
 
     pub fn processInput(self: *Server, buf: []const u8) ServerError!void {
@@ -3816,7 +3818,10 @@ test "swap_pane_up and swap_pane_down swap panes in window — bug #244" {
     const session = try server.newSession("test", 80, 24);
     const win = session.active_window.?;
     const pane1 = win.active_pane.?;
-    const pane2 = try win.addPane(testing.allocator);
+    const pane2 = try win.splitPane(testing.allocator, pane1, true, 0.3); // pane1 gets 30%, pane2 gets 70%
+
+    const h1_orig = pane1.screen.grid.height;
+    const h2_orig = pane2.screen.grid.height;
 
     try testing.expectEqual(pane1, win.panes.items[0]);
     try testing.expectEqual(pane2, win.panes.items[1]);
@@ -3826,8 +3831,14 @@ test "swap_pane_up and swap_pane_down swap panes in window — bug #244" {
     try testing.expectEqual(pane2, win.panes.items[0]);
     try testing.expectEqual(pane1, win.panes.items[1]);
 
+    // bug #250: pane1 should now have pane2's former slot height, and vice versa
+    try testing.expectEqual(h2_orig, pane1.screen.grid.height);
+    try testing.expectEqual(h1_orig, pane2.screen.grid.height);
+
     // Execute swapPaneRelative up
     Server.swapPaneRelative(win, pane1, -1);
     try testing.expectEqual(pane1, win.panes.items[0]);
     try testing.expectEqual(pane2, win.panes.items[1]);
+    try testing.expectEqual(h1_orig, pane1.screen.grid.height);
+    try testing.expectEqual(h2_orig, pane2.screen.grid.height);
 }

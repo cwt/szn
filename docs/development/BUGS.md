@@ -3440,7 +3440,7 @@ Found during an audit of bugs fixed between v0.6.0 and v0.7.0, hunting for follo
 ### 250. Inverted dimension assignment in `swapPaneRelative`
 **File:** `src/server/server.zig:1071–1080`
 **Severity:** HIGH
-**Status:** 🚨 UNRESOLVED
+**Status:** ✅ FIXED — swapped node parameters to `resizePaneToNode(pane, node2, ...)` and `resizePaneToNode(dest_pane, node1, ...)` so each pane receives its correct new slot dimensions. Updated unit tests.
 
 Bug #220 added `resizePaneToNode` calls to update terminal sizes after swapping pane slots:
 ```zig
