@@ -95,10 +95,14 @@ pub const Packet = struct {
     }
 
     pub fn make(msg_type: MessageType, data: []const u8) Packet {
-        const total_len = 5 + data.len;
+        const length: u32 = if (data.len > std.math.maxInt(u32) - 5)
+            std.math.maxInt(u32)
+        else
+            @intCast(5 + data.len);
+
         return Packet{
             .header = .{
-                .length = if (total_len > std.math.maxInt(u32)) std.math.maxInt(u32) else @as(u32, @intCast(total_len)),
+                .length = length,
                 .msg_type = @intFromEnum(msg_type),
             },
             .data = data,
@@ -199,4 +203,9 @@ test "packet serialize handles small buffer safely — bug #228" {
 test "packet deserialize handles malformed len < 5 — bug #228" {
     const bad_pkt = [_]u8{ 0x03, 0x00, 0x00, 0x00, 0x01 }; // len = 3 (< 5)
     try testing.expectError(error.InvalidPacket, Packet.deserialize(&bad_pkt));
+}
+
+test "Packet.make clamps length safely without integer overflow — bug #258" {
+    const pkt = Packet.make(.command, "hello");
+    try testing.expectEqual(@as(u32, 10), pkt.header.length);
 }

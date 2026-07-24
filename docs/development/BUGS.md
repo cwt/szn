@@ -3536,7 +3536,7 @@ Step 4 in `placeSixelImage` contains an exact copy of the loop in Step 3 (`if (!
 ### 258. `Packet.make` integer overflow risk on `5 + data.len`
 **File:** `src/server/protocol.zig:98`
 **Severity:** LOW (safety)
-**Status:** 🚨 UNRESOLVED
+**Status:** ✅ FIXED — checked `data.len > std.math.maxInt(u32) - 5` before adding 5 in `Packet.make`. Added unit test.
 
 `const total_len = 5 + data.len;` can overflow `usize` if `data.len` is near `maxInt(usize)`, wrapping around to a small integer and creating a corrupted packet header length.
 
