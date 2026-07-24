@@ -3084,7 +3084,7 @@ Reverse Index (`RI`) and Scroll Down (`CSI T`) in `Screen` invoke `self.grid.scr
 ### 231. Integer underflow panic in `Grid.clone()`
 **File:** `src/grid.zig:310–330`
 **Severity:** CRITICAL
-**Status:** ❌ OPEN
+**Status:** ✅ FIXED
 
 `copy.history` is allocated with active items (`items.len - history_start`), but `copy.history_start` is copied directly from `self.history_start`.
 

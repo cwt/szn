@@ -105,6 +105,7 @@ pub const Grid = struct {
 
     /// Number of live history lines (ring-buffered via history_start offset).
     pub fn historyLen(self: *const Grid) usize {
+        if (self.history.items.len < self.history_start) return 0;
         return self.history.items.len - self.history_start;
     }
 
@@ -127,7 +128,8 @@ pub const Grid = struct {
     pub fn deinit(self: *Grid) void {
         for (self.lines.items) |*line| line.deinit(self.allocator);
         self.lines.deinit(self.allocator);
-        for (self.history.items[self.history_start..]) |*line| line.deinit(self.allocator);
+        const start = @min(self.history_start, self.history.items.len);
+        for (self.history.items[start..]) |*line| line.deinit(self.allocator);
         self.history.deinit(self.allocator);
     }
 
@@ -137,7 +139,7 @@ pub const Grid = struct {
             .width = self.width,
             .height = self.height,
             .history_limit = self.history_limit,
-            .history_start = self.history_start,
+            .history_start = 0,
             .start_index = self.start_index,
         };
         try copy.lines.ensureTotalCapacity(allocator, self.lines.items.len);
@@ -150,12 +152,14 @@ pub const Grid = struct {
             try new_line.cells.appendSlice(allocator, line.cells.items);
             try copy.lines.append(allocator, new_line);
         }
-        try copy.history.ensureTotalCapacity(allocator, self.history.items.len - self.history_start);
+        const h_len = self.historyLen();
+        try copy.history.ensureTotalCapacity(allocator, h_len);
         errdefer {
             for (copy.history.items) |*l| l.deinit(allocator);
             copy.history.deinit(allocator);
         }
-        for (self.history.items[self.history_start..]) |line| {
+        const start = @min(self.history_start, self.history.items.len);
+        for (self.history.items[start..]) |line| {
             var new_line = GridLine{ .dirty = line.dirty, .wrapped = line.wrapped };
             try new_line.cells.appendSlice(allocator, line.cells.items);
             try copy.history.append(allocator, new_line);
@@ -1797,4 +1801,24 @@ test "reflowCursorInternal with history_start offset — bug #230" {
 
     try testing.expectEqual(@as(usize, 0), grid.history_start);
     try testing.expect(grid.historyLen() <= grid.history.items.len);
+}
+
+test "Grid.clone with history_start offset — bug #231" {
+    var grid = try Grid.init(testing.allocator, 10, 2);
+    defer grid.deinit();
+    grid.history_limit = 5;
+
+    // Scroll up 10 times so history receives 10 lines and history_start advances to 5
+    var i: usize = 0;
+    while (i < 10) : (i += 1) {
+        try grid.scrollUp();
+    }
+
+    try testing.expectEqual(@as(usize, 5), grid.history_start);
+
+    var cloned = try grid.clone(testing.allocator);
+    defer cloned.deinit();
+
+    try testing.expectEqual(@as(usize, 0), cloned.history_start);
+    try testing.expectEqual(@as(usize, 5), cloned.historyLen());
 }
