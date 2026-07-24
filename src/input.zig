@@ -2301,3 +2301,23 @@ test "CSI private marker after parameter digits is rejected — bug #138" {
     try parser.feed(&[_]u8{ 0x1B, '[', '2', '5', '?', 'h' });
     try testing.expect(parser.state == .ground);
 }
+
+test "DECSM 1000/1002/1003/1006 mouse modes set screen flags for inner app compatibility — bug #247" {
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+
+    var parser = InputParser.init(&screen);
+    defer parser.deinit(testing.allocator);
+
+    // DECSM 1000 (normal mouse tracking)
+    try parser.feed("\x1b[?1000h");
+    try testing.expect(screen.mode.mouse_standard);
+
+    // DECSM 1002 (button event tracking)
+    try parser.feed("\x1b[?1002h");
+    try testing.expect(screen.mode.mouse_button);
+
+    // DECSM 1006 (SGR mouse tracking)
+    try parser.feed("\x1b[?1006h");
+    try testing.expect(screen.mode.mouse_sgr);
+}

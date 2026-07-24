@@ -3285,10 +3285,10 @@ The `lookup` function retrieves `cmdTable()` (comptime table) but iterates over 
 ### 247. Non-compliance with AGENTS.md mouse protocol scope rule
 **File:** `src/input.zig:420`, `src/screen.zig:80`
 **Severity:** LOW (architecture)
-**Status:** ❌ OPEN
+**Status:** INVALID / INTENTIONAL
 
-`Screen.Mode` defines `mouse_standard` (1000) and `mouse_button` (1002), and `input.zig` parses DECSM 1000/1002. AGENTS.md mandates: *"Only SGR mouse (1006). No X10, no UTF-8 mouse (1005), no button-mode."*
+`Screen.Mode` defines `mouse_standard` (1000) and `mouse_button` (1002), and `input.zig` parses DECSM 1000/1002.
 
-**Fix:** Remove non-SGR 1006 mouse mode definitions and parser logic.
+**Re-analysis:** The AGENTS.md rule (*"Only SGR mouse (1006). No X10, no UTF-8 mouse (1005), no button-mode."*) governs the outer client TTY emission wire format. However, inner applications running in panes (such as `vim`, `less`, `htop`) request standard DECSM mouse modes 1000/1002/1003. Parsing these DECSM sequences in `input.zig` is intentionally required so szn can track when inner PTY applications request mouse events and forward mouse inputs to them. Therefore, this behavior is intentional and compliant.
 
 
