@@ -3124,7 +3124,7 @@ Resizing/splitting reserves 1 cell for borders (`available_w = parent_w -| 1`) a
 ### 234. Copy mode incremental search fails across soft-wrapped line boundaries
 **File:** `src/mode_copy.zig:600–650`
 **Severity:** HIGH
-**Status:** ❌ OPEN
+**Status:** ✅ FIXED
 
 Copy mode search (`searchForward`/`searchBackward`) uses `lineBytes` to fetch single physical grid lines, iterating over physical line counts.
 

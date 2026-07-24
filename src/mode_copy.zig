@@ -530,49 +530,54 @@ pub const CopyMode = struct {
     /// to a cell column — needed for 2-width characters). Returns the number
     /// of cells written.
     fn lineBytes(grid: *const Grid, allocator: std.mem.Allocator, out: *std.ArrayList(u8), offsets: *std.ArrayList(usize), li: usize) ?usize {
-        const hist_len = grid.history.items.len - grid.history_start;
-        const line = if (li < hist_len)
-            grid.getHistoryLine(li)
-        else
-            grid.getLine(@intCast(li - hist_len));
+        const hist_len = grid.historyLen();
+        const total_physical = hist_len + grid.height;
+        if (li >= total_physical) return null;
 
         out.clearRetainingCapacity();
         offsets.clearRetainingCapacity();
-        var x: u32 = 0;
-        while (x < line.cells.items.len and x < grid.width) : (x += 1) {
-            const cell = line.cells.items[x];
-            offsets.append(allocator, out.items.len) catch return null;
-            if (cell.char == 0) {
-                // Empty cell: represent as a blank so the rest of the line
-                // stays searchable and cell columns stay aligned.
-                out.append(allocator, ' ') catch return null;
-                continue;
-            }
-            var buf: [4]u8 = undefined;
-            const len = std.unicode.utf8Encode(cell.char, &buf) catch {
-                out.append(allocator, ' ') catch return null;
-                continue;
-            };
-            out.appendSlice(allocator, buf[0..len]) catch return null;
-            // Append combining marks (tone marks, vowel signs) so a query
-            // that includes them matches the grid's stored form. They share
-            // this cell's column, so they sit between offsets[x] and
-            // offsets[x+1] and still map back to column x on a hit.
-            if (cell.comb1 != 0) {
-                const cp1 = char_width.combiningCodepoint(cell.comb1);
-                if (cp1 != 0) {
-                    const l1 = std.unicode.utf8Encode(cp1, &buf) catch 0;
-                    if (l1 > 0) out.appendSlice(allocator, buf[0..l1]) catch return null;
+
+        var curr_li = li;
+        while (curr_li < total_physical) {
+            const line = if (curr_li < hist_len)
+                grid.getHistoryLine(curr_li)
+            else
+                grid.getLine(@intCast(curr_li - hist_len));
+
+            var x: u32 = 0;
+            while (x < line.cells.items.len and x < grid.width) : (x += 1) {
+                const cell = line.cells.items[x];
+                offsets.append(allocator, out.items.len) catch return null;
+                if (cell.char == 0) {
+                    out.append(allocator, ' ') catch return null;
+                    continue;
+                }
+                var buf: [4]u8 = undefined;
+                const len = std.unicode.utf8Encode(cell.char, &buf) catch {
+                    out.append(allocator, ' ') catch return null;
+                    continue;
+                };
+                out.appendSlice(allocator, buf[0..len]) catch return null;
+                if (cell.comb1 != 0) {
+                    const cp1 = char_width.combiningCodepoint(cell.comb1);
+                    if (cp1 != 0) {
+                        const l1 = std.unicode.utf8Encode(cp1, &buf) catch 0;
+                        if (l1 > 0) out.appendSlice(allocator, buf[0..l1]) catch return null;
+                    }
+                }
+                if (cell.comb2 != 0) {
+                    const cp2 = char_width.combiningCodepoint(cell.comb2);
+                    if (cp2 != 0) {
+                        const l2 = std.unicode.utf8Encode(cp2, &buf) catch 0;
+                        if (l2 > 0) out.appendSlice(allocator, buf[0..l2]) catch return null;
+                    }
                 }
             }
-            if (cell.comb2 != 0) {
-                const cp2 = char_width.combiningCodepoint(cell.comb2);
-                if (cp2 != 0) {
-                    const l2 = std.unicode.utf8Encode(cp2, &buf) catch 0;
-                    if (l2 > 0) out.appendSlice(allocator, buf[0..l2]) catch return null;
-                }
-            }
+
+            if (!line.wrapped) break;
+            curr_li += 1;
         }
+
         return offsets.items.len;
     }
 
@@ -1573,4 +1578,32 @@ test "search matches Thai word with vowel + tone marks" {
     try testing.expect(found);
     try testing.expectEqual(@as(u32, 0), cm.cursor_x);
     try testing.expectEqual(@as(u32, 0), cm.cursor_y);
+}
+
+test "searchForward across soft-wrapped line boundaries — bug #234" {
+    var cm = CopyMode.init(.vi);
+    var g = try Grid.init(testing.allocator, 5, 3);
+    defer g.deinit();
+
+    // Write "hello" on line 0 (width 5), set wrapped=true, write "world" on line 1
+    g.writeChar(0, 0, 'h');
+    g.writeChar(1, 0, 'e');
+    g.writeChar(2, 0, 'l');
+    g.writeChar(3, 0, 'l');
+    g.writeChar(4, 0, 'o');
+    g.getLineMut(0).wrapped = true;
+
+    g.writeChar(0, 1, 'w');
+    g.writeChar(1, 1, 'o');
+    g.writeChar(2, 1, 'r');
+    g.writeChar(3, 1, 'l');
+    g.writeChar(4, 1, 'd');
+
+    cm.cursor_x = 0;
+    cm.cursor_y = 0;
+
+    // Search for "lowo" which spans the wrap point between "hello" and "world"
+    const found = cm.searchForward(&g, testing.allocator, "lowo");
+    try testing.expect(found);
+    try testing.expectEqual(@as(u32, 3), cm.cursor_x);
 }
