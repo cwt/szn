@@ -3470,7 +3470,7 @@ Bug #234 updated `lineBytes` to concatenate contiguous soft-wrapped physical lin
 ### 252. Unimplemented Sixel matrix scanning optimization in `renderSixelImages`
 **File:** `src/server/render.zig:773–827`
 **Severity:** MEDIUM (performance)
-**Status:** 🚨 UNRESOLVED
+**Status:** ✅ FIXED — replaced $O(W \times H)$ grid matrix loop in `renderSixelImages` with a direct 64-element loop over `screen.sixel_images`.
 
 `BUGS.md` (bug #240) notes that `renderSixelImages` was optimized to iterate over `screen.sixel_images` (max 64 items) instead of scanning the full O(W×H) grid matrix. However, the actual implementation in `render.zig` still performs nested loops over `y < pane_h` and `x < pane_w` per pane.
 

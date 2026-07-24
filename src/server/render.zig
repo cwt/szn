@@ -770,59 +770,33 @@ pub const Display = struct {
 
             var current: [64]?SixelAnchor = [_]?SixelAnchor{null} ** 64;
 
-            var y: u32 = 0;
-            while (y < pane_h) : (y += 1) {
-                const hist_len = screen.grid.history.items.len - screen.grid.history_start;
-                const combined_idx = (@as(isize, @intCast(hist_len)) - @as(isize, @intCast(if (screen.copy_mode) |cm| cm.scroll_offset else 0))) + @as(isize, @intCast(y));
+            for (&screen.sixel_images, 0..) |*opt_img, slot| {
+                const img = opt_img.* orelse continue;
+                if (!screen.isImageReferenced(img.id)) continue;
 
-                const cells = if (combined_idx < 0)
-                    @as(?*const std.ArrayList(Cell), null)
-                else if (combined_idx < hist_len)
-                    &screen.grid.history.items[screen.grid.history_start + @as(usize, @intCast(combined_idx))].cells
-                else blk: {
-                    const visible_y = combined_idx - @as(isize, @intCast(hist_len));
-                    break :blk if (visible_y < screen.grid.height)
-                        &screen.grid.getLine(@intCast(visible_y)).cells
-                    else
-                        @as(?*const std.ArrayList(Cell), null);
-                };
+                const cell_rows = if (img.px_height > 0) (img.px_height + screen.cell_px_height - 1) / screen.cell_px_height else 1;
+                const cell_cols = if (img.px_width > 0) (img.px_width + screen.cell_px_width - 1) / screen.cell_px_width else 1;
 
-                if (cells) |cls| {
-                    var x: u32 = 0;
-                    while (x < pane_w) : (x += 1) {
-                        const cell = if (x < cls.items.len) cls.items[x] else Cell.empty();
-                        if (cell.attr.sixel) {
-                            const image_id = cell.char;
-                            if (screen.findSixelImageSlot(image_id)) |slot| {
-                                if (current[slot] != null) continue;
-                                const img = screen.sixel_images[slot].?;
-                                const cell_rows = if (img.px_height > 0) (img.px_height + screen.cell_px_height - 1) / screen.cell_px_height else 1;
-                                const cell_cols = if (img.px_width > 0) (img.px_width + screen.cell_px_width - 1) / screen.cell_px_width else 1;
+                const img_pane_col = @as(i32, @intCast(img.anchor_col));
+                const img_pane_row = @as(i32, @intCast(img.anchor_row));
 
-                                const img_pane_col = @as(i32, @intCast(img.anchor_col));
-                                const img_pane_row = @as(i32, @intCast(img.anchor_row));
+                const pane_left = @as(i32, @intCast(pb.x));
+                const pane_top = @as(i32, @intCast(pb.y));
+                const pane_right = pane_left + @as(i32, @intCast(pane_w));
+                const pane_bottom = pane_top + @as(i32, @intCast(pane_h));
 
-                                const pane_left = @as(i32, @intCast(pb.x));
-                                const pane_top = @as(i32, @intCast(pb.y));
-                                const pane_right = pane_left + @as(i32, @intCast(pane_w));
-                                const pane_bottom = pane_top + @as(i32, @intCast(pane_h));
+                const img_left = pane_left + img_pane_col;
+                const img_top = pane_top + img_pane_row;
+                const img_right = img_left + @as(i32, @intCast(cell_cols));
+                const img_bottom = img_top + @as(i32, @intCast(cell_rows));
 
-                                const img_left = pane_left + img_pane_col;
-                                const img_top = pane_top + img_pane_row;
-                                const img_right = img_left + @as(i32, @intCast(cell_cols));
-                                const img_bottom = img_top + @as(i32, @intCast(cell_rows));
+                const contained = img_left >= pane_left and
+                    img_right <= pane_right and
+                    img_top >= pane_top and
+                    img_bottom <= pane_bottom;
 
-                                const contained = img_left >= pane_left and
-                                    img_right <= pane_right and
-                                    img_top >= pane_top and
-                                    img_bottom <= pane_bottom;
-
-                                if (contained) {
-                                    current[slot] = .{ .col = img_left, .row = img_top };
-                                }
-                            }
-                        }
-                    }
+                if (contained) {
+                    current[slot] = .{ .col = img_left, .row = img_top };
                 }
             }
 
