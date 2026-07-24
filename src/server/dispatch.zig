@@ -101,6 +101,7 @@ pub fn sendResponse(fd: i32, result: *const DispatchResult) Error!void {
             if (std.c.errno(n) == .INTR) continue;
             return error.WriteFailed;
         }
+        if (n == 0) return error.ConnectionClosed;
         hdr_remaining = hdr_remaining[@intCast(n)..];
     }
 
@@ -113,6 +114,7 @@ pub fn sendResponse(fd: i32, result: *const DispatchResult) Error!void {
                 if (std.c.errno(n) == .INTR) continue;
                 return error.WriteFailed;
             }
+            if (n == 0) return error.ConnectionClosed;
             body_remaining = body_remaining[@intCast(n)..];
         }
     }
@@ -297,4 +299,15 @@ test "dispatch kill-window" {
     defer result.deinit();
 
     try testing.expectEqual(MessageType.ready, result.response_type);
+}
+
+test "sendResponse write failure handles 0 or negative return — bug #227" {
+    const result = DispatchResult{
+        .response_type = .ready,
+        .data = "hello",
+        .allocator = testing.allocator,
+        .is_owned = false,
+    };
+    // Passing invalid / closed fd (-1) must fail immediately without spinning
+    try testing.expectError(error.WriteFailed, sendResponse(-1, &result));
 }

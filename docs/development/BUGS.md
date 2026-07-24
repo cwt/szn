@@ -3029,7 +3029,7 @@ The `prompt` slice is assigned from a block that returns a slice of stack-alloca
 ### 227. Socket write loop pegs CPU on 0-byte writes
 **File:** `src/server/dispatch.zig:98–116`
 **Severity:** CRITICAL
-**Status:** ❌ OPEN
+**Status:** ✅ FIXED
 
 The loops writing `hdr_remaining` and `body_remaining` to the file descriptor check `n < 0` but do not check if `n == 0`. If `std.c.write` returns 0, the loop spins infinitely without advancing the remaining slice pointer.
 
