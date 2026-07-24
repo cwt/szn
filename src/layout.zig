@@ -85,7 +85,7 @@ pub const Layout = struct {
         }
     }
 
-    pub fn splitPane(self: *Layout, allocator: std.mem.Allocator, pane: *Pane, direction: SplitDir, proportion: f64) window.Error!*Pane {
+    pub fn splitPane(self: *Layout, allocator: std.mem.Allocator, pane: *Pane, direction: SplitDir, proportion: f64) !*Pane {
         _ = allocator;
         const a = self.allocator;
         const leaf_node = self.findLeafParent(self.root, pane) orelse return error.PaneNotFound;
@@ -99,15 +99,17 @@ pub const Layout = struct {
         var child_h2 = parent_h;
 
         if (direction == .horizontal) {
-            const available_w = parent_w -| 1;
+            if (parent_w < 3) return error.PaneTooSmall;
+            const available_w = parent_w - 1;
             const split_w = @as(u32, @intFromFloat(@as(f64, @floatFromInt(available_w)) * proportion));
-            child_w1 = @max(1, split_w);
-            child_w2 = @max(1, available_w -| child_w1);
+            child_w1 = std.math.clamp(split_w, 1, available_w - 1);
+            child_w2 = available_w - child_w1;
         } else {
-            const available_h = parent_h -| 1;
+            if (parent_h < 3) return error.PaneTooSmall;
+            const available_h = parent_h - 1;
             const split_h = @as(u32, @intFromFloat(@as(f64, @floatFromInt(available_h)) * proportion));
-            child_h1 = @max(1, split_h);
-            child_h2 = @max(1, available_h -| child_h1);
+            child_h1 = std.math.clamp(split_h, 1, available_h - 1);
+            child_h2 = available_h - child_h1;
         }
 
         const new_pane = try a.create(Pane);
@@ -463,15 +465,21 @@ test "countLeaves handles deeply nested layout without stack overflow — bug #1
     var layout = try Layout.init(testing.allocator, pane1, 80, 24);
     defer layout.deinit();
 
-    const depth = 500;
-    var current = pane1;
+    var curr_node = layout.root;
     var i: usize = 0;
-    while (i < depth) : (i += 1) {
-        current = try layout.splitPane(testing.allocator, current, .horizontal, 0.5);
+    while (i < 500) : (i += 1) {
+        const new_p = try createTestPane(testing.allocator, @intCast(i + 1));
+        const a_node = try testing.allocator.create(Node);
+        const b_node = try testing.allocator.create(Node);
+        a_node.* = Node{ .leaf = curr_node.leaf };
+        b_node.* = Node{ .leaf = new_p };
+        const split = try testing.allocator.create(Split);
+        split.* = Split{ .direction = .horizontal, .proportion = 0.5, .a = a_node, .b = b_node };
+        curr_node.* = Node{ .split = split };
+        curr_node = a_node;
     }
 
-    // Should have depth + 1 leaves (the chain creates a comb layout)
-    try testing.expectEqual(@as(usize, depth + 1), layout.countLeaves());
+    try testing.expectEqual(@as(usize, 501), layout.countLeaves());
 }
 
 test "split pane horizontal sizes are equal" {
@@ -494,15 +502,32 @@ test "split pane horizontal sizes are equal" {
 test "deinit handles massive nested layout without stack overflow" {
     const pane1 = try createTestPane(testing.allocator, 0);
     var layout = try Layout.init(testing.allocator, pane1, 80, 24);
-    // Defer the deinit which calls deinitNode
     defer layout.deinit();
 
-    const depth = 5000;
-    var current = pane1;
+    var curr_node = layout.root;
     var i: usize = 0;
-    while (i < depth) : (i += 1) {
-        current = try layout.splitPane(testing.allocator, current, .horizontal, 0.5);
+    while (i < 5000) : (i += 1) {
+        const new_p = try createTestPane(testing.allocator, @intCast(i + 1));
+        const a_node = try testing.allocator.create(Node);
+        const b_node = try testing.allocator.create(Node);
+        a_node.* = Node{ .leaf = curr_node.leaf };
+        b_node.* = Node{ .leaf = new_p };
+        const split = try testing.allocator.create(Split);
+        split.* = Split{ .direction = .horizontal, .proportion = 0.5, .a = a_node, .b = b_node };
+        curr_node.* = Node{ .split = split };
+        curr_node = a_node;
     }
 
-    try testing.expectEqual(@as(usize, depth + 1), layout.countLeaves());
+    try testing.expectEqual(@as(usize, 5001), layout.countLeaves());
+}
+
+test "splitPane rejects parent smaller than 3 cells — bug #233" {
+    const pane1 = try createTestPane(testing.allocator, 0);
+    pane1.screen.grid.width = 2;
+    pane1.screen.grid.height = 20;
+
+    var layout = try Layout.init(testing.allocator, pane1, 2, 20);
+    defer layout.deinit();
+
+    try testing.expectError(error.PaneTooSmall, layout.splitPane(testing.allocator, pane1, .horizontal, 0.5));
 }

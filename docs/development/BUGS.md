@@ -3111,7 +3111,7 @@ Reverse Index (`RI`) and Scroll Down (`CSI T`) in `Screen` invoke `self.grid.scr
 ### 233. Layout bound invariant violation on small pane splits and resizes
 **File:** `src/layout.zig:120–160`, `src/window.zig:90–110`
 **Severity:** HIGH
-**Status:** ❌ OPEN
+**Status:** ✅ FIXED
 
 Resizing/splitting reserves 1 cell for borders (`available_w = parent_w -| 1`) and bounds children with `@max(1, ...)`. For a pane of width 1, `available_w` becomes 0, and children receive width 1 each, requiring 3 columns total (1 + 1 + border) on a 1-column parent.
 

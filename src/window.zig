@@ -12,7 +12,7 @@ const layout = @import("layout.zig");
 const options_mod = @import("options.zig");
 const choose_mod = @import("choose.zig");
 
-pub const Error = screen.Error || pty_mod.Error || layout.LayoutError || options_mod.Error;
+pub const Error = screen.Error || pty_mod.Error || layout.LayoutError || options_mod.Error || error{PaneTooSmall};
 
 /// Pane represents a single terminal pane within a window.
 pub const Pane = struct {
@@ -360,7 +360,7 @@ pub const Window = struct {
         return new_pane;
     }
 
-    pub fn splitPane(self: *Window, allocator: std.mem.Allocator, pane: *Pane, vertical: bool, proportion: f64) Error!*Pane {
+    pub fn splitPane(self: *Window, allocator: std.mem.Allocator, pane: *Pane, vertical: bool, proportion: f64) !*Pane {
         _ = allocator;
         const dir = if (vertical) layout.SplitDir.vertical else layout.SplitDir.horizontal;
         const new_pane = try self.layout.splitPane(self.allocator, pane, dir, proportion);
