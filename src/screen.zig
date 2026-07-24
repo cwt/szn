@@ -621,7 +621,32 @@ pub const Screen = struct {
         }
 
         if (width == 0) {
-            if (self.cursor.x == 0) return;
+            if (self.cursor.x == 0) {
+                if (self.cursor.y > 0 and self.grid.getLine(self.cursor.y - 1).wrapped) {
+                    const prev_y = self.cursor.y - 1;
+                    const last_col = self.grid.width - 1;
+                    var prev_cell = self.grid.getCell(last_col, prev_y);
+                    var target_col = last_col;
+                    if (prev_cell.is_padding and last_col > 0) {
+                        target_col = last_col - 1;
+                        prev_cell = self.grid.getCell(target_col, prev_y);
+                    }
+                    if (prev_cell.char != ' ' and prev_cell.char != 0) {
+                        const cidx = char_width.combiningIndex(char);
+                        if (cidx != 0) {
+                            if (prev_cell.comb1 == 0) {
+                                prev_cell.comb1 = cidx;
+                            } else if (prev_cell.comb2 == 0) {
+                                prev_cell.comb2 = cidx;
+                            }
+                            self.grid.setCell(target_col, prev_y, prev_cell);
+                            self.dirty = true;
+                            return;
+                        }
+                    }
+                }
+                return;
+            }
             var base_x = self.cursor.x - 1;
             var prev_cell = self.grid.getCell(base_x, self.cursor.y);
             if (prev_cell.is_padding) {
@@ -646,6 +671,10 @@ pub const Screen = struct {
 
         if (width == 2) {
             if (self.mode.line_wrap and self.cursor.x + 2 > self.grid.width) {
+                if (self.cursor.x < self.grid.width) {
+                    self.decrementMainGridRef(self.cursor.x, self.cursor.y);
+                    self.grid.setCell(self.cursor.x, self.cursor.y, self.eraseCell());
+                }
                 self.grid.getLineMut(self.cursor.y).wrapped = true;
                 self.cursor.x = 0;
                 if (self.cursor.y + 1 >= self.grid.height) {
@@ -2279,4 +2308,47 @@ test "scrollDown and reverseIndex work with empty history — bug #229" {
     try screen.scrollDown(1);
     // Line 2 should now have 'A'
     try testing.expectEqual(@as(u21, 'A'), screen.grid.getCell(0, 2).char);
+}
+
+test "wide character 2-col wrap clears ghost character and combining mark across wrap — bug #235" {
+    const allocator = std.testing.allocator;
+    var screen = try Screen.init(allocator, 5, 3);
+    defer screen.deinit();
+
+    // Position cursor at x = 4 (width 5), write 'X', then write 2-col wide char '日'
+    screen.cursor.x = 4;
+    screen.cursor.y = 0;
+    try screen.writeChar('X');
+
+    // Reset cursor to x = 4
+    screen.cursor.x = 4;
+    screen.cursor.y = 0;
+    try screen.writeChar(0x65E5); // '日' (width 2)
+
+    // Cell at (4, 0) should be cleared (no ghost 'X')
+    try testing.expectEqual(@as(u21, 0), screen.grid.getCell(4, 0).char);
+    // '日' should be at line 1 (0, 1)
+    try testing.expectEqual(@as(u21, 0x65E5), screen.grid.getCell(0, 1).char);
+
+    // Now test combining mark attached at x=0 right after line wrap
+    var screen2 = try Screen.init(allocator, 3, 3);
+    defer screen2.deinit();
+    try screen2.writeChar('A');
+    try screen2.writeChar('B');
+    try screen2.writeChar('C');
+    try screen2.writeChar('D'); // fills line 0 (width 3), wraps to line 1 x=1
+
+    try testing.expectEqual(@as(u32, 1), screen2.cursor.x);
+    try testing.expectEqual(@as(u32, 1), screen2.cursor.y);
+
+    // Set cursor to x=0 on wrapped line 1
+    screen2.cursor.x = 0;
+
+    // Write combining mark (0x0301) at x=0 on line 1 right after line wrap
+    try screen2.writeChar(0x0301);
+
+    // Combining mark should attach to 'C' at (2, 0) of preceding wrapped line
+    const cell_c = screen2.grid.getCell(2, 0);
+    try testing.expectEqual(@as(u21, 'C'), cell_c.char);
+    try testing.expect(cell_c.comb1 != 0);
 }

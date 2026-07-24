@@ -3137,7 +3137,7 @@ Copy mode search (`searchForward`/`searchBackward`) uses `lineBytes` to fetch si
 ### 235. Ghost character artifacts and dropped UTF-8 combining marks on soft wraps
 **File:** `src/screen.zig:510–560`
 **Severity:** HIGH
-**Status:** ❌ OPEN
+**Status:** ✅ FIXED
 
 1. **Ghost Character Artifact:** When a 2-column wide character forces a wrap at column `width - 1`, the cell at the previous cursor position is left un-cleared before wrapping to the next line.
 2. **Combining Mark Dropping:** If a zero-width combining mark lands when `cursor.x == 0` right after a soft-wrap, `writeChar` discards it (`if (self.cursor.x == 0) return;`).
