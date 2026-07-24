@@ -260,7 +260,15 @@ pub const Window = struct {
             .automatic_rename = true,
         };
         var pane = try allocator.create(Pane);
-        pane.* = try Pane.init(allocator, 0, width, height);
+        errdefer allocator.destroy(pane);
+        pane.* = Pane.init(allocator, 0, width, height) catch |err| {
+            allocator.destroy(pane);
+            return err;
+        };
+        errdefer {
+            pane.deinit();
+            allocator.destroy(pane);
+        }
         pane.active = true;
         // bug #222: propagate cell size from parent screen if available.
         if (parent_screen) |ps| {
@@ -352,9 +360,17 @@ pub const Window = struct {
             return self.splitPane(self.allocator, pane, false, 0.5);
         }
         const new_pane = try self.allocator.create(Pane);
+        errdefer self.allocator.destroy(new_pane);
         const pane_id = self.next_pane_id;
+        new_pane.* = Pane.init(self.allocator, pane_id, self.width, self.height) catch |err| {
+            self.allocator.destroy(new_pane);
+            return err;
+        };
+        errdefer {
+            new_pane.deinit();
+            self.allocator.destroy(new_pane);
+        }
         self.next_pane_id += 1;
-        new_pane.* = try Pane.init(self.allocator, pane_id, self.width, self.height);
         try self.panes.append(self.allocator, new_pane);
         self.registerPane(new_pane);
         return new_pane;
@@ -578,4 +594,16 @@ test "rotatePanes rotates layout tree leaves — bug #232" {
     try testing.expectEqual(pane1, window.panes.items[1]);
     try testing.expectEqual(pane2, window.layout.root.split.a.leaf);
     try testing.expectEqual(pane1, window.layout.root.split.b.leaf);
+}
+
+test "Window.init and addPane cleanup on allocation failure — bug #239" {
+    // Failing allocator test for Window.init
+    var failing_alloc = std.testing.FailingAllocator.init(testing.allocator, .{ .fail_index = 0 });
+
+    // Test failing on 1st allocation (allocator.create(Pane))
+    try testing.expectError(error.OutOfMemory, Window.init(failing_alloc.allocator(), 1, "test", 80, 24, null, null));
+
+    // Test successful Window.init cleaned up cleanly
+    var window = try Window.init(testing.allocator, 1, "test", 80, 24, null, null);
+    defer window.deinit(testing.allocator);
 }

@@ -3189,7 +3189,7 @@ In `processInput`, when evaluating a command from the prompt, `dispatch.dispatch
 ### 239. Memory leak on `Pane.init` failure during pane creation
 **File:** `src/window.zig:45–70`
 **Severity:** HIGH
-**Status:** ❌ OPEN
+**Status:** ✅ FIXED
 
 `Window.addPane` allocates `try allocator.create(Pane)` and calls `Pane.init(...)`. If `Pane.init` fails or `panes.append` fails, the `Pane` pointer is leaked.
 
