@@ -3000,3 +3000,295 @@ Called from `runInteractiveClient` (line 333). This blocks the single-threaded c
 
 **Fix:** Maintain a reference count per sixel image slot. Increment when a sixel marker cell is written (`addSixelImage` and any copy/scroll that moves such cells), decrement when a sixel cell is overwritten/erased. Replace `isImageReferenced` with a simple `refcount > 0` check.
 
+---
+
+## NEW BUGS (2026-07-24 deep static code review audit)
+
+---
+
+### 226. Dangling pointer in status bar prompt rendering
+**File:** `src/server/render.zig:667–671`
+**Severity:** CRITICAL
+**Status:** ❌ OPEN
+
+```zig
+if (...) {
+    var buf: [2]u8 = undefined;
+    prompt = std.fmt.bufPrint(&buf, ...) catch "";
+}
+```
+
+The `prompt` slice is assigned from a block that returns a slice of stack-allocated `buf: [2]u8`. Once the `if` block exits, `buf` goes out of scope, leaving `prompt` as a dangling pointer before being passed to `writeBytes(prompt)`.
+
+**Impact:** Undefined behavior, memory corruption, or garbled prompt output during status bar rendering.
+
+**Fix:** Move `var prompt_buf: [2]u8 = undefined;` outside and before the `if` block.
+
+---
+
+### 227. Socket write loop pegs CPU on 0-byte writes
+**File:** `src/server/dispatch.zig:98–116`
+**Severity:** CRITICAL
+**Status:** ❌ OPEN
+
+The loops writing `hdr_remaining` and `body_remaining` to the file descriptor check `n < 0` but do not check if `n == 0`. If `std.c.write` returns 0, the loop spins infinitely without advancing the remaining slice pointer.
+
+**Impact:** 100% CPU utilization (infinite spin) on disconnected or unwriteable client sockets.
+
+**Fix:** Add `if (n == 0) return error.ConnectionClosed;` immediately after the `n < 0` check.
+
+---
+
+### 228. `Packet.deserialize` and `Packet.serialize` buffer panic hazards
+**File:** `src/server/protocol.zig:71, 83–92`
+**Severity:** CRITICAL
+**Status:** ❌ OPEN
+
+1. `Packet.deserialize` reads `len` from header and checks `if (buf.len < len)`. If a malformed packet specifies `len < 5` (e.g. `len = 3`), `buf[5..len]` triggers a Zig slice bounds panic (`start > end`).
+2. `Packet.serialize` executes `@memcpy(buf[5..], self.data)` without validating `buf.len >= 5 + self.data.len`.
+
+**Impact:** Server crash/panic upon receiving malformed IPC packets or writing to small buffers.
+
+**Fix:** In `deserialize`, add `if (len < 5) return error.InvalidPacket;`. In `serialize`, add `if (buf.len < 5 + self.data.len) return error.BufferTooSmall;`.
+
+---
+
+### 229. Terminal scrolling logic destroys scrollback history & fails on empty history
+**File:** `src/screen.zig:1082–1119`, `src/grid.zig:246–260`
+**Severity:** CRITICAL
+**Status:** ❌ OPEN
+
+Reverse Index (`RI`) and Scroll Down (`CSI T`) in `Screen` invoke `self.grid.scrollDown()` and `@memset` the result line to blank. `Grid.scrollDown()` incorrectly pops the *oldest* history line (`history[history_start]`) instead of shifting lines in the active screen. Furthermore, `if (history.len - history_start > 0)` causes scroll commands to be silently ignored when history is empty.
+
+**Impact:** Terminal fails to scroll text down when history is empty, and destroys scrollback history when history exists.
+
+**Fix:** Create a `Grid.shiftDown()` method that rotates line ring-buffer indices backwards by 1 and zeroes out the top line without touching `history`.
+
+---
+
+### 230. `reflowCursorInternal` double-frees history, leaks memory, and corrupts ring buffer index
+**File:** `src/grid.zig:820–895`
+**Severity:** CRITICAL
+**Status:** ❌ OPEN
+
+1. `for (old_history.items) |*l| l.deinit(allocator);` frees all history slots, including evicted elements before `old_history_start`.
+2. If `rewrap` or `allocator.dupe` fails, `errdefer` cleans up `new_lines` but leaks `old_lines` and `old_history`.
+3. `self.history_start` is left un-reset after setting `self.history = new_history`.
+
+**Impact:** `SIGSEGV` double-free crashes during window resize, memory leaks under OOM, and out-of-bounds indexing.
+
+**Fix:** Save `old_history_start`. Deinitialize `old_history.items[old_history_start..]`. Add `errdefer` restoring `old_lines`, `old_history`, and `old_history_start`. Set `self.history_start = 0`.
+
+---
+
+### 231. Integer underflow panic in `Grid.clone()`
+**File:** `src/grid.zig:310–330`
+**Severity:** CRITICAL
+**Status:** ❌ OPEN
+
+`copy.history` is allocated with active items (`items.len - history_start`), but `copy.history_start` is copied directly from `self.history_start`.
+
+**Impact:** Any call to `copy.historyLen()` calculates `items.len - history_start`, causing an integer underflow panic.
+
+**Fix:** Explicitly set `copy.history_start = 0` in `Grid.clone`.
+
+---
+
+### 232. Window/layout tree desync on last pane removal & window rotation
+**File:** `src/window.zig:110–140`, `src/layout.zig:220–240`, `src/server/server.zig:791`
+**Severity:** CRITICAL
+**Status:** ❌ OPEN
+
+1. In `Window.removePane`, if the last pane is removed, `Layout.removePane` early-returns if root is a leaf (`if (self.root.* == .leaf) return;`), leaving the removed pane in `layout.root`.
+2. `rotate_window` in `server.zig` rotates `window.panes.items` but fails to update layout tree nodes or call `resizePaneToNode`.
+
+**Impact:** Window layout desync, invisible panes, or dangling pointer dereferences.
+
+**Fix:** Signal window destruction when `panes.items.len == 0`. In `rotate_window`, update `.leaf` pointers in the layout tree and re-layout.
+
+---
+
+### 233. Layout bound invariant violation on small pane splits and resizes
+**File:** `src/layout.zig:120–160`, `src/window.zig:90–110`
+**Severity:** HIGH
+**Status:** ❌ OPEN
+
+Resizing/splitting reserves 1 cell for borders (`available_w = parent_w -| 1`) and bounds children with `@max(1, ...)`. For a pane of width 1, `available_w` becomes 0, and children receive width 1 each, requiring 3 columns total (1 + 1 + border) on a 1-column parent.
+
+**Impact:** Out-of-bounds layout rendering on small pane splits.
+
+**Fix:** Return `error.PaneTooSmall` if `parent_w < 3` (horizontal) or `parent_h < 3` (vertical).
+
+---
+
+### 234. Copy mode incremental search fails across soft-wrapped line boundaries
+**File:** `src/mode_copy.zig:600–650`
+**Severity:** HIGH
+**Status:** ❌ OPEN
+
+Copy mode search (`searchForward`/`searchBackward`) uses `lineBytes` to fetch single physical grid lines, iterating over physical line counts.
+
+**Impact:** Incremental search fails to match search queries (such as long URLs or phrases) that soft-wrap across terminal edges.
+
+**Fix:** Update `lineBytes` to inspect `line.wrapped` and concatenate cells from contiguous wrapped physical lines into `line_buf` before performing `std.mem.indexOf`.
+
+---
+
+### 235. Ghost character artifacts and dropped UTF-8 combining marks on soft wraps
+**File:** `src/screen.zig:510–560`
+**Severity:** HIGH
+**Status:** ❌ OPEN
+
+1. **Ghost Character Artifact:** When a 2-column wide character forces a wrap at column `width - 1`, the cell at the previous cursor position is left un-cleared before wrapping to the next line.
+2. **Combining Mark Dropping:** If a zero-width combining mark lands when `cursor.x == 0` right after a soft-wrap, `writeChar` discards it (`if (self.cursor.x == 0) return;`).
+
+**Impact:** Visual artifact on line right edge and missing accents/diacritics across line wraps.
+
+**Fix:** Clear `getCellMut(self.cursor.x, self.cursor.y)` before wrapping for 2-column characters. For combining marks at `cursor.x == 0`, attach the mark to the last cell of the preceding wrapped line if `cursor.y > 0`.
+
+---
+
+### 236. `SIGWINCH` signal handler missing `SA_RESTART` flag
+**File:** `src/main.zig:180–210`
+**Severity:** HIGH
+**Status:** ❌ OPEN
+
+Signal handlers for `SIGWINCH` and `SIGCHLD` pass `flags = 0` to `std.posix.sigaction`.
+
+**Impact:** Standard library calls during window resize or child exit can fail with `EINTR` instead of automatically restarting.
+
+**Fix:** Set `flags = std.posix.SA.RESTART` in `sigaction`.
+
+---
+
+### 237. Memory leak of `DispatchResult` in prompt input processing
+**File:** `src/server/server.zig:1198–1204`
+**Severity:** HIGH
+**Status:** ❌ OPEN
+
+In `processInput`, when evaluating a command from the prompt, `dispatch.dispatchCommand` returns `DispatchResult`, but `result.deinit()` is never called.
+
+**Impact:** Leaks response strings allocated when executing prompt commands.
+
+**Fix:** Change declaration to `var result = ...` and add `defer result.deinit();`.
+
+---
+
+### 238. Memory leaks in configuration directive parsing
+**File:** `src/cfg.zig:197, 263–311, 340–349, 392–395`
+**Severity:** HIGH
+**Status:** ❌ OPEN
+
+- **`parseSet` (L197):** `flags.option` is duplicated; if `parseValue` fails, `flags.option` leaks. Add `errdefer allocator.free(flags.option);`.
+- **`parseBindKey` & `parseUnbindKey` (L263–311):** Duplicate `-T`/`-n` flags overwrite `key_table` without freeing previous allocations. If `parseKeyName` fails, `key_table` leaks. Add prior `free` and `errdefer` guards.
+- **`parseSetEnv` (L340–349):** `name` and `value` leak if `directives.append` fails under OOM. Add `errdefer` statements.
+- **`parseIfShell` (L392–395):** `condition` leaks if quote validation fails. Add `errdefer allocator.free(condition);`.
+
+---
+
+### 239. Memory leak on `Pane.init` failure during pane creation
+**File:** `src/window.zig:45–70`
+**Severity:** HIGH
+**Status:** ❌ OPEN
+
+`Window.addPane` allocates `try allocator.create(Pane)` and calls `Pane.init(...)`. If `Pane.init` fails or `panes.append` fails, the `Pane` pointer is leaked.
+
+**Impact:** Memory leak on pane creation failure.
+
+**Fix:** Add `errdefer allocator.destroy(pane);` and `errdefer pane.deinit();`.
+
+---
+
+### 240. O(W×H) matrix scanning for Sixel images during rendering
+**File:** `src/server/render.zig:757–782`
+**Severity:** MEDIUM (performance)
+**Status:** ❌ OPEN
+
+`renderSixelImages` loops over every cell in the grid (Width × Height) of every pane just to locate Sixel image anchors.
+
+**Impact:** Excessive CPU time spent scanning grid matrices per frame when Sixel images are present.
+
+**Fix:** Iterate directly over `screen.sixel_images` array (max 64 items) instead of scanning the full grid matrix.
+
+---
+
+### 241. O(N) pixel-level border active checks inside render loop
+**File:** `src/server/render.zig:372, 414`
+**Severity:** MEDIUM (performance)
+**Status:** ❌ OPEN
+
+`isBorderActiveAt` is called for every single pixel of split layout borders, iterating over all pane bounds to find `active_bound` every time.
+
+**Impact:** Redundant O(N) array traversals per border character rendered.
+
+**Fix:** Resolve `active_bound` once at the beginning of `drawLayoutBorders` and pass it down as an argument.
+
+---
+
+### 242. Heap allocation in `getCwd` PTY path resolution
+**File:** `src/server/pty.zig:193–195`
+**Severity:** MEDIUM (performance)
+**Status:** ❌ OPEN
+
+`getCwd` allocates a heap string using `allocator.dupeZ(u8, proc_path)` before calling `readlink`.
+
+**Impact:** Unnecessary heap allocation on PTY path inspection.
+
+**Fix:** Use `std.fmt.bufPrintZ` to write into a stack buffer.
+
+---
+
+### 243. Duplicated layout tree traversal logic in server
+**File:** `src/server/server.zig:1099, 1964`
+**Severity:** LOW (code quality)
+**Status:** ❌ OPEN
+
+`layoutFindNodeBounds` and `findPaneBounds` perform the exact same layout tree traversal logic.
+
+**Fix:** Remove `layoutFindNodeBounds` and refactor `resizePaneToNode` to use `findPaneBounds`.
+
+---
+
+### 244. Duplicated pane swapping logic between up/down actions
+**File:** `src/server/server.zig:884–924`
+**Severity:** LOW (code quality)
+**Status:** ❌ OPEN
+
+The layout node lookup, pointer swapping, and terminal resizing logic is copy-pasted between `.swap_pane_up` and `.swap_pane_down`.
+
+**Fix:** Consolidate into a `swapPanes(window: *Window, p1: *Pane, p2: *Pane)` helper method.
+
+---
+
+### 245. Non-compliance with AGENTS.md arena allocator lifecycle rule
+**File:** `src/server/server.zig:2542, 2577`
+**Severity:** LOW (architecture)
+**Status:** ❌ OPEN
+
+`Server.newSession` uses standard `self.allocator.create(Session)`, and `killSession`/`killAllSessions` call `self.allocator.destroy(session)`. AGENTS.md mandates: *"Always use arena allocators per session/pane lifecycle. Never `gpa.alloc`. Never call `allocator.destroy` — arena reset handles everything."*
+
+**Fix:** Create a dedicated `std.heap.ArenaAllocator` for the session in `newSession`.
+
+---
+
+### 246. Non-compliance with AGENTS.md comptime command table dispatch rule
+**File:** `src/cmd/cmd.zig:1502`
+**Severity:** LOW (architecture)
+**Status:** ❌ OPEN
+
+The `lookup` function retrieves `cmdTable()` (comptime table) but iterates over it using a runtime `for` loop. AGENTS.md mandates: *"Use `inline for` for dispatch loops instead of function pointer tables."*
+
+**Fix:** Change to `inline for (cmdTable()) |entry|`.
+
+---
+
+### 247. Non-compliance with AGENTS.md mouse protocol scope rule
+**File:** `src/input.zig:420`, `src/screen.zig:80`
+**Severity:** LOW (architecture)
+**Status:** ❌ OPEN
+
+`Screen.Mode` defines `mouse_standard` (1000) and `mouse_button` (1002), and `input.zig` parses DECSM 1000/1002. AGENTS.md mandates: *"Only SGR mouse (1006). No X10, no UTF-8 mouse (1005), no button-mode."*
+
+**Fix:** Remove non-SGR 1006 mouse mode definitions and parser logic.
+
+
