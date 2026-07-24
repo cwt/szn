@@ -36,6 +36,7 @@ const buffer_mod = @import("../buffer.zig");
 const format_mod = @import("../format.zig");
 const status_mod = @import("../status.zig");
 const TemplateCache = format_mod.TemplateCache;
+const layout = @import("../layout.zig");
 
 extern "c" fn fopen(filename: [*c]const u8, modes: [*c]const u8) ?*anyopaque;
 extern "c" fn fclose(stream: ?*anyopaque) c_int;
@@ -895,6 +896,10 @@ pub const Server = struct {
 
                     window.panes.items[active_idx] = dest_pane;
                     window.panes.items[dest_idx] = pane;
+
+                    // bug #220: resize panes to their new slot dimensions after swap.
+                    _ = resizePaneToNode(pane, node1, &window.layout);
+                    _ = resizePaneToNode(dest_pane, node2, &window.layout);
                 }
             },
             .swap_pane_down => {
@@ -912,6 +917,10 @@ pub const Server = struct {
 
                     window.panes.items[active_idx] = dest_pane;
                     window.panes.items[dest_idx] = pane;
+
+                    // bug #220: resize panes to their new slot dimensions after swap.
+                    _ = resizePaneToNode(pane, node1, &window.layout);
+                    _ = resizePaneToNode(dest_pane, node2, &window.layout);
                 }
             },
             .resize_left => {
@@ -1080,6 +1089,42 @@ pub const Server = struct {
         }
     }
 
+    /// Resize a pane to match its layout node's dimensions. Used after pane swaps
+    /// so each pane fills its new slot (bug #220).
+    fn resizePaneToNode(pane: *Pane, node: *const layout.Node, layout_tree: *const layout.Layout) void {
+        const bounds = layoutFindNodeBounds(layout_tree.root, layout_tree.width, layout_tree.height, node) orelse return;
+        _ = pane.resizeTerminal(bounds.w, bounds.h) catch {};
+    }
+
+    fn layoutFindNodeBounds(
+        root: *const layout.Node,
+        lw: u32,
+        lh: u32,
+        target: *const layout.Node,
+    ) ?struct { w: u32, h: u32 } {
+        if (root == target) return .{ .w = lw, .h = lh };
+        switch (root.*) {
+            .leaf => return null,
+            .split => |s| {
+                if (s.direction == .horizontal) {
+                    const avail = lw -| 1;
+                    const split_w = @as(u32, @intFromFloat(@as(f64, @floatFromInt(avail)) * s.proportion));
+                    const w_a = @max(1, split_w);
+                    const w_b = @max(1, avail -| w_a);
+                    if (layoutFindNodeBounds(s.a, w_a, lh, target)) |r| return r;
+                    return layoutFindNodeBounds(s.b, w_b, lh, target);
+                } else {
+                    const avail = lh -| 1;
+                    const split_h = @as(u32, @intFromFloat(@as(f64, @floatFromInt(avail)) * s.proportion));
+                    const h_a = @max(1, split_h);
+                    const h_b = @max(1, avail -| h_a);
+                    if (layoutFindNodeBounds(s.a, lw, h_a, target)) |r| return r;
+                    return layoutFindNodeBounds(s.b, lw, h_b, target);
+                }
+            },
+        }
+    }
+
     pub fn processInput(self: *Server, buf: []const u8) ServerError!void {
         const session = self.activeSession() orelse return;
         const window = session.active_window orelse return;
@@ -1150,17 +1195,17 @@ pub const Server = struct {
                                     self.command_buf.clearRetainingCapacity();
                                     self.dirty = true;
                                 } else {
-                                const cmd = self.command_buf.items;
-                                if (cmd.len > 0) {
-                                    const dispatch = @import("dispatch.zig");
-                                    const result = dispatch.dispatchCommand(self.allocator, self, cmd);
-                                    if (result.response_type == .ready or result.response_type == .err) {
-                                        if (result.data.len > 0) self.setMessage(result.data) catch {};
+                                    const cmd = self.command_buf.items;
+                                    if (cmd.len > 0) {
+                                        const dispatch = @import("dispatch.zig");
+                                        const result = dispatch.dispatchCommand(self.allocator, self, cmd);
+                                        if (result.response_type == .ready or result.response_type == .err) {
+                                            if (result.data.len > 0) self.setMessage(result.data) catch {};
+                                        }
                                     }
-                                }
-                                self.command_mode = false;
-                                self.command_buf.clearRetainingCapacity();
-                                self.dirty = true;
+                                    self.command_mode = false;
+                                    self.command_buf.clearRetainingCapacity();
+                                    self.dirty = true;
                                 }
                             } else if (is_tab) {
                                 const prefix = self.command_buf.items;
@@ -1706,8 +1751,8 @@ pub const Server = struct {
         }
 
         const window = session.active_window orelse return;
-        const layout = &window.layout;
-        const found_pane = self.findPaneAtNode(layout.root, x, y, 0, 0, layout.width, layout.height) orelse return;
+        const win_layout = &window.layout;
+        const found_pane = self.findPaneAtNode(win_layout.root, x, y, 0, 0, win_layout.width, win_layout.height) orelse return;
         // Safety: ensure the pane is still valid (not destroyed during handling)
         var pane_valid = false;
         for (window.panes.items) |p| {

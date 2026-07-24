@@ -245,7 +245,19 @@ pub const Grid = struct {
 
     pub fn scrollDown(self: *Grid) Error!void {
         if (self.height == 0 or self.history.items.len - self.history_start == 0) return;
-        var line = self.history.pop().?;
+
+        // Extract the oldest history line from history_start.
+        var line = self.history.items[self.history_start];
+        self.history_start += 1;
+
+        // Compact the gap when it grows too large.
+        if (self.history_start > 256) {
+            const alive = self.history.items[self.history_start..];
+            for (alive, 0..) |*l, j| self.history.items[j] = l.*;
+            self.history.items.len = alive.len;
+            self.history_start = 0;
+        }
+
         errdefer line.deinit(self.allocator);
 
         self.getLineMut(self.height - 1).deinit(self.allocator);
@@ -843,12 +855,6 @@ pub const Grid = struct {
             }
         }
 
-        // ── Deinit old lines ──
-        for (old_lines.items) |*l| l.deinit(allocator);
-        old_lines.deinit(allocator);
-        for (old_history.items) |*l| l.deinit(allocator);
-        old_history.deinit(allocator);
-
         // ── Split result into visible + history ──
         self.width = new_width;
 
@@ -885,6 +891,12 @@ pub const Grid = struct {
             new_lines.deinit(allocator);
             new_lines = .empty;
         }
+
+        // ── Deinit old lines AFTER split succeeds — bug #217 fix ──
+        for (old_lines.items) |*l| l.deinit(allocator);
+        old_lines.deinit(allocator);
+        for (old_history.items) |*l| l.deinit(allocator);
+        old_history.deinit(allocator);
 
         if (cursor_x != null and cursor_y != null) {
             if (new_cursor_logical_line) |ncll| {
@@ -978,7 +990,7 @@ test "scroll down restores from history" {
     try testing.expectEqual(@as(usize, 1), grid.history.items.len);
 
     try grid.scrollDown();
-    try testing.expectEqual(@as(usize, 0), grid.history.items.len);
+    try testing.expectEqual(@as(usize, 0), grid.historyLen());
     try testing.expectEqual(@as(u21, 'A'), grid.getCell(0, 0).char);
 }
 
@@ -1114,6 +1126,33 @@ test "resize to zero is no-op" {
     try grid.resize(0);
     try testing.expectEqual(@as(u32, 24), grid.height);
     try testing.expectEqual(@as(usize, 24), grid.lines.items.len);
+}
+
+test "scrollDown restores oldest history line — bug #216" {
+    var grid = try Grid.init(testing.allocator, 80, 5);
+    defer grid.deinit();
+
+    // Write lines A through E
+    for (0..5) |i| {
+        grid.writeChar(0, @intCast(i), @intCast('A' + i));
+    }
+
+    // Scroll up 3 times: history has [A, B, C] (oldest → newest)
+    try grid.scrollUp();
+    try grid.scrollUp();
+    try grid.scrollUp();
+    try testing.expectEqual(@as(usize, 3), grid.history.items.len - grid.history_start);
+    try testing.expectEqual(@as(u21, 'A'), grid.getHistoryLine(0).cells.items[0].char); // oldest
+    try testing.expectEqual(@as(u21, 'C'), grid.getHistoryLine(2).cells.items[0].char); // newest
+
+    // scrollDown should restore the OLDEST line (A) at position 0
+    try grid.scrollDown();
+    try testing.expectEqual(@as(u21, 'A'), grid.getCell(0, 0).char);
+    try testing.expectEqual(@as(u21, 'B'), grid.getHistoryLine(0).cells.items[0].char); // B is now oldest
+
+    // Another scrollDown should restore B
+    try grid.scrollDown();
+    try testing.expectEqual(@as(u21, 'B'), grid.getCell(0, 0).char);
 }
 
 test "scrollDown with zero height does not crash" {

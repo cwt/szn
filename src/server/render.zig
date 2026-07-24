@@ -200,7 +200,10 @@ pub const Display = struct {
             const pane_has_sixels = blk: {
                 var found = false;
                 for (&pb.pane.screen.sixel_images) |opt| {
-                    if (opt != null) { found = true; break; }
+                    if (opt != null) {
+                        found = true;
+                        break;
+                    }
                 }
                 break :blk found;
             };
@@ -537,8 +540,8 @@ pub const Display = struct {
                             break :blk all[0 .. all.len - 2];
                         };
                         const attrCodes = [_][]const u8{
-                            "1",   "2",   "3",   "4",   "5",
-                            "7",   "8",   "9",   "53",  "4:2",
+                            "1",   "2", "3", "4",  "5",
+                            "7",   "8", "9", "53", "4:2",
                             "4:3",
                         };
                         inline for (attrFields, 0..) |field, idx| {
@@ -1034,7 +1037,7 @@ test "renderAll cursor visibility hide" {
         .capture_allocator = allocator,
     };
 
-    var win = try Window.init(allocator, 1, "test-win", 80, 23, null);
+    var win = try Window.init(allocator, 1, "test-win", 80, 23, null, null);
     defer win.deinit(allocator);
 
     const pane = win.active_pane.?;
@@ -1078,9 +1081,9 @@ test "renderAll honours force_clear from a non-active pane — bug #196" {
         .capture_allocator = allocator,
     };
 
-    var win1 = try Window.init(allocator, 1, "active", 40, 23, null);
+    var win1 = try Window.init(allocator, 1, "active", 40, 23, null, null);
     defer win1.deinit(allocator);
-    var win2 = try Window.init(allocator, 2, "inactive", 40, 23, null);
+    var win2 = try Window.init(allocator, 2, "inactive", 40, 23, null, null);
     defer win2.deinit(allocator);
     const active_pane = win1.active_pane.?;
     const inactive_pane = win2.active_pane.?;
@@ -1122,7 +1125,7 @@ test "renderSixelImages emits DCS at correct absolute position" {
         .capture_allocator = allocator,
     };
 
-    var win = try Window.init(allocator, 1, "test-sixel", 80, 23, null);
+    var win = try Window.init(allocator, 1, "test-sixel", 80, 23, null, null);
     defer win.deinit(allocator);
     const pane = win.active_pane.?;
 
@@ -1175,9 +1178,9 @@ test "renderSixelImages renders sixel from every pane — bug #194" {
         .capture_allocator = allocator,
     };
 
-    var win1 = try Window.init(allocator, 1, "pane-a", 40, 23, null);
+    var win1 = try Window.init(allocator, 1, "pane-a", 40, 23, null, null);
     defer win1.deinit(allocator);
-    var win2 = try Window.init(allocator, 2, "pane-b", 40, 23, null);
+    var win2 = try Window.init(allocator, 2, "pane-b", 40, 23, null, null);
     defer win2.deinit(allocator);
     const pane1 = win1.active_pane.?;
     const pane2 = win2.active_pane.?;
@@ -1223,7 +1226,7 @@ test "renderSixelImages keeps partially-scrolled sixel visible — bug #197" {
         .capture_allocator = allocator,
     };
 
-    var win = try Window.init(allocator, 1, "partial", 80, 23, null);
+    var win = try Window.init(allocator, 1, "partial", 80, 23, null, null);
     defer win.deinit(allocator);
     const pane = win.active_pane.?;
 
@@ -1267,7 +1270,7 @@ test "renderSixelImages clips sixel to pane and erases when scrolled above the b
     };
 
     // A 5×10 cell image (50×200 px) in the LOWER pane (terminal rows 12..22).
-    var win = try Window.init(allocator, 1, "lower", 80, 11, null);
+    var win = try Window.init(allocator, 1, "lower", 80, 11, null, null);
     defer win.deinit(allocator);
     const pane = win.active_pane.?;
 
@@ -1316,7 +1319,7 @@ test "renderSixelImages erases previous position when image scrolls — bug #195
         .capture_allocator = allocator,
     };
 
-    var win = try Window.init(allocator, 1, "smear", 80, 23, null);
+    var win = try Window.init(allocator, 1, "smear", 80, 23, null, null);
     defer win.deinit(allocator);
     const pane = win.active_pane.?;
 
@@ -1361,7 +1364,7 @@ test "renderSixelImages erases removed image overlay — bug #195" {
         .capture_allocator = allocator,
     };
 
-    var win = try Window.init(allocator, 1, "ghost", 80, 23, null);
+    var win = try Window.init(allocator, 1, "ghost", 80, 23, null, null);
     defer win.deinit(allocator);
     const pane = win.active_pane.?;
 
@@ -1400,7 +1403,7 @@ test "renderSixelImages derives position from image anchor not cell comb — bug
         .capture_allocator = allocator,
     };
 
-    var win = try Window.init(allocator, 1, "anchor", 80, 23, null);
+    var win = try Window.init(allocator, 1, "anchor", 80, 23, null, null);
     defer win.deinit(allocator);
     const pane = win.active_pane.?;
 
@@ -1440,7 +1443,7 @@ test "sixel rendering with scrolling" {
         .capture_allocator = allocator,
     };
 
-    var win = try Window.init(allocator, 1, "test-sixel-scrolling", 80, 23, null);
+    var win = try Window.init(allocator, 1, "test-sixel-scrolling", 80, 23, null, null);
     defer win.deinit(allocator);
     const pane = win.active_pane.?;
 
@@ -1499,7 +1502,7 @@ test "sixel rendering with scrolling" {
     }
 
     capture_buf.clearRetainingCapacity();
-    
+
     // Render it!
     // Since the top of the image went off-screen, renderAll should clear attr.sixel
     var merged = try Screen.init(allocator, 80, 23);
@@ -1522,7 +1525,7 @@ test "sixel rendering with scrolling" {
 
     // Swap back to free resources correctly in defer
     merged = opt_merged.?;
-    
+
     // Verify that the sixel attribute is cleared for the cells
     const cell = merged.grid.getCell(0, 0);
     try std.testing.expect(!cell.attr.sixel);
@@ -1530,4 +1533,3 @@ test "sixel rendering with scrolling" {
     // Verify output: DCS bytes should NOT be in the output
     try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1bPqTEST\x1b\\") == null);
 }
-

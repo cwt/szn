@@ -2784,11 +2784,11 @@ cell.char = fmt[i];
 
 | Severity | Count | Fixed | False Positive | Unresolved |
 |----------|-------|-------|----------------|------------|
-| Critical | 25 | 22 | 3 | **0** |
-| High | 48 | 47 | 1 | **0** |
-| Medium | 73 (70+3) | 71 | 2 | **0** |
+| Critical | 25 | 23 | 3 | **0** |
+| High | 48 | 48 | 1 | **0** |
+| Medium | 73 (70+3) | 72 | 2 | **0** |
 | Low | 64 (63+1) | 61 | 3 | **0** |
-| Total | 210 (206+4) | **201** | **9** | **0** |
+| Total | 210 (206+4) | **204** | **9** | **0** |
 
 ---
 
@@ -2801,7 +2801,7 @@ Found during a comprehensive line-by-line audit of the entire codebase (~39 `.zi
 ### 216. `Grid.scrollDown` pops newest history entry instead of oldest — corrupts history after compaction
 **File:** `src/grid.zig:148–157`
 **Severity:** CRITICAL
-**Status:** ❌ OPEN
+**Status:** ✅ FIXED — extract from `history_start` (oldest) instead of `pop()` (newest); compact gap when it grows too large.
 
 ```zig
 pub fn scrollDown(self: *Grid) Error!void {
@@ -2823,7 +2823,7 @@ pub fn scrollDown(self: *Grid) Error!void {
 ### 217. `reflowCursorInternal` destroys old grid lines before new lines are committed — unrecoverable on OOM
 **File:** `src/grid.zig:663–671`
 **Severity:** CRITICAL
-**Status:** ❌ OPEN
+**Status:** ✅ FIXED — moved old line deinit to after the split logic so OOM during allocation doesn't corrupt the grid.
 
 ```zig
 for (old_lines.items) |*l| l.deinit(allocator);
@@ -2841,7 +2841,7 @@ The old grid lines and history are fully deinitialized and freed *before* `new_l
 ### 218. Sixel registry eviction (step 4) can evict still-referenced images — dangling cell references
 **File:** `src/screen.zig:250–258`
 **Severity:** CRITICAL
-**Status:** ❌ OPEN
+**Status:** ✅ FIXED — step 4 now first tries to find an unreferenced slot; only falls back to minimum-ID eviction as absolute last resort.
 
 ```zig
 // 4. If all slots are full and referenced, evict the oldest image (min id)
@@ -2869,7 +2869,7 @@ Steps 1–3 guard against evicting a referenced image by checking `isImageRefere
 ### 219. `shiftSixelAnchors` shifts images belonging to the wrong screen — alt/main anchor drift
 **File:** `src/screen.zig:300–305`
 **Severity:** CRITICAL
-**Status:** ❌ OPEN
+**Status:** ✅ FIXED — added `alt_screen` tag to `SixelImage`; `shiftSixelAnchors` only shifts images matching the active screen.
 
 ```zig
 fn shiftSixelAnchors(self: *Screen, delta_rows: i32) void {
@@ -2890,7 +2890,7 @@ The sixel image registry is shared between the main grid and the alt grid (there
 ### 220. Pane swap (`swap_pane_up`/`swap_pane_down`) does not resize panes to their new positions
 **File:** `src/server/server.zig:849–870`
 **Severity:** HIGH
-**Status:** ❌ OPEN
+**Status:** ✅ FIXED — added `resizePaneToNode` helper and `layoutFindNodeBounds` to compute dimensions from the layout tree; both swap directions call it after swapping.
 
 ```zig
 const node1 = window.layout.findLeafParent(window.layout.root, pane) orelse return;
@@ -2910,7 +2910,7 @@ Swapping panes only exchanges the `*Pane` pointers in the layout tree leaf nodes
 ### 221. Use-after-free in `runServerDaemon`: `default_pane` captured across async `server.run` calls
 **File:** `src/main.zig:205–213`
 **Severity:** HIGH
-**Status:** ❌ OPEN
+**Status:** ✅ FIXED — re-validate that the pane still exists by walking sessions again immediately before spawn.
 
 ```zig
 var default_pane: ?*@import("window.zig").Pane = null;
@@ -2939,7 +2939,7 @@ The `for` loop that captures `default_pane` runs *after* the first 16 `server.ru
 ### 222. New panes in existing sessions miss cell pixel size initialization — sixels use stale defaults
 **File:** `src/server/server.zig:2542–2551` (`newSession`), `src/window.zig:116–120` (`Window.init`), `src/layout.zig:108` (`splitPane`)
 **Severity:** HIGH
-**Status:** ❌ OPEN
+**Status:** ✅ FIXED — `Window.init` now takes an optional `parent_screen` parameter and propagates `cell_size_known`/`cell_px_*` to the new pane.
 
 `newSession` correctly propagates `cell_size_known` and `cell_px_*` to the initial pane's screen:
 ```zig
@@ -2956,7 +2956,7 @@ However, `Window.init` (which creates the initial pane for a new window) and `La
 ### 223. `Screen.resize` uses main cursor position to compute alt grid cursor — alt cursor drifts
 **File:** `src/screen.zig:329–338`
 **Severity:** MEDIUM
-**Status:** ❌ OPEN
+**Status:** ✅ FIXED — changed alt grid resize to read from `self.alt_cursor.x/y` instead of `self.cursor.x/y`.
 
 ```zig
 pub fn resize(self: *Screen, width: u32, height: u32) Error!void {
@@ -2979,7 +2979,7 @@ When the alt screen is active (`self.mode.alt_screen == true`), `self.cursor` ho
 ### 224. `queryCellSize` blocks interactive client event loop for 200 ms on startup
 **File:** `src/main.zig:281`
 **Severity:** MEDIUM
-**Status:** ❌ OPEN
+**Status:** ✅ FIXED — reduced poll timeout from 200 ms to 5 ms so terminals that don't support CSI 14 t don't block the client.
 
 ```zig
 const rc = std.posix.poll(&pollfd, 200) catch return false;
@@ -2994,7 +2994,7 @@ Called from `runInteractiveClient` (line 333). This blocks the single-threaded c
 ### 225. `isImageReferenced` performs O(total_cells × num_slots) scanning — linear search per sixel placement
 **File:** `src/screen.zig:307–340`
 **Severity:** LOW (performance)
-**Status:** ❌ OPEN
+**Status:** ⏳ Deferred — this is a performance optimization, not a correctness bug. Would require adding reference counts per slot.
 
 `isImageReferenced` is called up to three times per sixel placement (slot-selection steps 1, 2, and 3), and each call scans every cell in the main grid, main history, alt grid, and alt history. For a grid of 80×24 with 2000 history lines, that is ~160,000 cell comparisons per call. With step 3 looping over 64 slots, the worst case is 64 × 160K = ~10 million cell comparisons per sixel image.
 

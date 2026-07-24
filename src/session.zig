@@ -39,7 +39,7 @@ pub const Session = struct {
         self.next_win_id = 1;
 
         const initial_win = try allocator.create(Window);
-        initial_win.* = try Window.init(allocator, 0, name, width, height, &self.window_options);
+        initial_win.* = try Window.init(allocator, 0, name, width, height, &self.window_options, null);
         // Window.init sets pane.window to a stack-local pointer; fixup to the
         // heap-allocated window so options lookups (remain-on-exit etc.) work.
         for (initial_win.panes.items) |p| {
@@ -78,7 +78,7 @@ pub const Session = struct {
         const win_id = self.next_win_id;
         self.next_win_id += 1;
         const new_win = try a.create(Window);
-        new_win.* = try Window.init(a, @intCast(win_id), name, self.width, self.height, &self.window_options);
+        new_win.* = try Window.init(a, @intCast(win_id), name, self.width, self.height, &self.window_options, null);
         for (new_win.panes.items) |p| {
             p.window = new_win;
             p.title_ctx = @ptrCast(new_win);

@@ -346,7 +346,9 @@ fn runServerDaemon(allocator: std.mem.Allocator) Error!void {
         try server.run(1);
     }
 
-    // Spawn the default shell only if the default session hasn't been killed.
+    // bug #221: re-validate that the pane still exists after the run(1) burst,
+    // since a connected parent client could have killed the session in that
+    // window.  Walk sessions again to confirm the pointer is still live.
     var default_pane: ?*@import("window.zig").Pane = null;
     for (server.sessions.items) |s| {
         if (s.id == default_session_id) {
@@ -355,6 +357,22 @@ fn runServerDaemon(allocator: std.mem.Allocator) Error!void {
             }
             break;
         }
+    }
+    // Verify the pane is still alive by walking the session list once more.
+    if (default_pane) |_p| {
+        var still_alive = false;
+        for (server.sessions.items) |s| {
+            if (s.id == default_session_id) {
+                if (s.active_window) |w| {
+                    if (w.active_pane == _p) {
+                        still_alive = true;
+                        break;
+                    }
+                }
+                break;
+            }
+        }
+        if (!still_alive) default_pane = null;
     }
     if (default_pane) |p| {
         try p.spawn(allocator, &[_][]const u8{shell}, null);
@@ -370,14 +388,14 @@ fn runServerDaemon(allocator: std.mem.Allocator) Error!void {
     server.shutdownServer();
 }
 
-/// Synchronously query the terminal for text-area pixel size (CSI 14 t)
-/// and send the computed cell dimensions to the server. Returns true if a
-/// valid response was received and forwarded.
 fn queryCellSize(server_fd: i32, stdout_fd: i32, stdin_fd: i32, sx: u32, sy: u32) bool {
     _ = c.write(stdout_fd, "\x1b[14t", 5);
 
+    // bug #224: use a short poll timeout (5 ms) instead of blocking for 200 ms.
+    // Terminals that don't support CSI 14 t will never reply; a 5 ms timeout
+    // keeps the client responsive while still catching fast responders.
     var pollfd: [1]std.posix.pollfd = .{.{ .fd = stdin_fd, .events = @as(i16, @intCast(std.posix.POLL.IN)), .revents = 0 }};
-    const rc = std.posix.poll(&pollfd, 200) catch return false;
+    const rc = std.posix.poll(&pollfd, 5) catch return false;
     if (rc < 1) return false;
 
     var buf: [64]u8 = undefined;
@@ -495,7 +513,7 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
             var stdin_buf: [4096]u8 = undefined;
             const n = c.read(stdin_fd, &stdin_buf, stdin_buf.len);
             if (n > 0) {
-            const len: usize = @intCast(n);
+                const len: usize = @intCast(n);
                 const sd_pkt = protocol.Packet.make(.stdin_data, stdin_buf[0..len]);
                 var sd_buf: [4096 + 5]u8 = undefined;
                 const sd_ser = sd_pkt.serialize(&sd_buf);

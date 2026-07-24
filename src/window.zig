@@ -245,7 +245,7 @@ pub const Window = struct {
     options: options_mod.Options,
     automatic_rename: bool = true,
 
-    pub fn init(allocator: std.mem.Allocator, id: u32, name: []const u8, width: u32, height: u32, global_window_options: ?*const options_mod.Options) Error!Window {
+    pub fn init(allocator: std.mem.Allocator, id: u32, name: []const u8, width: u32, height: u32, global_window_options: ?*const options_mod.Options, parent_screen: ?*const Screen) Error!Window {
         var options = if (global_window_options) |gwo| try gwo.clone(allocator) else try options_mod.Options.init(allocator, options_mod.WINDOW_OPTIONS);
         errdefer options.deinit();
 
@@ -262,6 +262,12 @@ pub const Window = struct {
         var pane = try allocator.create(Pane);
         pane.* = try Pane.init(allocator, 0, width, height);
         pane.active = true;
+        // bug #222: propagate cell size from parent screen if available.
+        if (parent_screen) |ps| {
+            pane.screen.cell_size_known = ps.cell_size_known;
+            pane.screen.cell_px_width = ps.cell_px_width;
+            pane.screen.cell_px_height = ps.cell_px_height;
+        }
         try window.panes.append(allocator, pane);
         window.registerPane(pane);
         window.active_pane = pane;
@@ -433,7 +439,7 @@ test "pane write string" {
 }
 
 test "create window with initial pane" {
-    var window = try Window.init(testing.allocator, 1, "test", 80, 24, null);
+    var window = try Window.init(testing.allocator, 1, "test", 80, 24, null, null);
     defer window.deinit(testing.allocator);
     try testing.expectEqual(@as(u32, 1), window.id);
     try testing.expectEqualStrings("test", window.name);
@@ -442,7 +448,7 @@ test "create window with initial pane" {
 }
 
 test "add pane to window" {
-    var window = try Window.init(testing.allocator, 1, "test", 80, 24, null);
+    var window = try Window.init(testing.allocator, 1, "test", 80, 24, null, null);
     defer window.deinit(testing.allocator);
 
     const pane = try window.addPane(testing.allocator);
@@ -451,7 +457,7 @@ test "add pane to window" {
 }
 
 test "remove pane from window" {
-    var window = try Window.init(testing.allocator, 1, "test", 80, 24, null);
+    var window = try Window.init(testing.allocator, 1, "test", 80, 24, null, null);
     defer window.deinit(testing.allocator);
 
     const pane = try window.addPane(testing.allocator);
@@ -462,7 +468,7 @@ test "remove pane from window" {
 }
 
 test "set active pane" {
-    var window = try Window.init(testing.allocator, 1, "test", 80, 24, null);
+    var window = try Window.init(testing.allocator, 1, "test", 80, 24, null, null);
     defer window.deinit(testing.allocator);
 
     const pane = try window.addPane(testing.allocator);
@@ -474,7 +480,7 @@ test "set active pane" {
 }
 
 test "remove active pane falls back to first" {
-    var window = try Window.init(testing.allocator, 1, "test", 80, 24, null);
+    var window = try Window.init(testing.allocator, 1, "test", 80, 24, null, null);
     defer window.deinit(testing.allocator);
 
     const original = window.active_pane.?;
@@ -488,7 +494,7 @@ test "remove active pane falls back to first" {
 }
 
 test "nested split focus transition on exit" {
-    var window = try Window.init(testing.allocator, 1, "test", 80, 24, null);
+    var window = try Window.init(testing.allocator, 1, "test", 80, 24, null, null);
     defer window.deinit(testing.allocator);
 
     const pane1 = window.active_pane.?;
@@ -512,13 +518,13 @@ test "nested split focus transition on exit" {
 
 test "window name is not freed on deinit" {
     // Window.deinit frees the name — verify it doesn't double-free
-    var window = try Window.init(testing.allocator, 1, "test-name", 80, 24, null);
+    var window = try Window.init(testing.allocator, 1, "test-name", 80, 24, null, null);
     window.deinit(testing.allocator);
     // Should not crash
 }
 
 test "pane initial size matches window" {
-    var window = try Window.init(testing.allocator, 1, "test", 100, 40, null);
+    var window = try Window.init(testing.allocator, 1, "test", 100, 40, null, null);
     defer window.deinit(testing.allocator);
 
     try testing.expectEqual(@as(u32, 100), window.panes.items[0].screen.grid.width);
