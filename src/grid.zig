@@ -253,18 +253,12 @@ pub const Grid = struct {
     }
 
     pub fn scrollDown(self: *Grid) Error!void {
-        if (self.height == 0 or self.history.items.len - self.history_start == 0) return;
+        if (self.height == 0 or self.history.items.len <= self.history_start) return;
 
-        // Extract the oldest history line from history_start.
-        var line = self.history.items[self.history_start];
-        self.history_start += 1;
-
-        // Compact the gap when it grows too large.
-        if (self.history_start > 256) {
-            const alive = self.history.items[self.history_start..];
-            for (alive, 0..) |*l, j| self.history.items[j] = l.*;
-            self.history.items.len = alive.len;
+        var line = self.history.pop().?;
+        if (self.history.items.len == self.history_start) {
             self.history_start = 0;
+            self.history.clearRetainingCapacity();
         }
 
         errdefer line.deinit(self.allocator);
@@ -1143,7 +1137,7 @@ test "resize to zero is no-op" {
     try testing.expectEqual(@as(usize, 24), grid.lines.items.len);
 }
 
-test "scrollDown restores oldest history line — bug #216" {
+test "scrollDown restores newest history line in LIFO order — bug #249" {
     var grid = try Grid.init(testing.allocator, 80, 5);
     defer grid.deinit();
 
@@ -1160,14 +1154,18 @@ test "scrollDown restores oldest history line — bug #216" {
     try testing.expectEqual(@as(u21, 'A'), grid.getHistoryLine(0).cells.items[0].char); // oldest
     try testing.expectEqual(@as(u21, 'C'), grid.getHistoryLine(2).cells.items[0].char); // newest
 
-    // scrollDown should restore the OLDEST line (A) at position 0
+    // scrollDown should restore the NEWEST line (C) at position 0
     try grid.scrollDown();
-    try testing.expectEqual(@as(u21, 'A'), grid.getCell(0, 0).char);
-    try testing.expectEqual(@as(u21, 'B'), grid.getHistoryLine(0).cells.items[0].char); // B is now oldest
+    try testing.expectEqual(@as(u21, 'C'), grid.getCell(0, 0).char);
 
     // Another scrollDown should restore B
     try grid.scrollDown();
     try testing.expectEqual(@as(u21, 'B'), grid.getCell(0, 0).char);
+
+    // Third scrollDown should restore A (oldest)
+    try grid.scrollDown();
+    try testing.expectEqual(@as(u21, 'A'), grid.getCell(0, 0).char);
+    try testing.expectEqual(@as(usize, 0), grid.historyLen());
 }
 
 test "scrollDown with zero height does not crash" {

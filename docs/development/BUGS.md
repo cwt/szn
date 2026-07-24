@@ -3429,7 +3429,7 @@ Found during an audit of bugs fixed between v0.6.0 and v0.7.0, hunting for follo
 ### 249. History restoration order inversion in `Grid.scrollDown`
 **File:** `src/grid.zig:255–275`
 **Severity:** CRITICAL
-**Status:** 🚨 UNRESOLVED
+**Status:** ✅ FIXED — restored LIFO stack popping order using `history.pop()`; reset `history_start` and cleared capacity when history becomes empty. Updated unit tests.
 
 `Grid.scrollDown` was modified in bug #216 to take `history.items[history_start]` (FIFO queue, oldest line first) instead of `history.pop()` (LIFO stack, newest line first). Because `scrollUp` appends lines to `history` sequentially, `history_start` contains the oldest line while `pop()` yields the newest (most recently scrolled off) line. Restoring multiple scrolled-off lines back into the active visible grid restores them in reverse order (oldest first instead of newest first), scrambling scrollback lines.
 
