@@ -3151,7 +3151,7 @@ Copy mode search (`searchForward`/`searchBackward`) uses `lineBytes` to fetch si
 ### 236. `SIGWINCH` signal handler missing `SA_RESTART` flag
 **File:** `src/main.zig:180–210`
 **Severity:** HIGH
-**Status:** ❌ OPEN
+**Status:** ✅ FIXED
 
 Signal handlers for `SIGWINCH` and `SIGCHLD` pass `flags = 0` to `std.posix.sigaction`.
 

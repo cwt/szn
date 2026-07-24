@@ -331,7 +331,7 @@ fn runServerDaemon(allocator: std.mem.Allocator) Error!void {
     var chld_act: std.posix.Sigaction = .{
         .handler = .{ .handler = server_mod.sigchld_handler },
         .mask = std.posix.sigemptyset(),
-        .flags = 0,
+        .flags = std.posix.SA.RESTART,
     };
     std.posix.sigaction(.CHLD, &chld_act, null);
 
@@ -463,7 +463,7 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
     var act: std.posix.Sigaction = .{
         .handler = .{ .handler = sigwinch_handler },
         .mask = std.posix.sigemptyset(),
-        .flags = 0,
+        .flags = std.posix.SA.RESTART,
     };
     std.posix.sigaction(.WINCH, &act, null);
 
@@ -614,4 +614,13 @@ test "detectNested returns false when SZN env is not set" {
         return error.SkipZigTest;
     }
     try testing.expect(!detectNested());
+}
+
+test "sigaction configured with SA_RESTART — bug #236" {
+    const act: std.posix.Sigaction = .{
+        .handler = .{ .handler = sigwinch_handler },
+        .mask = std.posix.sigemptyset(),
+        .flags = std.posix.SA.RESTART,
+    };
+    try testing.expect((act.flags & std.posix.SA.RESTART) != 0);
 }
