@@ -358,22 +358,7 @@ fn runServerDaemon(allocator: std.mem.Allocator) Error!void {
             break;
         }
     }
-    // Verify the pane is still alive by walking the session list once more.
-    if (default_pane) |_p| {
-        var still_alive = false;
-        for (server.sessions.items) |s| {
-            if (s.id == default_session_id) {
-                if (s.active_window) |w| {
-                    if (w.active_pane == _p) {
-                        still_alive = true;
-                        break;
-                    }
-                }
-                break;
-            }
-        }
-        if (!still_alive) default_pane = null;
-    }
+
     if (default_pane) |p| {
         try p.spawn(allocator, &[_][]const u8{shell}, null);
         try server.watchPanePty(p);

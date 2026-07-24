@@ -3514,7 +3514,7 @@ Lines 271–281 set active window variables on `ctx` prior to the window list lo
 ### 256. Dead session list re-validation loop in `runServerDaemon`
 **File:** `src/main.zig:361–376`
 **Severity:** LOW (code quality)
-**Status:** 🚨 UNRESOLVED
+**Status:** ✅ FIXED — removed redundant second session validation loop.
 
 Lines 353–360 populate `default_pane` from `server.sessions`. Immediately following (lines 361–376), without any intervening code or async execution, the code performs the exact same loop a second time to verify if `default_pane` is still alive.
 
