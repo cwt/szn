@@ -789,7 +789,7 @@ pub const Grid = struct {
 
                 if (cursor_y != null and line_idx == cursor_y.? + hist_len) {
                     is_cursor_logical_line = true;
-                    cursor_offset_in_this_logical = current_offset + @min(cursor_x.?, cells_to_add.len);
+                    cursor_offset_in_this_logical = current_offset + cursor_x.?;
                 }
 
                 try flat_cells.appendSlice(allocator, cells_to_add);
