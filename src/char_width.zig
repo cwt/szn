@@ -144,6 +144,10 @@ const combining_mark_count = blk: {
     break :blk count;
 };
 
+comptime {
+    std.debug.assert(combining_mark_count <= 8191);
+}
+
 const combining_marks: [combining_mark_count]u21 = blk: {
     @setEvalBranchQuota(100000);
     var buf: [combining_mark_count]u21 = undefined;
