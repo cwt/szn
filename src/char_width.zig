@@ -127,7 +127,6 @@ fn searchTable(key: u21, ranges: []const WidthRange) bool {
 pub const COMBINING_MAX = 8191;
 
 fn isCombining(cp: u21) bool {
-    if (cp < 0x0300) return cp >= 0x1160 and cp <= 0x11FF;
     if (cp >= 0x1100 and cp <= 0x115F) return false;
     if (cp == 0x3164) return false;
     return true;
@@ -750,6 +749,18 @@ test "charWidth: Hangul Jamo are wide (bug #104)" {
     try std.testing.expectEqual(@as(u4, 2), charWidth(0x1102));
     try std.testing.expectEqual(@as(u4, 0), charWidth(0x1160)); // Jungseong — still zero-width
     try std.testing.expectEqual(@as(u4, 0), charWidth(0x11FF)); // Jongseong — still zero-width
+}
+
+test "isCombining: Hangul Jamo medials/finals correctly classified — bug #273" {
+    // 0x1160–0x11FF (Jungseong/Jongseong) should be combining (width 0)
+    try std.testing.expect(isCombining(0x1160));
+    try std.testing.expect(isCombining(0x11FF));
+    try std.testing.expect(isCombining(0x11A8));
+    // 0x1100–0x115F (Choseong) should NOT be combining (they're wide)
+    try std.testing.expect(!isCombining(0x1100));
+    try std.testing.expect(!isCombining(0x115F));
+    // Dead code path: cp < 0x0300 and cp >= 0x1160 is impossible
+    try std.testing.expect(!(0x0300 > 0x1160));
 }
 
 test "charWidth: sorted tables invariant" {
