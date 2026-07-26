@@ -779,9 +779,10 @@ pub const Grid = struct {
 
                 var cells_to_add = line.cells.items;
                 // Trim trailing unwritten cells from all lines to remove padding
+                // Exclude padding cells (char == 0, is_padding == true) and combining chars — bug #264.
                 while (cells_to_add.len > 0) {
                     const last = cells_to_add[cells_to_add.len - 1];
-                    if (last.char == 0) {
+                    if (last.char == 0 and !last.is_padding and last.comb1 == 0 and last.comb2 == 0) {
                         cells_to_add = cells_to_add[0 .. cells_to_add.len - 1];
                     } else break;
                 }
@@ -800,10 +801,10 @@ pub const Grid = struct {
             }
             idx = line_idx;
 
-            // Final trim of trailing unwritten cells
+            // Final trim of trailing unwritten cells — exclude padding and combining chars — bug #264.
             while (flat_cells.items.len > start_idx) {
                 const last = flat_cells.items[flat_cells.items.len - 1];
-                if (last.char == 0) {
+                if (last.char == 0 and !last.is_padding and last.comb1 == 0 and last.comb2 == 0) {
                     _ = flat_cells.pop();
                 } else break;
             }
