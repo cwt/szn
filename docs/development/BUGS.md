@@ -1859,7 +1859,7 @@ const n = std.fmt.parseInt(u8, s[6..], 10) catch return ParseError.InvalidIndexe
 ### 146. `cfg.zig` — `set -u` silently dropped
 **File:** `src/cfg.zig:189`
 **Severity:** LOW
-**Status:** ✅ FIXED — removed dead `if (cp >= 0x80 and cp <= 0x9F) return 0;`.
+**Status:** ✅ FIXED — added log warning and early return for unhandled unset flag.
 
 ```zig
 'u' => return, // unset (handled elsewhere)
@@ -1872,7 +1872,7 @@ Returns success without appending any directive. The caller has no way to know t
 ### 147. `cfg.zig` — Combined flags like `-gw` misparsed
 **File:** `src/cfg.zig:183–192`
 **Severity:** LOW
-**Status:** ✅ FIXED — added log warning and early return.
+**Status:** ✅ FIXED — flags are now correctly parsed using the while loop.
 
 ```zig
 switch (remaining[1]) {
@@ -1889,7 +1889,7 @@ Input `-gw option value` is parsed as flag `-g` with option name `w` and value `
 ### 148. `client/raw.zig` — BRKINT left enabled in raw mode
 **File:** `src/client/raw.zig:28`
 **Severity:** LOW
-**Status:** ✅ FIXED — flags are now correctly parsed using the while loop.
+**Status:** ✅ FIXED — changed `BRKINT` from `true` to `false`.
 
 ```zig
 raw.iflag = .{ .BRKINT = true };
@@ -1902,7 +1902,7 @@ raw.iflag = .{ .BRKINT = true };
 ### 149. `client/client.zig` — `recvPacket` doesn't validate msg_type
 **File:** `src/client/client.zig:88`
 **Severity:** LOW
-**Status:** ✅ FIXED — changed `BRKINT` from `true` to `false`.
+**Status:** ✅ FIXED — added `MessageType.fromByte()` validation.
 
 ```zig
 .msg_type = hdr[4],
@@ -1915,7 +1915,7 @@ The raw byte `hdr[4]` is stored directly as `msg_type` without validating it's a
 ### 150. `tty/tty_key.zig` — Invalid UTF-8 lead bytes 0xC0–0xC1 accepted into multi-byte state
 **File:** `src/tty/tty_key.zig:73–77`
 **Severity:** LOW
-**Status:** ✅ FIXED — added `MessageType.fromByte()` validation.
+**Status:** ✅ FIXED — changed range from `0xc0..0xdf` to `0xc2..0xdf`.
 
 ```zig
 if (byte >= 0xc0 and byte <= 0xdf) {
@@ -1933,7 +1933,7 @@ Bytes 0xC0 and 0xC1 are never valid UTF-8 lead bytes (they would produce overlon
 ### 151. `tty/tty_key.zig` — Wheel left/right mouse buttons misidentified
 **File:** `src/tty/tty_key.zig:243–259`
 **Severity:** LOW
-**Status:** ✅ FIXED — changed range from `0xc0..0xdf` to `0xc2..0xdf`.
+**Status:** ✅ FIXED — added `scroll_left`/`scroll_right` to `MouseButton` enum and parser.
 
 SGR mouse button values 66 (0x42, wheel left) and 67 (0x43, wheel right) are not detected by the wheel checks (`& 0xC3` yields 0x42/0x43, not 0x40/0x41). They fall through to the switch where `btn & 0x03` gives 2/3, mapping wheel-left to `.right` and wheel-right to `.release`.
 
@@ -1942,7 +1942,7 @@ SGR mouse button values 66 (0x42, wheel left) and 67 (0x43, wheel right) are not
 ### 152. `tty/tty.zig` — `writeCell` always advances `cx` by 1, ignoring wide character width
 **File:** `src/tty/tty.zig:398`
 **Severity:** LOW
-**Status:** ✅ FIXED — added `scroll_left`/`scroll_right` to `MouseButton` enum and parser.
+**Status:** ✅ FIXED — use `char_width.charWidth(cell.char)` to determine advance amount.
 
 ```zig
 if (self.cx >= 0) self.cx += 1;
@@ -1955,7 +1955,7 @@ Wide characters (e.g., CJK, emoji) occupy 2 terminal columns, but `cx` is always
 ### 153. `cmd/cmd.zig` — `src_pane` declared `undefined` in `cmdJoinPane`
 **File:** `src/cmd/cmd.zig:326`
 **Severity:** LOW
-**Status:** ✅ FIXED — use `char_width.charWidth(cell.char)` to determine advance amount.
+**Status:** ✅ FIXED — initialized `src_pane` to `null` and handled non-matching case safely.
 
 ```zig
 var src_pane: *@import("../window.zig").Pane = undefined;
@@ -2288,11 +2288,11 @@ _ = c.write(cfd, ser.ptr, ser.len);  // silently ignores failure
 
 | Severity | Count | Fixed | False Positive | Unresolved |
 |----------|-------|-------|----------------|------------|
-| Critical | 23 (18+5) | 20 | 3 | **0** |
-| High | 42 (39+3) | 41 | 1 | **0** |
+| Critical | 22 (18+4) | 19 | 3 | **0** |
+| High | 41 (39+2) | 40 | 1 | **0** |
 | Medium | 58 (52+6) | 56 | 2 | **0** |
-| Low | 54 (26+28) | 51 | 3 | **0** |
-| Total | 177 (163+14) | **168** | **9** | **0** |
+| Low | 54 (54+0) | 51 | 3 | **0** |
+| Total | 175 (163+12) | **166** | **9** | **0** |
 
 ---
 
@@ -2912,7 +2912,7 @@ Found during a comprehensive line-by-line audit of the entire codebase (~39 `.zi
 ### 216. `Grid.scrollDown` pops newest history entry instead of oldest — corrupts history after compaction
 **File:** `src/grid.zig:148–157`
 **Severity:** CRITICAL
-**Status:** ✅ FIXED — extract from `history_start` (oldest) instead of `pop()` (newest); compact gap when it grows too large.
+**Status:** ❌ FALSE POSITIVE / REVERTED — `history.pop()` (LIFO) is the intentional and correct order for restoring history lines. The FIFO modification proposed in this entry inverted scrollback restoration order and was reverted in Bug #249.
 
 ```zig
 pub fn scrollDown(self: *Grid) Error!void {
@@ -2925,9 +2925,7 @@ pub fn scrollDown(self: *Grid) Error!void {
 }
 ```
 
-`self.history.pop()` pops the **newest** entry (last element of the `ArrayList`), which is the most recently scrolled-off line. But `scrollDown` should restore the **oldest** history line back to the bottom of the visible grid. After a compaction (`scrollUp` lines 139–143 shrink the gap), `history.items.len` reflects only live entries and `history_start` is 0 — but `pop()` still takes from the wrong end.  `scrollUp` pushes with `history.append` (newest at back), so `scrollDown` must remove from the front (`history_start`).  Using `pop()` reverses the scroll order.
-
-**Fix:** Extract the line at `history_start` (e.g. `var line = self.history.items[self.history_start]; self.history_start += 1;`) and compact the gap if it grows too large.
+`self.history.pop()` pops the **newest** entry (last element of the `ArrayList`), which is the most recently scrolled-off line. The proposal in this bug entry to extract from `history_start` (FIFO) inverted history restoration order when scrolling down. Bug #249 reverted this change back to `pop()` (LIFO) as intentional behavior.
 
 ---
 
