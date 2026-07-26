@@ -262,6 +262,12 @@ fn appendWithStrftime(allocator: std.mem.Allocator, out: *std.ArrayList(u8), tex
                 try out.appendSlice(allocator, result_buf[0..n]);
                 i += 2;
                 continue;
+            } else {
+                // strftime failed (buffer too small or error) — emit literal %X
+                try out.append(allocator, '%');
+                try out.append(allocator, text[i + 1]);
+                i += 2;
+                continue;
             }
         }
         try out.append(allocator, text[i]);
