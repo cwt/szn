@@ -766,9 +766,11 @@ pub const Screen = struct {
     }
 
     pub fn repeatLastChar(self: *Screen, count: u32) Error!void {
+        const max_repeat: u32 = 4096;
+        const n = @min(count, max_repeat);
         if (self.last_char) |lc| {
             var i: u32 = 0;
-            while (i < count) : (i += 1) {
+            while (i < n) : (i += 1) {
                 try self.writeChar(lc);
             }
         }
@@ -2380,4 +2382,36 @@ test "sixel_refcounts resets to 0 on slot eviction — bug #253" {
 
     // Refcount of slot 0 should reflect only the new image (1 cell * 1 row = 1)
     try testing.expectEqual(@as(usize, 1), screen.sixel_refcounts[0]);
+}
+
+test "repeatLastChar clamps count to prevent DoS — bug #260" {
+    const allocator = std.testing.allocator;
+    var screen = try Screen.init(allocator, 10, 5);
+    defer screen.deinit();
+
+    // Write a character to set last_char
+    try screen.writeChar('A');
+    try testing.expect(screen.last_char != null);
+
+    // Requesting max u32 repeat should not hang — it gets clamped to 4096
+    try screen.repeatLastChar(std.math.maxInt(u32));
+
+    // Should have written at most 4096 chars (the clamp), not overflow the grid
+    try testing.expect(screen.cursor.x <= screen.grid.width);
+    try testing.expect(screen.cursor.y < screen.grid.height);
+}
+
+test "repeatLastChar with zero count does nothing" {
+    const allocator = std.testing.allocator;
+    var screen = try Screen.init(allocator, 10, 5);
+    defer screen.deinit();
+
+    try screen.writeChar('A');
+    const orig_x = screen.cursor.x;
+    const orig_y = screen.cursor.y;
+
+    try screen.repeatLastChar(0);
+
+    try testing.expectEqual(orig_x, screen.cursor.x);
+    try testing.expectEqual(orig_y, screen.cursor.y);
 }
