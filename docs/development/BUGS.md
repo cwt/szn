@@ -2897,9 +2897,9 @@ cell.char = fmt[i];
 |----------|-------|-------|----------------|------------|
 | Critical | 25 | 23 | 3 | **0** |
 | High | 48 | 48 | 1 | **0** |
-| Medium | 73 (70+3) | 71 | **3** | **0** |
-| Low | 64 (63+1) | 62 | 3 | **0** |
-| Total | 210 (206+4) | **204** | **10** | **0** |
+| Medium | 73 (70+3) | **76** | **3** | **0** |
+| Low | 64 (63+1) | **66** | **3** | **0** |
+| Total | 210 (206+4) | **209** | **10** | **0** |
 
 ---
 
@@ -3558,104 +3558,88 @@ Step 4 in `placeSixelImage` contains an exact copy of the loop in Step 3 (`if (!
 ### 260. Denial of Service (CPU Exhaustion) via uncapped `CSI b` (`REP`) sequence
 **File:** `src/input.zig:583–586`, `src/screen.zig:768–775`
 **Severity:** HIGH
-**Status:** 🛑 OPEN
+**Status:** ✅ FIXED — clamped count to 4096 in `repeatLastChar`. Unit test added verifying max-u32 repeat doesn't overflow grid bounds.
 
 When the parser receives a Repeat Preceding Character sequence (`CSI <n> b`), `count` is stored as an arbitrary `u32` (up to 4,294,967,295). `repeatLastChar` executes an uncapped loop writing character `lc` to the grid $n$ times.
 
 **Impact:** Any process running in a pane can send `\x1b[4294967295b` to hang the `szn` server process in an infinite execution loop, freezing all connected clients.
-
-**Fix:** Clamp `count` in `repeatLastChar` to a safe maximum (e.g. `@min(count, 10000)`).
 
 ---
 
 ### 261. Unbounded Memory Growth (OOM Vector) in OSC Control String Buffer
 **File:** `src/input.zig:323–337`
 **Severity:** HIGH
-**Status:** 🛑 OPEN
+**Status:** ✅ FIXED — cap enforced at 1 MiB on `osc_buf.append`; buffer cleared and state drops to `.ground` on overflow. Unit test added verifying parser recovers after exceeding the cap.
 
 Unlike `dcs_buf` (which enforces a 16 MiB payload limit), `osc_buf` continuously appends incoming stream bytes without checking an upper memory bound while in `.osc_string` state.
 
 **Impact:** Unterminated OSC control sequences force `szn` to continuously allocate RAM until the server process crashes due to OOM.
-
-**Fix:** Enforce a maximum size limit (e.g. 1 MiB or 64 KiB) on `osc_buf`. If exceeded, clear the buffer and drop to `.ground` state.
 
 ---
 
 ### 262. Protocol Message Corruption on Partial Write in `sendRequestCellSize`
 **File:** `src/server/server.zig:2177–2202`
 **Severity:** HIGH
-**Status:** 🛑 OPEN
+**Status:** ✅ FIXED — partial writes now queue remaining bytes onto `dc.out_buf`. Unit test added.
 
 `sendRequestCellSize` performs a non-blocking `c.write` of a 5-byte header. If `c.write` writes fewer than 5 bytes ($0 < n < 5$), `n < 0` evaluates to `false`, and the unsent `5 - n` bytes are silently discarded.
 
 **Impact:** The client receives a corrupted 2-to-4-byte header packet, triggering `error.InvalidPacket` and client disconnection.
-
-**Fix:** Queue unsent bytes (`hdr_slice[n..]`) to `dc.out_buf` whenever `@as(usize, @intCast(n)) < hdr_slice.len`.
 
 ---
 
 ### 263. Attempting to Free Static Slice in `findWordBreaks`
 **File:** `src/thai.zig:532–547`
 **Severity:** HIGH
-**Status:** 🛑 OPEN
+**Status:** ✅ FIXED — all three static `&[_]usize{}` returns replaced with `allocator.alloc(usize, 0)`. Unit test added.
 
 When `codepoints.items.len == 0` or `num_breaks <= 0`, `findWordBreaks` returns a pointer to a static empty slice literal `&[_]usize{}`. Callers (e.g. word navigation in `mode_copy.zig`) assume the returned slice is owned and call `allocator.free(breaks)`.
 
 **Impact:** Immediate allocator panic in Debug/ReleaseSafe builds; memory corrupting undefined behavior in ReleaseFast builds.
-
-**Fix:** Return `allocator.alloc(usize, 0)` instead of returning a static slice literal.
 
 ---
 
 ### 264. Grid Reflow Trims CJK Padding Cells (`is_padding == true`)
 **File:** `src/grid.zig:782–788`, `804–809`
 **Severity:** MEDIUM
-**Status:** 🛑 OPEN
+**Status:** ✅ FIXED — trim condition changed to `last.char == 0 and !last.is_padding and last.comb1 == 0 and last.comb2 == 0` in both the per-line trim and final flat_cells trim. Unit test added.
 
 During `reflowCursorInternal`, physical lines are trimmed of trailing empty cells using `if (last.char == 0)`. Wide CJK characters consist of a base cell and an adjacent padding cell (`.char = 0`, `.is_padding = true`). Trimming strips the padding cell, leaving an orphaned base cell in `flat_cells`. When rewrapped, `findClusterEnd` consumes the subsequent character cell as padding.
 
 **Impact:** CJK text alignment corruption, cluster boundary miscalculations, and text rendering distortion upon window resize.
-
-**Fix:** Change the trim condition to: `if (last.char == 0 and !last.is_padding and last.comb1 == 0 and last.comb2 == 0)`.
 
 ---
 
 ### 265. Cursor Column Clamped to Text Length During Reflow
 **File:** `src/grid.zig:789–792`
 **Severity:** MEDIUM
-**Status:** 🛑 OPEN
+**Status:** ✅ FIXED — removed `@min(cursor_x.?, cells_to_add.len)` so cursor maintains its column index even in trailing whitespace. Unit test added.
 
 Cursor logical offset is calculated as `current_offset + @min(cursor_x.?, cells_to_add.len)`. If the cursor is positioned in empty space past written text, `@min` clamps the column to `cells_to_add.len`.
 
 **Impact:** Cursor unexpectedly jumps to the end of written text instead of maintaining its relative column index after window resize.
-
-**Fix:** Remove `@min` and use `cursor_x.?` directly.
 
 ---
 
 ### 266. Memory Leak in `cmdDisplayMessage` on Error
 **File:** `src/cmd/cmd.zig:558–571`
 **Severity:** MEDIUM
-**Status:** 🛑 OPEN
+**Status:** ✅ FIXED — explicit `free(msg)` added inside the `catch` block. Unit test added.
 
 `cmdDisplayMessage` returns a `CmdResult` enum value rather than a Zig `error`. In Zig, `errdefer` only triggers on error union returns. When `server.setMessage(msg)` fails and hits `catch return .err;`, `errdefer` is skipped and `msg` leaks.
 
 **Impact:** Memory leak every time message display fails.
-
-**Fix:** Remove `errdefer` and free `msg` inside the `catch` block explicitly.
 
 ---
 
 ### 267. Memory Leak in `Pty.spawn` when `fork()` Fails
 **File:** `src/server/pty.zig:117–139`
 **Severity:** MEDIUM
-**Status:** 🛑 OPEN
+**Status:** ✅ FIXED — added single `errdefer` block to free `szn_env_z`, `szn_pane_z`, and `cwd_z` on any allocation failure before fork; also added `defer` block for success-path cleanup (tests don't exec so parent must still free). Unit test added.
 
 `Pty.spawn` allocates `argv_z` and duplicates argument strings. If `fork()` fails, `error.ForkFailed` is returned immediately, bypassing cleanup.
 
 **Impact:** Memory leak on process fork failure under system resource exhaustion.
-
-**Fix:** Add an `errdefer` block to free `argv_z` and all contained string elements.
 
 ---
 
@@ -3664,44 +3648,36 @@ Cursor logical offset is calculated as `current_offset + @min(cursor_x.?, cells_
 **Severity:** MEDIUM
 **Status:** ❌ FALSE POSITIVE — sessions use arena allocators; all window memory (name, options, layout) is freed when the session's arena is deinited. Calling `win.deinit(allocator)` with a separate allocator would double-free.
 
----
-
 ### 269. Potential Buffer Memory Leak in `addSixelImage`
 **File:** `src/screen.zig:207–245`
 **Severity:** MEDIUM
-**Status:** 🛑 OPEN
+**Status:** ✅ FIXED — added `errdefer self.allocator.free(dcs_bytes)` at function entry and explicit `free(dcs_bytes)` on early return path for oversized images. Unit test added.
 
 `addSixelImage` accepts ownership of `dcs_bytes: []u8`. If `placeSixelImage` fails (e.g. `OutOfMemory` during grid scroll-up), execution unwinds before `dcs_bytes` is stored in the `sixel_images` array.
 
 **Impact:** Memory leak whenever sixel image placement fails due to allocation errors.
-
-**Fix:** Add `errdefer self.allocator.free(dcs_bytes);` inside `addSixelImage` prior to delegating to `placeSixelImage`.
 
 ---
 
 ### 270. Array Write Without Bounds Check in `InputReader.feedCsi`
 **File:** `src/tty/tty_key.zig:113–139`
 **Severity:** MEDIUM
-**Status:** 🛑 OPEN
+**Status:** ✅ FIXED — added `if (rd.pos >= rd.buf.len)` check before the final byte write at line 136, matching the existing checks for parameter bytes. Unit test added.
 
 When terminating a sequence, `rd.buf[rd.pos] = byte` is executed. If `rd.pos` equals `rd.buf.len` (256), the write occurs past the buffer boundary.
 
 **Impact:** Potential panic/crash on malformed escape sequences.
-
-**Fix:** Add a boundary check `if (rd.pos >= rd.buf.len)` prior to writing.
 
 ---
 
 ### 271. Direct History Length Subtraction Bypasses Safety Bounds Check
 **File:** `src/mode_copy.zig:124` (and L162, L184, L263, L279, L391, L427)
 **Severity:** MEDIUM
-**Status:** 🛑 OPEN
+**Status:** ✅ FIXED — all 7 occurrences of `grid.history.items.len - grid.history_start` replaced with `grid.historyLen()`. Unit test added.
 
 Functions in `CopyMode` compute live history length using direct subtraction `grid.history.items.len - grid.history_start`. In contrast, `src/grid.zig:107` defines `historyLen()` with an explicit check `if (self.history.items.len < self.history_start) return 0;`.
 
 **Impact:** Risk of integer underflow panic during copy mode navigation or text selection if `history_start` temporarily exceeds array bounds during history ring-buffer compaction.
-
-**Fix:** Replace direct subtractions with calls to `grid.historyLen()`.
 
 ---
 
