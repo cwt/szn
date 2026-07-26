@@ -566,7 +566,10 @@ fn cmdDisplayMessage(server: *Server, args: []const []const u8) CmdResult {
         @memcpy(msg[off..][0..arg.len], arg);
         off += arg.len;
     }
-    server.setMessage(msg) catch return .err;
+    server.setMessage(msg) catch {
+        server.allocator.free(msg);
+        return .err;
+    };
     server.allocator.free(msg);
     return .ok;
 }
