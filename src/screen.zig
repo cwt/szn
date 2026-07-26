@@ -210,6 +210,7 @@ pub const Screen = struct {
         px_width: u32,
         px_height: u32,
     ) Error!void {
+        errdefer self.allocator.free(dcs_bytes);
         // Under the fully-contained sixel rule an image can only ever be drawn
         // when it fits entirely inside the pane. If it spans more cell rows or
         // columns than the grid has it can never be `contained`, so it would be
@@ -222,7 +223,6 @@ pub const Screen = struct {
         // built-in defaults the footprint could be wrong and we must wait for
         // the real dimensions before deciding (see #203).
         if (self.cell_size_known and (footprint_rows > self.grid.height or footprint_cols > self.grid.width)) {
-            self.allocator.free(dcs_bytes);
             return;
         }
 
