@@ -331,7 +331,13 @@ pub const InputParser = struct {
             },
             0x00...0x06, 0x08...0x1A, 0x1C...0x1F => {},
             0x20...0x7E, 0x7F, 0x80...0xFF => {
-                try self.osc_buf.append(self.screen.allocator, byte);
+                // Cap OSC buffer at 1 MiB to prevent unbounded memory growth — bug #261.
+                if (self.osc_buf.items.len < 1024 * 1024) {
+                    try self.osc_buf.append(self.screen.allocator, byte);
+                } else {
+                    self.osc_buf.clearRetainingCapacity();
+                    self.toGround();
+                }
             },
         }
     }
@@ -2320,4 +2326,30 @@ test "DECSM 1000/1002/1003/1006 mouse modes set screen flags for inner app compa
     // DECSM 1006 (SGR mouse tracking)
     try parser.feed("\x1b[?1006h");
     try testing.expect(screen.mode.mouse_sgr);
+}
+
+test "OSC buffer capped at 1 MiB to prevent OOM — bug #261" {
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+
+    var parser = InputParser.init(&screen);
+    defer parser.deinit(testing.allocator);
+
+    // Feed 1 MiB + 1 bytes of OSC data without terminator — should cap and drop to ground.
+    var buf: [1024]u8 = undefined;
+    @memset(&buf, 'A');
+    const chunk = &buf;
+
+    var total: usize = 0;
+    const target = 1024 * 1024 + 256; // exceed the 1 MiB cap
+    while (total < target) : (total += chunk.len) {
+        const remaining = target - total;
+        const send = if (remaining < chunk.len) remaining else chunk.len;
+        try parser.feed(chunk[0..send]);
+    }
+
+    // Parser should have dropped back to ground state after hitting the cap.
+    try testing.expectEqual(InputParser.State.ground, parser.state);
+    // Buffer should have been cleared when capping.
+    try testing.expectEqual(0, parser.osc_buf.items.len);
 }
