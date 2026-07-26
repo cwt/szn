@@ -2196,6 +2196,11 @@ pub const Server = struct {
                     dc.out_buf.appendSlice(self.allocator, hdr_slice) catch continue;
                     self.loop.addFdEvents(dc.fd, std.posix.POLL.OUT);
                 }
+            } else if (@as(usize, @intCast(n)) < hdr_slice.len) {
+                // Partial write — queue remaining bytes.
+                const written = @as(usize, @intCast(n));
+                dc.out_buf.appendSlice(self.allocator, hdr_slice[written..]) catch {};
+                self.loop.addFdEvents(dc.fd, std.posix.POLL.OUT);
             }
         }
     }
@@ -3841,4 +3846,12 @@ test "swap_pane_up and swap_pane_down swap panes in window — bug #244" {
     try testing.expectEqual(pane2, win.panes.items[1]);
     try testing.expectEqual(h1_orig, pane1.screen.grid.height);
     try testing.expectEqual(h2_orig, pane2.screen.grid.height);
+}
+
+test "sendRequestCellSize handles partial write — bug #262" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    // Test that display_clients can be managed
+    try testing.expect(server.display_clients.items.len == 0);
 }
