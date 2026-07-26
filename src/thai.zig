@@ -505,9 +505,9 @@ pub fn findWordBreaks(allocator: std.mem.Allocator, cells: []const Cell) ![]usiz
             break;
         }
     }
-    if (!has_thai) return &[_]usize{};
+    if (!has_thai) return allocator.alloc(usize, 0);
 
-    const libthai = getLibThai() orelse return &[_]usize{};
+    const libthai = getLibThai() orelse return allocator.alloc(usize, 0);
 
     var codepoints: std.ArrayList(u32) = .empty;
     defer codepoints.deinit(allocator);
@@ -529,7 +529,7 @@ pub fn findWordBreaks(allocator: std.mem.Allocator, cells: []const Cell) ![]usiz
         }
     }
 
-    if (codepoints.items.len == 0) return &[_]usize{};
+    if (codepoints.items.len == 0) return allocator.alloc(usize, 0);
 
     // th_brk_wc_find_breaks expects a null-terminated wide-character string
     try codepoints.append(allocator, 0);
@@ -544,7 +544,7 @@ pub fn findWordBreaks(allocator: std.mem.Allocator, cells: []const Cell) ![]usiz
         breaks_buf.len,
     );
 
-    if (num_breaks <= 0) return &[_]usize{};
+    if (num_breaks <= 0) return allocator.alloc(usize, 0);
 
     var result: std.ArrayList(usize) = .empty;
     errdefer result.deinit(allocator);
