@@ -2897,9 +2897,9 @@ cell.char = fmt[i];
 |----------|-------|-------|----------------|------------|
 | Critical | 25 | 23 | 3 | **0** |
 | High | 48 | 48 | 1 | **0** |
-| Medium | 73 (70+3) | 72 | 2 | **0** |
+| Medium | 73 (70+3) | 71 | **3** | **0** |
 | Low | 64 (63+1) | 62 | 3 | **0** |
-| Total | 210 (206+4) | **205** | **9** | **0** |
+| Total | 210 (206+4) | **204** | **10** | **0** |
 
 ---
 
@@ -3662,13 +3662,7 @@ Cursor logical offset is calculated as `current_offset + @min(cursor_x.?, cells_
 ### 268. Unfreed Window Memory in `Session.killWindow`
 **File:** `src/session.zig:94–111`, `src/window.zig:292–297`
 **Severity:** MEDIUM
-**Status:** 🛑 OPEN
-
-`killWindow` deinitializes individual panes but fails to call `win.deinit(allocator)`. Allocated window options and window names remain un-freed in memory.
-
-**Impact:** Memory growth in long-running sessions where windows are repeatedly created and killed.
-
-**Fix:** Call `win.deinit(self.arena.allocator());` inside `Session.killWindow`.
+**Status:** ❌ FALSE POSITIVE — sessions use arena allocators; all window memory (name, options, layout) is freed when the session's arena is deinited. Calling `win.deinit(allocator)` with a separate allocator would double-free.
 
 ---
 
