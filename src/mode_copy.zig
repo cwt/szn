@@ -121,7 +121,7 @@ pub const CopyMode = struct {
     pub fn moveUp(self: *CopyMode, grid: *const Grid) void {
         if (self.cursor_y > 0) {
             self.cursor_y -= 1;
-        } else if (self.scroll_offset < grid.history.items.len - grid.history_start) {
+        } else if (self.scroll_offset < grid.historyLen()) {
             self.scroll_offset += 1;
         }
     }
@@ -159,7 +159,7 @@ pub const CopyMode = struct {
         } else {
             const remaining = page - self.cursor_y;
             self.cursor_y = 0;
-            self.scroll_offset = @min(self.scroll_offset + remaining, @as(u32, @intCast(@as(usize, @min(grid.history.items.len - grid.history_start, std.math.maxInt(u32))))));
+            self.scroll_offset = @min(self.scroll_offset + remaining, @as(u32, @intCast(@as(usize, @min(grid.historyLen(), std.math.maxInt(u32))))));
         }
     }
 
@@ -181,7 +181,7 @@ pub const CopyMode = struct {
         } else {
             const remaining = half - self.cursor_y;
             self.cursor_y = 0;
-            self.scroll_offset = @min(self.scroll_offset + remaining, @as(u32, @intCast(@as(usize, @min(grid.history.items.len - grid.history_start, std.math.maxInt(u32))))));
+            self.scroll_offset = @min(self.scroll_offset + remaining, @as(u32, @intCast(@as(usize, @min(grid.historyLen(), std.math.maxInt(u32))))));
         }
     }
 
@@ -260,7 +260,7 @@ pub const CopyMode = struct {
     }
 
     fn getCellAtOffset(_: *const CopyMode, grid: *const Grid, x: u32, screen_y: u32, scroll_offset: u32) Cell {
-        const hist_len = grid.history.items.len - grid.history_start;
+        const hist_len = grid.historyLen();
         const scroll = @as(usize, @intCast(scroll_offset));
         if (scroll > hist_len) return Cell.empty();
 
@@ -276,7 +276,7 @@ pub const CopyMode = struct {
 
     fn isLineWrapped(self: *const CopyMode, grid: *const Grid, screen_y: u32, scroll_offset: u32) bool {
         _ = self;
-        const hist_len = grid.history.items.len - grid.history_start;
+        const hist_len = grid.historyLen();
         const scroll = @as(usize, @intCast(scroll_offset));
         if (scroll > hist_len) return false;
 
@@ -424,7 +424,7 @@ pub const CopyMode = struct {
     pub fn searchBackward(self: *CopyMode, grid: *const Grid, allocator: std.mem.Allocator, needle: []const u8) bool {
         if (needle.len == 0) return false;
 
-        const hist_len = grid.history.items.len - grid.history_start;
+        const hist_len = grid.historyLen();
         const total = hist_len + grid.height;
         const cursor_logical = (hist_len -| self.scroll_offset) + self.cursor_y;
         const start_x: usize = if (self.cursor_x == 0) 0 else self.cursor_x - 1;
