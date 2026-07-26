@@ -141,6 +141,12 @@ pub const Pty = struct {
             cwd_z = try allocator.dupeZ(u8, c);
         }
 
+        defer {
+            if (cwd_z) |c| allocator.free(c);
+            allocator.free(szn_pane_z);
+            allocator.free(szn_env_z);
+        }
+
         const pid = fork();
         if (pid < 0) return error.ForkFailed;
         if (pid == 0) {

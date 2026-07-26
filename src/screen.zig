@@ -223,6 +223,7 @@ pub const Screen = struct {
         // built-in defaults the footprint could be wrong and we must wait for
         // the real dimensions before deciding (see #203).
         if (self.cell_size_known and (footprint_rows > self.grid.height or footprint_cols > self.grid.width)) {
+            self.allocator.free(dcs_bytes);
             return;
         }
 
