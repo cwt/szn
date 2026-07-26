@@ -406,6 +406,18 @@ pub const CopyMode = struct {
                 self.placeCursorAtLogical(grid, li, found_x);
                 return true;
             }
+            // Skip continuation lines that are part of the same logical line
+            // to avoid O(M²) redundant searches — bug #276.
+            var skip = li + 1;
+            while (skip < total) {
+                const sl = if (skip < hist_len)
+                    grid.getHistoryLine(skip)
+                else
+                    grid.getLine(@intCast(skip - hist_len));
+                if (!sl.wrapped) break;
+                skip += 1;
+            }
+            li = skip - 1;
         }
 
         // Pass 2 (cyclic wrap): from the top down to just before the cursor
@@ -445,6 +457,18 @@ pub const CopyMode = struct {
                 self.placeCursorAtLogical(grid, li, found_x);
                 return true;
             }
+            // Skip continuation lines going backwards to avoid O(M²) redundant searches — bug #276.
+            var skip = li - 1;
+            while (skip > 0) {
+                const sl = if (skip < hist_len)
+                    grid.getHistoryLine(skip)
+                else
+                    grid.getLine(@intCast(skip - hist_len));
+                if (!sl.wrapped) break;
+                if (skip == 0) break;
+                skip -= 1;
+            }
+            li = skip;
             if (li == 0) break;
         }
 
