@@ -132,6 +132,12 @@ pub const InputReader = struct {
             rd.pos += 1;
             return null;
         }
+        if (rd.pos >= rd.buf.len) {
+            std.log.debug("input: buffer overflow, dropping sequence", .{});
+            rd.state = .ground;
+            rd.pos = 0;
+            return null;
+        }
         rd.state = .ground;
         rd.buf[rd.pos] = byte;
         rd.pos += 1;
