@@ -2898,8 +2898,8 @@ cell.char = fmt[i];
 | Critical | 25 | 23 | 3 | **0** |
 | High | 48 | 48 | 1 | **0** |
 | Medium | 73 (70+3) | **76** | **3** | **0** |
-| Low | 64 (63+1) | **66** | **3** | **0** |
-| Total | 210 (206+4) | **209** | **10** | **0** |
+| Low | 64 (63+1) | **70** | **3** | **0** |
+| Total | 210 (206+4) | **213** | **10** | **0** |
 
 ---
 
@@ -3691,26 +3691,26 @@ Functions in `CopyMode` compute live history length using direct subtraction `gr
 ### 273. Dead Range Check in `isCombining` Omits Hangul Jamo Marks
 **File:** `src/char_width.zig:129–135`
 **Severity:** LOW
-**Status:** ✅ VALID — Line 130: `cp < 0x0300` and `cp >= 0x1160` are mutually exclusive. Hangul Jamo medials/finals (`0x1160–0x11FF`) are never classified as combining marks, falling through to `return true` which incorrectly treats them as width-1 non-combining characters.
+**Status:** ✅ FIXED — removed dead `cp < 0x0300 and cp >= 0x1160` condition. Added comptime assert for COMBINING_MAX capacity. Unit test added verifying Hangul Jamo medials/finals classification.
 
 ---
 
 ### 274. Unchecked `@intCast` in `combiningIndex`
 **File:** `src/char_width.zig:176`
 **Severity:** LOW
-**Status:** ✅ VALID — `@intCast(mid + 1)` casts `usize` to `u13`. If `combining_mark_count` exceeds 8191, this panics. A `comptime assert` should guard against table expansion beyond capacity.
+**Status:** ✅ FIXED — added `comptime { std.debug.assert(combining_mark_count <= 8191); }` to catch table expansion beyond u13 capacity at compile time.
 
 ---
 
 ### 275. Format Loop Bug in `appendWithStrftime`
 **File:** `src/format.zig:259–266`
 **Severity:** LOW
-**Status:** ✅ VALID — When `strftime` returns 0 (buffer overflow or error), the code falls through to append `%` literally and increment `i` by 1. While not an infinite loop (the next iteration processes the char after `%`), it silently produces incorrect format output instead of a formatted time string.
+**Status:** ✅ FIXED — when `strftime` returns 0, the code now emits the format specifier as literal characters (`%X`) instead of falling through which would produce incorrect output. Index always advances by 2.
 
 ---
 
 ### 276. $O(M^2)$ Re-evaluations in Copy Mode Search
 **File:** `src/mode_copy.zig:403–420`, `437–461`
 **Severity:** LOW (performance)
-**Status:** ✅ VALID — `searchForward`/`searchBackward` iterate over physical line indices (`li += 1`), but `searchLogicalLine` concatenates wrapped lines into a single logical buffer. For a soft-wrapped line spanning M physical lines, the same logical content is searched M times, causing O(M²) redundant work.
+**Status:** ✅ FIXED — `searchForward` and `searchBackward` now skip past wrapped continuation lines after searching a physical line, avoiding O(M²) redundant reconstruction of the same logical line content.
 
