@@ -406,18 +406,22 @@ pub const CopyMode = struct {
                 self.placeCursorAtLogical(grid, li, found_x);
                 return true;
             }
-            // Skip continuation lines that are part of the same logical line
-            // to avoid O(M²) redundant searches — bug #276.
-            var skip = li + 1;
-            while (skip < total) {
-                const sl = if (skip < hist_len)
-                    grid.getHistoryLine(skip)
-                else
-                    grid.getLine(@intCast(skip - hist_len));
-                if (!sl.wrapped) break;
-                skip += 1;
+            // Skip past the physical lines that lineBytes(li) already consumed
+            // (the current line plus any continuations) — bug #276.
+            {
+                var skip = li;
+                while (skip < total) {
+                    const sl = if (skip < hist_len)
+                        grid.getHistoryLine(skip)
+                    else
+                        grid.getLine(@intCast(skip - hist_len));
+                    if (!sl.wrapped) break;
+                    skip += 1;
+                }
+                // `skip` is now the last physical line of this logical line.
+                // The while loop's `li += 1` will advance to `skip + 1`.
+                li = skip;
             }
-            li = skip - 1;
         }
 
         // Pass 2 (cyclic wrap): from the top down to just before the cursor
@@ -427,6 +431,19 @@ pub const CopyMode = struct {
             if (searchLogicalLine(grid, allocator, &line_buf, &offsets, li, 0, needle)) |found_x| {
                 self.placeCursorAtLogical(grid, li, found_x);
                 return true;
+            }
+            // Skip past continuation lines (same as pass 1).
+            {
+                var skip = li;
+                while (skip < cursor_logical) {
+                    const sl = if (skip < hist_len)
+                        grid.getHistoryLine(skip)
+                    else
+                        grid.getLine(@intCast(skip - hist_len));
+                    if (!sl.wrapped) break;
+                    skip += 1;
+                }
+                li = skip;
             }
         }
 
@@ -448,28 +465,26 @@ pub const CopyMode = struct {
 
         // Pass 1: from just before the cursor back to the start.
         var li = cursor_logical;
-        while (true) : ({
-            if (li == 0) break;
-            li -= 1;
-        }) {
+        while (true) {
+            // Walk backward to find the start of the logical line containing `li`.
+            // A line at position P is a continuation if the line at P-1 has
+            // wrapped=true (meaning it flows into P).
+            while (li > 0) {
+                const prev = if (li - 1 < hist_len)
+                    grid.getHistoryLine(li - 1)
+                else
+                    grid.getLine(@intCast(li - 1 - hist_len));
+                if (!prev.wrapped) break;
+                li -= 1;
+            }
+            // `li` is now the first physical line of this logical line.
             const start_col: usize = if (li == cursor_logical) start_x else grid.width -| 1;
             if (searchLogicalLineBackward(grid, allocator, &line_buf, &offsets, li, start_col, needle)) |found_x| {
                 self.placeCursorAtLogical(grid, li, found_x);
                 return true;
             }
-            // Skip continuation lines going backwards to avoid O(M²) redundant searches — bug #276.
-            var skip = li - 1;
-            while (skip > 0) {
-                const sl = if (skip < hist_len)
-                    grid.getHistoryLine(skip)
-                else
-                    grid.getLine(@intCast(skip - hist_len));
-                if (!sl.wrapped) break;
-                if (skip == 0) break;
-                skip -= 1;
-            }
-            li = skip;
             if (li == 0) break;
+            li -= 1;
         }
 
         // Pass 2 (cyclic wrap): from the bottom of the scrollback up to the
@@ -481,6 +496,20 @@ pub const CopyMode = struct {
                 self.placeCursorAtLogical(grid, li, found_x);
                 return true;
             }
+            // Skip backward past the logical line we just searched.
+            {
+                var start = li;
+                while (start > cursor_logical) {
+                    const prev = if (start - 1 < hist_len)
+                        grid.getHistoryLine(start - 1)
+                    else
+                        grid.getLine(@intCast(start - 1 - hist_len));
+                    if (!prev.wrapped) break;
+                    start -= 1;
+                }
+                li = start;
+            }
+            if (li == cursor_logical) break;
         }
 
         return false;
@@ -1664,4 +1693,72 @@ test "searchForward on wrapped continuation line maps cursor_x within physical w
     // cursor_x should be 0 (column 0 on line 1), NOT 5 (out of bounds)
     try testing.expectEqual(@as(u32, 0), cm.cursor_x);
     try testing.expectEqual(@as(u32, 1), cm.cursor_y);
+}
+
+test "searchForward must not skip logical line starting after a standalone line — bug #276 regression" {
+    var cm = CopyMode.init(.vi);
+    // 3 columns wide, 3 visible lines:
+    //   line 0: "abc"         (wrapped=false — standalone)
+    //   line 1: "foo"         (wrapped=true  — continues to line 2)
+    //   line 2: "bar"         (wrapped=false — end of logical line 1-2)
+    var g = try Grid.init(testing.allocator, 3, 3);
+    defer g.deinit();
+
+    g.writeChar(0, 0, 'a');
+    g.writeChar(1, 0, 'b');
+    g.writeChar(2, 0, 'c');
+    // line 0 is NOT wrapped (standalone)
+
+    g.writeChar(0, 1, 'f');
+    g.writeChar(1, 1, 'o');
+    g.writeChar(2, 1, 'o');
+    g.getLineMut(1).wrapped = true;
+
+    g.writeChar(0, 2, 'b');
+    g.writeChar(1, 2, 'a');
+    g.writeChar(2, 2, 'r');
+
+    cm.cursor_x = 0;
+    cm.cursor_y = 0;
+
+    // "foobar" spans lines 1+2. The old skip logic would miss this because
+    // after searching line 0 it saw line 1.wrapped=true and skipped past it.
+    const found = cm.searchForward(&g, testing.allocator, "foobar");
+    try testing.expect(found);
+    try testing.expectEqual(@as(u32, 0), cm.cursor_x);
+    try testing.expectEqual(@as(u32, 1), cm.cursor_y);
+}
+
+test "searchBackward must not skip logical line ending before a standalone line — bug #276 regression" {
+    var cm = CopyMode.init(.vi);
+    // 3 columns wide, 3 visible lines:
+    //   line 0: "foo"         (wrapped=true  — continues to line 1)
+    //   line 1: "bar"         (wrapped=false — end of logical line 0-1)
+    //   line 2: "xyz"         (wrapped=false — standalone)
+    var g = try Grid.init(testing.allocator, 3, 3);
+    defer g.deinit();
+
+    g.writeChar(0, 0, 'f');
+    g.writeChar(1, 0, 'o');
+    g.writeChar(2, 0, 'o');
+    g.getLineMut(0).wrapped = true;
+
+    g.writeChar(0, 1, 'b');
+    g.writeChar(1, 1, 'a');
+    g.writeChar(2, 1, 'r');
+    // line 1 is NOT wrapped
+
+    g.writeChar(0, 2, 'x');
+    g.writeChar(1, 2, 'y');
+    g.writeChar(2, 2, 'z');
+
+    // Start cursor at end of line 2
+    cm.cursor_x = 2;
+    cm.cursor_y = 2;
+
+    // "foobar" spans lines 0+1. Backward search from line 2 should find it.
+    const found = cm.searchBackward(&g, testing.allocator, "foobar");
+    try testing.expect(found);
+    try testing.expectEqual(@as(u32, 0), cm.cursor_x);
+    try testing.expectEqual(@as(u32, 0), cm.cursor_y);
 }

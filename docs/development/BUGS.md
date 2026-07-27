@@ -3708,7 +3708,9 @@ Functions in `CopyMode` compute live history length using direct subtraction `gr
 ---
 
 ### 276. $O(M^2)$ Re-evaluations in Copy Mode Search
-**File:** `src/mode_copy.zig:403–420`, `437–461`
-**Severity:** LOW (performance)
-**Status:** ✅ FIXED — `searchForward` and `searchBackward` now skip past wrapped continuation lines after searching a physical line, avoiding O(M²) redundant reconstruction of the same logical line content.
+**File:** `src/mode_copy.zig:403–424`, `453–513`
+**Severity:** LOW (performance) → **MEDIUM** (correctness regression in original fix)
+**Status:** ✅ FIXED (corrected) — The original fix (rev 451) skipped continuation lines by checking the *next* line's `wrapped` flag, which confuses "this line continues forward" with "this line is a continuation of the previous." When a standalone line (wrapped=false) was followed by a line with wrapped=true (the start of a new logical line), the skip walked past that new logical line, causing `searchForward` to miss matches entirely. `searchBackward` had the same class of bug, plus an off-by-one that prevented searching line 0.
+
+**Corrected approach:** The forward skip now walks from `li` following the current line's own `wrapped` flag — mirroring exactly what `lineBytes(li)` consumed — so it only skips physical lines already searched. The backward search was restructured to first walk `li` backward to the logical line start (by checking if the *previous* line's `wrapped` flag is true), then search from there, ensuring every logical line is visited exactly once. Both Pass 2 (cyclic wrap) loops also received the same skip treatment. Two regression tests added.
 
