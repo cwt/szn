@@ -341,8 +341,8 @@ pub const Display = struct {
             if (cursor_visible) {
                 const pane_cx = if (active_pane.screen.copy_mode) |cm| cm.cursor_x else active_pane.screen.cursor.x;
                 const pane_cy = if (active_pane.screen.copy_mode) |cm| cm.cursor_y else active_pane.screen.cursor.y;
-                merged_screen.cursor.x = ab.x + pane_cx;
-                merged_screen.cursor.y = ab.y + pane_cy;
+                merged_screen.cursor.x = @min(ab.x + pane_cx, ab.x + ab.w -| 1);
+                merged_screen.cursor.y = @min(ab.y + pane_cy, ab.y + ab.h -| 1);
             }
         } else {
             merged_screen.cursor.visible = false;
@@ -358,7 +358,9 @@ pub const Display = struct {
         _ = active_window;
 
         if (merged_screen.cursor.visible) {
-            try self.moveTo(merged_screen.cursor.x, merged_screen.cursor.y);
+            const cx = @min(merged_screen.cursor.x, self.sx -| 1);
+            const cy = @min(merged_screen.cursor.y, self.sy -| 1);
+            try self.moveTo(cx, cy);
             try self.writeBytes("\x1b[?25h");
         }
         try self.writeBytes("\x1b[?2026l");
@@ -626,7 +628,7 @@ pub const Display = struct {
                         continue;
                     };
                     try self.writeBytes(buf[0..len]);
-                    cur_cx += if (cw > 0) @as(u32, cw) else 1;
+                    cur_cx += @as(u32, @intCast(cw));
 
                     if (cell.comb1 != 0) {
                         const ccp1 = char_width.combiningCodepoint(cell.comb1);
@@ -1560,4 +1562,232 @@ test "isBorderActiveAt uses pre-calculated active_bound — bug #241" {
     try std.testing.expect(!Display.isBorderActiveAt(50, 10, true, pb));
     // Border with null active_bound returns false
     try std.testing.expect(!Display.isBorderActiveAt(40, 10, true, null));
+}
+
+test "renderAll clamps cursor to pane bounds when cursor.x equals grid width" {
+    const allocator = std.testing.allocator;
+    var capture_buf: std.ArrayList(u8) = .empty;
+    defer capture_buf.deinit(allocator);
+
+    const display = Display{
+        .fd = -1,
+        .sx = 80,
+        .sy = 24,
+        .capture = &capture_buf,
+        .capture_allocator = allocator,
+    };
+
+    var win = try Window.init(allocator, 1, "test-win", 10, 23, null, null);
+    defer win.deinit(allocator);
+
+    const pane = win.active_pane.?;
+    // Simulate writing at last column (grid.width - 1) with line_wrap,
+    // cursor.x advances to grid.width (= 10). CUP should be clamped to 9.
+    pane.screen.cursor.x = 10;
+    pane.screen.cursor.y = 5;
+    pane.screen.mode.cursor = true;
+
+    const bounds = [_]PaneBounds{.{
+        .pane = pane,
+        .x = 0,
+        .y = 0,
+        .w = 10,
+        .h = 23,
+    }};
+
+    const windows = [_]*Window{&win};
+    const Node = @import("../layout.zig").Node;
+    const node = Node{ .leaf = pane };
+
+    try display.renderAll(allocator, &bounds, pane, "test", &windows, &win, &node, .{
+        .status_fg = Colour.default_(),
+        .status_bg = Colour.default_(),
+        .pane_border_fg = Colour.fromIndexed(8),
+        .pane_active_border_fg = Colour.fromIndexed(2),
+    }, null, false, "", 0, false, true, null, false);
+
+    // Cursor at (5, 9) should be 1-indexed CUP: \x1b[6;10H
+    // Column 10 (grid.width) clamps to 9 → 1-indexed 10
+    try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1b[6;10H") != null);
+    // Must NOT emit unclamped column 11 (1-indexed for grid.width=10)
+    try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1b[6;11H") == null);
+}
+
+test "renderAll clamps cursor to pane bounds with pane offset" {
+    const allocator = std.testing.allocator;
+    var capture_buf: std.ArrayList(u8) = .empty;
+    defer capture_buf.deinit(allocator);
+
+    const display = Display{
+        .fd = -1,
+        .sx = 100,
+        .sy = 24,
+        .capture = &capture_buf,
+        .capture_allocator = allocator,
+    };
+
+    var win = try Window.init(allocator, 1, "test-offset", 40, 23, null, null);
+    defer win.deinit(allocator);
+
+    const pane = win.active_pane.?;
+    // Pane at x=50 offset, cursor.x = 40 (grid.width), pane width = 40
+    // Pane clamp: min(50+40=90, 50+39=89) = 89
+    // Terminal clamp (sx=100): min(89, 99) = 89 (no-op)
+    // 1-indexed CUP: \x1b[4;90H
+    pane.screen.cursor.x = 40;
+    pane.screen.cursor.y = 3;
+    pane.screen.mode.cursor = true;
+
+    const bounds = [_]PaneBounds{.{
+        .pane = pane,
+        .x = 50,
+        .y = 0,
+        .w = 40,
+        .h = 23,
+    }};
+
+    const windows = [_]*Window{&win};
+    const Node = @import("../layout.zig").Node;
+    const node = Node{ .leaf = pane };
+
+    try display.renderAll(allocator, &bounds, pane, "test", &windows, &win, &node, .{
+        .status_fg = Colour.default_(),
+        .status_bg = Colour.default_(),
+        .pane_border_fg = Colour.fromIndexed(8),
+        .pane_active_border_fg = Colour.fromIndexed(2),
+    }, null, false, "", 0, false, true, null, false);
+
+    try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1b[4;90H") != null);
+    // Unclamped would be 50+40+1 = \x1b[4;91H
+    try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1b[4;91H") == null);
+}
+
+test "renderAll clamps final cursor to terminal dimensions" {
+    const allocator = std.testing.allocator;
+    var capture_buf: std.ArrayList(u8) = .empty;
+    defer capture_buf.deinit(allocator);
+
+    const display = Display{
+        .fd = -1,
+        .sx = 20,
+        .sy = 10,
+        .capture = &capture_buf,
+        .capture_allocator = allocator,
+    };
+
+    var win = try Window.init(allocator, 1, "test-clamp", 20, 9, null, null);
+    defer win.deinit(allocator);
+
+    const pane = win.active_pane.?;
+    // Cursor beyond terminal height (pane h=9 → pane y max = 8, terminal sy=10)
+    pane.screen.cursor.x = 5;
+    pane.screen.cursor.y = 5;
+    pane.screen.mode.cursor = true;
+
+    const bounds = [_]PaneBounds{.{
+        .pane = pane,
+        .x = 0,
+        .y = 0,
+        .w = 20,
+        .h = 9,
+    }};
+
+    const windows = [_]*Window{&win};
+    const Node = @import("../layout.zig").Node;
+    const node = Node{ .leaf = pane };
+
+    try display.renderAll(allocator, &bounds, pane, "test", &windows, &win, &node, .{
+        .status_fg = Colour.default_(),
+        .status_bg = Colour.default_(),
+        .pane_border_fg = Colour.fromIndexed(8),
+        .pane_active_border_fg = Colour.fromIndexed(2),
+    }, null, false, "", 0, false, true, null, false);
+
+    // Cursor at (5, 5) → 1-indexed: \x1b[6;6H — within 20×10 terminal
+    try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1b[6;6H") != null);
+}
+
+test "renderAll cursor clamp with non-zero pane bounds" {
+    const allocator = std.testing.allocator;
+    var capture_buf: std.ArrayList(u8) = .empty;
+    defer capture_buf.deinit(allocator);
+
+    const display = Display{
+        .fd = -1,
+        .sx = 100,
+        .sy = 24,
+        .capture = &capture_buf,
+        .capture_allocator = allocator,
+    };
+
+    var win = try Window.init(allocator, 1, "test-clamp-2", 30, 23, null, null);
+    defer win.deinit(allocator);
+
+    const pane = win.active_pane.?;
+    // Pane at (40, 0), width=30 — cursor at grid.width (30) → merged = 40 + 30 clamped to 40 + 29 = 69
+    pane.screen.cursor.x = 30;
+    pane.screen.cursor.y = 0;
+    pane.screen.mode.cursor = true;
+
+    const bounds = [_]PaneBounds{.{
+        .pane = pane,
+        .x = 40,
+        .y = 0,
+        .w = 30,
+        .h = 23,
+    }};
+
+    const windows = [_]*Window{&win};
+    const Node = @import("../layout.zig").Node;
+    const node = Node{ .leaf = pane };
+
+    try display.renderAll(allocator, &bounds, pane, "test", &windows, &win, &node, .{
+        .status_fg = Colour.default_(),
+        .status_bg = Colour.default_(),
+        .pane_border_fg = Colour.fromIndexed(8),
+        .pane_active_border_fg = Colour.fromIndexed(2),
+    }, null, false, "", 0, false, true, null, false);
+
+    // Clamped: y=0, x=min(40+30, 40+29)=69 → 1-indexed \x1b[1;70H
+    try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1b[1;70H") != null);
+    // Must NOT emit unclamped x=70 → 1-indexed 71
+    try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1b[1;71H") == null);
+}
+
+test "renderContent zero-width combining char does not advance cur_cx" {
+    const allocator = std.testing.allocator;
+    var capture_buf: std.ArrayList(u8) = .empty;
+    defer capture_buf.deinit(allocator);
+
+    const display = Display{
+        .fd = -1,
+        .sx = 5,
+        .sy = 2,
+        .capture = &capture_buf,
+        .capture_allocator = allocator,
+    };
+
+    // Place a combining mark (Thai vowel SARA I, U+0E35) as a standalone cell at col 2.
+    // This simulates a grid cell whose base character has width 0.
+    var screen = try Screen.init(allocator, 5, 1);
+    defer screen.deinit();
+    screen.grid.setCell(0, 0, Cell.withChar('A'));
+    var cc = Cell.withChar(0x0E35);
+    cc.fg = Colour.default_();
+    cc.bg = Colour.default_();
+    screen.grid.setCell(2, 0, cc);
+
+    try display.renderContent(&screen);
+
+    // Row 0: moveTo(0,0), write 'A' (cur_cx=1), skip x=1 (empty, matches last),
+    //         x=2 cur_cx(1) != x(2) → moveTo(2,0), write combining mark.
+    // After combining mark, cur_cx stays at 2 (not 3).
+    //
+    // The Combining mark should be rendered between the CUP and the final SGR reset.
+    const cup_pos = std.mem.indexOf(u8, capture_buf.items, "\x1b[1;3H") orelse
+        std.mem.indexOf(u8, capture_buf.items, "\x1b[1;1H"); // fallback
+    try std.testing.expect(cup_pos != null);
+    // Verify the combining mark bytes are present after the CUP
+    const cc_utf8: [3]u8 = .{ 0xE0, 0xB8, 0xB5 };
+    try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, &cc_utf8) != null);
 }
