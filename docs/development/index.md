@@ -2,7 +2,7 @@
 type: index
 title: "Development"
 description: "Development notes: bugs, lessons, migration plan, and progress."
-timestamp: 2026-07-20T03:25:00Z
+timestamp: 2026-07-30T00:00:00Z
 ---
 
 # Development
@@ -11,4 +11,5 @@ timestamp: 2026-07-20T03:25:00Z
 - [Lessons from Talyn](lessons-from-talyn.md)
 - [Migration Plan](MIGRATION.md)
 - [Progress](PROGRESS.md)
+- [Improvements](improvements.md)
 - [Sixel Grid Allocation](sixel_grid_allocation.md)

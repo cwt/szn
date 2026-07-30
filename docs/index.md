@@ -2,7 +2,7 @@
 type: index
 title: "szn Documentation Bundle"
 description: "OKF v0.1 knowledge bundle root for the szn project."
-timestamp: 2026-07-20T03:25:00Z
+timestamp: 2026-07-30T00:00:00Z
 ---
 
 # szn Docs
@@ -14,6 +14,10 @@ timestamp: 2026-07-20T03:25:00Z
 - [Build, Run, and Test](build-run.md)
 - [Concepts Glossary](concepts.md)
 - [Text Reflow](TEXT_REFLOW.md)
+
+## Meta
+
+- [Bundle Log](log.md)
 
 ## Sub-bundles
 

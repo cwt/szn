@@ -2,7 +2,7 @@
 type: bug_tracker
 title: "Bugs — szn"
 description: "Known bugs sorted by severity (Critical to Low)."
-timestamp: 2026-07-20T03:40:00Z
+timestamp: 2026-07-30T00:00:00Z
 ---
 
 # Bugs — szn
@@ -3713,4 +3713,29 @@ Functions in `CopyMode` compute live history length using direct subtraction `gr
 **Status:** ✅ FIXED (corrected) — The original fix (rev 451) skipped continuation lines by checking the *next* line's `wrapped` flag, which confuses "this line continues forward" with "this line is a continuation of the previous." When a standalone line (wrapped=false) was followed by a line with wrapped=true (the start of a new logical line), the skip walked past that new logical line, causing `searchForward` to miss matches entirely. `searchBackward` had the same class of bug, plus an off-by-one that prevented searching line 0.
 
 **Corrected approach:** The forward skip now walks from `li` following the current line's own `wrapped` flag — mirroring exactly what `lineBytes(li)` consumed — so it only skips physical lines already searched. The backward search was restructured to first walk `li` backward to the logical line start (by checking if the *previous* line's `wrapped` flag is true), then search from there, ensuring every logical line is visited exactly once. Both Pass 2 (cyclic wrap) loops also received the same skip treatment. Two regression tests added.
+
+---
+
+## NEW BUGS (2026-07-30 — render cursor clamping)
+
+---
+
+### 277. `renderAll` cursor position unclamped to pane and terminal bounds — CUP writes outside pane area
+**File:** `src/server/render.zig:344–345, 361–362, 631`
+**Severity:** MEDIUM
+**Status:** ✅ FIXED — merged-screen cursor clamped to `ab.x + ab.w -| 1` / `ab.y + ab.h -| 1` (pane bounds), final `moveTo` further clamped to `self.sx -| 1` / `self.sy -| 1` (terminal bounds), `cur_cx` advance changed from `if (cw > 0) @as(u32, cw) else 1` to `@as(u32, @intCast(cw))` so zero-width combining marks don't advance the column tracker.
+
+```zig
+// OLD — no clamping:
+merged_screen.cursor.x = ab.x + pane_cx;  // could exceed ab.x + ab.w
+merged_screen.cursor.y = ab.y + pane_cy;
+try self.moveTo(merged_screen.cursor.x, merged_screen.cursor.y); // could exceed sx/sy
+
+// OLD — zero-width combining mark advances cur_cx by 1:
+cur_cx += if (cw > 0) @as(u32, cw) else 1;
+```
+
+When a pane's cursor resides at `grid.width` (e.g. after a character written at the last column triggers an auto-wrap), the merged display cursor was set to `ab.x + grid.width` — one column past the pane's right edge. The subsequent `moveTo` emitted a CUP with coordinates outside both the pane and potentially the terminal bounds. Similarly, the `cur_cx` column tracker in `renderContent` was advanced by 1 for zero-width combining marks (e.g. Thai vowels), causing it to drift relative to the real terminal cursor after every combining character.
+
+**Impact:** Cursor position visual misplacement after wrapping operations and after rendering combining characters; CUP escape sequences could specify out-of-bounds terminal coordinates. Five unit tests added covering: pane-bound clamp at grid.width, pane-bound clamp with offset, terminal-bound clamp, cursor clamp with non-zero pane bounds, and zero-width combining char cur_cx tracking.
 
