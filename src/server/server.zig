@@ -147,6 +147,9 @@ pub const Server = struct {
     host_short: []const u8 = "",
     command_mode: bool = false,
     command_buf: std.ArrayList(u8) = .empty,
+    /// Set once while the command buffer is at MAX_COMMAND_BUF and rejecting
+    /// input, so the overflow warning is emitted once per episode (bug #297).
+    command_buf_overflow_warned: bool = false,
     /// Set while a copy-mode search prompt is open; remembers the search
     /// direction. The query itself is collected in `command_buf` like the
     /// command prompt, but on enter we dispatch to the active pane's
@@ -429,9 +432,15 @@ pub const Server = struct {
             const len = std.unicode.utf8Encode(code, &enc) catch 0;
             if (len == 0) return;
             if (self.command_buf.items.len + len > MAX_COMMAND_BUF) {
-                std.log.warn("command buffer exceeds limit, ignoring input", .{});
+                // Warn once per overflow episode, not once per rejected char,
+                // so a paste storm can't flood the log (bug #297).
+                if (!self.command_buf_overflow_warned) {
+                    self.command_buf_overflow_warned = true;
+                    std.log.warn("command buffer exceeds limit, ignoring input", .{});
+                }
                 return;
             }
+            self.command_buf_overflow_warned = false;
             self.command_buf.appendSlice(self.allocator, enc[0..len]) catch {};
         }
     }
