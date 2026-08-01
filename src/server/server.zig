@@ -1082,14 +1082,19 @@ pub const Server = struct {
     }
 
     pub fn processInput(self: *Server, buf: []const u8) ServerError!void {
-        const session = self.activeSession() orelse return;
-        const window = session.active_window orelse return;
-        const pane = window.active_pane orelse return;
-
         var i: usize = 0;
         self.esc_buf.clearRetainingCapacity();
 
         while (i < buf.len) : (i += 1) {
+            // bug #282: resolve the active session/window/pane fresh on every
+            // iteration. A command dispatched from the prompt (or a keybinding
+            // action) may kill the session/pane mid-batch, freeing the arena
+            // memory these pointers referenced. Re-resolving here (and bailing
+            // out when nothing remains) prevents dereferencing freed memory
+            // for the remaining bytes of this buffer.
+            const session = self.activeSession() orelse break;
+            const window = session.active_window orelse break;
+            const pane = window.active_pane orelse break;
             const byte = buf[i];
 
             if (self.input_reader.state == .ground and byte >= 0x20 and byte != 0x7f and !self.command_mode and !pane.choose_mode.active and !pane.screen.clock_mode and pane.screen.copy_mode == null and self.dispatcher.prefix_state == .normal) {
@@ -3821,6 +3826,27 @@ test "prompt command execution frees DispatchResult — bug #237" {
     try server.processInput("\r");
 
     try testing.expect(!server.command_mode);
+}
+
+test "processInput does not use freed pane after prompt command kills session — bug #282" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    _ = try server.newSession("killme", 80, 24);
+
+    // Enter command mode with a command that kills the only session.
+    server.command_mode = true;
+    try server.command_buf.appendSlice(testing.allocator, "kill-session killme");
+
+    // The trailing 'X' is a plain byte in the same buffer AFTER the '\r' that
+    // dispatches the kill. Previously processInput kept the captured pane
+    // pointer and dereferenced it for the 'X' byte — use-after-free.
+    // The '\r' terminates the command (dispatch), the 'X' then flows to the
+    // (now-freed) pane. After the fix, processInput re-resolves the session,
+    // finds none, and stops.
+    try server.processInput("\rX");
+
+    try testing.expectEqual(@as(usize, 0), server.sessions.items.len);
 }
 
 test "swap_pane_up and swap_pane_down swap panes in window — bug #244" {
