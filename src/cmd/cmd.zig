@@ -216,8 +216,18 @@ fn cmdMoveWindow(server: *Server, args: []const []const u8) CmdResult {
 
     if (src_idx >= session.windows.items.len or dst_idx >= session.windows.items.len) return .err;
 
+    // session.windows is managed by the session's arena allocator, so use that
+    // for any growth (using server.allocator here would realloc arena memory
+    // with the wrong allocator if capacity is exceeded).
+    const arena_alloc = session.arenaAllocator();
     const w = session.windows.orderedRemove(src_idx);
-    session.windows.insert(server.allocator, dst_idx, w) catch return .err;
+    session.windows.insert(arena_alloc, dst_idx, w) catch {
+        // bug #286: if the insert fails, put the window back at its original
+        // position so it is not orphaned (its panes/ptys would otherwise
+        // become unreachable and never be killed or deinit'd).
+        session.windows.insert(arena_alloc, src_idx, w) catch {};
+        return .err;
+    };
     return .ok;
 }
 
@@ -2220,6 +2230,43 @@ test "move-window and swap-window exec" {
         try testing.expectEqualStrings("win2", session.windows.items[0].name);
         try testing.expectEqualStrings("win1", session.windows.items[1].name);
         try testing.expectEqualStrings("test", session.windows.items[2].name);
+    }
+}
+
+test "move-window never orphans a window and uses the session arena — bug #286" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    const session = try server.newSession("test", 80, 24);
+    _ = try session.newWindow(server.allocator, "win1");
+    _ = try session.newWindow(server.allocator, "win2");
+    _ = try session.newWindow(server.allocator, "win3");
+    _ = try session.newWindow(server.allocator, "win4");
+    const count_before = session.windows.items.len;
+
+    // Move the front window to the back and back again; every window must
+    // survive (no orphan from orderedRemove + insert), and the total count
+    // must never change.
+    {
+        var c = try parse("move-window 0 4", testing.allocator);
+        defer c.deinit(testing.allocator);
+        try testing.expectEqual(CmdResult.ok, c.exec(&server));
+        try testing.expectEqual(count_before, session.windows.items.len);
+        // After removing index 0, the list shifts left and insert at 4 appends
+        // the removed "test" window at the end.
+        try testing.expectEqualStrings("win1", session.windows.items[0].name);
+        try testing.expectEqualStrings("test", session.windows.items[4].name);
+    }
+    {
+        var c = try parse("move-window 4 0", testing.allocator);
+        defer c.deinit(testing.allocator);
+        try testing.expectEqual(CmdResult.ok, c.exec(&server));
+        try testing.expectEqual(count_before, session.windows.items.len);
+        // Removing index 4 (the "test" window) and inserting at 0 puts it back
+        // at the front, restoring the original order.
+        try testing.expectEqualStrings("test", session.windows.items[0].name);
+        try testing.expectEqualStrings("win1", session.windows.items[1].name);
+        try testing.expectEqualStrings("win4", session.windows.items[4].name);
     }
 }
 
