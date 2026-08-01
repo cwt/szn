@@ -3407,15 +3407,23 @@ test "command buffer is capped to prevent unbounded growth — bug #297" {
 
     _ = try server.newSession("test", 80, 24);
 
-    // Enter command mode and feed more printable chars than the cap. Each char
-    // is a printable ASCII byte, so it goes through appendCommandChar.
-    server.command_mode = true;
-    var input: [Server.MAX_COMMAND_BUF + 128]u8 = undefined;
-    @memset(&input, 'a');
-    try server.processInput(&input);
+    // Fill the command buffer up to exactly the cap.
+    var fill: [Server.MAX_COMMAND_BUF]u8 = undefined;
+    @memset(&fill, 'a');
+    try server.command_buf.appendSlice(testing.allocator, &fill);
+    try testing.expectEqual(@as(usize, Server.MAX_COMMAND_BUF), server.command_buf.items.len);
 
-    // The buffer must never exceed the cap, and must not have grown past it.
-    try testing.expect(server.command_buf.items.len <= Server.MAX_COMMAND_BUF);
+    // Additional input must be rejected without growing the buffer. Drive
+    // appendCommandChar directly rather than overflowing via processInput so
+    // the (deliberate) overflow warning never fires during the test run.
+    server.command_buf_overflow_warned = true; // suppress the warn on the reject path
+    server.appendCommandChar('x');
+    try testing.expectEqual(@as(usize, Server.MAX_COMMAND_BUF), server.command_buf.items.len);
+
+    // After shrinking below the cap, new input is accepted again.
+    server.command_buf.items.len = Server.MAX_COMMAND_BUF - 1;
+    server.appendCommandChar('y');
+    try testing.expectEqual(@as(usize, Server.MAX_COMMAND_BUF), server.command_buf.items.len);
 }
 
 test "processInput preserves split escape sequence across packets — bug #294" {
