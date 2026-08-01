@@ -490,26 +490,29 @@ pub const CopyMode = struct {
         // Pass 2 (cyclic wrap): from the bottom of the scrollback up to the
         // cursor line, not past the cursor's own column.
         li = total -| 1;
-        while (li > cursor_logical) : (li -= 1) {
-            const start_col: usize = if (li == cursor_logical) start_x else grid.width -| 1;
-            if (searchLogicalLineBackward(grid, allocator, &line_buf, &offsets, li, start_col, needle)) |found_x| {
+        while (li > cursor_logical) {
+            // bug #281: walk `li` backward to the START of the logical line
+            // containing it, mirroring pass 1. Starting from the tail of a
+            // wrapped line would search only its tail — the head (e.g. the
+            // first half of "foobar" split across two physical lines) would be
+            // skipped entirely.
+            while (li > cursor_logical) {
+                const prev = if (li - 1 < hist_len)
+                    grid.getHistoryLine(li - 1)
+                else
+                    grid.getLine(@intCast(li - 1 - hist_len));
+                if (!prev.wrapped) break;
+                li -= 1;
+            }
+            // If walking back crossed into the cursor's own logical line, pass
+            // 1 already searched it — stop.
+            if (li <= cursor_logical) break;
+            if (searchLogicalLineBackward(grid, allocator, &line_buf, &offsets, li, grid.width -| 1, needle)) |found_x| {
                 self.placeCursorAtLogical(grid, li, found_x);
                 return true;
             }
-            // Skip backward past the logical line we just searched.
-            {
-                var start = li;
-                while (start > cursor_logical) {
-                    const prev = if (start - 1 < hist_len)
-                        grid.getHistoryLine(start - 1)
-                    else
-                        grid.getLine(@intCast(start - 1 - hist_len));
-                    if (!prev.wrapped) break;
-                    start -= 1;
-                }
-                li = start;
-            }
-            if (li == cursor_logical) break;
+            if (li == 0) break;
+            li -= 1;
         }
 
         return false;
@@ -1761,4 +1764,40 @@ test "searchBackward must not skip logical line ending before a standalone line 
     try testing.expect(found);
     try testing.expectEqual(@as(u32, 0), cm.cursor_x);
     try testing.expectEqual(@as(u32, 0), cm.cursor_y);
+}
+
+test "searchBackward cyclic wrap finds match in head of wrapped line at scrollback bottom — bug #281" {
+    var cm = CopyMode.init(.vi);
+    // 3 columns wide, 3 visible lines:
+    //   line 0: "aaa"         (wrapped=false — standalone)
+    //   line 1: "foo"         (wrapped=true  — continues to line 2)
+    //   line 2: "bar"         (wrapped=false — end of logical line 1-2)
+    // The wrapped logical line "foobar" ends at the very bottom of the
+    // scrollback (line 2 = total-1). Pass 2 (cyclic wrap) previously started
+    // searching from the tail (line 2 = "bar"), skipped back past the whole
+    // logical line, and never searched the head (line 1 = "foo").
+    var g = try Grid.init(testing.allocator, 3, 3);
+    defer g.deinit();
+
+    g.writeChar(0, 0, 'a');
+    g.writeChar(1, 0, 'a');
+    g.writeChar(2, 0, 'a');
+
+    g.writeChar(0, 1, 'f');
+    g.writeChar(1, 1, 'o');
+    g.writeChar(2, 1, 'o');
+    g.getLineMut(1).wrapped = true;
+
+    g.writeChar(0, 2, 'b');
+    g.writeChar(1, 2, 'a');
+    g.writeChar(2, 2, 'r');
+
+    // Cursor at the very top. Backward search must cyclically wrap to the
+    // bottom and find "foobar" spanning lines 1-2.
+    cm.cursor_x = 0;
+    cm.cursor_y = 0;
+    const found = cm.searchBackward(&g, testing.allocator, "foobar");
+    try testing.expect(found);
+    try testing.expectEqual(@as(u32, 0), cm.cursor_x);
+    try testing.expectEqual(@as(u32, 1), cm.cursor_y);
 }
