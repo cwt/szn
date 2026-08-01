@@ -2588,6 +2588,11 @@ pub const Server = struct {
         const session = try self.allocator.create(Session);
         errdefer self.allocator.destroy(session);
         try session.init(self.allocator, self.next_session_id, name, width, height, &self.global_options, &self.global_window_options);
+        // bug #296: init has now built the session's arena (windows/panes).
+        // Any later failure (e.g. sessions.append) must deinit the whole
+        // session before the destroy errdefer frees the struct. Registered
+        // AFTER init so an init failure doesn't double-deinit.
+        errdefer session.deinit(self.allocator);
         self.next_session_id += 1;
         // Apply the learned cell pixel size to the freshly-created screen(s),
         // since the cell_size message may have arrived before this session
@@ -2879,6 +2884,30 @@ test "new session increments id" {
     const s1 = try server.newSession("a", 80, 24);
     const s2 = try server.newSession("b", 80, 24);
     try testing.expect(s1.id < s2.id);
+}
+
+test "newSession frees session internals when append fails — bug #296" {
+    // Server.init with the real allocator, then swap in a FailingAllocator for
+    // the newSession call so failures land inside newSession (not Server.init).
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    var i: usize = 0;
+    while (i < 60) : (i += 1) {
+        var failing = std.testing.FailingAllocator.init(testing.allocator, .{ .fail_index = i });
+        const saved = server.allocator;
+        server.allocator = failing.allocator();
+        const result = server.newSession("leaktest", 80, 24);
+        server.allocator = saved;
+
+        if (result) |s| {
+            _ = s;
+        } else |_| {
+            // On any failure, including one after session.init's arena was
+            // built (i.e. the sessions.append step), nothing may remain.
+            try testing.expectEqual(@as(usize, 0), server.sessions.items.len);
+        }
+    }
 }
 
 test "server listen creates socket" {
