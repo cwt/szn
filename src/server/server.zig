@@ -1715,26 +1715,65 @@ pub const Server = struct {
     pub fn handleMouseFocus(self: *Server, x: u32, y: u32) ServerError!void {
         const session = self.activeSession() orelse return;
 
-        if (y == session.height) {
-            var col: u32 = 0;
-            const prefix_len = 3 +| @as(u32, @intCast(@min(session.name.len, std.math.maxInt(u32))));
-            col += prefix_len;
+        // bug #290: the status bar renders on the last row of each display
+        // client (dc.sy - 1). The session grid only spans the content area
+        // (session.height = min client content height), so a status click on
+        // any client satisfies y >= session.height.
+        if (y >= session.height) {
+            // Compute the rendered status line's window-entry column ranges so
+            // clicks match exactly what was drawn (honouring base-index,
+            // window-status formats, truncation, and justification).
+            const base_index: i64 = session.options.asNumber("base-index") orelse 0;
+            const win_opts = if (session.active_window) |aw| &aw.options else &self.global_window_options;
+            const win_fmt = win_opts.asString("window-status-format") orelse
+                self.global_window_options.asString("window-status-format") orelse
+                "#I:#W#{?window_flags,#{window_flags}, }";
+            const win_cur = win_opts.asString("window-status-current-format") orelse
+                self.global_window_options.asString("window-status-current-format") orelse
+                "#I:#W#{?window_flags,#{window_flags}, }";
 
-            for (session.windows.items, 0..) |win, idx| {
+            self.status_win_infos.clearRetainingCapacity();
+            for (session.windows.items, 0..) |win, i| {
                 const is_active = (win == session.active_window);
-                const suffix_len: u32 = if (is_active) 1 else 0;
+                try self.status_win_infos.append(self.allocator, .{
+                    .index = @intCast(base_index + @as(i64, @intCast(i))),
+                    .name = win.name,
+                    .flags = if (is_active) "*" else "",
+                    .is_active = is_active,
+                });
+            }
 
-                var idx_buf: [32]u8 = undefined;
-                const idx_len = (std.fmt.bufPrint(&idx_buf, "{}", .{idx}) catch {
-                    std.log.warn("window index overflow: idx={d}", .{idx});
-                    return error.OutOfMemory;
-                }).len;
-                const entry_len = 1 +| @as(u32, @intCast(@min(idx_len, std.math.maxInt(u32)))) +| 1 +| @as(u32, @intCast(@min(win.name.len, std.math.maxInt(u32)))) +| suffix_len;
+            const left = session.options.asString("status-left") orelse "[#{session_name}] ";
+            const right = session.options.asString("status-right") orelse "\"#{=21:pane_title}\" %H:%M %d-%b-%y";
+            const left_len: u32 = @intCast(@max(session.options.asNumber("status-left-length") orelse 10, 0));
+            const right_len: u32 = @intCast(@max(session.options.asNumber("status-right-length") orelse 40, 0));
+            const justify = status_mod.Alignment.fromString(session.options.asString("status-justify") orelse "left");
 
-                const start_x = col;
-                const end_x = col + entry_len;
+            const ranges = status_mod.windowRanges(self.allocator, .{
+                .session_name = session.name,
+                .windows = self.status_win_infos.items,
+                .pane_title = if (session.active_window) |aw| aw.name else "",
+                .host = self.host_name,
+                .host_short = self.host_short,
+                .left = left,
+                .right = right,
+                .left_length = left_len,
+                .right_length = right_len,
+                .justify = justify,
+                .window_status_format = win_fmt,
+                .window_status_current_format = win_cur,
+                .width = session.width,
+                .left_cache = &self.status_left_cache,
+                .right_cache = &self.status_right_cache,
+                .win_fmt_cache = &self.window_status_fmt_cache,
+                .win_cur_cache = &self.window_status_cur_cache,
+            }) catch return;
+            defer self.allocator.free(ranges);
 
-                if (x >= start_x and x < end_x) {
+            for (ranges) |r| {
+                if (x >= r.start_col and x < r.end_col) {
+                    if (r.pos >= session.windows.items.len) return;
+                    const win = session.windows.items[r.pos];
                     session.setActiveWindow(win);
                     if (win.active_pane) |pane| {
                         pane.dirty = true;
@@ -1742,7 +1781,6 @@ pub const Server = struct {
                     self.dirty = true;
                     return;
                 }
-                col += entry_len;
             }
             return;
         }
