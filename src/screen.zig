@@ -967,15 +967,15 @@ pub const Screen = struct {
         while (i < count) : (i += 1) {
             var row = bottom;
             const temp = self.grid.getLine(bottom).*;
-            // bug #225: decrement refcounts for the target row before overwriting.
-            self.decrementLineRefs(self.grid.getLineMut(row).cells.items);
+            // bug #278: decrement refcounts exactly once for the discarded
+            // bottom line (the buffer moves to `y` and is reused as the new
+            // blank line, so the old bottom content is erased exactly once).
+            self.decrementLineRefs(temp.cells.items);
             while (row > y) : (row -= 1) {
                 self.grid.getLineMut(row).* = self.grid.getLine(row - 1).*;
             }
             self.grid.getLineMut(y).* = temp;
             const line = self.grid.getLineMut(y);
-            // bug #225: zero refcount for fill cells.
-            self.decrementLineRefs(line.cells.items);
             @memset(line.cells.items, fill);
             line.dirty = true;
         }
@@ -991,8 +991,10 @@ pub const Screen = struct {
         const fill = self.eraseCell();
         var i: u32 = 0;
         while (i < count) : (i += 1) {
-            // bug #225: decrement refcount for the bottom row before overwrite.
-            self.decrementLineRefs(self.grid.getLineMut(bottom).cells.items);
+            // bug #279: the old bottom line shifts UP and stays visible — its
+            // refcounts must NOT be decremented. Only the old line `y` content
+            // (moved to `bottom`, then memset) is discarded, so it is the only
+            // line that gets its refcounts released.
             const temp = self.grid.getLine(y).*;
             var row = y;
             while (row < bottom) : (row += 1) {
@@ -1000,7 +1002,6 @@ pub const Screen = struct {
             }
             self.grid.getLineMut(bottom).* = temp;
             const line = self.grid.getLineMut(bottom);
-            // bug #225: zero refcount for fill cells.
             self.decrementLineRefs(line.cells.items);
             @memset(line.cells.items, fill);
             line.dirty = true;
@@ -2415,4 +2416,67 @@ test "repeatLastChar with zero count does nothing" {
 
     try testing.expectEqual(orig_x, screen.cursor.x);
     try testing.expectEqual(orig_y, screen.cursor.y);
+}
+
+test "insertLines decrements discarded bottom line refcount exactly once — bug #278" {
+    const allocator = std.testing.allocator;
+    var screen = try Screen.init(allocator, 5, 5);
+    defer screen.deinit();
+
+    // Seed a sixel image in slot 0 with marker cells at (0,3) and (0,4).
+    screen.sixel_images[0] = .{
+        .data = try allocator.dupe(u8, "\x1bPqX\x1b\\"),
+        .col = 0,
+        .row = 3,
+        .px_width = 5,
+        .px_height = 40,
+        .id = 1,
+    };
+    screen.sixel_refcounts[0] = 2;
+    var m1 = Cell.empty();
+    m1.attr.sixel = true;
+    m1.char = 1;
+    screen.grid.getLineMut(3).cells.items[0] = m1;
+    var m2 = Cell.empty();
+    m2.attr.sixel = true;
+    m2.char = 1;
+    screen.grid.getLineMut(4).cells.items[0] = m2;
+
+    // Insert 1 line at row 0: old bottom line (row 4) is discarded, so its
+    // single marker is released once. Row 3's marker shifts down and survives.
+    screen.cursor.x = 0;
+    screen.cursor.y = 0;
+    try screen.insertLines(1);
+
+    try testing.expectEqual(@as(usize, 1), screen.sixel_refcounts[0]);
+}
+
+test "deleteLines does not decrement preserved bottom line refcount — bug #279" {
+    const allocator = std.testing.allocator;
+    var screen = try Screen.init(allocator, 5, 5);
+    defer screen.deinit();
+
+    // Seed a sixel image in slot 0 with a single marker cell at (0,4).
+    screen.sixel_images[0] = .{
+        .data = try allocator.dupe(u8, "\x1bPqX\x1b\\"),
+        .col = 0,
+        .row = 4,
+        .px_width = 5,
+        .px_height = 20,
+        .id = 1,
+    };
+    screen.sixel_refcounts[0] = 1;
+    var m = Cell.empty();
+    m.attr.sixel = true;
+    m.char = 1;
+    screen.grid.getLineMut(4).cells.items[0] = m;
+
+    // Delete 1 line at row 0: rows shift up, so the bottom marker (0,4) moves
+    // to (0,3) and stays visible — its refcount must NOT change.
+    screen.cursor.x = 0;
+    screen.cursor.y = 0;
+    try screen.deleteLines(1);
+
+    try testing.expectEqual(@as(usize, 1), screen.sixel_refcounts[0]);
+    try testing.expect(screen.grid.getCell(0, 3).attr.sixel);
 }
