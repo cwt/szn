@@ -993,19 +993,33 @@ pub const Screen = struct {
     }
 
     pub fn insertChars(self: *Screen, n: u32) void {
-        // bug #225: decrement refcount for the overwritten cell at width-1.
-        if (self.grid.width > 0) {
-            self.decrementMainGridRef(self.grid.width - 1, self.cursor.y);
+        const num = @min(n, self.grid.width -| self.cursor.x);
+        // bug #292: inserting chars shifts [cursor.x, width-1] right by `num`;
+        // the markers in the rightmost `num` cells are shifted off the edge and
+        // destroyed, so exactly those must have their refcounts released.
+        if (num > 0 and self.grid.width > 0) {
+            const start = self.grid.width - num;
+            var x: u32 = start;
+            while (x < self.grid.width) : (x += 1) {
+                self.decrementMainGridRef(x, self.cursor.y);
+            }
         }
         self.grid.insertChars(self.cursor.x, self.cursor.y, n);
         self.dirty = true;
     }
 
     pub fn deleteChars(self: *Screen, n: u32) void {
-        // bug #225: decrement refcounts for the padding cells at the end.
-        var x: u32 = self.grid.width -| n;
-        while (x < self.grid.width) : (x += 1) {
-            self.decrementMainGridRef(x, self.cursor.y);
+        const num = @min(n, self.grid.width -| self.cursor.x);
+        // bug #292: deleting chars shifts [cursor.x, width-1] left by `num`;
+        // the markers at [cursor.x, cursor.x+num-1] are shifted off the left
+        // edge and destroyed — release their refcounts (previously the wrong
+        // tail cells were decremented).
+        if (num > 0) {
+            var x: u32 = self.cursor.x;
+            const end = self.cursor.x + num;
+            while (x < end) : (x += 1) {
+                self.decrementMainGridRef(x, self.cursor.y);
+            }
         }
         self.grid.deleteChars(self.cursor.x, self.cursor.y, n);
         self.dirty = true;
@@ -2431,6 +2445,74 @@ test "useAltScreen releases alt-grid sixel refcounts — bug #291" {
 
     try testing.expectEqual(@as(usize, 0), screen.sixel_refcounts[0]);
     try testing.expect(!screen.isImageReferenced(0));
+}
+
+test "insertChars releases refcounts of markers shifted off the right edge — bug #292" {
+    const allocator = std.testing.allocator;
+    var screen = try Screen.init(allocator, 5, 5);
+    defer screen.deinit();
+
+    // Seed an image in slot 0 with marker cells at (2,0) and (4,0).
+    screen.sixel_images[0] = .{
+        .data = try allocator.dupe(u8, "\x1bPqX\x1b\\"),
+        .col = 0,
+        .row = 0,
+        .px_width = 5,
+        .px_height = 20,
+        .id = 1,
+    };
+    screen.sixel_refcounts[0] = 2;
+    var m1 = Cell.empty();
+    m1.attr.sixel = true;
+    m1.char = 1;
+    screen.grid.getLineMut(0).cells.items[2] = m1;
+    var m2 = Cell.empty();
+    m2.attr.sixel = true;
+    m2.char = 1;
+    screen.grid.getLineMut(0).cells.items[4] = m2;
+
+    // Insert 2 chars at x=0: cells shift right by 2, the marker at col 4 is
+    // pushed off the right edge (destroyed). Col 2's marker survives at col 4.
+    screen.cursor.x = 0;
+    screen.cursor.y = 0;
+    screen.insertChars(2);
+
+    try testing.expectEqual(@as(usize, 1), screen.sixel_refcounts[0]);
+    try testing.expect(screen.grid.getCell(4, 0).attr.sixel);
+}
+
+test "deleteChars releases refcounts of markers shifted off the left edge — bug #292" {
+    const allocator = std.testing.allocator;
+    var screen = try Screen.init(allocator, 5, 5);
+    defer screen.deinit();
+
+    // Seed an image in slot 0 with marker cells at (0,0) and (3,0).
+    screen.sixel_images[0] = .{
+        .data = try allocator.dupe(u8, "\x1bPqX\x1b\\"),
+        .col = 0,
+        .row = 0,
+        .px_width = 5,
+        .px_height = 20,
+        .id = 1,
+    };
+    screen.sixel_refcounts[0] = 2;
+    var m1 = Cell.empty();
+    m1.attr.sixel = true;
+    m1.char = 1;
+    screen.grid.getLineMut(0).cells.items[0] = m1;
+    var m2 = Cell.empty();
+    m2.attr.sixel = true;
+    m2.char = 1;
+    screen.grid.getLineMut(0).cells.items[3] = m2;
+
+    // Delete 2 chars at x=0: cells shift left by 2, the marker at col 0 is
+    // shifted off the left edge (destroyed). Col 3's marker survives at col 1.
+    screen.cursor.x = 0;
+    screen.cursor.y = 0;
+    screen.deleteChars(2);
+
+    try testing.expectEqual(@as(usize, 1), screen.sixel_refcounts[0]);
+    try testing.expect(screen.grid.getCell(1, 0).attr.sixel);
 }
 
 test "insertLines decrements discarded bottom line refcount exactly once — bug #278" {
