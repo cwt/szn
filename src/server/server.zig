@@ -1111,7 +1111,13 @@ pub const Server = struct {
 
     pub fn processInput(self: *Server, buf: []const u8) ServerError!void {
         var i: usize = 0;
-        self.esc_buf.clearRetainingCapacity();
+        // bug #294: only reset esc_buf when the parser is idle. If a previous
+        // stdin_data packet ended mid-escape-sequence, esc_buf holds its
+        // leading bytes and must survive so the sequence can complete across
+        // packets. Clearing unconditionally here truncated such sequences.
+        if (self.input_reader.state == .ground) {
+            self.esc_buf.clearRetainingCapacity();
+        }
 
         while (i < buf.len) : (i += 1) {
             // bug #282: resolve the active session/window/pane fresh on every
@@ -3269,6 +3275,35 @@ test "processInput esc_buf capacity limit" {
 
     // It should reset input reader state to .ground due to limit trigger.
     try testing.expectEqual(.ground, server.input_reader.state);
+}
+
+test "processInput preserves split escape sequence across packets — bug #294" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    const s = try server.newSession("test", 80, 24);
+    const pane = s.active_window.?.active_pane.?;
+
+    // Use a pipe as a fake pty so we can read back what writeInput forwards.
+    var fds: [2]c_int = undefined;
+    if (std.c.pipe(&fds) != 0) return error.PipeFailed;
+    defer _ = std.c.close(fds[0]);
+    defer _ = std.c.close(fds[1]);
+    pane.pty = .{ .master = fds[1], .slave = fds[0], .pid = -1 };
+
+    // A split SS3 sequence "\x1bOZ" across two packets. 'Z' is not a valid
+    // SS3 key, so feed returns null while the parser returns to ground; the
+    // accumulated esc_buf is then forwarded verbatim to the pty.
+    try server.processInput("\x1bO");
+    try server.processInput("Z");
+
+    // The forwarded bytes land on the master fd (test-mode writeInput mirrors
+    // them). With the bug, the second call cleared esc_buf at its start,
+    // dropping the "\x1bO" prefix, so only "Z" arrives.
+    var buf: [8]u8 = undefined;
+    const n = std.c.read(fds[0], &buf, buf.len);
+    try testing.expect(n >= 0);
+    try testing.expectEqualStrings("\x1bOZ", buf[0..@intCast(n)]);
 }
 
 test "findPaneAtNode accounts for border width — bug #127" {
