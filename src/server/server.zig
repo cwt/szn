@@ -297,8 +297,13 @@ pub const Server = struct {
     }
 
     pub fn setMessage(self: *Server, msg: []const u8) !void {
+        // bug #285: dupe the new message BEFORE freeing the old one. If dupe
+        // fails, self.message still points at the previous (still-live)
+        // allocation; freeing first and failing would leave a dangling pointer
+        // that clearMessage()/renderToDisplayClient() would then use/free.
+        const new_message = try self.allocator.dupe(u8, msg);
         if (self.message) |m| self.allocator.free(m);
-        self.message = try self.allocator.dupe(u8, msg);
+        self.message = new_message;
         self.message_time = currentMillis();
     }
 
@@ -4004,4 +4009,29 @@ test "renderToDisplayClient does not free string literals for empty pane-border-
     server.dirty = true;
     server.renderToDisplayClient();
     try testing.expect(server.display_clients.items.len == 1);
+}
+
+test "setMessage preserves old message on allocation failure — bug #285" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    try server.setMessage("first message");
+    try testing.expectEqualStrings("first message", server.message.?);
+
+    // Inject allocation failure: dupe of the new message must fail while the
+    // previous message stays live (dupe-before-free).
+    var failing_alloc = std.testing.FailingAllocator.init(testing.allocator, .{ .fail_index = 0 });
+    const saved_allocator = server.allocator;
+    server.allocator = failing_alloc.allocator();
+    defer server.allocator = saved_allocator;
+
+    try testing.expectError(error.OutOfMemory, server.setMessage("second message"));
+
+    // Old message must still be valid — not a dangling pointer.
+    try testing.expectEqualStrings("first message", server.message.?);
+
+    // Restore real allocator; clearMessage must free exactly once (no double free).
+    server.allocator = saved_allocator;
+    server.clearMessage();
+    try testing.expect(server.message == null);
 }
