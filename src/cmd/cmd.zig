@@ -985,7 +985,7 @@ fn cmdResizePane(server: *Server, args: []const []const u8) CmdResult {
                     i += 1;
                 } else |_| {}
             }
-            adjust_h += val;
+            adjust_h +|= val;
         } else if (std.mem.eql(u8, args[i], "-U")) {
             var val: i32 = 1;
             if (i + 1 < args.len) {
@@ -994,7 +994,7 @@ fn cmdResizePane(server: *Server, args: []const []const u8) CmdResult {
                     i += 1;
                 } else |_| {}
             }
-            adjust_h -= val;
+            adjust_h -|= val;
         } else if (std.mem.eql(u8, args[i], "-L")) {
             var val: i32 = 1;
             if (i + 1 < args.len) {
@@ -1003,7 +1003,7 @@ fn cmdResizePane(server: *Server, args: []const []const u8) CmdResult {
                     i += 1;
                 } else |_| {}
             }
-            adjust_w -= val;
+            adjust_w -|= val;
         } else if (std.mem.eql(u8, args[i], "-R")) {
             var val: i32 = 1;
             if (i + 1 < args.len) {
@@ -1012,7 +1012,7 @@ fn cmdResizePane(server: *Server, args: []const []const u8) CmdResult {
                     i += 1;
                 } else |_| {}
             }
-            adjust_w += val;
+            adjust_w +|= val;
         } else if (std.mem.eql(u8, args[i], "-x")) {
             if (i + 1 >= args.len) return .err;
             exact_w = std.fmt.parseUnsigned(u32, args[i + 1], 10) catch return .err;
@@ -1027,12 +1027,17 @@ fn cmdResizePane(server: *Server, args: []const []const u8) CmdResult {
     const current_w = pane.screen.grid.width;
     const current_h = pane.screen.grid.height;
 
-    const new_w = @as(i32, @intCast(current_w)) + adjust_w;
+    // bug #289: use saturating arithmetic so huge -U/-D/-L/-R adjustments
+    // cannot overflow i32 (panic in Debug, silent wrap in ReleaseFast), and
+    // clamp to a sane ceiling so a saturated huge value can't attempt an
+    // absurd grid allocation.
+    const MAX_DIM: u32 = 10_000;
+    const new_w = @as(i32, @intCast(current_w)) +| adjust_w;
     if (new_w < 1) return .err;
-    const target_w = exact_w orelse @as(u32, @intCast(new_w));
-    const new_h = @as(i32, @intCast(current_h)) + adjust_h;
+    const target_w = @min(exact_w orelse @as(u32, @intCast(new_w)), MAX_DIM);
+    const new_h = @as(i32, @intCast(current_h)) +| adjust_h;
     if (new_h < 1) return .err;
-    const target_h = exact_h orelse @as(u32, @intCast(new_h));
+    const target_h = @min(exact_h orelse @as(u32, @intCast(new_h)), MAX_DIM);
 
     pane.resizeTerminal(target_w, target_h) catch return .err;
     return .ok;
@@ -2555,4 +2560,42 @@ test "formatHelp returns owned memory and handles unknown command — bug #288" 
     const unknown = try formatHelp(testing.allocator, "nonexistent-cmd");
     defer testing.allocator.free(unknown);
     try testing.expect(std.mem.indexOf(u8, unknown, "Unknown command") != null);
+}
+
+test "resize-pane saturates on huge adjustments — bug #289" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    _ = try server.newSession("testsession", 80, 24);
+    const session = server.activeSession().?;
+    const pane = session.active_window.?.active_pane.?;
+
+    // Accumulating two maxInt(i32) values previously overflowed i32 before the
+    // < 1 bounds check ran. With saturating arithmetic this must not panic,
+    // must not wrap into a bogus small/big size, and must clamp to MAX_DIM.
+    {
+        var c = try parse("resize-pane -D 2147483647 -D 2147483647", testing.allocator);
+        defer c.deinit(testing.allocator);
+        try testing.expectEqual(CmdResult.ok, c.exec(&server));
+    }
+    try testing.expectEqual(@as(u32, 10_000), pane.screen.grid.height);
+
+    // Huge shrink saturates below 1 -> command returns .err, size unchanged.
+    {
+        var c = try parse("resize-pane -U 2147483647 -U 2147483647", testing.allocator);
+        defer c.deinit(testing.allocator);
+        try testing.expectEqual(CmdResult.err, c.exec(&server));
+    }
+    try testing.expectEqual(@as(u32, 10_000), pane.screen.grid.height);
+
+    // Width direction likewise clamps to MAX_DIM, never wraps.
+    {
+        var c = try parse("resize-pane -R 2147483647 -R 2147483647", testing.allocator);
+        defer c.deinit(testing.allocator);
+        try testing.expectEqual(CmdResult.ok, c.exec(&server));
+    }
+    try testing.expectEqual(@as(u32, 10_000), pane.screen.grid.width);
+
+    // Reset to a normal size so the test teardown doesn't resize a 10k grid.
+    pane.resizeTerminal(80, 24) catch return error.Unexpected;
 }
