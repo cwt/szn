@@ -413,6 +413,14 @@ pub const Server = struct {
     fn tickAutoscroll(self: *Server) void {
         const pane = self.mouse_autoscroll_pane orelse return;
         const dir = self.mouse_autoscroll_dir orelse return;
+        // bug #283: the pane may have been destroyed via killSession /
+        // killAllSessions (which don't route through destroyPane). Bail out if
+        // the cached pointer no longer references a live pane.
+        if (!self.isPaneValid(pane)) {
+            self.mouse_autoscroll_pane = null;
+            self.mouse_autoscroll_dir = null;
+            return;
+        }
         if (pane.screen.copy_mode) |*cm| {
             if (cm.selection.active) {
                 const grid = &pane.screen.grid;
@@ -512,6 +520,16 @@ pub const Server = struct {
             }
         }
         return false;
+    }
+
+    /// Drop cached mouse pointers (`mouse_press_pane`, `mouse_autoscroll_pane`)
+    /// when the referenced pane is being destroyed — bug #283.
+    fn clearPaneMouseRefs(self: *Server, pane: *Pane) void {
+        if (self.mouse_press_pane == pane) self.mouse_press_pane = null;
+        if (self.mouse_autoscroll_pane == pane) {
+            self.mouse_autoscroll_pane = null;
+            self.mouse_autoscroll_dir = null;
+        }
     }
 
     const PtyResult = enum { not_ours, handled, destroyed };
@@ -631,6 +649,10 @@ pub const Server = struct {
     pub fn destroyPane(self: *Server, pane: *Pane) void {
         var found_session: ?*Session = null;
         var found_window: ?*Window = null;
+
+        // bug #283: the pane is about to be freed — drop any cached mouse
+        // pointer that references it before the memory goes away.
+        self.clearPaneMouseRefs(pane);
 
         outer: for (self.sessions.items) |session| {
             for (session.windows.items) |win| {
@@ -1559,7 +1581,12 @@ pub const Server = struct {
                                             }
                                         } else if (m.button == .left and m.drag) {
                                             if (self.mouse_press_pane) |press_pane| {
-                                                if (self.findPaneBounds(window, press_pane)) |pb| {
+                                                // bug #283: guard against a pane destroyed since the press.
+                                                if (!self.isPaneValid(press_pane)) {
+                                                    self.mouse_press_pane = null;
+                                                    self.mouse_autoscroll_pane = null;
+                                                    self.mouse_autoscroll_dir = null;
+                                                } else if (self.findPaneBounds(window, press_pane)) |pb| {
                                                     if (press_pane.screen.copy_mode == null) {
                                                         press_pane.enterCopyMode() catch {};
                                                     }
@@ -1607,16 +1634,19 @@ pub const Server = struct {
                                             self.mouse_autoscroll_dir = null;
                                             self.mouse_autoscroll_pane = null;
                                             if (self.mouse_press_pane) |press_pane| {
-                                                if (press_pane.screen.copy_mode) |*cm| {
-                                                    if (cm.selection.active) {
-                                                        const data = cm.yankSelection(self.allocator, &press_pane.screen.grid) catch null;
-                                                        if (data) |d| {
-                                                            const name = try self.buffers.generateName();
-                                                            errdefer self.allocator.free(name);
-                                                            try self.buffers.pushOwned(name, d);
+                                                // bug #283: guard against a pane destroyed since the press.
+                                                if (self.isPaneValid(press_pane)) {
+                                                    if (press_pane.screen.copy_mode) |*cm| {
+                                                        if (cm.selection.active) {
+                                                            const data = cm.yankSelection(self.allocator, &press_pane.screen.grid) catch null;
+                                                            if (data) |d| {
+                                                                const name = try self.buffers.generateName();
+                                                                errdefer self.allocator.free(name);
+                                                                try self.buffers.pushOwned(name, d);
+                                                            }
+                                                            press_pane.screen.copy_mode = null;
+                                                            press_pane.dirty = true;
                                                         }
-                                                        press_pane.screen.copy_mode = null;
-                                                        press_pane.dirty = true;
                                                     }
                                                 }
                                             }
@@ -3657,6 +3687,53 @@ test "mouse hover scroll focus and scroll" {
 
     // Copy mode should be null now
     try testing.expect(pane2.screen.copy_mode == null);
+}
+
+test "destroyPane clears cached mouse pane pointers — bug #283" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    const s = try server.newSession("test-mouse-clear", 80, 24);
+    const win = s.active_window.?;
+    const pane1 = win.active_pane.?;
+    const pane2 = try win.splitPane(server.allocator, pane1, false, 0.5);
+
+    // Simulate an in-progress drag/autoscroll targeting pane2.
+    server.mouse_press_pane = pane2;
+    server.mouse_autoscroll_pane = pane2;
+    server.mouse_autoscroll_dir = .up;
+    server.mouse_press_x = 10;
+    server.mouse_press_y = 5;
+
+    // Destroy pane2.
+    server.destroyPane(pane2);
+
+    // Cached pointers must no longer reference the freed pane.
+    try testing.expect(server.mouse_press_pane == null);
+    try testing.expect(server.mouse_autoscroll_pane == null);
+    try testing.expect(server.mouse_autoscroll_dir == null);
+
+    // tickAutoscroll must not dereference the freed pane.
+    server.tickAutoscroll();
+}
+
+test "tickAutoscroll ignores pane destroyed via killSession — bug #283" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    const s = try server.newSession("test-autoscroll-kill", 80, 24);
+    const pane = s.active_window.?.active_pane.?;
+
+    // Simulate autoscroll referencing the pane, then kill the whole session
+    // (which does NOT route through destroyPane).
+    server.mouse_autoscroll_pane = pane;
+    server.mouse_autoscroll_dir = .up;
+    _ = server.killSession("test-autoscroll-kill") catch return error.Unexpected;
+
+    // tickAutoscroll must detect the stale pane and clear it, not crash.
+    server.tickAutoscroll();
+    try testing.expect(server.mouse_autoscroll_pane == null);
+    try testing.expect(server.mouse_autoscroll_dir == null);
 }
 
 test "OSC 52 clipboard forwarding and buffer copy" {
