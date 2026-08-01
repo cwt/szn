@@ -461,23 +461,6 @@ pub const Screen = struct {
         }
     }
 
-    /// Decrement the refcount for the sixel image occupying cell (x, y) on the
-    /// alt grid (if active).  No-op when no alt grid exists.
-    fn decrementAltGridRef(self: *Screen, x: u32, y: u32) void {
-        if (self.alt_grid) |alt| {
-            if (x < alt.width and y < alt.height) {
-                const cell = alt.getCell(x, y);
-                if (!cell.attr.sixel) return;
-                const id = @as(u32, cell.char & 0x1FFFFF);
-                if (self.findSixelImageSlot(id)) |slot| {
-                    if (self.sixel_refcounts[slot] > 0) {
-                        self.sixel_refcounts[slot] -= 1;
-                    }
-                }
-            }
-        }
-    }
-
     /// Decrement refcount for every cell in the given line's cells slice.
     fn decrementLineRefs(self: *Screen, cells: []const Cell) void {
         for (cells, 0..) |cell, x| {
@@ -1340,6 +1323,12 @@ pub const Screen = struct {
         } else if (!enable and self.alt_grid != null) {
             var saved = self.alt_grid.?;
             std.mem.swap(Grid, &self.grid, &saved);
+            // bug #291: the alt grid's sixel marker cells are about to be
+            // freed — release their refcounts so the shared registry slots can
+            // be reused (isImageReferenced checks the refcount).
+            for (saved.lines.items) |*line| {
+                self.decrementLineRefs(line.cells.items);
+            }
             saved.deinit();
             self.alt_grid = null;
 
@@ -2416,6 +2405,32 @@ test "repeatLastChar with zero count does nothing" {
 
     try testing.expectEqual(orig_x, screen.cursor.x);
     try testing.expectEqual(orig_y, screen.cursor.y);
+}
+
+test "useAltScreen releases alt-grid sixel refcounts — bug #291" {
+    const allocator = std.testing.allocator;
+    var screen = try Screen.init(allocator, 5, 5);
+    defer screen.deinit();
+    screen.cell_size_known = true;
+    screen.cell_px_width = 10;
+    screen.cell_px_height = 20;
+
+    // Enter alternate screen; subsequent writes go to the alt grid.
+    try screen.useAltScreen(true);
+
+    // Place a sixel on the alt screen: 1 marker cell, refcount 1.
+    screen.cursor.y = 0;
+    screen.cursor.x = 0;
+    const dcs = try allocator.dupe(u8, "\x1bPqALT\x1b\\");
+    try screen.addSixelImage(dcs, 10, 20);
+    try testing.expect(screen.sixel_refcounts[0] > 0);
+
+    // Exit alternate screen: the alt grid (holding the marker) is deinit'd.
+    // Its refcount must be released so the image becomes evictable.
+    try screen.useAltScreen(false);
+
+    try testing.expectEqual(@as(usize, 0), screen.sixel_refcounts[0]);
+    try testing.expect(!screen.isImageReferenced(0));
 }
 
 test "insertLines decrements discarded bottom line refcount exactly once — bug #278" {
