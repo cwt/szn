@@ -103,6 +103,12 @@ pub const DisplayClient = struct {
 
 pub const Server = struct {
     pub const MAX_PASTE_SIZE = 16384;
+    /// Upper bound on a display client's pending output buffer. Prevents a
+    /// non-reading client from growing out_buf without bound via
+    /// queueToClient / sendRequestCellSize (bug #297).
+    pub const MAX_OUT_BUF = 1 << 20;
+    /// Upper bound on the command/search prompt buffer (bug #297).
+    pub const MAX_COMMAND_BUF = 1 << 16;
 
     allocator: std.mem.Allocator,
     sessions: std.ArrayList(*Session) = .empty,
@@ -413,6 +419,21 @@ pub const Server = struct {
             .win_cur_cache = &self.window_status_cur_cache,
         });
         return rendered.line;
+    }
+
+    /// Append a codepoint's UTF-8 encoding to the command prompt buffer,
+    /// rejecting input that would exceed MAX_COMMAND_BUF (bug #297).
+    fn appendCommandChar(self: *Server, code: u21) void {
+        if (code >= 0x20 and code != 0x7f) {
+            var enc: [4]u8 = undefined;
+            const len = std.unicode.utf8Encode(code, &enc) catch 0;
+            if (len == 0) return;
+            if (self.command_buf.items.len + len > MAX_COMMAND_BUF) {
+                std.log.warn("command buffer exceeds limit, ignoring input", .{});
+                return;
+            }
+            self.command_buf.appendSlice(self.allocator, enc[0..len]) catch {};
+        }
     }
 
     fn tickAutoscroll(self: *Server) void {
@@ -1261,12 +1282,8 @@ pub const Server = struct {
                                 // scripts like Thai — by UTF-8 encoding it. Control
                                 // chars and ctrl/alt-modified keys are still rejected.
                                 if (code >= 0x20 and code != 0x7f and !k.char.mod.ctrl and !k.char.mod.alt) {
-                                    var enc: [4]u8 = undefined;
-                                    const len = std.unicode.utf8Encode(code, &enc) catch 0;
-                                    if (len > 0) {
-                                        try self.command_buf.appendSlice(self.allocator, enc[0..len]);
-                                        self.dirty = true;
-                                    }
+                                    self.appendCommandChar(code);
+                                    self.dirty = true;
                                 }
                             }
                         },
@@ -2286,21 +2303,24 @@ pub const Server = struct {
             // deliver it.  A bare c.write could EAGAIN on the now
             // non-blocking socket and lose the query.
             if (dc.out_buf.items.len > 0) {
-                dc.out_buf.appendSlice(self.allocator, hdr_slice) catch continue;
-                _ = self.flushDisplayClient(dc);
+                if (self.appendClientOut(dc, hdr_slice)) {
+                    _ = self.flushDisplayClient(dc);
+                }
                 continue;
             }
             const n = c.write(dc.fd, hdr_slice.ptr, hdr_slice.len);
             if (n < 0) {
                 if (std.c.errno(n) == .AGAIN) {
-                    dc.out_buf.appendSlice(self.allocator, hdr_slice) catch continue;
-                    self.loop.addFdEvents(dc.fd, std.posix.POLL.OUT);
+                    if (self.appendClientOut(dc, hdr_slice)) {
+                        self.loop.addFdEvents(dc.fd, std.posix.POLL.OUT);
+                    }
                 }
             } else if (@as(usize, @intCast(n)) < hdr_slice.len) {
                 // Partial write — queue remaining bytes.
                 const written = @as(usize, @intCast(n));
-                dc.out_buf.appendSlice(self.allocator, hdr_slice[written..]) catch {};
-                self.loop.addFdEvents(dc.fd, std.posix.POLL.OUT);
+                if (self.appendClientOut(dc, hdr_slice[written..])) {
+                    self.loop.addFdEvents(dc.fd, std.posix.POLL.OUT);
+                }
             }
         }
     }
@@ -2312,25 +2332,26 @@ pub const Server = struct {
     fn queueToClient(self: *Server, fd: i32, data: []const u8) void {
         for (self.display_clients.items) |*dc| {
             if (dc.fd != fd) continue;
+            if (!self.appendClientOut(dc, data)) return;
+            _ = self.flushDisplayClient(dc);
             if (dc.out_buf.items.len > 0) {
-                dc.out_buf.appendSlice(self.allocator, data) catch return;
-                _ = self.flushDisplayClient(dc);
-                return;
-            }
-            const n = c.write(dc.fd, data.ptr, data.len);
-            if (n < 0) {
-                if (std.c.errno(n) == .AGAIN) {
-                    dc.out_buf.appendSlice(self.allocator, data) catch return;
-                    self.loop.addFdEvents(dc.fd, std.posix.POLL.OUT);
-                }
-                return;
-            }
-            if (@as(usize, @intCast(n)) < data.len) {
-                dc.out_buf.appendSlice(self.allocator, data[@as(usize, @intCast(n))..]) catch return;
                 self.loop.addFdEvents(dc.fd, std.posix.POLL.OUT);
             }
             return;
         }
+    }
+
+    /// Append `data` to a client's out_buf, but drop it if the buffer would
+    /// exceed MAX_OUT_BUF (bug #297). Returns false when the append was
+    /// rejected or failed, so callers bail out.
+    fn appendClientOut(self: *Server, dc: *DisplayClient, data: []const u8) bool {
+        if (data.len == 0) return true;
+        if (dc.out_buf.items.len + data.len > MAX_OUT_BUF) {
+            std.log.warn("display client {d} output buffer exceeds limit, dropping {d} bytes", .{ dc.fd, data.len });
+            return false;
+        }
+        dc.out_buf.appendSlice(self.allocator, data) catch return false;
+        return true;
     }
 
     /// Non-blocking flush of a display client's pending output buffer. Returns
@@ -3369,6 +3390,23 @@ test "processInput esc_buf capacity limit" {
 
     // It should reset input reader state to .ground due to limit trigger.
     try testing.expectEqual(.ground, server.input_reader.state);
+}
+
+test "command buffer is capped to prevent unbounded growth — bug #297" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    _ = try server.newSession("test", 80, 24);
+
+    // Enter command mode and feed more printable chars than the cap. Each char
+    // is a printable ASCII byte, so it goes through appendCommandChar.
+    server.command_mode = true;
+    var input: [Server.MAX_COMMAND_BUF + 128]u8 = undefined;
+    @memset(&input, 'a');
+    try server.processInput(&input);
+
+    // The buffer must never exceed the cap, and must not have grown past it.
+    try testing.expect(server.command_buf.items.len <= Server.MAX_COMMAND_BUF);
 }
 
 test "processInput preserves split escape sequence across packets — bug #294" {
