@@ -2057,9 +2057,24 @@ pub const Server = struct {
     fn handleAccept(self: *Server) ServerError!void {
         const fd = try socket_mod.acceptClient(self.listener_fd.?);
         try self.client_fds.append(self.allocator, fd);
+        errdefer {
+            // bug #295: if a later step fails, drop the fd from client_fds
+            // and close it so nothing leaks (the fd stays registered in the
+            // event loop only if addFd succeeded below).
+            for (self.client_fds.items, 0..) |cfd, idx| {
+                if (cfd == fd) {
+                    _ = self.client_fds.swapRemove(idx);
+                    break;
+                }
+            }
+            self.loop.removeFd(fd);
+            _ = c.close(fd);
+        }
         const reader = try self.allocator.create(MessageReader);
+        errdefer self.allocator.destroy(reader);
         reader.* = .{};
         try self.client_readers.put(fd, reader);
+        errdefer _ = self.client_readers.remove(fd);
         try self.loop.addFd(self.allocator, fd, @as(i16, @intCast(std.posix.POLL.IN)), @ptrCast(self));
     }
 
@@ -2871,6 +2886,56 @@ test "server listen creates socket" {
     defer server.deinit();
     try server.listen();
     try testing.expect(server.listener_fd != null);
+}
+
+test "handleAccept cleans up fd and reader on allocation failure — bug #295" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    // Create a real Unix listener on a temp path, then connect a client so
+    // accept() has a pending connection.
+    const tmp = "/tmp/szn-handle-accept-test.sock";
+    _ = std.c.unlink(tmp);
+    defer _ = std.c.unlink(tmp);
+
+    const listen_fd = std.c.socket(std.posix.AF.LOCAL, std.posix.SOCK.STREAM, 0);
+    if (listen_fd < 0) return error.SocketFailed;
+    defer _ = std.c.close(listen_fd);
+
+    var addr = std.mem.zeroes(std.c.sockaddr.un);
+    addr.family = std.posix.AF.LOCAL;
+    if (@hasField(std.c.sockaddr.un, "len")) {
+        addr.len = @intCast(@offsetOf(std.c.sockaddr.un, "path") + tmp.len);
+    }
+    @memcpy(addr.path[0..tmp.len], tmp);
+    const sa: *const std.c.sockaddr = @ptrCast(&addr);
+    const socklen: c_int = @intCast(@offsetOf(std.c.sockaddr.un, "path") + tmp.len + 1);
+    if (std.c.bind(listen_fd, sa, socklen) != 0) return error.BindFailed;
+    if (std.c.listen(listen_fd, 16) != 0) return error.ListenFailed;
+
+    const client_fd = std.c.socket(std.posix.AF.LOCAL, std.posix.SOCK.STREAM, 0);
+    if (client_fd < 0) return error.SocketFailed;
+    defer _ = std.c.close(client_fd);
+    if (std.c.connect(client_fd, sa, socklen) != 0) return error.ConnectFailed;
+
+    const saved_listener = server.listener_fd;
+    server.listener_fd = listen_fd;
+
+    // accept() succeeds and client_fds.append succeeds, but the second
+    // allocation (allocator.create(MessageReader)) fails. Without the fix the
+    // accepted fd stays registered in client_fds and the loop; with it, the
+    // errdefer removes and closes it.
+    var failing = std.testing.FailingAllocator.init(testing.allocator, .{ .fail_index = 1 });
+    const saved_alloc = server.allocator;
+    server.allocator = failing.allocator();
+    const result = server.handleAccept();
+    server.allocator = saved_alloc;
+    server.listener_fd = saved_listener;
+
+    try testing.expectError(error.OutOfMemory, result);
+    // No client fd / reader must have been left behind.
+    try testing.expectEqual(@as(usize, 0), server.client_fds.items.len);
+    try testing.expectEqual(@as(usize, 0), server.client_readers.count());
 }
 
 test "prefix interception and key dispatching" {
