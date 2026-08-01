@@ -3,6 +3,7 @@ const testing = std.testing;
 const server_mod = @import("../server/server.zig");
 const Server = server_mod.Server;
 const Pane = @import("../window.zig").Pane;
+const Window = @import("../window.zig").Window;
 const ChooseItem = @import("../choose.zig").ChooseItem;
 const char_width = @import("../char_width.zig");
 
@@ -372,18 +373,33 @@ fn cmdJoinPane(server: *Server, args: []const []const u8) CmdResult {
     if (src_pane == null or src_pane.? == dst_pane) return .err;
 
     const sp = src_pane orelse return .err;
-    src_win.extractPane(server.allocator, sp);
-    if (src_win.panes.items.len == 0) {
-        const a = session.arenaAllocator();
-        const dummy = a.create(Pane) catch return .err;
-        dummy.* = Pane.init(a, 9999, 1, 1) catch return .err;
-        src_win.layout.root.leaf = dummy;
-        session.killWindow(server.allocator, src_win);
-    }
 
+    // bug #287: do the fallible splitPane BEFORE extracting sp from src_win.
+    // If splitPane fails, sp is still owned by src_win. Extracting first would
+    // orphan sp (no window list, live pty, master fd still polled) and could
+    // even kill src_win before the failure.
     const dummy_pane = dst_win.splitPane(server.allocator, dst_pane, vertical, 0.5) catch return .err;
     const dummy_width = dummy_pane.screen.grid.width;
     const dummy_height = dummy_pane.screen.grid.height;
+
+    src_win.extractPane(server.allocator, sp);
+    if (src_win.panes.items.len == 0) {
+        const a = session.arenaAllocator();
+        const dummy = a.create(Pane) catch {
+            // sp was extracted but we can't prepare src_win for teardown.
+            // Put it back so it is not orphaned.
+            src_win.panes.append(a, sp) catch {};
+            src_win.layout.root.leaf = sp;
+            return .err;
+        };
+        dummy.* = Pane.init(a, 9999, 1, 1) catch {
+            src_win.panes.append(a, sp) catch {};
+            src_win.layout.root.leaf = sp;
+            return .err;
+        };
+        src_win.layout.root.leaf = dummy;
+        session.killWindow(server.allocator, src_win);
+    }
 
     for (dst_win.panes.items) |*p| {
         if (p.* == dummy_pane) {
@@ -411,9 +427,14 @@ fn cmdBreakPane(server: *Server, args: []const []const u8) CmdResult {
 
     if (window.panes.items.len <= 1) return .err;
 
+    // bug #287: create the new window BEFORE extracting the pane. If
+    // newWindow fails, the pane is still owned by `window` — extracting first
+    // would leave it in no window's list with a live pty child and a master
+    // fd still registered in the event loop.
+    const new_win = session.newWindow(server.allocator, "window") catch return .err;
+
     window.extractPane(server.allocator, pane);
 
-    const new_win = session.newWindow(server.allocator, "window") catch return .err;
     if (new_win.panes.items.len > 0) {
         var old_pane = new_win.panes.items[0];
         old_pane.deinit();
@@ -2313,6 +2334,56 @@ test "swap-pane, join-pane, and break-pane exec" {
         try testing.expectEqual(CmdResult.ok, c.exec(&server));
         try testing.expectEqual(@as(usize, 2), win.panes.items.len);
         try testing.expectEqual(pane1, win.active_pane.?);
+    }
+}
+
+test "break-pane and join-pane keep pane ownership consistent — bug #287" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    const session = try server.newSession("test", 80, 24);
+    const win = session.active_window.?;
+    const pane1 = win.active_pane.?;
+    _ = try win.splitPane(server.allocator, pane1, true, 0.5);
+
+    // break-pane: active pane (pane1) promotes to a new window. Every pane
+    // must belong to exactly one window afterwards.
+    win.setActivePane(pane1);
+    {
+        var c = try parse("break-pane", testing.allocator);
+        defer c.deinit(testing.allocator);
+        try testing.expectEqual(CmdResult.ok, c.exec(&server));
+    }
+    var new_win: ?*Window = null;
+    for (session.windows.items) |w| {
+        if (w != win and w.panes.items.len == 1 and w.panes.items[0] == pane1) {
+            new_win = w;
+        }
+    }
+    try testing.expect(new_win != null);
+
+    // join-pane back into win. After joining, pane1 must be owned by win and
+    // the source window (the one we broke it out of) must be gone.
+    session.setActiveWindow(win);
+    const src_idx = for (session.windows.items, 0..) |w, i| {
+        if (w == new_win.?) break i;
+    } else 0;
+    {
+        var buf: [64]u8 = undefined;
+        const cmd = std.fmt.bufPrint(&buf, "join-pane {d}:0", .{src_idx}) catch return error.Unexpected;
+        var c = try parse(cmd, testing.allocator);
+        defer c.deinit(testing.allocator);
+        try testing.expectEqual(CmdResult.ok, c.exec(&server));
+    }
+    try testing.expectEqual(@as(usize, 2), win.panes.items.len);
+    var found = false;
+    for (win.panes.items) |p| {
+        if (p == pane1) found = true;
+    }
+    try testing.expect(found);
+    // The broken-out window must be gone.
+    for (session.windows.items) |w| {
+        try testing.expect(w != new_win.?);
     }
 }
 
