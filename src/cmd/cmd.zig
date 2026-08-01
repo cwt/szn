@@ -652,12 +652,10 @@ fn cmdListKeys(server: *Server, args: []const []const u8) CmdResult {
 fn cmdRotateWindow(server: *Server, _: []const []const u8) CmdResult {
     const session = server.activeSession() orelse return .err;
     const window = session.active_window orelse return .err;
-    if (window.panes.items.len <= 1) return .ok;
-    const first = window.panes.items[0];
-    for (0..window.panes.items.len - 1) |i| {
-        window.panes.items[i] = window.panes.items[i + 1];
-    }
-    window.panes.items[window.panes.items.len - 1] = first;
+    // bug #284: use Window.rotatePanes() so the layout tree is rotated in
+    // lock-step with the panes list. Hand-rolling the list rotation here left
+    // the layout unchanged, desyncing pane indices from on-screen positions.
+    window.rotatePanes() catch return .err;
     return .ok;
 }
 
@@ -1891,6 +1889,39 @@ test "rotate-window rotates panes" {
         try testing.expectEqual(.ok, result);
     }
     try testing.expect(window.panes.items[window.panes.items.len - 1] == first_pane);
+}
+
+test "rotate-window rotates layout tree in lock-step — bug #284" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+    {
+        var c = try parse("new-session test", testing.allocator);
+        defer c.deinit(testing.allocator);
+        _ = c.exec(&server);
+    }
+    {
+        var c = try parse("split-window", testing.allocator);
+        defer c.deinit(testing.allocator);
+        _ = c.exec(&server);
+    }
+    const window = server.sessions.items[0].active_window.?;
+    const pane1 = window.panes.items[0];
+    const pane2 = window.panes.items[1];
+    // Initial layout: pane1 on the left (node a), pane2 on the right (node b).
+    try testing.expectEqual(pane1, window.layout.root.split.a.leaf);
+    try testing.expectEqual(pane2, window.layout.root.split.b.leaf);
+
+    {
+        var c = try parse("rotate-window", testing.allocator);
+        defer c.deinit(testing.allocator);
+        try testing.expectEqual(.ok, c.exec(&server));
+    }
+
+    // The layout must be rotated to match the panes list: pane2 now first in
+    // the list, so it must own the left-hand slot (node a).
+    try testing.expectEqual(pane2, window.panes.items[0]);
+    try testing.expectEqual(pane2, window.layout.root.split.a.leaf);
+    try testing.expectEqual(pane1, window.layout.root.split.b.leaf);
 }
 
 test "next-window cycles forward" {
