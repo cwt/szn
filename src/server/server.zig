@@ -2385,7 +2385,9 @@ pub const Server = struct {
             const pane_border_fmt_str = session.options.asString("pane-border-format") orelse "";
             for (dc.bounds_buf.items) |*pb| {
                 if (pane_border_fmt_str.len == 0) {
-                    pane_border_owned.append(self.allocator, "") catch {};
+                    // bug #280: never enqueue the literal "" — the defer would
+                    // free a static string. Leave the default (also "") and skip.
+                    pb.border_format = "";
                     continue;
                 }
                 var pane_idx: i64 = pane_base_index;
@@ -2413,10 +2415,15 @@ pub const Server = struct {
 
                 const expanded = format_mod.expand(self.allocator, pane_border_fmt_str, &ctx) catch |err| blk: {
                     std.log.warn("pane-border-format expand error: {any}", .{err});
-                    break :blk "";
+                    // bug #280: the fallback is a literal — do NOT enqueue it
+                    // for the defer-free; leave the default empty format.
+                    pb.border_format = "";
+                    break :blk null;
                 };
-                pane_border_owned.append(self.allocator, expanded) catch {};
-                pb.border_format = expanded;
+                if (expanded) |exp| {
+                    pane_border_owned.append(self.allocator, exp) catch {};
+                    pb.border_format = exp;
+                }
             }
 
             var status_line_owned: ?[]const u8 = null;
@@ -3854,4 +3861,44 @@ test "sendRequestCellSize handles partial write — bug #262" {
 
     // Test that display_clients can be managed
     try testing.expect(server.display_clients.items.len == 0);
+}
+
+test "renderToDisplayClient does not free string literals for empty pane-border-format — bug #280" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    const session = try server.newSession("test", 80, 24);
+
+    // Set pane-border-format to empty — the old code enqueued the literal ""
+    // into pane_border_owned and the defer called allocator.free on it.
+    try session.options.set("pane-border-format", .{ .string = "" });
+
+    var fds: [2]i32 = undefined;
+    if (std.c.socketpair(std.posix.AF.LOCAL, std.posix.SOCK.STREAM, 0, &fds) != 0) {
+        return error.SocketPairFailed;
+    }
+    const client_fd = fds[0];
+    const server_fd = fds[1];
+    defer _ = std.c.close(client_fd);
+    defer _ = std.c.close(server_fd);
+
+    try server.display_clients.append(server.allocator, .{
+        .fd = server_fd,
+        .sx = 80,
+        .sy = 24,
+    });
+    defer {
+        for (server.display_clients.items, 0..) |*dc, idx| {
+            if (dc.fd == server_fd) {
+                dc.deinit(server.allocator);
+                _ = server.display_clients.swapRemove(idx);
+                break;
+            }
+        }
+    }
+
+    // Force a render. Must not crash on an invalid free of "".
+    server.dirty = true;
+    server.renderToDisplayClient();
+    try testing.expect(server.display_clients.items.len == 1);
 }
