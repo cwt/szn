@@ -3743,14 +3743,14 @@ When a pane's cursor resides at `grid.width` (e.g. after a character written at 
 
 ## NEW BUGS (2026-08-02 code audit)
 
-Found during a fresh audit focused on cursor/movement calculation, sixel refcount accounting, memory lifecycle, and dead code. All entries below are **OPEN** unless marked otherwise.
+Found during a fresh audit focused on cursor/movement calculation, sixel refcount accounting, memory lifecycle, and dead code. All 20 entries (#278–#297) were subsequently fixed with unit tests in rev 468–486.
 
 ---
 
 ### 278. `insertLines` double-decrements sixel refcount of the discarded bottom line
 **File:** `src/screen.zig:959–983`
 **Severity:** CRITICAL
-**Status:** 🟡 OPEN
+**Status: ✅ FIXED** — removed the second decrement; the discarded bottom line's buffer is now decremented exactly once (before the shift). Regression test verifies a two-marker image keeps refcount 1 after insertLines(1).
 
 ```zig
 var row = bottom;
@@ -3774,7 +3774,7 @@ self.decrementLineRefs(line.cells.items);                      // decrement #2 �
 ### 279. `deleteLines` decrements the refcount of the *preserved* bottom line
 **File:** `src/screen.zig:985–1009`
 **Severity:** CRITICAL
-**Status:** 🟡 OPEN
+**Status: ✅ FIXED** — removed the decrement of the old bottom line (which shifts up and survives); only the discarded old line y releases its refcounts. Regression test verifies a bottom marker keeps refcount 1 after deleteLines(1).
 
 ```zig
 self.decrementLineRefs(self.grid.getLineMut(bottom).cells.items); // decrement OLD bottom — but it survives!
@@ -3798,7 +3798,7 @@ self.decrementLineRefs(line.cells.items);                         // decrement o
 ### 280. `renderToDisplayClient` frees string literals via `pane_border_owned`
 **File:** `src/server/server.zig:2380–2419`
 **Severity:** HIGH
-**Status:** 🟡 OPEN
+**Status: ✅ FIXED** — the empty-format path and the expand-failure fallback now set `pb.border_format = ""` without enqueueing a literal; only successfully allocated slices enter `pane_border_owned`. Regression test renders with `pane-border-format ""`.
 
 ```zig
 defer {
@@ -3825,7 +3825,7 @@ Two paths append a **static string literal** (`""`) to `pane_border_owned`: (1) 
 ### 281. `searchBackward` cyclic wrap (pass 2) skips the head of a wrapped logical line
 **File:** `src/mode_copy.zig:492–513`
 **Severity:** HIGH
-**Status:** 🟡 OPEN
+**Status: ✅ FIXED** — pass 2 now walks `li` backward to the start of the logical line (mirroring pass 1) before searching, and stops early if the walk crosses into the cursor's own line. Regression test: cursor at top, "foobar" wrapped across lines 1-2 at the bottom, previously missed.
 
 Pass 2 of `searchBackward` starts at `li = total -| 1` — the **tail** of the bottom logical line — and calls `searchLogicalLineBackward` there. `lineBytes(li)` reconstructs only *from* `li` forward, so a logical line that wraps across two physical lines (e.g. `"foo"`@line1 wrapped + `"bar"`@line2) is searched starting from `"bar"`. The skip block then walks back to the line head and jumps past the whole logical line — the head `"foo"` is **never searched**.
 
@@ -3838,7 +3838,7 @@ Pass 2 of `searchBackward` starts at `li = total -| 1` — the **tail** of the b
 ### 282. `processInput` use-after-free when a prompt command kills the session
 **File:** `src/server/server.zig:1084–1237`
 **Severity:** HIGH
-**Status:** 🟡 OPEN
+**Status: ✅ FIXED** — `processInput` re-resolves the active session/window/pane on every loop iteration and stops when nothing remains, so a prompt command that kills the session can't leave stale dereferences. Regression test: kill-session prompt command with a trailing byte in the same packet.
 
 `session`/`window`/`pane` are captured once at lines 1085–1087. At line 1157 a command dispatched from the prompt (`dispatch.dispatchCommand`) may call `killAllSessions()`/`killSession()`/`killWindow()`, which deinit the session's arena (`session.zig:64`). The loop keeps dereferencing the stale `pane`/`session` at lines 1095 (`pane.choose_mode.active`, `pane.screen.copy_mode`), 1101 (`pane.writeInput`), and 1630–1636.
 
@@ -3849,7 +3849,7 @@ Pass 2 of `searchBackward` starts at `li = total -| 1` — the **tail** of the b
 ### 283. Dangling `mouse_autoscroll_pane` / `mouse_press_pane` after pane destruction
 **File:** `src/server/server.zig:154–156`
 **Severity:** HIGH
-**Status:** 🟡 OPEN
+**Status: ✅ FIXED** — `destroyPane` now calls `clearPaneMouseRefs(pane)` before freeing; `tickAutoscroll` validates the cached pane with `isPaneValid` (covers session kills); drag/release handlers guard `mouse_press_pane`. Two regression tests.
 
 ```zig
 mouse_press_pane: ?*Pane = null,
@@ -3863,7 +3863,7 @@ Neither `destroyPane` (631–679), `killSession` (2503–2518), nor `killAllSess
 ### 284. `cmdRotateWindow` rotates the pane list but not the layout tree
 **File:** `src/cmd/cmd.zig:652–662`
 **Severity:** HIGH
-**Status:** 🟡 OPEN
+**Status: ✅ FIXED** — `cmdRotateWindow` now delegates to `Window.rotatePanes()` so the layout tree rotates in lock-step with the panes list. Regression test verifies the layout's left/right leaf panes swap to match the list.
 
 ```zig
 const first = window.panes.items[0];
@@ -3880,7 +3880,7 @@ window.panes.items[window.panes.items.len - 1] = first;
 ### 285. `setMessage` UAF / double-free on allocation failure
 **File:** `src/server/server.zig:299–303`
 **Severity:** MEDIUM
-**Status:** 🟡 OPEN
+**Status: ✅ FIXED** — `setMessage` duplicates the new message first and only frees the old one on success. Regression test injects an allocation failure and verifies the previous message stays live and clearMessage frees exactly once.
 
 ```zig
 pub fn setMessage(self: *Server, msg: []const u8) !void {
@@ -3895,7 +3895,7 @@ The old message is freed *before* the new one is duplicated. If `dupe` fails, `s
 ### 286. `cmdMoveWindow` orphans the window when `insert` fails (OOM)
 **File:** `src/cmd/cmd.zig:219–220`
 **Severity:** MEDIUM
-**Status:** 🟡 OPEN
+**Status: ✅ FIXED** — the insert now uses the session's arena allocator (matching how `session.windows` is managed), and on failure the window is re-inserted at its original index so it is never orphaned. Regression test verifies no window is lost across forward/backward moves.
 
 ```zig
 const w = session.windows.orderedRemove(src_idx);
@@ -3909,7 +3909,7 @@ If `insert` fails, `w` has already been removed from the list and is dropped —
 ### 287. `cmdBreakPane` / `cmdJoinPane` orphan the pane on failure after extraction
 **File:** `src/cmd/cmd.zig:364–374`, `src/cmd/cmd.zig:404–406`
 **Severity:** MEDIUM
-**Status:** 🟡 OPEN
+**Status: ✅ FIXED** — `cmdBreakPane` creates the new window before extracting; `cmdJoinPane` runs the fallible `splitPane` before extracting, and restores the pane to `src_win` if teardown preparation fails. Regression test verifies pane ownership across break/join round trips.
 
 Both commands call `extractPane` first, then a fallible operation (`newWindow` / `splitPane`). If the fallible step fails (OOM), the extracted pane is in no window's list but its pty child keeps running and its master fd stays in the poll set. `cmdJoinPane` is worse: it may kill `src_win` at lines 366–372 *before* the failing `splitPane`, leaving `sp` orphaned after its window is gone.
 
@@ -3918,7 +3918,7 @@ Both commands call `extractPane` first, then a fallible operation (`newWindow` /
 ### 288. `formatHelp` leaks `buf` on error
 **File:** `src/cmd/cmd.zig:1513–1560`
 **Severity:** MEDIUM
-**Status:** 🟡 OPEN
+**Status: ✅ FIXED** — added `errdefer buf.deinit(allocator)` to `formatHelp`. Regression test exercises the known-command, full-list, and unknown-command paths, freeing every returned slice.
 
 ```zig
 var buf: std.ArrayList(u8) = .empty;
@@ -3933,7 +3933,7 @@ No `errdefer buf.deinit(allocator)`. Any `try` failure leaks the accumulator. Ca
 ### 289. `cmdResizePane` signed overflow on accumulated adjustments
 **File:** `src/cmd/cmd.zig:949–1006`
 **Severity:** MEDIUM
-**Status:** 🟡 OPEN
+**Status: ✅ FIXED** — adjustments use saturating `+|`/`-|` arithmetic and the final target is clamped to `MAX_DIM` (10,000) so a saturated huge value can't attempt an absurd grid allocation. Regression test verifies -D/-R clamp to MAX_DIM and a huge -U returns .err.
 
 ```zig
 adjust_h += val;   // lines 959/968/977
@@ -3947,7 +3947,7 @@ Adjustments use plain `i32` arithmetic on user-parsed values with the bounds che
 ### 290. `handleMouseFocus` status-bar hit-testing doesn't match the rendered status line
 **File:** `src/server/server.zig:1678–1707`
 **Severity:** MEDIUM
-**Status:** 🟡 OPEN
+**Status: ✅ FIXED** — added `status.windowRanges()`, which mirrors `buildLine`'s packing and reports each window entry's exact visible column span; `handleMouseFocus` uses these ranges and treats `y >= session.height` as the status row. Three unit tests cover exact columns, left-prefix offset, and centre truncation.
 
 The hit-test assumes a left prefix of `[name] ` (3 + name.len) and per-window entries of `#I:#W` (1 + idx + 1 + name), ignoring `base-index`, `window_flags`, `status-left-length` truncation, and `status-right`. It also checks `y == session.height`, but the status row renders at `dc.sy - 1` (`render.zig:668`), so on any display client larger than the smallest, status-bar clicks fail entirely; on smaller ones they can select the wrong window.
 
@@ -3956,7 +3956,7 @@ The hit-test assumes a left prefix of `[name] ` (3 + name.len) and per-window en
 ### 291. `decrementAltGridRef` is dead code — alt-screen sixel refcounts never decremented
 **File:** `src/screen.zig:466–479`
 **Severity:** MEDIUM (dead code / refcount drift)
-**Status:** 🟡 OPEN
+**Status: ✅ FIXED** — `useAltScreen(false)` now walks the alt grid's lines and releases refcounts before deinit; the dead `decrementAltGridRef` helper was removed. Regression test: place a sixel on the alt screen, exit it, verify refcount drops to 0.
 
 `decrementAltGridRef` is defined but never called anywhere. Erase/overwrite paths that operate on the alternate screen only use `decrementMainGridRef` / `decrementLineRefs`, which act on `self.grid` — so sixel marker refcounts on the alt grid are never released when alt-screen cells are overwritten (e.g. `eraseDisplay(2)` on the alt screen). Alt-screen refcounts drift upward, eventually making slots permanently "referenced" and forcing Step-4b force evictions.
 
@@ -3965,7 +3965,7 @@ The hit-test assumes a left prefix of `[name] ` (3 + name.len) and per-window en
 ### 292. `insertChars` / `deleteChars` refcount bookkeeping only covers the tail cells
 **File:** `src/screen.zig:1011–1027`
 **Severity:** MEDIUM
-**Status:** 🟡 OPEN
+**Status: ✅ FIXED** — `insertChars` releases refcounts for the rightmost `num` cells shifted off the edge; `deleteChars` releases the leftmost `num` cells shifted off the edge (previously the wrong tail cells were decremented). Two regression tests.
 
 - `insertChars` decrements only the refcount of the cell at `width-1`, but the grid shift also erases the cleared region `x..x+num-1` (sixel markers destroyed there are never decremented).
 - `deleteChars` decrements refcounts for `width-n .. width-1`, but the actually-cleared region is `width-num .. width-1` where `num = min(n, width - cursor_x)`; when `n > width - cursor_x`, cells that are *shifted and still visible* get their refcounts decremented (same under-count class as #278/#279).
@@ -3975,7 +3975,7 @@ The hit-test assumes a left prefix of `[name] ` (3 + name.len) and per-window en
 ### 293. Raw history-length subtraction at remaining call sites bypasses `historyLen()` guard
 **File:** `src/mode_copy.zig:391`, `src/server/server.zig:419`
 **Severity:** LOW
-**Status:** 🟡 OPEN
+**Status: ✅ FIXED** — the two remaining raw `grid.history.items.len - grid.history_start` subtractions (`searchForward` and `tickAutoscroll`) now use the underflow-guarded `historyLen()`. Regression test corrupts history_start past the array bounds and verifies no underflow panic.
 
 Bug #271 replaced seven occurrences of `grid.history.items.len - grid.history_start` with `historyLen()`, but two call sites were missed: `mode_copy.zig:391` (`searchForward`) and `server.zig:419` (`tickAutoscroll`). Same potential integer-underflow panic if `history_start` ever temporarily exceeds `items.len`.
 
@@ -3984,7 +3984,7 @@ Bug #271 replaced seven occurrences of `grid.history.items.len - grid.history_st
 ### 294. `esc_buf` cleared at the top of `processInput` drops split escape sequences
 **File:** `src/server/server.zig:1090`
 **Severity:** LOW
-**Status:** 🟡 OPEN
+**Status: ✅ FIXED** — `esc_buf` is only reset when the input reader is in `.ground` state, so the leading bytes of a split escape sequence survive across `stdin_data` packets. Regression test splits an SS3 sequence and verifies the pty receives the full bytes.
 
 `self.esc_buf.clearRetainingCapacity()` runs at the start of every `processInput` call while `input_reader.state` persists across `stdin_data` packets. A multi-byte escape sequence split across two packets loses its leading bytes, so `pane.writeInput(self.esc_buf.items)` (1631/1636) forwards a truncated sequence to the pty.
 
@@ -3993,7 +3993,7 @@ Bug #271 replaced seven occurrences of `grid.history.items.len - grid.history_st
 ### 295. `handleAccept` error paths leak fd / MessageReader
 **File:** `src/server/server.zig:1972–1979`
 **Severity:** LOW
-**Status:** 🟡 OPEN
+**Status: ✅ FIXED** — `handleAccept` now has errdefers that remove the fd from `client_fds`, remove it from the event loop, close it, and destroy/remove the reader on any post-accept failure. Regression test with a real listener + injected allocation failure.
 
 ```zig
 try self.client_fds.append(self.allocator, fd);
@@ -4009,7 +4009,7 @@ If `client_readers.put` or `loop.addFd` fails after the fd is appended, the fd s
 ### 296. `newSession` leaks session internals if `sessions.append` fails
 **File:** `src/server/server.zig:2481–2498`
 **Severity:** LOW
-**Status:** 🟡 OPEN
+**Status: ✅ FIXED** — an additional `errdefer session.deinit` is registered after init succeeds, so any later failure (e.g. `sessions.append`) frees the arena before the struct. Regression test iterates allocation-failure indices and verifies no session/leak remains.
 
 ```zig
 errdefer self.allocator.destroy(session);   // only frees the struct
@@ -4025,7 +4025,7 @@ If `init` succeeded but `append` fails, the session's arena (windows/panes) is n
 ### 297. `out_buf` / `command_buf` unbounded growth with a non-reading client
 **File:** `src/server/server.zig:2212–2234`, `src/server/server.zig:1219–1231`
 **Severity:** LOW
-**Status:** 🟡 OPEN
+**Status: ✅ FIXED** — `appendCommandChar` caps the prompt buffer at `MAX_COMMAND_BUF` (64 KiB); `appendClientOut` caps a display client's pending output at `MAX_OUT_BUF` (1 MiB), used by `queueToClient` and `sendRequestCellSize`. Regression test feeds more chars than the cap and verifies the buffer stays bounded.
 
 `queueToClient` and `sendRequestCellSize` append to `dc.out_buf` with no cap; a client that stops reading but keeps issuing commands grows it without bound (slow-loris). `command_buf` likewise has no cap while in command mode. The per-frame `out_buf` replacement path is bounded; only the queue append paths are not.
 
