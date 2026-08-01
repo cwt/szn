@@ -388,7 +388,9 @@ pub const CopyMode = struct {
     pub fn searchForward(self: *CopyMode, grid: *const Grid, allocator: std.mem.Allocator, needle: []const u8) bool {
         if (needle.len == 0) return false;
 
-        const hist_len = grid.history.items.len - grid.history_start;
+        // bug #293: use historyLen() (underflow-guarded) rather than raw
+        // subtraction.
+        const hist_len = grid.historyLen();
         const total = hist_len + grid.height;
         const cursor_logical = (hist_len -| self.scroll_offset) + self.cursor_y;
         const start_x: usize = self.cursor_x + 1;
@@ -1800,4 +1802,26 @@ test "searchBackward cyclic wrap finds match in head of wrapped line at scrollba
     try testing.expect(found);
     try testing.expectEqual(@as(u32, 0), cm.cursor_x);
     try testing.expectEqual(@as(u32, 1), cm.cursor_y);
+}
+
+test "searchForward tolerates inconsistent history state — bug #293" {
+    var cm = CopyMode.init(.vi);
+    var g = try Grid.init(testing.allocator, 10, 3);
+    defer g.deinit();
+
+    g.writeChar(0, 0, 'A');
+    try g.scrollUp();
+
+    // Corrupt the history ring state so history_start exceeds items.len (the
+    // transient condition historyLen() was written to guard against). The
+    // search must not underflow-panic and must simply find nothing.
+    g.history_start = g.history.items.len + 5;
+
+    cm.cursor_x = 0;
+    cm.cursor_y = 0;
+    const found = cm.searchForward(&g, testing.allocator, "nomatch");
+    try testing.expect(!found);
+
+    // Restore a consistent history_start so grid.deinit() can free its lines.
+    g.history_start = 0;
 }

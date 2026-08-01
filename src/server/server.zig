@@ -429,7 +429,8 @@ pub const Server = struct {
         if (pane.screen.copy_mode) |*cm| {
             if (cm.selection.active) {
                 const grid = &pane.screen.grid;
-                const hist_len: u32 = @intCast(grid.history.items.len - grid.history_start);
+                // bug #293: use the underflow-guarded historyLen().
+                const hist_len: u32 = @intCast(grid.historyLen());
                 if (dir == .up and cm.scroll_offset < hist_len) {
                     cm.scroll_offset += 1;
                     cm.adjustSelectionForAutoScroll(1);
