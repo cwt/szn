@@ -1541,6 +1541,9 @@ pub fn lookup(name: []const u8) ?*const CmdEntry {
 
 pub fn formatHelp(allocator: std.mem.Allocator, command_name: ?[]const u8) ParseError![]const u8 {
     var buf: std.ArrayList(u8) = .empty;
+    // bug #288: free the accumulator on any error path. Several `try`
+    // appends below can fail (OOM); without this they'd leak `buf`.
+    errdefer buf.deinit(allocator);
 
     if (command_name) |name| {
         const entry = lookup(name) orelse {
@@ -2535,4 +2538,21 @@ test "lookup uses comptime inline for dispatch — bug #246" {
 
     // Lookup non-existent command
     try testing.expect(lookup("nonexistent-command") == null);
+}
+
+test "formatHelp returns owned memory and handles unknown command — bug #288" {
+    // Success path: known command returns an owned slice the caller can free.
+    const help = try formatHelp(testing.allocator, "split-window");
+    defer testing.allocator.free(help);
+    try testing.expect(std.mem.indexOf(u8, help, "split-window") != null);
+
+    // Full list path.
+    const all = try formatHelp(testing.allocator, null);
+    defer testing.allocator.free(all);
+    try testing.expect(std.mem.indexOf(u8, all, "split-window") != null);
+
+    // Unknown command path also returns owned memory.
+    const unknown = try formatHelp(testing.allocator, "nonexistent-cmd");
+    defer testing.allocator.free(unknown);
+    try testing.expect(std.mem.indexOf(u8, unknown, "Unknown command") != null);
 }
