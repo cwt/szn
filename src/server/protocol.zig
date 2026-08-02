@@ -17,6 +17,7 @@ pub const MessageType = enum(u8) {
     detach = 0x06,
     stdin_data = 0x08,
     cell_size = 0x09, // Payload: u32 cell_height_px, u32 cell_width_px (little-endian)
+    redraw = 0x0A, // Client → server: reset this client's diff state; full repaint next render
 
     ready = 0x80,
     output = 0x81,
@@ -36,6 +37,7 @@ pub const MessageType = enum(u8) {
             0x06 => .detach,
             0x08 => .stdin_data,
             0x09 => .cell_size,
+            0x0A => .redraw,
             0x80 => .ready,
             0x81 => .output,
             0x82 => .exit,
@@ -156,6 +158,7 @@ test "message type fromByte rejects invalid values" {
     try testing.expectEqual(MessageType.detach, MessageType.fromByte(0x06).?);
     try testing.expectEqual(MessageType.output, MessageType.fromByte(0x81).?);
     try testing.expectEqual(MessageType.cell_size, MessageType.fromByte(0x09).?);
+    try testing.expectEqual(MessageType.redraw, MessageType.fromByte(0x0A).?);
 }
 
 test "message type request detection" {

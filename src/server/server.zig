@@ -2222,6 +2222,20 @@ pub const Server = struct {
                     }
                     self.recalculateMinimumSize();
                 },
+                .redraw => {
+                    // The client dropped queued output while its downstream pty
+                    // was applying backpressure (bug #298). Reset its per-client
+                    // diff baseline so the next render sends a full repaint.
+                    for (self.display_clients.items) |*dc| {
+                        if (dc.fd == fd) {
+                            dc.last_cells.clearRetainingCapacity();
+                            dc.last_sx = 0;
+                            dc.last_sy = 0;
+                            break;
+                        }
+                    }
+                    self.dirty = true;
+                },
                 else => {
                     std.log.warn("server ignored unhandled message type: {any}", .{msg_type});
                 },
@@ -4118,6 +4132,52 @@ test "server handleClient handles unknown message types gracefully" {
 
     // Call handleClient: it should not fail/return error, it should log and ignore
     try server.handleClient(server_fd);
+}
+
+test "handleClient .redraw resets display client diff state for a full repaint — bug #298" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    var fds: [2]i32 = undefined;
+    if (std.c.socketpair(std.c.AF.UNIX, std.c.SOCK.STREAM, 0, &fds) != 0) return error.Unexpected;
+    const server_fd = fds[0];
+    const client_fd = fds[1];
+    defer _ = std.c.close(server_fd);
+    defer _ = std.c.close(client_fd);
+
+    const reader = try testing.allocator.create(MessageReader);
+    reader.* = .{};
+    try server.client_readers.put(server_fd, reader);
+    try server.client_fds.append(server.allocator, server_fd);
+    try server.loop.addFd(server.allocator, server_fd, @as(i16, @intCast(std.posix.POLL.IN)), null);
+    defer {
+        if (server.client_readers.fetchRemove(server_fd)) |entry| {
+            testing.allocator.destroy(entry.value);
+        }
+    }
+
+    try server.display_clients.append(server.allocator, .{ .fd = server_fd });
+    const dc = &server.display_clients.items[0];
+
+    // Give the client a non-empty diff baseline so the reset is observable.
+    try dc.last_cells.append(testing.allocator, @import("../grid.zig").Cell.empty());
+    dc.last_sx = 12;
+    dc.last_sy = 34;
+
+    // Client drops a backlog and asks for a full repaint.
+    const pkt = protocol.Packet.make(.redraw, "");
+    var pkt_buf: [32]u8 = undefined;
+    const ser = pkt.serialize(&pkt_buf);
+    const n = std.c.write(client_fd, ser.ptr, ser.len);
+    try testing.expectEqual(@as(isize, @intCast(ser.len)), n);
+
+    server.dirty = false;
+    try server.handleClient(server_fd);
+
+    try testing.expectEqual(@as(usize, 0), dc.last_cells.items.len);
+    try testing.expectEqual(@as(u32, 0), dc.last_sx);
+    try testing.expectEqual(@as(u32, 0), dc.last_sy);
+    try testing.expect(server.dirty);
 }
 
 test "prompt command execution frees DispatchResult — bug #237" {

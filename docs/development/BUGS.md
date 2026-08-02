@@ -4029,3 +4029,14 @@ If `init` succeeded but `append` fails, the session's arena (windows/panes) is n
 
 `queueToClient` and `sendRequestCellSize` append to `dc.out_buf` with no cap; a client that stops reading but keeps issuing commands grows it without bound (slow-loris). `command_buf` likewise has no cap while in command mode. The per-frame `out_buf` replacement path is bounded; only the queue append paths are not.
 
+---
+
+### 298. Client freezes on a full stdout — blocking `writeAll` stalls input forwarding (mosh backpressure)
+**File:** `src/main.zig:495` (`runInteractiveClient` → `writeAll(stdout_fd, data)`)
+**Severity:** HIGH
+**Status:** ✅ FIXED — the interactive client's stdout is now set `O_NONBLOCK`; rendered frames are queued into a bounded `out_buf` and drained on `POLL.OUT` (mirroring the server's `flushDisplayClient`). If the queue exceeds `MAX_CLIENT_OUT_BUF` the backlog is dropped and, once the pty drains, the client sends a new `.redraw` request so the server resets that client's diff baseline (`last_cells`) and repaints a coherent full screen. Regression tests: `queueStdout` overflow/drop, `flushStdout` full-pipe remainder + later drain, and server `handleClient` `.redraw` reset.
+
+The interactive client renders every frame with a **blocking** `writeAll(stdout_fd, data)` (`src/main.zig`). When the downstream terminal applies backpressure — e.g. mosh throttling the pty when the network is slow, which happens readily under a full-screen TUI like opencode that redraws constantly — `write(2)` blocks forever. The client is single-threaded, so while it is stuck in that write it stops polling both its stdin and the server socket: no keystrokes are forwarded, no frames are read, and the screen freezes. Killing the mosh client and reconnecting drains the pty, the write completes, and the buffered input + queued frames finally flow — which is why "everything typed while frozen appears after reconnect."
+
+This is the client-side mirror of bug #207: the server's display sockets were made non-blocking, but the client's own stdout write was never hardened, so the same class of stall silently moved to the other side of the socket. The server-side non-blocking fix (v0.6.0) is what made the server keep running; the client-side blocking write was the remaining freeze.
+
