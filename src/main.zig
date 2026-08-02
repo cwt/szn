@@ -52,6 +52,26 @@ fn writeAll(fd: i32, buf: []const u8) Error!void {
     }
 }
 
+/// Non-blocking, best-effort write to the server socket. The socket is
+/// O_NONBLOCK, so this never blocks the client. If the server is wedged (its
+/// read backlog full, e.g. while it is busy), the remainder is dropped rather
+/// than freezing the client in write(2) — which is exactly the deadlock seen
+/// over mosh: the client blocked writing to the server, stopped reading, the
+/// server's socket filled, `behind` set, and opencode froze (bug #298).
+fn writeServer(fd: i32, buf: []const u8) void {
+    var off: usize = 0;
+    while (off < buf.len) {
+        const n = c.write(fd, buf.ptr + off, buf.len - off);
+        if (n < 0) {
+            const err = std.c.errno(n);
+            if (err == .INTR) continue;
+            break; // EAGAIN or fatal — drop the remainder
+        }
+        if (n == 0) break;
+        off += @as(usize, @intCast(n));
+    }
+}
+
 /// Upper bound on the client's pending stdout bytes. When a downstream pty
 /// (e.g. mosh backpressure on a slow link) stops draining, the client queues
 /// rendered frames here instead of blocking on write(2). If the queue exceeds
@@ -542,7 +562,7 @@ fn queryCellSize(server_fd: i32, stdout_fd: i32, stdin_fd: i32, sx: u32, sy: u32
     const cs_pkt = protocol.Packet.make(.cell_size, &cell_data);
     var cs_buf: [128]u8 = undefined;
     const cs_ser = cs_pkt.serialize(&cs_buf);
-    writeAll(server_fd, cs_ser) catch return false;
+    writeServer(server_fd, cs_ser);
     return true;
 }
 
@@ -555,8 +575,12 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
     // bug #298: a downstream pty that applies backpressure (e.g. mosh on a slow
     // link) must not stall the whole client. stdout is made non-blocking and
     // rendered frames are queued + drained on POLL.OUT instead of blocking in
-    // write(2).
+    // write(2). The server socket is also made non-blocking: a wedged server
+    // (busy rendering or logging) that stops reading its backlog must not block
+    // the client's small writes (keystrokes / redraws) — writeServer() drops
+    // the remainder on EAGAIN instead of freezing the client.
     setNonBlocking(stdout_fd);
+    setNonBlocking(server_fd);
 
     var ws: c.winsize = undefined;
     var sx: u32 = 80;
@@ -686,7 +710,7 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
                     const rs_pkt = protocol.Packet.make(.resize, resize_buf[0..8]);
                     var rs_buf: [128]u8 = undefined;
                     const rs_ser = rs_pkt.serialize(&rs_buf);
-                    try writeAll(server_fd, rs_ser);
+                    writeServer(server_fd, rs_ser);
                 }
             }
         }
@@ -700,7 +724,7 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
                 const sd_pkt = protocol.Packet.make(.stdin_data, stdin_buf[0..len]);
                 var sd_buf: [4096 + 5]u8 = undefined;
                 const sd_ser = sd_pkt.serialize(&sd_buf);
-                try writeAll(server_fd, sd_ser);
+                writeServer(server_fd, sd_ser);
                 stdin_alive = true;
                 if (was_dead) {
                     // The display link is back; ask for a full repaint so any
@@ -708,7 +732,7 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
                     const rd_pkt = protocol.Packet.make(.redraw, "");
                     var rd_buf: [128]u8 = undefined;
                     const rd_ser = rd_pkt.serialize(&rd_buf);
-                    writeAll(server_fd, rd_ser) catch {};
+                    writeServer(server_fd, rd_ser);
                 }
             } else if (n == -1) {
                 const err = std.c.errno(n);
@@ -780,7 +804,7 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
                                 const rd_pkt = protocol.Packet.make(.redraw, "");
                                 var rd_buf: [128]u8 = undefined;
                                 const rd_ser = rd_pkt.serialize(&rd_buf);
-                                writeAll(server_fd, rd_ser) catch {};
+                                writeServer(server_fd, rd_ser);
                             }
                         }
                     },
@@ -811,7 +835,7 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
                 const rd_pkt = protocol.Packet.make(.redraw, "");
                 var rd_buf: [128]u8 = undefined;
                 const rd_ser = rd_pkt.serialize(&rd_buf);
-                writeAll(server_fd, rd_ser) catch {};
+                writeServer(server_fd, rd_ser);
             }
         }
     }

@@ -202,6 +202,12 @@ pub const Server = struct {
     /// sending request_cell_size to all display clients.
     needs_cell_size_refresh: bool = false,
 
+    /// Rate-limits the "flow control: pane read throttled" warn to at most one
+    /// per second. Without this, a client that stays behind floods the log —
+    /// a single freeze produced 47M lines / 3 GiB (bug #298), and the I/O cost
+    /// of writing them starved client-socket reads, wedging the whole loop.
+    last_flow_warn_ms: i64 = 0,
+
     pub fn init(allocator: std.mem.Allocator) ServerError!Server {
         const key_binding = @import("../key_binding.zig");
         const key_mod = @import("../key.zig");
@@ -644,9 +650,14 @@ fn pumpPaneInput(self: *Server) void {
             // pane pty and let the child block on write — throttling it to the
             // lagging client's speed instead of dropping frames (bug #298
             // follow-up). The client drains its socket, out_buf empties, and
-            // `behind` clears, resuming pane reads.
+            // `behind` clears, resuming pane reads. Rate-limited to 1/sec: a
+            // stuck client would otherwise flood the log (47M lines / 3 GiB).
             if (self.anyDisplayClientBehind()) {
-                std.log.warn("flow control: pane read throttled, display client(s) behind", .{});
+                const now = currentMillis();
+                if (now - self.last_flow_warn_ms > 1000) {
+                    self.last_flow_warn_ms = now;
+                    std.log.warn("flow control: pane read throttled, display client(s) behind", .{});
+                }
                 return .handled;
             }
             // Pause feeding while a sixel is buffered awaiting a measured cell
