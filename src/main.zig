@@ -59,6 +59,13 @@ fn writeAll(fd: i32, buf: []const u8) Error!void {
 /// pty drains again (bug #298).
 const MAX_CLIENT_OUT_BUF = 1 << 20;
 
+/// Above this pending-stdout level the client stops reading from the server
+/// socket. This fills the server's socket, which trips the server's
+/// `DisplayClient.behind` flow control and throttles the child to the link's
+/// speed — frames get delivered (slowly) instead of piling up and being
+/// dropped, which is what a "frozen" screen actually is (bug #298).
+const CLIENT_OUT_HIGH_WATERMARK = MAX_CLIENT_OUT_BUF / 2;
+
 fn setNonBlocking(fd: i32) void {
     const c_fcntl = struct {
         extern "c" fn fcntl(fd: c_int, cmd: c_int, ...) c_int;
@@ -626,7 +633,16 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
         }
 
         var pollfds: [3]std.posix.pollfd = undefined;
-        pollfds[0] = .{ .fd = server_fd, .events = @as(i16, @intCast(std.posix.POLL.IN)), .revents = 0 };
+        // Backpressure: while our own stdout queue is congested (the downstream
+        // pty, e.g. mosh, can't keep up), do NOT read from the server. That
+        // fills the server socket so its flow control throttles the child to
+        // our speed; otherwise we'd keep consuming frames and dropping them,
+        // which reads as a frozen screen. Resume when the queue drains.
+        if (out_buf.items.len >= CLIENT_OUT_HIGH_WATERMARK) {
+            pollfds[0] = .{ .fd = -1, .events = 0, .revents = 0 };
+        } else {
+            pollfds[0] = .{ .fd = server_fd, .events = @as(i16, @intCast(std.posix.POLL.IN)), .revents = 0 };
+        }
         // While stdin is dead we stop polling it (polling a HUP fd busy-loops)
         // and instead probe it again every ~50 iterations for revival.
         if (stdin_alive) {
