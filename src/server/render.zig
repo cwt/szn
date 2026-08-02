@@ -736,6 +736,42 @@ pub const Display = struct {
     ///   2. draw every currently-visible image at its current anchor.
     /// All erases happen before all draws so a redraw always restores any
     /// overlay pixels the erase may have cleared.
+    fn computeSixelAnchors(screen: *const Screen, pb: PaneBounds) [64]?SixelAnchor {
+        var current: [64]?SixelAnchor = [_]?SixelAnchor{null} ** 64;
+        const pane_h = pb.h;
+        const pane_w = pb.w;
+
+        for (&screen.sixel_images, 0..) |*opt_img, slot| {
+            const img = opt_img.* orelse continue;
+
+            const cell_rows = if (img.px_height > 0) (img.px_height + screen.cell_px_height - 1) / screen.cell_px_height else 1;
+            const cell_cols = if (img.px_width > 0) (img.px_width + screen.cell_px_width - 1) / screen.cell_px_width else 1;
+
+            const img_pane_col = @as(i32, @intCast(img.anchor_col));
+            const img_pane_row = @as(i32, @intCast(img.anchor_row));
+
+            const pane_left = @as(i32, @intCast(pb.x));
+            const pane_top = @as(i32, @intCast(pb.y));
+            const pane_right = pane_left + @as(i32, @intCast(pane_w));
+            const pane_bottom = pane_top + @as(i32, @intCast(pane_h));
+
+            const img_left = pane_left + img_pane_col;
+            const img_top = pane_top + img_pane_row;
+            const img_right = img_left + @as(i32, @intCast(cell_cols));
+            const img_bottom = img_top + @as(i32, @intCast(cell_rows));
+
+            const contained = img_left >= pane_left and
+                img_right <= pane_right and
+                img_top >= pane_top and
+                img_bottom <= pane_bottom;
+
+            if (contained) {
+                current[slot] = .{ .col = img_left, .row = img_top };
+            }
+        }
+        return current;
+    }
+
     fn renderSixelImages(self: Display, bounds: []const PaneBounds) Error!void {
         // Phase 0 — check if any pane has (or had) sixel images. Skip the
         // entire O(total_cells) per-pane scan when no sixels are present.
@@ -760,6 +796,40 @@ pub const Display = struct {
 
         if (!has_sixel and !needs_erase) return;
 
+        // Sixel images are stored out-of-band from last_cells, so the diff state
+        // can't represent them; re-emitting them every render re-sent a 72 KiB
+        // sixel hundreds of times while a slow client kept the screen dirty,
+        // pegging CPU (bug #298). Compute the anchors first and skip the whole
+        // erase+redraw when no pane's image layout actually changed.
+        var any_changed = false;
+        for (bounds) |pb| {
+            const screen = &pb.pane.screen;
+            // Evaluate every pane, including ones whose images were removed:
+            // their current anchors are all null but last_anchor is not, which
+            // must be flagged as "changed" so the erase clears the overlay.
+            const current = computeSixelAnchors(screen, pb);
+            for (screen.sixel_last_anchor, 0..) |prev, slot| {
+                const cur = current[slot];
+                if ((prev == null) != (cur == null)) {
+                    any_changed = true;
+                    break;
+                }
+                if (prev != null and (prev.?.col != cur.?.col or prev.?.row != cur.?.row)) {
+                    any_changed = true;
+                    break;
+                }
+            }
+            if (any_changed) break;
+        }
+
+        if (!any_changed) {
+            // Keep the anchors in sync even though nothing was emitted.
+            for (bounds) |pb| {
+                pb.pane.screen.sixel_last_anchor = computeSixelAnchors(&pb.pane.screen, pb);
+            }
+            return;
+        }
+
         if (needs_erase) {
             try self.writeBytes("\x1bP2q\x1b\\"); // DECSIXEL erase all (Ps=2)
         }
@@ -767,42 +837,8 @@ pub const Display = struct {
         for (bounds) |pb| {
             const screen = &pb.pane.screen;
             if (!screen.hasSixelImages()) continue;
-            const pane_h = pb.h;
-            const pane_w = pb.w;
-
-            var current: [64]?SixelAnchor = [_]?SixelAnchor{null} ** 64;
-
-            for (&screen.sixel_images, 0..) |*opt_img, slot| {
-                const img = opt_img.* orelse continue;
-
-                const cell_rows = if (img.px_height > 0) (img.px_height + screen.cell_px_height - 1) / screen.cell_px_height else 1;
-                const cell_cols = if (img.px_width > 0) (img.px_width + screen.cell_px_width - 1) / screen.cell_px_width else 1;
-
-                const img_pane_col = @as(i32, @intCast(img.anchor_col));
-                const img_pane_row = @as(i32, @intCast(img.anchor_row));
-
-                const pane_left = @as(i32, @intCast(pb.x));
-                const pane_top = @as(i32, @intCast(pb.y));
-                const pane_right = pane_left + @as(i32, @intCast(pane_w));
-                const pane_bottom = pane_top + @as(i32, @intCast(pane_h));
-
-                const img_left = pane_left + img_pane_col;
-                const img_top = pane_top + img_pane_row;
-                const img_right = img_left + @as(i32, @intCast(cell_cols));
-                const img_bottom = img_top + @as(i32, @intCast(cell_rows));
-
-                const contained = img_left >= pane_left and
-                    img_right <= pane_right and
-                    img_top >= pane_top and
-                    img_bottom <= pane_bottom;
-
-                if (contained) {
-                    current[slot] = .{ .col = img_left, .row = img_top };
-                }
-            }
-
             // Phase 2 — draw every currently-visible image at its anchor.
-            // (No per-slot erase needed since we cleared everything in phase 0.)
+            const current = computeSixelAnchors(screen, pb);
             for (current, 0..) |cur, slot| {
                 if (cur == null) continue;
                 const img = screen.sixel_images[slot].?;
@@ -812,7 +848,6 @@ pub const Display = struct {
                 try self.writeBytes(img.data);
                 try self.writeBytes("\x1b[m");
             }
-
             screen.sixel_last_anchor = current;
         }
     }
