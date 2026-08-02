@@ -574,11 +574,28 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
     // is requested after the pty drains.
     var needs_redraw = false;
     var running = true;
+    // The display's stdin (the mosh/ssh pty) can vanish transiently when the
+    // transport drops. For mosh -a the remote process — and thus the session —
+    // must survive such drops, so a lost stdin is NOT a detach; we stop reading
+    // it and probe for revival instead of exiting (bug #298).
+    var stdin_alive = true;
+    var stdin_check_counter: usize = 0;
 
     while (running) {
         var pollfds: [3]std.posix.pollfd = undefined;
         pollfds[0] = .{ .fd = server_fd, .events = @as(i16, @intCast(std.posix.POLL.IN)), .revents = 0 };
-        pollfds[1] = .{ .fd = stdin_fd, .events = @as(i16, @intCast(std.posix.POLL.IN)), .revents = 0 };
+        // While stdin is dead we stop polling it (polling a HUP fd busy-loops)
+        // and instead probe it again every ~50 iterations for revival.
+        if (stdin_alive) {
+            pollfds[1] = .{ .fd = stdin_fd, .events = @as(i16, @intCast(std.posix.POLL.IN)), .revents = 0 };
+        } else {
+            pollfds[1] = .{ .fd = -1, .events = 0, .revents = 0 };
+            stdin_check_counter += 1;
+            if (stdin_check_counter >= 50) {
+                stdin_check_counter = 0;
+                pollfds[1] = .{ .fd = stdin_fd, .events = @as(i16, @intCast(std.posix.POLL.IN)), .revents = 0 };
+            }
+        }
         var poll_count: usize = 2;
         if (out_buf.items.len > 0) {
             pollfds[2] = .{ .fd = stdout_fd, .events = @as(i16, @intCast(std.posix.POLL.OUT)), .revents = 0 };
@@ -610,21 +627,35 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
             const n = c.read(stdin_fd, &stdin_buf, stdin_buf.len);
             if (n > 0) {
                 const len: usize = @intCast(n);
+                const was_dead = !stdin_alive;
                 const sd_pkt = protocol.Packet.make(.stdin_data, stdin_buf[0..len]);
                 var sd_buf: [4096 + 5]u8 = undefined;
                 const sd_ser = sd_pkt.serialize(&sd_buf);
                 try writeAll(server_fd, sd_ser);
+                stdin_alive = true;
+                if (was_dead) {
+                    // The display link is back; ask for a full repaint so any
+                    // frames dropped while it was down are replaced coherently.
+                    const rd_pkt = protocol.Packet.make(.redraw, "");
+                    var rd_buf: [128]u8 = undefined;
+                    const rd_ser = rd_pkt.serialize(&rd_buf);
+                    writeAll(server_fd, rd_ser) catch {};
+                }
             } else if (n == -1) {
                 const err = std.c.errno(n);
                 if (err != .AGAIN and err != .INTR) {
-                    running = false;
+                    // Display stdin gone (mosh/ssh transport drop). Stay
+                    // attached — the session keeps running and the link resumes.
+                    std.log.warn("client stdin unavailable, staying attached", .{});
+                    stdin_alive = false;
+                    stdin_check_counter = 0;
                 }
             } else {
-                const detach_pkt = protocol.Packet.make(.detach, "");
-                var d_buf: [128]u8 = undefined;
-                const d_ser = detach_pkt.serialize(&d_buf);
-                try writeAll(server_fd, d_ser);
-                running = false;
+                // EOF on stdin: a transport drop, not a detach. Keep the
+                // session alive and wait for the pty to come back.
+                std.log.warn("client stdin EOF, staying attached", .{});
+                stdin_alive = false;
+                stdin_check_counter = 0;
             }
         }
 
