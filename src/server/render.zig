@@ -751,6 +751,9 @@ pub const Display = struct {
             // Only images belonging to the currently active screen are drawn;
             // the other screen's images are erased on switch (bug #298 ghosts).
             if (img.alt_screen != screen.mode.alt_screen) continue;
+            // Skip images with no visible marker cells (refcount 0): the app
+            // cleared/scrolled past them, so they must be erased, not redrawn.
+            if (screen.sixel_refcounts[slot] == 0) continue;
 
             const cell_rows = if (img.px_height > 0) (img.px_height + screen.cell_px_height - 1) / screen.cell_px_height else 1;
             const cell_cols = if (img.px_width > 0) (img.px_width + screen.cell_px_width - 1) / screen.cell_px_width else 1;
@@ -813,7 +816,11 @@ pub const Display = struct {
         // re-emit images that actually changed, comparing both anchor and id.
         const state_count = @min(bounds.len, 8);
         var states: [8]PerPaneSixelState = undefined;
+        // Full redraw (erase-all + redraw every visible image) is only needed
+        // when an image was removed or moved, since the old overlay must be
+        // cleared. Pure additions / same-anchor replacements just draw over.
         var any_changed = false;
+        var need_full_redraw = false;
 
         for (bounds[0..state_count], 0..) |pb, i| {
             const screen = &pb.pane.screen;
@@ -828,6 +835,9 @@ pub const Display = struct {
                     prev_a.?.col == cur_a.?.col and prev_a.?.row == cur_a.?.row;
                 if (same_anchor and prev_id != null and prev_id.? == cur_id.?) continue; // unchanged
                 any_changed = true;
+                // Removed (was drawn, no longer visible) or moved (anchor
+                // changed) images leave an overlay that only erase-all clears.
+                if (cur_a == null or !same_anchor) need_full_redraw = true;
             }
         }
 
@@ -840,15 +850,24 @@ pub const Display = struct {
             return;
         }
 
-        // Anything changed (added, removed, moved, or replaced): clear the whole
-        // sixel layer and redraw every current-screen image so no stale overlay
-        // ghosts remain (bug #298).
-        try self.writeBytes("\x1bP2q\x1b\\"); // DECSIXEL erase all (Ps=2)
+        if (need_full_redraw) {
+            try self.writeBytes("\x1bP2q\x1b\\"); // DECSIXEL erase all (Ps=2)
+        }
         for (bounds[0..state_count], 0..) |pb, i| {
             const screen = &pb.pane.screen;
             const st = states[i];
             for (st.anchors, 0..) |cur, slot| {
                 if (cur == null) continue;
+                if (!need_full_redraw) {
+                    // Draw only the changed image; unchanged visible images are
+                    // already on the terminal (bug #298 — avoids re-sending
+                    // every image on each change, which froze the client).
+                    const prev_a = screen.sixel_last_anchor[slot];
+                    const prev_id = screen.sixel_last_id[slot];
+                    const same_anchor = prev_a != null and
+                        prev_a.?.col == cur.?.col and prev_a.?.row == cur.?.row;
+                    if (same_anchor and prev_id != null and prev_id.? == st.ids[slot].?) continue;
+                }
                 const img = screen.sixel_images[slot].?;
                 try self.moveTo(@as(u32, @intCast(cur.?.col)), @as(u32, @intCast(cur.?.row)));
                 try self.writeBytes(img.data);
@@ -1175,6 +1194,7 @@ test "renderSixelImages emits DCS at correct absolute position" {
         .anchor_col = 5,
         .anchor_row = 3,
     };
+    pane.screen.sixel_refcounts[0] = 1;
     var cell = &pane.screen.grid.getLineMut(3).cells.items[5];
     cell.attr.sixel = true;
     cell.char = 0;
@@ -1218,6 +1238,7 @@ test "renderSixelImages re-emits only a replaced image at the same anchor — bu
 
     const dcs_a = try allocator.dupe(u8, "\x1bPqAAAA\x1b\\");
     pane.screen.sixel_images[0] = .{ .data = dcs_a, .col = 3, .row = 2, .px_width = 10, .px_height = 20, .id = 1, .anchor_col = 3, .anchor_row = 2 };
+    pane.screen.sixel_refcounts[0] = 1;
     const bounds = [_]PaneBounds{.{ .pane = pane, .x = 0, .y = 0, .w = 80, .h = 23 }};
 
     try display.renderSixelImages(&bounds);
@@ -1229,12 +1250,15 @@ test "renderSixelImages re-emits only a replaced image at the same anchor — bu
     if (pane.screen.sixel_images[0]) |*img| img.deinit(pane.screen.allocator);
     const dcs_b = try allocator.dupe(u8, "\x1bPqBBBB\x1b\\");
     pane.screen.sixel_images[0] = .{ .data = dcs_b, .col = 3, .row = 2, .px_width = 10, .px_height = 20, .id = 2, .anchor_col = 3, .anchor_row = 2 };
+    pane.screen.sixel_refcounts[0] = 1;
 
     capture_buf.clearRetainingCapacity();
     try display.renderSixelImages(&bounds);
+    // Same-anchor replacement draws over the old: emit only the new DCS, no
+    // erase-all, and never re-emit the old bytes.
     try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1bPqBBBB\x1b\\") != null);
     try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1bPqAAAA\x1b\\") == null);
-    try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1bP2q\x1b\\") != null);
+    try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1bP2q\x1b\\") == null);
 }
 
 test "renderSixelImages renders sixel from every pane — bug #194" {
@@ -1260,6 +1284,7 @@ test "renderSixelImages renders sixel from every pane — bug #194" {
     // Both panes store their image in slot 0 (id % 64 == 0).
     const dcs1 = try allocator.dupe(u8, "\x1bPqONEx\x1b\\");
     pane1.screen.sixel_images[0] = .{ .data = dcs1, .col = 5, .row = 3, .px_width = 10, .px_height = 20, .id = 0 };
+    pane1.screen.sixel_refcounts[0] = 1;
     var c1 = &pane1.screen.grid.getLineMut(3).cells.items[5];
     c1.attr.sixel = true;
     c1.char = 0;
@@ -1268,6 +1293,7 @@ test "renderSixelImages renders sixel from every pane — bug #194" {
 
     const dcs2 = try allocator.dupe(u8, "\x1bPqTWO\x1b\\");
     pane2.screen.sixel_images[0] = .{ .data = dcs2, .col = 5, .row = 3, .px_width = 10, .px_height = 20, .id = 0 };
+    pane2.screen.sixel_refcounts[0] = 1;
     var c2 = &pane2.screen.grid.getLineMut(3).cells.items[5];
     c2.attr.sixel = true;
     c2.char = 0;
@@ -1357,6 +1383,7 @@ test "renderSixelImages clips sixel to pane and erases when scrolled above the b
         .anchor_col = 0,
         .anchor_row = 0,
     };
+    pane.screen.sixel_refcounts[0] = 1;
     var cell = &pane.screen.grid.getLineMut(0).cells.items[0];
     cell.attr.sixel = true;
     cell.char = 0;
