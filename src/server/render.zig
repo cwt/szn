@@ -736,8 +736,13 @@ pub const Display = struct {
     ///   2. draw every currently-visible image at its current anchor.
     /// All erases happen before all draws so a redraw always restores any
     /// overlay pixels the erase may have cleared.
-    fn computeSixelAnchors(screen: *const Screen, pb: PaneBounds) [64]?SixelAnchor {
-        var current: [64]?SixelAnchor = [_]?SixelAnchor{null} ** 64;
+    const PerPaneSixelState = struct {
+        anchors: [64]?SixelAnchor = [_]?SixelAnchor{null} ** 64,
+        ids: [64]?u32 = [_]?u32{null} ** 64,
+    };
+
+    fn computeSixelState(screen: *const Screen, pb: PaneBounds) PerPaneSixelState {
+        var state = PerPaneSixelState{};
         const pane_h = pb.h;
         const pane_w = pb.w;
 
@@ -766,10 +771,11 @@ pub const Display = struct {
                 img_bottom <= pane_bottom;
 
             if (contained) {
-                current[slot] = .{ .col = img_left, .row = img_top };
+                state.anchors[slot] = .{ .col = img_left, .row = img_top };
+                state.ids[slot] = img.id;
             }
         }
-        return current;
+        return state;
     }
 
     fn renderSixelImages(self: Display, bounds: []const PaneBounds) Error!void {
@@ -796,59 +802,84 @@ pub const Display = struct {
 
         if (!has_sixel and !needs_erase) return;
 
-        // Sixel images are stored out-of-band from last_cells, so the diff state
-        // can't represent them; re-emitting them every render re-sent a 72 KiB
-        // sixel hundreds of times while a slow client kept the screen dirty,
-        // pegging CPU (bug #298). Compute the anchors first and skip the whole
-        // erase+redraw when no pane's image layout actually changed.
+        // Sixel images live out-of-band from last_cells, so the diff can't
+        // represent them. Re-emitting every image on every render re-sent a
+        // 72 KiB sixel hundreds of times (and, with many accumulated images,
+        // produced 12 MiB frames that blew past the client buffer cap and were
+        // dropped) — pegging CPU and freezing the display (bug #298). Only
+        // re-emit images that actually changed, comparing both anchor and id.
+        const state_count = @min(bounds.len, 8);
+        var states: [8]PerPaneSixelState = undefined;
         var any_changed = false;
-        for (bounds) |pb| {
+        var any_full_redraw = false;
+
+        for (bounds[0..state_count], 0..) |pb, i| {
             const screen = &pb.pane.screen;
-            // Evaluate every pane, including ones whose images were removed:
-            // their current anchors are all null but last_anchor is not, which
-            // must be flagged as "changed" so the erase clears the overlay.
-            const current = computeSixelAnchors(screen, pb);
-            for (screen.sixel_last_anchor, 0..) |prev, slot| {
-                const cur = current[slot];
-                if ((prev == null) != (cur == null)) {
-                    any_changed = true;
-                    break;
-                }
-                if (prev != null and (prev.?.col != cur.?.col or prev.?.row != cur.?.row)) {
-                    any_changed = true;
-                    break;
-                }
+            states[i] = computeSixelState(screen, pb);
+            for (0..64) |slot| {
+                const prev_a = screen.sixel_last_anchor[slot];
+                const cur_a = states[i].anchors[slot];
+                if (prev_a == null and cur_a == null) continue;
+                const prev_id = screen.sixel_last_id[slot];
+                const cur_id = states[i].ids[slot];
+                const same_anchor = prev_a != null and cur_a != null and
+                    prev_a.?.col == cur_a.?.col and prev_a.?.row == cur_a.?.row;
+                if (same_anchor and prev_id != null and prev_id.? == cur_id.?) continue; // unchanged
+                any_changed = true;
+                // Removed or moved images need the erase-all (the old overlay
+                // must be cleared); a pure replacement at the same anchor or a
+                // fresh addition can just be drawn over.
+                if (cur_a == null or !same_anchor) any_full_redraw = true;
             }
-            if (any_changed) break;
         }
+        if (bounds.len > state_count) any_full_redraw = true;
 
         if (!any_changed) {
-            // Keep the anchors in sync even though nothing was emitted.
-            for (bounds) |pb| {
-                pb.pane.screen.sixel_last_anchor = computeSixelAnchors(&pb.pane.screen, pb);
+            // Nothing changed — keep last anchors/ids in sync.
+            for (bounds[0..state_count], 0..) |pb, i| {
+                pb.pane.screen.sixel_last_anchor = states[i].anchors;
+                pb.pane.screen.sixel_last_id = states[i].ids;
             }
             return;
         }
 
-        if (needs_erase) {
+        if (any_full_redraw) {
             try self.writeBytes("\x1bP2q\x1b\\"); // DECSIXEL erase all (Ps=2)
+            for (bounds) |pb| {
+                const screen = &pb.pane.screen;
+                if (!screen.hasSixelImages()) continue;
+                const st = computeSixelState(screen, pb);
+                for (st.anchors, 0..) |cur, slot| {
+                    if (cur == null) continue;
+                    const img = screen.sixel_images[slot].?;
+                    try self.moveTo(@as(u32, @intCast(cur.?.col)), @as(u32, @intCast(cur.?.row)));
+                    try self.writeBytes(img.data);
+                    try self.writeBytes("\x1b[m");
+                }
+            }
+        } else {
+            // Only replacements/additions at unchanged anchors — draw just those.
+            for (bounds[0..state_count], 0..) |pb, i| {
+                const screen = &pb.pane.screen;
+                const st = states[i];
+                for (st.anchors, 0..) |cur, slot| {
+                    if (cur == null) continue;
+                    const prev_a = screen.sixel_last_anchor[slot];
+                    const prev_id = screen.sixel_last_id[slot];
+                    const same_anchor = prev_a != null and
+                        prev_a.?.col == cur.?.col and prev_a.?.row == cur.?.row;
+                    if (same_anchor and prev_id != null and prev_id.? == st.ids[slot].?) continue;
+                    const img = screen.sixel_images[slot].?;
+                    try self.moveTo(@as(u32, @intCast(cur.?.col)), @as(u32, @intCast(cur.?.row)));
+                    try self.writeBytes(img.data);
+                    try self.writeBytes("\x1b[m");
+                }
+            }
         }
 
-        for (bounds) |pb| {
-            const screen = &pb.pane.screen;
-            if (!screen.hasSixelImages()) continue;
-            // Phase 2 — draw every currently-visible image at its anchor.
-            const current = computeSixelAnchors(screen, pb);
-            for (current, 0..) |cur, slot| {
-                if (cur == null) continue;
-                const img = screen.sixel_images[slot].?;
-                const px = @as(u32, @intCast(cur.?.col));
-                const py = @as(u32, @intCast(cur.?.row));
-                try self.moveTo(px, py);
-                try self.writeBytes(img.data);
-                try self.writeBytes("\x1b[m");
-            }
-            screen.sixel_last_anchor = current;
+        for (bounds[0..state_count], 0..) |pb, i| {
+            pb.pane.screen.sixel_last_anchor = states[i].anchors;
+            pb.pane.screen.sixel_last_id = states[i].ids;
         }
     }
 };
@@ -1187,6 +1218,43 @@ test "renderSixelImages emits DCS at correct absolute position" {
     try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1bPqA\x1b\\") != null);
     // … and a SGR reset after it.
     try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1b[m") != null);
+}
+
+test "renderSixelImages re-emits only a replaced image at the same anchor — bug #298" {
+    const allocator = std.testing.allocator;
+    var capture_buf: std.ArrayList(u8) = .empty;
+    defer capture_buf.deinit(allocator);
+
+    const display = Display{
+        .fd = -1,
+        .sx = 80,
+        .sy = 24,
+        .capture = &capture_buf,
+        .capture_allocator = allocator,
+    };
+
+    var win = try Window.init(allocator, 1, "repl-sixel", 80, 23, null, null);
+    defer win.deinit(allocator);
+    const pane = win.active_pane.?;
+
+    const dcs_a = try allocator.dupe(u8, "\x1bPqAAAA\x1b\\");
+    pane.screen.sixel_images[0] = .{ .data = dcs_a, .col = 3, .row = 2, .px_width = 10, .px_height = 20, .id = 1, .anchor_col = 3, .anchor_row = 2 };
+    const bounds = [_]PaneBounds{.{ .pane = pane, .x = 0, .y = 0, .w = 80, .h = 23 }};
+
+    try display.renderSixelImages(&bounds);
+    try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1bPqAAAA\x1b\\") != null);
+
+    // Replace the image at the SAME anchor with new content (new id). Only the
+    // new DCS must be emitted — no erase-all, and no re-emit of the old bytes.
+    if (pane.screen.sixel_images[0]) |*img| img.deinit(pane.screen.allocator);
+    const dcs_b = try allocator.dupe(u8, "\x1bPqBBBB\x1b\\");
+    pane.screen.sixel_images[0] = .{ .data = dcs_b, .col = 3, .row = 2, .px_width = 10, .px_height = 20, .id = 2, .anchor_col = 3, .anchor_row = 2 };
+
+    capture_buf.clearRetainingCapacity();
+    try display.renderSixelImages(&bounds);
+    try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1bPqBBBB\x1b\\") != null);
+    try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1bPqAAAA\x1b\\") == null);
+    try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1bP2q\x1b\\") == null);
 }
 
 test "renderSixelImages renders sixel from every pane — bug #194" {

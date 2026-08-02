@@ -128,6 +128,10 @@ pub const Screen = struct {
     /// so without tracking the last anchor a scrolling image leaves a smear
     /// trail, and a removed image leaves a permanent ghost.
     sixel_last_anchor: [64]?SixelAnchor = [_]?SixelAnchor{null} ** 64,
+    /// Image id each slot was last drawn with, so a replacement at the same
+    /// anchor (e.g. a preview thumbnail swapping content) is detected as a
+    /// change even though the position didn't move (bug #298).
+    sixel_last_id: [64]?u32 = [_]?u32{null} ** 64,
     /// Terminal cell size in pixels, used to convert sixel pixel dimensions into
     /// character-cell extents (bug #199). Defaults match the common 10×20 metrics
     /// but should be set from the real terminal (e.g. DECSLPP / font metrics).
