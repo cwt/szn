@@ -664,6 +664,11 @@ fn pumpPaneInput(self: *Server) void {
                     self.last_flow_warn_ms = now;
                     std.log.warn("flow control: pane read throttled, display client(s) behind", .{});
                 }
+                // Stop polling the pane for input while throttled. Its pty
+                // data stays in the kernel buffer, but without this the
+                // level-triggered POLL.IN makes the loop busy-spin on the
+                // unread data at 100% CPU instead of sleeping (bug #298).
+                self.loop.removeFdEvents(ev.fd, std.posix.POLL.IN);
                 return .handled;
             }
             // Pause feeding while a sixel is buffered awaiting a measured cell
@@ -2353,6 +2358,7 @@ fn pumpPaneInput(self: *Server) void {
     pub fn sendRequestCellSize(self: *Server) void {
         if (!self.needs_cell_size_refresh) return;
         self.needs_cell_size_refresh = false;
+        std.log.info("sendRequestCellSize: sending request to clients", .{});
         const pkt = protocol.Packet.make(.request_cell_size, "");
         var hdr: [5]u8 = undefined;
         pkt.header.encode(&hdr);
@@ -2480,6 +2486,9 @@ fn pumpPaneInput(self: *Server) void {
             // (and thus the child) resume at full speed.
             dc.behind = false;
             self.loop.removeFdEvents(dc.fd, std.posix.POLL.OUT);
+            if (!self.anyDisplayClientBehind()) {
+                self.resumePaneReads();
+            }
             return true;
         }
         if (off > 0) {
@@ -2497,6 +2506,22 @@ fn pumpPaneInput(self: *Server) void {
             if (dc.behind) return true;
         }
         return false;
+    }
+
+    /// Re-arm POLL.IN on every pane master after flow control clears, so the
+    /// server resumes reading the pty (and the child unblocks). No-op while
+    /// any client is still behind.
+    fn resumePaneReads(self: *Server) void {
+        if (self.anyDisplayClientBehind()) return;
+        for (self.sessions.items) |session| {
+            for (session.windows.items) |win| {
+                for (win.panes.items) |p| {
+                    if (p.pty) |pty| {
+                        self.loop.addFdEvents(pty.master, std.posix.POLL.IN);
+                    }
+                }
+            }
+        }
     }
 
     pub fn renderToDisplayClient(self: *Server) void {
@@ -2697,6 +2722,9 @@ fn pumpPaneInput(self: *Server) void {
             };
 
             if (self.render_buf.items.len == 0) continue;
+            if (self.render_buf.items.len >= 10) {
+                std.log.info("renderToDisplayClient: {d}-byte content frame", .{self.render_buf.items.len});
+            }
 
             const pkt = protocol.Packet.make(.output, self.render_buf.items);
             var hdr: [5]u8 = undefined;

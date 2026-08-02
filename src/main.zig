@@ -648,6 +648,11 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
     // frozen screen can be attributed to server→client, client→pty, or mosh.
     var recv_frames: u64 = 0;
     var recv_bytes: u64 = 0;
+    var pkt_total: u64 = 0;
+    var pkt_output: u64 = 0;
+    var pkt_cellsize: u64 = 0;
+    var pkt_detach: u64 = 0;
+    var pkt_other: u64 = 0;
 
     // The client never loads the server config that enables logging (and the
     // server's log path can be overridden by the `log-file` option), so write
@@ -795,9 +800,13 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
                 };
                 const data = read_buf.items[read_pos + 5 .. read_pos + pkt_len];
 
+                pkt_total += 1;
                 switch (msg_type) {
-                    .ready => {},
+                    .ready => {
+                        pkt_other += 1;
+                    },
                     .output => {
+                        pkt_output += 1;
                         recv_frames += 1;
                         recv_bytes += @as(u64, @intCast(data.len));
                         if (recv_frames % 200 == 0) {
@@ -818,15 +827,21 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
                         }
                     },
                     .detach => {
+                        pkt_detach += 1;
                         std.log.info("client received detach, exiting", .{});
                         running = false;
                     },
                     .request_cell_size => {
+                        pkt_cellsize += 1;
                         _ = queryCellSize(server_fd, stdout_fd, stdin_fd, sx, sy);
                     },
                     else => {
+                        pkt_other += 1;
                         std.log.warn("client ignored unhandled message type: {any}", .{msg_type});
                     },
+                }
+                if (pkt_total % 200 == 0) {
+                    std.log.info("client processed {d} pkts (output={d} cell_size={d} detach={d} other={d})", .{ pkt_total, pkt_output, pkt_cellsize, pkt_detach, pkt_other });
                 }
 
                 read_pos += pkt_len;
