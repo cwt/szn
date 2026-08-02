@@ -748,6 +748,9 @@ pub const Display = struct {
 
         for (&screen.sixel_images, 0..) |*opt_img, slot| {
             const img = opt_img.* orelse continue;
+            // Only images belonging to the currently active screen are drawn;
+            // the other screen's images are erased on switch (bug #298 ghosts).
+            if (img.alt_screen != screen.mode.alt_screen) continue;
 
             const cell_rows = if (img.px_height > 0) (img.px_height + screen.cell_px_height - 1) / screen.cell_px_height else 1;
             const cell_cols = if (img.px_width > 0) (img.px_width + screen.cell_px_width - 1) / screen.cell_px_width else 1;
@@ -811,7 +814,6 @@ pub const Display = struct {
         const state_count = @min(bounds.len, 8);
         var states: [8]PerPaneSixelState = undefined;
         var any_changed = false;
-        var any_full_redraw = false;
 
         for (bounds[0..state_count], 0..) |pb, i| {
             const screen = &pb.pane.screen;
@@ -826,13 +828,8 @@ pub const Display = struct {
                     prev_a.?.col == cur_a.?.col and prev_a.?.row == cur_a.?.row;
                 if (same_anchor and prev_id != null and prev_id.? == cur_id.?) continue; // unchanged
                 any_changed = true;
-                // Removed or moved images need the erase-all (the old overlay
-                // must be cleared); a pure replacement at the same anchor or a
-                // fresh addition can just be drawn over.
-                if (cur_a == null or !same_anchor) any_full_redraw = true;
             }
         }
-        if (bounds.len > state_count) any_full_redraw = true;
 
         if (!any_changed) {
             // Nothing changed — keep last anchors/ids in sync.
@@ -843,37 +840,19 @@ pub const Display = struct {
             return;
         }
 
-        if (any_full_redraw) {
-            try self.writeBytes("\x1bP2q\x1b\\"); // DECSIXEL erase all (Ps=2)
-            for (bounds) |pb| {
-                const screen = &pb.pane.screen;
-                if (!screen.hasSixelImages()) continue;
-                const st = computeSixelState(screen, pb);
-                for (st.anchors, 0..) |cur, slot| {
-                    if (cur == null) continue;
-                    const img = screen.sixel_images[slot].?;
-                    try self.moveTo(@as(u32, @intCast(cur.?.col)), @as(u32, @intCast(cur.?.row)));
-                    try self.writeBytes(img.data);
-                    try self.writeBytes("\x1b[m");
-                }
-            }
-        } else {
-            // Only replacements/additions at unchanged anchors — draw just those.
-            for (bounds[0..state_count], 0..) |pb, i| {
-                const screen = &pb.pane.screen;
-                const st = states[i];
-                for (st.anchors, 0..) |cur, slot| {
-                    if (cur == null) continue;
-                    const prev_a = screen.sixel_last_anchor[slot];
-                    const prev_id = screen.sixel_last_id[slot];
-                    const same_anchor = prev_a != null and
-                        prev_a.?.col == cur.?.col and prev_a.?.row == cur.?.row;
-                    if (same_anchor and prev_id != null and prev_id.? == st.ids[slot].?) continue;
-                    const img = screen.sixel_images[slot].?;
-                    try self.moveTo(@as(u32, @intCast(cur.?.col)), @as(u32, @intCast(cur.?.row)));
-                    try self.writeBytes(img.data);
-                    try self.writeBytes("\x1b[m");
-                }
+        // Anything changed (added, removed, moved, or replaced): clear the whole
+        // sixel layer and redraw every current-screen image so no stale overlay
+        // ghosts remain (bug #298).
+        try self.writeBytes("\x1bP2q\x1b\\"); // DECSIXEL erase all (Ps=2)
+        for (bounds[0..state_count], 0..) |pb, i| {
+            const screen = &pb.pane.screen;
+            const st = states[i];
+            for (st.anchors, 0..) |cur, slot| {
+                if (cur == null) continue;
+                const img = screen.sixel_images[slot].?;
+                try self.moveTo(@as(u32, @intCast(cur.?.col)), @as(u32, @intCast(cur.?.row)));
+                try self.writeBytes(img.data);
+                try self.writeBytes("\x1b[m");
             }
         }
 
@@ -1244,8 +1223,9 @@ test "renderSixelImages re-emits only a replaced image at the same anchor — bu
     try display.renderSixelImages(&bounds);
     try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1bPqAAAA\x1b\\") != null);
 
-    // Replace the image at the SAME anchor with new content (new id). Only the
-    // new DCS must be emitted — no erase-all, and no re-emit of the old bytes.
+    // Replace the image at the SAME anchor with new content (new id). The
+    // renderer must clear the old overlay (erase-all) and emit only the new
+    // DCS — never re-emit the old bytes.
     if (pane.screen.sixel_images[0]) |*img| img.deinit(pane.screen.allocator);
     const dcs_b = try allocator.dupe(u8, "\x1bPqBBBB\x1b\\");
     pane.screen.sixel_images[0] = .{ .data = dcs_b, .col = 3, .row = 2, .px_width = 10, .px_height = 20, .id = 2, .anchor_col = 3, .anchor_row = 2 };
@@ -1254,7 +1234,7 @@ test "renderSixelImages re-emits only a replaced image at the same anchor — bu
     try display.renderSixelImages(&bounds);
     try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1bPqBBBB\x1b\\") != null);
     try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1bPqAAAA\x1b\\") == null);
-    try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1bP2q\x1b\\") == null);
+    try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1bP2q\x1b\\") != null);
 }
 
 test "renderSixelImages renders sixel from every pane — bug #194" {

@@ -1372,9 +1372,31 @@ pub const Screen = struct {
 
             self.alt_cursor = .{};
             self.alt_saved_cursor = null;
+
+            // Bug #298: the alt screen's sixel images are now unreferenced (their
+            // marker cells were freed above). Free them so they can't be re-emitted
+            // as ghosts after the app (e.g. yazi) exits. last_anchor/last_id are
+            // left as-is so the next render detects the removal and emits an
+            // erase-all, clearing them from the terminal's sixel layer.
+            self.dropScreenSixels(true);
         }
         self.mode.alt_screen = enable;
         self.dirty = true;
+    }
+
+    /// Free every registered sixel image belonging to `alt` (or all of them),
+    /// clearing its slot. Used when a screen is torn down so its images can't
+    /// linger and be re-emitted as ghosts (bug #298).
+    fn dropScreenSixels(self: *Screen, alt: bool) void {
+        for (&self.sixel_images, 0..) |*opt_img, i| {
+            if (opt_img.*) |*img| {
+                if (img.alt_screen == alt) {
+                    img.deinit(self.allocator);
+                    opt_img.* = null;
+                    self.sixel_refcounts[i] = 0;
+                }
+            }
+        }
     }
 };
 
@@ -2484,6 +2506,27 @@ test "useAltScreen releases alt-grid sixel refcounts — bug #291" {
 
     try testing.expectEqual(@as(usize, 0), screen.sixel_refcounts[0]);
     try testing.expect(!screen.isImageReferenced(0));
+}
+
+test "useAltScreen frees the alt screen's sixel images — bug #298 ghosts" {
+    const allocator = std.testing.allocator;
+    var screen = try Screen.init(allocator, 5, 5);
+    defer screen.deinit();
+    screen.cell_size_known = true;
+    screen.cell_px_width = 10;
+    screen.cell_px_height = 20;
+
+    try screen.useAltScreen(true);
+    screen.cursor.y = 0;
+    screen.cursor.x = 0;
+    const dcs = try allocator.dupe(u8, "\x1bPqALT\x1b\\");
+    try screen.addSixelImage(dcs, 10, 20);
+    try testing.expect(screen.sixel_images[0] != null);
+
+    // Exiting the alt screen must free the alt image so it can't be re-emitted
+    // as a ghost on the main screen.
+    try screen.useAltScreen(false);
+    try testing.expect(screen.sixel_images[0] == null);
 }
 
 test "insertChars releases refcounts of markers shifted off the right edge — bug #292" {
