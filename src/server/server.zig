@@ -595,6 +595,11 @@ pub const Server = struct {
     // writable master, so queued input drains once the child reads stdin
     // (flow control, bug #298 follow-up).
     self.pumpPaneInput();
+
+    // Manage the sixel-wait: pause panes with a buffered sixel (removing their
+    // POLL.IN so the loop sleeps instead of spinning at 100% CPU) and re-arm
+    // them once the sixel resolves (bug #298).
+    self.tickSixelWait();
 }
 
 /// Arm POLLOUT on the master of every pane that still has queued keystrokes
@@ -2550,6 +2555,46 @@ fn pumpPaneInput(self: *Server) void {
                 for (win.panes.items) |p| {
                     if (p.pty) |pty| {
                         self.loop.addFdEvents(pty.master, std.posix.POLL.IN);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Manage the sixel-wait (#204): while a pane has a buffered `pending_sixel`
+    /// awaiting a measured cell size, stop polling its pty for input (its data
+    /// stays in the kernel buffer) so the event loop sleeps instead of
+    /// busy-spinning on the level-triggered POLL.IN at 100% CPU (bug #298).
+    /// Runs every loop iteration: keeps the cell-size request armed, applies
+    /// the `cell_size_wait_ms` timeout, and re-arms the pane once the sixel is
+    /// flushed (cell size arrived or timeout gave up).
+    pub fn tickSixelWait(self: *Server) void {
+        const now = currentMillis();
+        // Don't re-arm a pane's POLL.IN while flow control is throttling it —
+        // that would undo handlePtyEvent's unarm and bring back the busy-spin.
+        const flow_controlled = self.anyDisplayClientBehind();
+        for (self.sessions.items) |session| {
+            for (session.windows.items) |win| {
+                for (win.panes.items) |p| {
+                    if (p.pty) |pty| {
+                        if (p.screen.pending_sixel != null) {
+                            self.needs_cell_size_refresh = true;
+                            if (self.cell_size_pending_since == 0) {
+                                self.cell_size_pending_since = now;
+                            }
+                            self.loop.removeFdEvents(pty.master, std.posix.POLL.IN);
+                            if (now - self.cell_size_pending_since > cell_size_wait_ms) {
+                                p.screen.flushPendingSixel();
+                                self.cell_size_pending_since = 0;
+                            }
+                        } else {
+                            if (self.cell_size_pending_since != 0) {
+                                self.cell_size_pending_since = 0;
+                            }
+                            if (!flow_controlled) {
+                                self.loop.addFdEvents(pty.master, std.posix.POLL.IN);
+                            }
+                        }
                     }
                 }
             }
