@@ -79,10 +79,9 @@ fn resolveTmp(buf: []u8) Error![:0]const u8 {
     return std.fmt.bufPrintZ(buf, "/tmp/szn-{d}.log", .{getuid()});
 }
 
-/// Dedicated log path for the interactive client. The server's log path can be
-/// overridden by the `log-file` config option, so the client writing to the
-/// "default" path is not guaranteed to land in the file the user inspects. Use
-/// an always-known path instead: ~/.szn/szn-client.log (or /tmp fallback).
+/// Dedicated log path for the interactive client (the "default" target of
+/// `enableClientLog`): ~/.szn/szn-client.log (or /tmp fallback). Kept separate
+/// from the server's resolveLogPath so the two logs never collide.
 fn resolveClientPath(buf: []u8) Error![:0]const u8 {
     if (std.c.getenv("HOME")) |home| {
         const home_str = std.mem.span(home);
@@ -178,16 +177,26 @@ pub fn disable() void {
     log_enabled.store(false, .seq_cst);
 }
 
-/// Enable the interactive client's dedicated log (~/.szn/szn-client.log). The
-/// client never loads the server config that enables the server log, so it
-/// needs its own well-known path (bug #298 diagnostics).
-pub fn enableClientLog() void {
-    if (log_fd) |old| _ = c.close(old);
-    var buf: [256]u8 = undefined;
-    const path = resolveClientPath(&buf) catch return;
-    const fd = open(path, O_WRONLY | O_CREAT | O_APPEND, 0o600);
+/// Enable the interactive client's log. Mirrors `enable` but resolves the
+/// "default" value to the client's own well-known path (~/.szn/szn-client.log)
+/// instead of the server's. An empty `path_or_default` leaves logging disabled.
+/// The client receives this path from the server via the `client_log` message
+/// (driven by the `client-log-file` config option), since it never loads the
+/// server config itself (bug #298 diagnostics).
+pub fn enableClientLog(path_or_default: []const u8) void {
+    if (path_or_default.len == 0) return;
+    const fd = if (std.mem.eql(u8, path_or_default, "default")) blk: {
+        var buf: [256]u8 = undefined;
+        const resolved = resolveClientPath(&buf) catch return;
+        break :blk open(resolved, O_WRONLY | O_CREAT | O_APPEND, 0o600);
+    } else blk2: {
+        var path_buf: [256]u8 = undefined;
+        const path_z = std.fmt.bufPrintZ(&path_buf, "{s}", .{path_or_default}) catch return;
+        break :blk2 open(path_z.ptr, O_WRONLY | O_CREAT | O_APPEND, 0o600);
+    };
     if (fd < 0) return;
     _ = fchmod(fd, 0o600);
+    if (log_fd) |old| _ = c.close(old);
     log_fd = fd;
     log_fd_failed.store(false, .seq_cst);
     log_enabled.store(true, .seq_cst);

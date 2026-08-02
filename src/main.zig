@@ -654,11 +654,11 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
     var pkt_detach: u64 = 0;
     var pkt_other: u64 = 0;
 
-    // The client never loads the server config that enables logging (and the
-    // server's log path can be overridden by the `log-file` option), so write
-    // client diagnostics to a dedicated file: ~/.szn/szn-client.log.
-    log_mod.enableClientLog();
-    std.log.info("interactive client connected (server_fd={d})", .{server_fd});
+    // Client logging is opt-in: the server sends the `client_log` message with
+    // the `client-log-file` path when a client connects (empty = disabled). The
+    // client never loads the server config itself, so it waits for that message
+    // before enabling its log.
+    var client_log_enabled = false;
 
     var backpressure = false;
     while (running) {
@@ -834,6 +834,15 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
                     .request_cell_size => {
                         pkt_cellsize += 1;
                         _ = queryCellSize(server_fd, stdout_fd, stdin_fd, sx, sy);
+                    },
+                    .client_log => {
+                        // The server tells us where to log (from its
+                        // `client-log-file` option). Empty = stay disabled.
+                        if (data.len > 0 and !client_log_enabled) {
+                            log_mod.enableClientLog(data);
+                            client_log_enabled = true;
+                            std.log.info("interactive client connected (server_fd={d})", .{server_fd});
+                        }
                     },
                     else => {
                         pkt_other += 1;

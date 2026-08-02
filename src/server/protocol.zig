@@ -24,6 +24,7 @@ pub const MessageType = enum(u8) {
     exit = 0x82,
     err = 0x83,
     request_cell_size = 0x84, // Server → client: please query CSI 14 t and reply with cell_size
+    client_log = 0x85, // Server → client: path for the client's log (empty = disabled)
 
     pub fn isRequest(self: MessageType) bool {
         return @intFromEnum(self) < 0x80;
@@ -43,6 +44,7 @@ pub const MessageType = enum(u8) {
             0x82 => .exit,
             0x83 => .err,
             0x84 => .request_cell_size,
+            0x85 => .client_log,
             else => return null,
         };
     }
@@ -159,6 +161,7 @@ test "message type fromByte rejects invalid values" {
     try testing.expectEqual(MessageType.output, MessageType.fromByte(0x81).?);
     try testing.expectEqual(MessageType.cell_size, MessageType.fromByte(0x09).?);
     try testing.expectEqual(MessageType.redraw, MessageType.fromByte(0x0A).?);
+    try testing.expectEqual(MessageType.client_log, MessageType.fromByte(0x85).?);
 }
 
 test "message type request detection" {

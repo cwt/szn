@@ -145,12 +145,16 @@ any log output unless explicitly configured.
 To enable it, add one of these lines to your `~/.szn.conf`:
 
 ```
-set -g log-file default
-set -g log-file /path/to/custom/log
+set -g server-log-file default
+set -g server-log-file /path/to/custom/szn.log
+set -g client-log-file default
+set -g client-log-file /path/to/custom/szn-client.log
 ```
 
-`default` writes to `$XDG_STATE_HOME/szn/szn.log` (usually
-`~/.local/state/szn/szn.log`).
+`default` for the server writes to `$XDG_STATE_HOME/szn/szn.log` (usually
+`~/.local/state/szn/szn.log`); `default` for the client writes to
+`~/.szn/szn-client.log`. (The old `log-file` name is still accepted as an
+alias for `server-log-file`.) Both are independent and disabled unless set.
 
 ## License
 

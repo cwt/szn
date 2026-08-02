@@ -215,6 +215,11 @@ pub const Server = struct {
     /// client drowned and froze (bug #298).
     last_cell_size_request_ms: i64 = 0,
 
+    /// Client log path from the `client-log-file` config directive ("" =
+    /// disabled). Sent to each interactive client when it connects via the
+    /// `client_log` message, since the client never loads the server config.
+    client_log_file: []const u8 = "",
+
     /// Frame-flow diagnostics (bug #298): total frames/bytes queued to display
     /// clients, to attribute a frozen screen to server→client, client→pty, or
     /// mosh.
@@ -269,6 +274,7 @@ pub const Server = struct {
             self.allocator.free(m);
         }
         self.log_messages.deinit(self.allocator);
+        if (self.client_log_file.len > 0) self.allocator.free(self.client_log_file);
         if (self.message) |m| self.allocator.free(m);
         self.command_buf.deinit(self.allocator);
         self.last_search.deinit(self.allocator);
@@ -2244,6 +2250,18 @@ fn pumpPaneInput(self: *Server) void {
                     var reply_buf: [128]u8 = undefined;
                     const serialized = reply.serialize(&reply_buf);
                     self.queueToClient(fd, serialized);
+                    // Tell the client where (if anywhere) to log. It never loads
+                    // the server config, so this is the only way it learns the
+                    // `client-log-file` setting; empty = logging disabled.
+                    if (self.client_log_file.len > 0) {
+                        const lc_pkt = protocol.Packet.make(.client_log, self.client_log_file);
+                        var lc_buf: [512]u8 = undefined;
+                        const lc_ser = lc_pkt.serialize(&lc_buf);
+                        if (lc_ser.len > 0) {
+                            std.log.info("server: sending client_log '{s}' to client {d}", .{ self.client_log_file, fd });
+                            self.queueToClient(fd, lc_ser);
+                        }
+                    }
                     if (self.activeSession()) |s| {
                         if (s.active_window) |w| {
                             if (w.active_pane) |ap| {
@@ -2870,9 +2888,16 @@ fn pumpPaneInput(self: *Server) void {
         for (parsed.directives.items) |d| {
             switch (d) {
                 .set => |s| {
-                    if (std.mem.eql(u8, s.option, "log-file")) {
+                    if (std.mem.eql(u8, s.option, "server-log-file") or std.mem.eql(u8, s.option, "log-file")) {
                         if (s.value == .string) {
                             log_mod.enable(s.value.string);
+                        }
+                        continue;
+                    }
+                    if (std.mem.eql(u8, s.option, "client-log-file")) {
+                        if (s.value == .string) {
+                            if (self.client_log_file.len > 0) self.allocator.free(self.client_log_file);
+                            self.client_log_file = self.allocator.dupe(u8, s.value.string) catch "";
                         }
                         continue;
                     }
