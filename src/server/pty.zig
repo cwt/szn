@@ -119,6 +119,12 @@ pub const Pty = struct {
     master: i32,
     slave: i32,
     pid: i32,
+    allocator: std.mem.Allocator = undefined,
+    /// Keystrokes / input that could not be written to the (non-blocking) pty
+    /// master because the child isn't reading its stdin (e.g. it is throttled
+    /// by flow control). Drained when the master becomes writable again
+    /// (POLLOUT) so keystrokes are never dropped under backpressure.
+    input_buf: std.ArrayList(u8) = .empty,
 
     pub fn open() Error!Pty {
         var master: c_int = 0;
@@ -140,6 +146,7 @@ pub const Pty = struct {
     }
 
     pub fn spawn(self: *Pty, allocator: std.mem.Allocator, argv: ?[]const []const u8, szn_env: []const u8, szn_pane: []const u8, cwd: ?[]const u8, min_nofile_soft: u64) Error!void {
+        self.allocator = allocator;
         const args = argv orelse &.{DEFAULT_SHELL};
 
         var argv_z = try allocator.alloc(?[*:0]const u8, args.len + 1);
@@ -252,6 +259,9 @@ pub const Pty = struct {
     }
 
     pub fn deinit(self: *Pty) void {
+        if (self.input_buf.capacity > 0) {
+            self.input_buf.deinit(self.allocator);
+        }
         if (self.pid > 0) {
             _ = std.c.kill(self.pid, std.c.SIG.KILL);
         }
@@ -274,16 +284,57 @@ pub const Pty = struct {
     }
 
     pub fn writeInput(self: *Pty, data: []const u8) Error!void {
+        // The master is O_NONBLOCK, so this never blocks the server. The fast
+        // path writes what fits; anything left over is queued and drained when
+        // the child reads its stdin again (see flushInput / POLLOUT).
         var off: usize = 0;
         while (off < data.len) {
             const n = write(self.master, data.ptr + off, data.len - off);
             if (n < 0) {
-                if (std.c.errno(n) == .INTR) continue;
+                const err = std.c.errno(n);
+                if (err == .INTR) continue;
+                if (err == .AGAIN) break;
                 return error.WriteFailed;
             }
             if (n == 0) return error.WriteFailed;
             off += @as(usize, @intCast(n));
         }
+        if (off >= data.len) return;
+        // Pty input buffer is full (child isn't reading stdin, e.g. it is
+        // throttled by flow control). Queue the remainder so keystrokes are
+        // not lost; the server drains it on POLLOUT.
+        const rem = data[off..];
+        self.input_buf.appendSlice(self.allocator, rem) catch return error.WriteFailed;
+    }
+
+    /// Non-blocking drain of queued keystrokes. Returns true when the whole
+    /// queue was written (or the fd is unwritable for good, in which case the
+    /// queue is dropped); false when the child is still not reading and the
+    /// remainder stays queued for a later POLLOUT drain.
+    pub fn flushInput(self: *Pty) bool {
+        if (self.input_buf.items.len == 0) return true;
+        var off: usize = 0;
+        while (off < self.input_buf.items.len) {
+            const n = write(self.master, self.input_buf.items.ptr + off, self.input_buf.items.len - off);
+            if (n < 0) {
+                const err = std.c.errno(n);
+                if (err == .INTR) continue;
+                if (err == .AGAIN) break;
+                self.input_buf.clearRetainingCapacity();
+                return true;
+            }
+            if (n == 0) break;
+            off += @as(usize, @intCast(n));
+        }
+        if (off >= self.input_buf.items.len) {
+            self.input_buf.clearRetainingCapacity();
+            return true;
+        }
+        if (off > 0) {
+            std.mem.copyForwards(u8, self.input_buf.items[0 .. self.input_buf.items.len - off], self.input_buf.items[off..]);
+            self.input_buf.items.len -= off;
+        }
+        return false;
     }
 
     pub fn setWinSize(self: *Pty, ws: *const std.c.winsize) Error!void {
@@ -393,4 +444,52 @@ test "getCwd with zero-terminated stack buffer — bug #242" {
         defer testing.allocator.free(cwd);
         try testing.expect(cwd.len > 0);
     } else |_| {}
+}
+
+test "writeInput queues remainder under backpressure and flushInput drains it — bug #298" {
+    var fds: [2]c_int = undefined;
+    if (pipe(&fds) < 0) return error.PipeFailed;
+    defer _ = close(fds[0]);
+
+    // Make the write end non-blocking so a full pipe returns EAGAIN.
+    const F_GETFL: c_int = 3;
+    const F_SETFL: c_int = 4;
+    const O_NONBLOCK: c_int = comptime switch (@import("builtin").os.tag) {
+        .linux => @as(c_int, 0o4000),
+        else => @as(c_int, 0x0004),
+    };
+    const flags = fcntl(fds[1], F_GETFL, @as(c_int, 0));
+    if (flags >= 0) _ = fcntl(fds[1], F_SETFL, flags | O_NONBLOCK);
+
+    var pty = Pty{ .master = fds[1], .slave = -1, .pid = -1, .allocator = testing.allocator };
+    defer pty.deinit();
+
+    // Fill the kernel pipe buffer so the next write EAGAINs immediately.
+    var junk: [65536]u8 = undefined;
+    @memset(&junk, 'x');
+    var guard: usize = 0;
+    while (guard < 16) : (guard += 1) {
+        const n = write(fds[1], &junk, junk.len);
+        if (n <= 0) break;
+    }
+
+    // A write larger than what fits must queue the remainder instead of
+    // dropping keystrokes (flow control, bug #298).
+    const big = try testing.allocator.alloc(u8, 1 << 18);
+    defer testing.allocator.free(big);
+    @memset(big, 'y');
+    try pty.writeInput(big);
+    try testing.expect(pty.input_buf.items.len > 0);
+
+    // Drain the read end and flush repeatedly until the queue empties.
+    // flushInput makes forward progress but returns false when the pipe is
+    // momentarily full (the real server retries on POLLOUT), so keep reading
+    // to free pipe room until the whole queue is written.
+    var drain: [16384]u8 = undefined;
+    var dguard: usize = 0;
+    while (pty.input_buf.items.len > 0 and dguard < 10000) : (dguard += 1) {
+        _ = read(fds[0], &drain, drain.len);
+        _ = pty.flushInput();
+    }
+    try testing.expectEqual(@as(usize, 0), pty.input_buf.items.len);
 }

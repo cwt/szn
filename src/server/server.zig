@@ -89,6 +89,12 @@ pub const DisplayClient = struct {
     /// frame currently buffered is fully flushed, so the client always receives
     /// a complete, consistent screen image.
     out_buf: std.ArrayList(u8) = .empty,
+    /// True when this client can't keep up with the render rate (its out_buf
+    /// crossed RENDER_HIGH_WATERMARK). While set, the server stops reading the
+    /// pane pty so the child is throttled to this client's speed instead of
+    /// having its output pile up and frames get dropped (flow control,
+    /// bug #298 follow-up).
+    behind: bool = false,
     bounds_buf: std.ArrayList(render.PaneBounds) = .empty,
 
     pub fn deinit(self: *DisplayClient, allocator: std.mem.Allocator) void {
@@ -559,7 +565,28 @@ pub const Server = struct {
             }
             if (is_client) continue;
         }
+
+    // Keep POLLOUT armed for any pane whose keystroke queue is waiting on a
+    // writable master, so queued input drains once the child reads stdin
+    // (flow control, bug #298 follow-up).
+    self.pumpPaneInput();
+}
+
+/// Arm POLLOUT on the master of every pane that still has queued keystrokes
+/// (see Pty.writeInput / flushInput). No-op for panes whose queue is empty.
+fn pumpPaneInput(self: *Server) void {
+    for (self.sessions.items) |session| {
+        for (session.windows.items) |win| {
+            for (win.panes.items) |p| {
+                if (p.pty) |pty| {
+                    if (pty.input_buf.items.len > 0) {
+                        self.loop.addFdEvents(pty.master, std.posix.POLL.OUT);
+                    }
+                }
+            }
+        }
     }
+}
 
     fn isPaneValid(self: *Server, pane: *Pane) bool {
         for (self.sessions.items) |session| {
@@ -589,7 +616,7 @@ pub const Server = struct {
         for (self.client_fds.items) |cfd| {
             if (ev.fd == cfd) return .not_ours;
         }
-        const pane: *Pane = @ptrCast(@alignCast(ev.udata orelse return .not_ours));
+        var pane: *Pane = @ptrCast(@alignCast(ev.udata orelse return .not_ours));
         if (!self.isPaneValid(pane)) {
             std.log.debug("handlePtyEvent: received event for invalid/stale pane pointer", .{});
             self.loop.removeFd(ev.fd);
@@ -599,8 +626,28 @@ pub const Server = struct {
         const has_hup = (ev.revents & @as(i16, @intCast(std.posix.POLL.HUP))) != 0;
         const has_err = (ev.revents & @as(i16, @intCast(std.posix.POLL.ERR))) != 0;
 
+        // Drain queued keystrokes once the pty master is writable again. The
+        // master is O_NONBLOCK, so this returns quickly when the child still
+        // isn't reading its stdin (flow control, bug #298 follow-up).
+        if ((ev.revents & @as(i16, @intCast(std.posix.POLL.OUT))) != 0) {
+            if (pane.pty) |*pty| {
+                _ = pty.flushInput();
+                if (pty.input_buf.items.len == 0) {
+                    self.loop.removeFdEvents(pty.master, std.posix.POLL.OUT);
+                }
+            }
+        }
+
         var exited = false;
         if (has_in) {
+            // Flow control: a display client can't keep up, so stop reading the
+            // pane pty and let the child block on write — throttling it to the
+            // lagging client's speed instead of dropping frames (bug #298
+            // follow-up). The client drains its socket, out_buf empties, and
+            // `behind` clears, resuming pane reads.
+            if (self.anyDisplayClientBehind()) {
+                return .handled;
+            }
             // Pause feeding while a sixel is buffered awaiting a measured cell
             // size (#204). The shell prints its next prompt right after the
             // sixel DCS; if we let that through now it would land on top of the
@@ -2345,18 +2392,38 @@ pub const Server = struct {
     /// and if the client is still hopelessly behind we reset the pending buffer
     /// and the diff baseline. The next full render then repaints a coherent
     /// screen rather than feeding the client garbage (bug #297).
+    ///
+    /// Flow control (bug #298 follow-up): when a client is behind we stop
+    /// queueing new frames entirely — the already-buffered frame is enough, and
+    /// piling on duplicates would only grow out_buf. The server also stops
+    /// reading the pane pty (see handlePtyEvent), throttling the child to this
+    /// client's speed so frames are displayed, not discarded.
+    const RENDER_HIGH_WATERMARK = (1 << 20) * 3 / 4; // 768 KiB
+
     fn appendClientOut(self: *Server, dc: *DisplayClient, data: []const u8) bool {
         if (data.len == 0) return true;
+        // Overflow safety (bug #297): if even after a drain the buffered bytes
+        // plus this frame exceed the hard cap, drop the backlog and resync the
+        // diff state so the next full render repaints a coherent screen rather
+        // than feeding the client a corrupt slice.
         if (dc.out_buf.items.len + data.len > MAX_OUT_BUF) {
             // A transient EAGAIN may have cleared by now — drain before giving up.
             _ = self.flushDisplayClient(dc);
             if (dc.out_buf.items.len + data.len > MAX_OUT_BUF) {
-                // Drop the stalled backlog and resync the diff state so the next
-                // render repaints a complete screen instead of a truncated one.
                 dc.out_buf.clearRetainingCapacity();
                 dc.last_cells.clearRetainingCapacity();
                 return false;
             }
+        }
+        // Flow control (bug #298 follow-up): once this client is behind, stop
+        // queueing new frames — the already-buffered frame is enough, and
+        // piling on duplicates would only grow out_buf. The server also stops
+        // reading the pane pty (see handlePtyEvent), throttling the child to
+        // this client's speed so frames are displayed, not discarded.
+        if (dc.behind) return true;
+        if (dc.out_buf.items.len + data.len > RENDER_HIGH_WATERMARK) {
+            dc.behind = true;
+            return true;
         }
         dc.out_buf.appendSlice(self.allocator, data) catch return false;
         return true;
@@ -2385,6 +2452,9 @@ pub const Server = struct {
         }
         if (off >= dc.out_buf.items.len) {
             dc.out_buf.clearRetainingCapacity();
+            // Client has caught up — clear the flow-control flag so pane reads
+            // (and thus the child) resume at full speed.
+            dc.behind = false;
             self.loop.removeFdEvents(dc.fd, std.posix.POLL.OUT);
             return true;
         }
@@ -2393,6 +2463,15 @@ pub const Server = struct {
             dc.out_buf.items.len -= off;
         }
         self.loop.addFdEvents(dc.fd, std.posix.POLL.OUT);
+        return false;
+    }
+
+    /// True when any attached display client is behind and flow control should
+    /// throttle pane reads.
+    fn anyDisplayClientBehind(self: *Server) bool {
+        for (self.display_clients.items) |*dc| {
+            if (dc.behind) return true;
+        }
         return false;
     }
 
@@ -4178,6 +4257,45 @@ test "handleClient .redraw resets display client diff state for a full repaint �
     try testing.expectEqual(@as(u32, 0), dc.last_sx);
     try testing.expectEqual(@as(u32, 0), dc.last_sy);
     try testing.expect(server.dirty);
+}
+
+test "appendClientOut marks display client behind on watermark and skips frames — bug #298 flow control" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    var fds: [2]c_int = undefined;
+    if (std.c.pipe(&fds) != 0) return error.Unexpected;
+    defer _ = std.c.close(fds[0]);
+    defer _ = std.c.close(fds[1]);
+
+    try server.display_clients.append(server.allocator, DisplayClient{ .fd = fds[1] });
+    const dc = &server.display_clients.items[0];
+
+    // Pre-fill just past the high watermark.
+    const filler = try testing.allocator.alloc(u8, Server.RENDER_HIGH_WATERMARK + 1);
+    defer testing.allocator.free(filler);
+    @memset(filler, 'x');
+    try dc.out_buf.appendSlice(testing.allocator, filler);
+    try testing.expect(!dc.behind);
+
+    // A new frame crosses the watermark: behind is set and the frame is
+    // skipped (the already-buffered frame is kept, not duplicated).
+    try testing.expect(server.appendClientOut(dc, "frame"));
+    try testing.expect(dc.behind);
+    try testing.expectEqual(@as(usize, Server.RENDER_HIGH_WATERMARK + 1), dc.out_buf.items.len);
+
+    // While behind, further frames are also skipped (no pile-up).
+    try testing.expect(server.appendClientOut(dc, "frame2"));
+    try testing.expectEqual(@as(usize, Server.RENDER_HIGH_WATERMARK + 1), dc.out_buf.items.len);
+
+    // Draining the buffer (writable fd) clears behind and empties out_buf,
+    // letting the child resume at full speed.
+    dc.behind = true;
+    dc.out_buf.clearRetainingCapacity();
+    try dc.out_buf.appendSlice(testing.allocator, "small");
+    try testing.expect(server.flushDisplayClient(dc));
+    try testing.expect(!dc.behind);
+    try testing.expectEqual(@as(usize, 0), dc.out_buf.items.len);
 }
 
 test "prompt command execution frees DispatchResult — bug #237" {
