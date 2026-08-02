@@ -25,10 +25,18 @@ extern "c" fn tcflush(fd: c_int, queue_selector: c_int) c_int;
 const TCIFLUSH = 1;
 
 var sigwinchFlag = std.atomic.Value(bool).init(false);
+// Set when the controlling terminal hangs up (mosh/ssh transport drop). The
+// client must survive it — mosh -a keeps the pty alive and resumes it.
+var sighupFlag = std.atomic.Value(bool).init(false);
 
 export fn sigwinch_handler(sig: c.SIG) callconv(.c) void {
     _ = sig;
     sigwinchFlag.store(true, .seq_cst);
+}
+
+export fn sighup_handler(sig: c.SIG) callconv(.c) void {
+    _ = sig;
+    sighupFlag.store(true, .seq_cst);
 }
 
 fn writeAll(fd: i32, buf: []const u8) Error!void {
@@ -126,6 +134,9 @@ pub fn detectNested() bool {
 
 pub fn main(init: std.process.Init) void {
     mainInner(init) catch |err| {
+        // Log propagated errors to the file too, so a client/server death is
+        // visible in szn.log rather than only on the (possibly dropped) pty.
+        std.log.err("szn exiting with error: {any}", .{err});
         switch (err) {
             error.SocketNotFound, error.ConnectionRefused => {
                 std.debug.print("No szn server running\n", .{});
@@ -157,6 +168,28 @@ fn mainInner(init: std.process.Init) Error!void {
         .flags = std.posix.SA.RESTART,
     };
     std.posix.sigaction(.PIPE, &ignore_pipe, null);
+
+    // Terminal job-control signals: the client does raw-mode/tcsetattr I/O on
+    // the mosh/ssh pty. If it is ever momentarily not the foreground process
+    // group of that pty, these ops would otherwise stop the client (SIGTTOU)
+    // or block its reads (SIGTTIN). tmux ignores them in the client; so do we.
+    var ignore_stop: std.posix.Sigaction = .{
+        .handler = .{ .handler = std.c.SIG.IGN },
+        .mask = std.posix.sigemptyset(),
+        .flags = std.posix.SA.RESTART,
+    };
+    std.posix.sigaction(.TTOU, &ignore_stop, null);
+    std.posix.sigaction(.TTIN, &ignore_stop, null);
+
+    // SIGHUP (controlling terminal hangup, i.e. a transport drop) must NOT kill
+    // the client: mosh -a keeps the pty and resumes it. Flag it instead so the
+    // client can log and keep the session alive.
+    var ignore_hup: std.posix.Sigaction = .{
+        .handler = .{ .handler = sighup_handler },
+        .mask = std.posix.sigemptyset(),
+        .flags = std.posix.SA.RESTART,
+    };
+    std.posix.sigaction(.HUP, &ignore_hup, null);
 
     if (detectNested()) {
         std.debug.print("szn: you are already running szn; nested instances are not supported\n", .{});
@@ -581,7 +614,17 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
     var stdin_alive = true;
     var stdin_check_counter: usize = 0;
 
+    std.log.info("interactive client connected (server_fd={d})", .{server_fd});
+
     while (running) {
+        if (sighupFlag.load(.seq_cst)) {
+            sighupFlag.store(false, .seq_cst);
+            // Controlling terminal hung up (transport drop). mosh -a keeps the
+            // pty alive and will resume it, so do NOT exit — just log and keep
+            // the session running.
+            std.log.warn("client SIGHUP, staying attached", .{});
+        }
+
         var pollfds: [3]std.posix.pollfd = undefined;
         pollfds[0] = .{ .fd = server_fd, .events = @as(i16, @intCast(std.posix.POLL.IN)), .revents = 0 };
         // While stdin is dead we stop polling it (polling a HUP fd busy-loops)
@@ -668,9 +711,11 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
             } else if (n == -1) {
                 const err = std.c.errno(n);
                 if (err != .AGAIN and err != .INTR) {
+                    std.log.err("client server_fd read error {s}, exiting", .{@errorName(error.ReadFailed)});
                     running = false;
                 }
             } else {
+                std.log.warn("client server_fd EOF (server closed), exiting", .{});
                 running = false;
                 continue;
             }
@@ -679,6 +724,7 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
             while (read_buf.items.len - read_pos >= 5) {
                 const pkt_len = std.mem.readInt(u32, read_buf.items[read_pos..][0..4], .little);
                 if (pkt_len < 5) {
+                    std.log.err("client malformed packet length {d}, exiting", .{pkt_len});
                     running = false;
                     break;
                 }
@@ -709,6 +755,7 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
                         }
                     },
                     .detach => {
+                        std.log.info("client received detach, exiting", .{});
                         running = false;
                     },
                     .request_cell_size => {
