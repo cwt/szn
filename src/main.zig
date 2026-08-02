@@ -621,11 +621,10 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
     var stdin_alive = true;
     var stdin_check_counter: usize = 0;
 
-    // The client never loads the server config that enables logging, so its
-    // diagnostics would be invisible in szn.log. Enable an append-mode log to
-    // the same file so the client's side of the story shows up next to the
-    // server's (bug #298).
-    log_mod.enable("default");
+    // The client never loads the server config that enables logging (and the
+    // server's log path can be overridden by the `log-file` option), so write
+    // client diagnostics to a dedicated file: ~/.szn/szn-client.log.
+    log_mod.enableClientLog();
     std.log.info("interactive client connected (server_fd={d})", .{server_fd});
 
     var backpressure = false;

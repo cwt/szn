@@ -16,6 +16,7 @@ pub const Level = enum(u3) {
 };
 
 extern "c" fn open(path: [*:0]const u8, oflag: c_int, mode: c.mode_t) c_int;
+extern "c" fn fchmod(fd: c_int, mode: c.mode_t) c_int;
 extern "c" fn getuid() c.uid_t;
 
 const O_WRONLY = 1;
@@ -76,6 +77,28 @@ fn resolveHomeOrTmp(buf: []u8) Error![:0]const u8 {
 
 fn resolveTmp(buf: []u8) Error![:0]const u8 {
     return std.fmt.bufPrintZ(buf, "/tmp/szn-{d}.log", .{getuid()});
+}
+
+/// Dedicated log path for the interactive client. The server's log path can be
+/// overridden by the `log-file` config option, so the client writing to the
+/// "default" path is not guaranteed to land in the file the user inspects. Use
+/// an always-known path instead: ~/.szn/szn-client.log (or /tmp fallback).
+fn resolveClientPath(buf: []u8) Error![:0]const u8 {
+    if (std.c.getenv("HOME")) |home| {
+        const home_str = std.mem.span(home);
+        var dir_path: [256]u8 = undefined;
+        const dir_z = std.fmt.bufPrintZ(&dir_path, "{s}/.szn", .{home_str}) catch
+            return std.fmt.bufPrintZ(buf, "/tmp/szn-client-{d}.log", .{getuid()}) catch error.NoSpaceLeft;
+        const rc = c.mkdir(dir_z.ptr, 0o700);
+        if (rc < 0) {
+            const err = std.c.errno(rc);
+            if (err != .EXIST) {
+                return std.fmt.bufPrintZ(buf, "/tmp/szn-client-{d}.log", .{getuid()}) catch error.NoSpaceLeft;
+            }
+        }
+        return std.fmt.bufPrintZ(buf, "{s}/.szn/szn-client.log", .{home_str}) catch error.NoSpaceLeft;
+    }
+    return std.fmt.bufPrintZ(buf, "/tmp/szn-client-{d}.log", .{getuid()}) catch error.NoSpaceLeft;
 }
 
 fn writeAllRaw(fd: std.posix.fd_t, bytes: []const u8) void {
@@ -139,6 +162,7 @@ pub fn enable(path_or_default: []const u8) void {
         break :blk2 open(path_z.ptr, O_WRONLY | O_CREAT | O_APPEND, 0o600);
     };
     if (fd < 0) return;
+    _ = fchmod(fd, 0o600);
     if (log_fd) |old| _ = c.close(old);
     log_fd = fd;
     log_fd_failed.store(false, .seq_cst);
@@ -152,6 +176,21 @@ pub fn disable() void {
     log_fd = null;
     log_fd_failed.store(false, .seq_cst);
     log_enabled.store(false, .seq_cst);
+}
+
+/// Enable the interactive client's dedicated log (~/.szn/szn-client.log). The
+/// client never loads the server config that enables the server log, so it
+/// needs its own well-known path (bug #298 diagnostics).
+pub fn enableClientLog() void {
+    if (log_fd) |old| _ = c.close(old);
+    var buf: [256]u8 = undefined;
+    const path = resolveClientPath(&buf) catch return;
+    const fd = open(path, O_WRONLY | O_CREAT | O_APPEND, 0o600);
+    if (fd < 0) return;
+    _ = fchmod(fd, 0o600);
+    log_fd = fd;
+    log_fd_failed.store(false, .seq_cst);
+    log_enabled.store(true, .seq_cst);
 }
 
 pub fn isEnabled() bool {
