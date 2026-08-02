@@ -707,7 +707,7 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
         const diag_now = currentMillis();
         if (diag_now - last_diag_ms > 2000) {
             last_diag_ms = diag_now;
-            std.log.info("client: out_buf={d} backpressure={any}", .{ out_buf.items.len, congested });
+            std.log.info("client: out_buf={d} backpressure={any} awaiting_cell_size={any}", .{ out_buf.items.len, congested, awaiting_cell_size });
         }
         if (congested) {
             pollfds[0] = .{ .fd = -1, .events = 0, .revents = 0 };
@@ -791,10 +791,14 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
                         cell_resp_len = 0;
                         forward = leftover[0..l];
                     } else if (cell_resp_len >= cell_resp_buf.len or
-                        (cell_resp_len >= 2 and (cell_resp_buf[0] != 0x1b or cell_resp_buf[1] != '[')))
+                        (cell_resp_len >= 2 and (cell_resp_buf[0] != 0x1b or cell_resp_buf[1] != '[')) or
+                        (cell_resp_len >= 3 and cell_resp_buf[2] != '4'))
                     {
-                        // Not a reply (bad prefix, or terminal won't answer) —
-                        // stop waiting and forward everything buffered.
+                        // Not a cell-size reply — e.g. an arrow key or other
+                        // escape sequence. Forward it immediately instead of
+                        // buffering it as a possible reply, which would swallow
+                        // keyboard input while awaiting_cell_size is set (the
+                        // server re-requests every 500 ms) (bug #298).
                         awaiting_cell_size = false;
                         var leftover: [40]u8 = undefined;
                         var l: usize = 0;
