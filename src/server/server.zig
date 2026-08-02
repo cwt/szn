@@ -208,6 +208,13 @@ pub const Server = struct {
     /// of writing them starved client-socket reads, wedging the whole loop.
     last_flow_warn_ms: i64 = 0,
 
+    /// Rate-limits `.request_cell_size` to at most two per second. The flag is
+    /// re-set on every pane read while a sixel is awaiting a measured cell size
+    /// (#204); without a cap the server fired 201,442 of them in a frozen
+    /// session, and each costs the client a 5 ms `queryCellSize` poll — the
+    /// client drowned and froze (bug #298).
+    last_cell_size_request_ms: i64 = 0,
+
     /// Frame-flow diagnostics (bug #298): total frames/bytes queued to display
     /// clients, to attribute a frozen screen to server→client, client→pty, or
     /// mosh.
@@ -2358,7 +2365,14 @@ fn pumpPaneInput(self: *Server) void {
     pub fn sendRequestCellSize(self: *Server) void {
         if (!self.needs_cell_size_refresh) return;
         self.needs_cell_size_refresh = false;
-        std.log.info("sendRequestCellSize: sending request to clients", .{});
+        // Bug #298: cap the rate. The flag is re-set on every pane read while a
+        // sixel waits on a cell size (#204), and if the client never answers
+        // (e.g. mosh's terminal doesn't respond to CSI 14 t) the flag stays on
+        // for the whole cell_size_wait_ms — the old code flooded the client
+        // with requests, each costing it a 5 ms queryCellSize poll.
+        const now = currentMillis();
+        if (self.last_cell_size_request_ms != 0 and now - self.last_cell_size_request_ms < 500) return;
+        self.last_cell_size_request_ms = now;
         const pkt = protocol.Packet.make(.request_cell_size, "");
         var hdr: [5]u8 = undefined;
         pkt.header.encode(&hdr);

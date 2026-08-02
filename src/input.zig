@@ -502,6 +502,11 @@ pub const InputParser = struct {
         // Append the ST terminator so the outer terminal can parse it.
         try self.dcs_buf.appendSlice(self.screen.allocator, "\x1b\\");
 
+        // Bug #298 diagnostic: log what triggered the sixel path so a false
+        // positive from a non-sixel DCS (e.g. opencode) can be identified.
+        const preview_len = @min(self.dcs_buf.items.len, 40);
+        std.log.info("sixel DCS captured: len={d} bytes, preview={s}", .{ self.dcs_buf.items.len, self.dcs_buf.items[0..preview_len] });
+
         var px_width: u32 = 0;
         var px_height: u32 = 0;
 
