@@ -4,13 +4,11 @@ const colour = @import("colour.zig");
 const grid = @import("grid.zig");
 const char_width = @import("char_width.zig");
 
-/// Upper bound on a sixel's DCS payload. Larger images (e.g. a 1024×1536 PNG
-/// previewed at native resolution, whose sixel is ~2.6 MiB) can never fit in a
-/// single output frame — the client's `MAX_OUT_BUF` is 1 MiB — so emitting
-/// them produces an oversized frame the server drops and then re-renders
-/// forever, freezing the display (bug #298). Cap is kept well under 1 MiB to
-/// leave room for the frame header and any text diff.
-pub const MAX_SIXEL_DATA = 768 * 1024;
+/// Upper bound on a sixel's DCS payload. With the server/client output buffers
+/// raised to 16 MiB, sixels up to this size can be relayed in a single frame;
+/// anything larger is dropped (logged) so a pathological image can't be placed
+/// and then re-rendered forever (bug #298).
+pub const MAX_SIXEL_DATA = 8 * 1024 * 1024;
 
 /// A sixel image stored as the raw DCS bytes (ESC P ... ESC \) received from
 /// the child process. We keep the original bytes so we can re-emit them

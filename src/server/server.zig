@@ -112,7 +112,7 @@ pub const Server = struct {
     /// Upper bound on a display client's pending output buffer. Prevents a
     /// non-reading client from growing out_buf without bound via
     /// queueToClient / sendRequestCellSize (bug #297).
-    pub const MAX_OUT_BUF = 1 << 20;
+    pub const MAX_OUT_BUF = 16 << 20;
     /// Upper bound on the command/search prompt buffer (bug #297).
     pub const MAX_COMMAND_BUF = 1 << 16;
 
@@ -2487,13 +2487,16 @@ fn pumpPaneInput(self: *Server) void {
         // queueing new frames — the already-buffered frame is enough, and
         // piling on duplicates would only grow out_buf. The server also stops
         // reading the pane pty (see handlePtyEvent), throttling the child to
-        // this client's speed so frames are displayed, not discarded.
-        if (dc.behind) return true;
-        if (dc.out_buf.items.len + data.len > RENDER_HIGH_WATERMARK) {
+        // this client's speed so frames are displayed, not discarded. A single
+        // large frame (e.g. a big sixel) is queued even if it crosses the
+        // watermark — only ADDITIONAL frames are skipped once the buffer is
+        // already large.
+        if (dc.behind or dc.out_buf.items.len >= RENDER_HIGH_WATERMARK) {
             dc.behind = true;
             return true;
         }
         dc.out_buf.appendSlice(self.allocator, data) catch return false;
+        if (dc.out_buf.items.len > RENDER_HIGH_WATERMARK) dc.behind = true;
         // Frame-flow diagnostics (bug #298): count what is queued for clients.
         self.rendered_frames += 1;
         self.rendered_bytes += @as(u64, @intCast(data.len));

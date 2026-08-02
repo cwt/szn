@@ -7,7 +7,7 @@ pub const Error = error{
     InvalidData,
 };
 
-pub const MAX_PACKET_SIZE = 1024 * 1024; // 1 MiB (server-to-client maximum)
+pub const MAX_PACKET_SIZE = 16 * 1024 * 1024; // 16 MiB (server-to-client maximum; must fit a large sixel frame)
 pub const MAX_CLIENT_PACKET_SIZE = 8192; // 8 KiB (client-to-server maximum)
 
 pub const MessageType = enum(u8) {

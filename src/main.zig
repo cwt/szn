@@ -86,14 +86,16 @@ fn writeServer(fd: i32, buf: []const u8) void {
 /// rendered frames here instead of blocking on write(2). If the queue exceeds
 /// this cap the backlog is dropped and a full repaint is requested once the
 /// pty drains again (bug #298).
-const MAX_CLIENT_OUT_BUF = 1 << 20;
+const MAX_CLIENT_OUT_BUF = 16 << 20;
 
 /// Above this pending-stdout level the client stops reading from the server
 /// socket. This fills the server's socket, which trips the server's
 /// `DisplayClient.behind` flow control and throttles the child to the link's
 /// speed — frames get delivered (slowly) instead of piling up and being
-/// dropped, which is what a "frozen" screen actually is (bug #298).
-const CLIENT_OUT_HIGH_WATERMARK = MAX_CLIENT_OUT_BUF / 2;
+/// dropped, which is what a "frozen" screen actually is (bug #298). Kept small
+/// (not proportional to MAX_CLIENT_OUT_BUF) so a large single sixel frame is
+/// received and drained, while regular frames throttle promptly.
+const CLIENT_OUT_HIGH_WATERMARK = 512 * 1024;
 
 fn setNonBlocking(fd: i32) void {
     const c_fcntl = struct {
