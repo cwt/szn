@@ -715,14 +715,18 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
                 if (err != .AGAIN and err != .INTR) {
                     // Display stdin gone (mosh/ssh transport drop). Stay
                     // attached — the session keeps running and the link resumes.
-                    std.log.warn("client stdin unavailable, staying attached", .{});
+                    if (stdin_alive) {
+                        std.log.warn("client stdin unavailable, staying attached", .{});
+                    }
                     stdin_alive = false;
                     stdin_check_counter = 0;
                 }
             } else {
                 // EOF on stdin: a transport drop, not a detach. Keep the
                 // session alive and wait for the pty to come back.
-                std.log.warn("client stdin EOF, staying attached", .{});
+                if (stdin_alive) {
+                    std.log.warn("client stdin EOF, staying attached", .{});
+                }
                 stdin_alive = false;
                 stdin_check_counter = 0;
             }

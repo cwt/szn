@@ -725,6 +725,7 @@ pub const InputParser = struct {
                             std.log.warn("DSR response buffer too small for cursor position", .{});
                             return;
                         };
+                        std.log.debug("DSR response sent to pane: {s}", .{rep});
                         pty.writeInput(rep) catch |err| {
                             std.log.warn("DSR writeInput error: {any}", .{err});
                         };
@@ -745,6 +746,7 @@ pub const InputParser = struct {
                         "\x1b[>0;10;0c"
                     else
                         "\x1b[?63;4;22c";
+                    std.log.debug("DA response sent to pane: {s}", .{rep});
                     pty.writeInput(rep) catch |err| {
                         std.log.warn("DA response writeInput error: {any}", .{err});
                     };
@@ -786,6 +788,7 @@ pub const InputParser = struct {
                     if (self.pty) |pty| {
                         var rep_buf: [64]u8 = undefined;
                         const rep = std.fmt.bufPrint(&rep_buf, "\x1b[?{d}u", .{self.screen.kitty_kbd_flags}) catch return;
+                        std.log.debug("kitty keyboard query response sent to pane: {s}", .{rep});
                         pty.writeInput(rep) catch |err| {
                             std.log.warn("CSI ? u writeInput error: {any}", .{err});
                         };
@@ -813,6 +816,7 @@ pub const InputParser = struct {
                         if (self.pty) |pty| {
                             var rep_buf: [64]u8 = undefined;
                             const rep = std.fmt.bufPrint(&rep_buf, "\x1b[?{d};{d}$y", .{ mode, status }) catch return;
+                            std.log.debug("DECRQM private response sent to pane: mode={d} status={d}", .{ mode, status });
                             pty.writeInput(rep) catch |err| {
                                 std.log.warn("DECRQM private response writeInput error: {any}", .{err});
                             };

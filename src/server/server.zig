@@ -646,6 +646,7 @@ fn pumpPaneInput(self: *Server) void {
             // follow-up). The client drains its socket, out_buf empties, and
             // `behind` clears, resuming pane reads.
             if (self.anyDisplayClientBehind()) {
+                std.log.warn("flow control: pane read throttled, display client(s) behind", .{});
                 return .handled;
             }
             // Pause feeding while a sixel is buffered awaiting a measured cell
