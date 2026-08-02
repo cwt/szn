@@ -143,6 +143,15 @@ pub const Server = struct {
     window_status_cur_cache: TemplateCache = .{},
     pane_border_fmt_cache: TemplateCache = .{},
     status_win_infos: std.ArrayList(status_mod.WindowInfo) = .empty,
+    /// Visible-column ranges of each window entry in the last-rendered status
+    /// line, filled by `buildStatusLine` and consumed by `handleMouseFocus` so
+    /// hit-testing matches the actual layout (bug #290).
+    status_click_ranges: std.ArrayList(status_mod.WindowRange) = .empty,
+    /// Row the status line was rendered on for the active session, and the
+    /// client width it was packed for. Lets a status click be identified
+    /// unambiguously regardless of which client reported the mouse event.
+    status_click_row: u32 = 0,
+    status_click_width: u32 = 0,
     host_name: []const u8 = "",
     host_short: []const u8 = "",
     command_mode: bool = false,
@@ -273,6 +282,7 @@ pub const Server = struct {
         self.window_status_cur_cache.deinit(self.allocator);
         self.pane_border_fmt_cache.deinit(self.allocator);
         self.status_win_infos.deinit(self.allocator);
+        self.status_click_ranges.deinit(self.allocator);
         if (self.host_name.len > 0) self.allocator.free(self.host_name);
         if (self.host_short.len > 0) self.allocator.free(self.host_short);
         @import("../thai.zig").deinitLibThai();
@@ -420,7 +430,11 @@ pub const Server = struct {
             .right_cache = &self.status_right_cache,
             .win_fmt_cache = &self.window_status_fmt_cache,
             .win_cur_cache = &self.window_status_cur_cache,
-        });
+        }, &self.status_click_ranges);
+        // Cache the status row + rendered width so handleMouseFocus can
+        // hit-test clicks against exactly this layout (bug #290).
+        self.status_click_row = session.height;
+        self.status_click_width = width;
         return rendered.line;
     }
 
@@ -1748,62 +1762,17 @@ pub const Server = struct {
     pub fn handleMouseFocus(self: *Server, x: u32, y: u32) ServerError!void {
         const session = self.activeSession() orelse return;
 
-        // bug #290: the status bar renders on the last row of each display
-        // client (dc.sy - 1). The session grid only spans the content area
-        // (session.height = min client content height), so a status click on
-        // any client satisfies y >= session.height.
-        if (y >= session.height) {
-            // Compute the rendered status line's window-entry column ranges so
-            // clicks match exactly what was drawn (honouring base-index,
-            // window-status formats, truncation, and justification).
-            const base_index: i64 = session.options.asNumber("base-index") orelse 0;
-            const win_opts = if (session.active_window) |aw| &aw.options else &self.global_window_options;
-            const win_fmt = win_opts.asString("window-status-format") orelse
-                self.global_window_options.asString("window-status-format") orelse
-                "#I:#W#{?window_flags,#{window_flags}, }";
-            const win_cur = win_opts.asString("window-status-current-format") orelse
-                self.global_window_options.asString("window-status-current-format") orelse
-                "#I:#W#{?window_flags,#{window_flags}, }";
-
-            self.status_win_infos.clearRetainingCapacity();
-            for (session.windows.items, 0..) |win, i| {
-                const is_active = (win == session.active_window);
-                try self.status_win_infos.append(self.allocator, .{
-                    .index = @intCast(base_index + @as(i64, @intCast(i))),
-                    .name = win.name,
-                    .flags = if (is_active) "*" else "",
-                    .is_active = is_active,
-                });
-            }
-
-            const left = session.options.asString("status-left") orelse "[#{session_name}] ";
-            const right = session.options.asString("status-right") orelse "\"#{=21:pane_title}\" %H:%M %d-%b-%y";
-            const left_len: u32 = @intCast(@max(session.options.asNumber("status-left-length") orelse 10, 0));
-            const right_len: u32 = @intCast(@max(session.options.asNumber("status-right-length") orelse 40, 0));
-            const justify = status_mod.Alignment.fromString(session.options.asString("status-justify") orelse "left");
-
-            const ranges = status_mod.windowRanges(self.allocator, .{
-                .session_name = session.name,
-                .windows = self.status_win_infos.items,
-                .pane_title = if (session.active_window) |aw| aw.name else "",
-                .host = self.host_name,
-                .host_short = self.host_short,
-                .left = left,
-                .right = right,
-                .left_length = left_len,
-                .right_length = right_len,
-                .justify = justify,
-                .window_status_format = win_fmt,
-                .window_status_current_format = win_cur,
-                .width = session.width,
-                .left_cache = &self.status_left_cache,
-                .right_cache = &self.status_right_cache,
-                .win_fmt_cache = &self.window_status_fmt_cache,
-                .win_cur_cache = &self.window_status_cur_cache,
-            }) catch return;
-            defer self.allocator.free(ranges);
-
-            for (ranges) |r| {
+        // bug #290: the status bar renders on the last content row of each
+        // display client. With status `on`, that row is exactly session.height
+        // (content height = client height - 1, status occupies the remaining
+        // row). Match the click against the column ranges produced by the last
+        // rendered status line, using the real packed width instead of
+        // re-deriving the layout by hand. When status is `off` there is no
+        // status row to hit-test, so a click past the content area is ignored.
+        const status_choice = session.options.asString("status") orelse "on";
+        const status_enabled = !std.mem.eql(u8, status_choice, "off");
+        if (status_enabled and y == self.status_click_row) {
+            for (self.status_click_ranges.items) |r| {
                 if (x >= r.start_col and x < r.end_col) {
                     if (r.pos >= session.windows.items.len) return;
                     const win = session.windows.items[r.pos];
@@ -2353,11 +2322,26 @@ pub const Server = struct {
     /// Append `data` to a client's out_buf, but drop it if the buffer would
     /// exceed MAX_OUT_BUF (bug #297). Returns false when the append was
     /// rejected or failed, so callers bail out.
+    ///
+    /// Self-heal: instead of silently truncating a frame (which would leave the
+    /// client with a partial, protocol-corrupting slice and let its per-client
+    /// diff state drift away from reality), we first try to drain the socket,
+    /// and if the client is still hopelessly behind we reset the pending buffer
+    /// and the diff baseline. The next full render then repaints a coherent
+    /// screen rather than feeding the client garbage (bug #297).
     fn appendClientOut(self: *Server, dc: *DisplayClient, data: []const u8) bool {
         if (data.len == 0) return true;
         if (dc.out_buf.items.len + data.len > MAX_OUT_BUF) {
-            std.log.warn("display client {d} output buffer exceeds limit, dropping {d} bytes", .{ dc.fd, data.len });
-            return false;
+            // A transient EAGAIN may have cleared by now — drain before giving up.
+            _ = self.flushDisplayClient(dc);
+            if (dc.out_buf.items.len + data.len > MAX_OUT_BUF) {
+                std.log.warn("display client {d} output buffer overflow, resetting pending output", .{dc.fd});
+                // Drop the stalled backlog and resync the diff state so the next
+                // render repaints a complete screen instead of a truncated one.
+                dc.out_buf.clearRetainingCapacity();
+                dc.last_cells.clearRetainingCapacity();
+                return false;
+            }
         }
         dc.out_buf.appendSlice(self.allocator, data) catch return false;
         return true;
@@ -2654,6 +2638,11 @@ pub const Server = struct {
                 }
             }
         }
+        // bug #283: panes are torn down here without routing through
+        // destroyPane, so drop any cached mouse pointers now. isPaneValid can
+        // alias an arena-reused address later, so leaving a dangling pointer
+        // would let a stale pane be treated as live.
+        self.clearPaneMouseRefsBulk();
         session.deinit(self.allocator);
         self.allocator.destroy(session);
         self.dirty = true;
@@ -2671,7 +2660,19 @@ pub const Server = struct {
             s.deinit(self.allocator);
             self.allocator.destroy(s);
         }
+        // bug #283: see killSession — clear cached mouse pointers since every
+        // pane is being destroyed here, not via destroyPane.
+        self.clearPaneMouseRefsBulk();
         self.sessions.clearRetainingCapacity();
+    }
+
+    /// Clear both cached mouse pointers. Used when panes are destroyed in bulk
+    /// (killSession / killAllSessions) rather than through destroyPane, which
+    /// clears them per-pane (bug #283).
+    fn clearPaneMouseRefsBulk(self: *Server) void {
+        self.mouse_press_pane = null;
+        self.mouse_autoscroll_pane = null;
+        self.mouse_autoscroll_dir = null;
     }
 
     pub fn activeSession(self: *Server) ?*Session {

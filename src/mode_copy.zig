@@ -458,7 +458,7 @@ pub const CopyMode = struct {
         const hist_len = grid.historyLen();
         const total = hist_len + grid.height;
         const cursor_logical = (hist_len -| self.scroll_offset) + self.cursor_y;
-        const start_x: usize = if (self.cursor_x == 0) 0 else self.cursor_x - 1;
+        const start_x_cells: usize = self.cursor_x;
 
         var line_buf: std.ArrayList(u8) = .empty;
         defer line_buf.deinit(allocator);
@@ -467,6 +467,7 @@ pub const CopyMode = struct {
 
         // Pass 1: from just before the cursor back to the start.
         var li = cursor_logical;
+        var at_cursor_line = true;
         while (true) {
             // Walk backward to find the start of the logical line containing `li`.
             // A line at position P is a continuation if the line at P-1 has
@@ -480,7 +481,15 @@ pub const CopyMode = struct {
                 li -= 1;
             }
             // `li` is now the first physical line of this logical line.
-            const start_col: usize = if (li == cursor_logical) start_x else grid.width -| 1;
+            // bug #281: `start_col` indexes cells of the whole *logical* line,
+            // so a wrapped line's limit must account for the physical lines
+            // walked over (`grid.width -| 1` only covered the head, hiding any
+            // match in the continuation part).
+            const start_col: usize = if (at_cursor_line)
+                ((cursor_logical - li) * grid.width + start_x_cells) -| 1
+            else
+                WHOLE_LINE;
+            at_cursor_line = false;
             if (searchLogicalLineBackward(grid, allocator, &line_buf, &offsets, li, start_col, needle)) |found_x| {
                 self.placeCursorAtLogical(grid, li, found_x);
                 return true;
@@ -509,7 +518,7 @@ pub const CopyMode = struct {
             // If walking back crossed into the cursor's own logical line, pass
             // 1 already searched it — stop.
             if (li <= cursor_logical) break;
-            if (searchLogicalLineBackward(grid, allocator, &line_buf, &offsets, li, grid.width -| 1, needle)) |found_x| {
+            if (searchLogicalLineBackward(grid, allocator, &line_buf, &offsets, li, WHOLE_LINE, needle)) |found_x| {
                 self.placeCursorAtLogical(grid, li, found_x);
                 return true;
             }
@@ -561,6 +570,14 @@ pub const CopyMode = struct {
         return byteToColumn(offsets.items, byte_start + at);
     }
 
+    /// `start_col` value meaning "search the entire logical line" — larger
+    /// than any possible cell index, so `searchLogicalLineBackward` starts at
+    /// the last byte of the reconstructed line (bug #281).
+    const WHOLE_LINE: usize = std.math.maxInt(usize);
+
+    /// Return the last column <= `start_col` where `needle` occurs in logical
+    /// line `li`, or null. `start_col` is a cell index into the *whole*
+    /// logical line (continuations included), or `WHOLE_LINE` for no limit.
     fn searchLogicalLineBackward(
         grid: *const Grid,
         allocator: std.mem.Allocator,
@@ -1802,6 +1819,75 @@ test "searchBackward cyclic wrap finds match in head of wrapped line at scrollba
     try testing.expect(found);
     try testing.expectEqual(@as(u32, 0), cm.cursor_x);
     try testing.expectEqual(@as(u32, 1), cm.cursor_y);
+}
+
+test "searchBackward finds a match in the continuation of a wrapped line — bug #281" {
+    var cm = CopyMode.init(.vi);
+    // Same layout as the test above: logical line "foobar" wrapped over the
+    // physical lines 1 and 2. "bar" lives entirely in the continuation, at
+    // logical cell 3 — beyond `grid.width - 1`, which used to be the search
+    // start limit, so backward search could never reach it (forward search
+    // found it fine).
+    var g = try Grid.init(testing.allocator, 3, 3);
+    defer g.deinit();
+
+    g.writeChar(0, 0, 'a');
+    g.writeChar(1, 0, 'a');
+    g.writeChar(2, 0, 'a');
+
+    g.writeChar(0, 1, 'f');
+    g.writeChar(1, 1, 'o');
+    g.writeChar(2, 1, 'o');
+    g.getLineMut(1).wrapped = true;
+
+    g.writeChar(0, 2, 'b');
+    g.writeChar(1, 2, 'a');
+    g.writeChar(2, 2, 'r');
+
+    // Cyclic-wrap path (pass 2): cursor above the wrapped line.
+    cm.cursor_x = 0;
+    cm.cursor_y = 0;
+    try testing.expect(cm.searchBackward(&g, testing.allocator, "bar"));
+    try testing.expectEqual(@as(u32, 0), cm.cursor_x);
+    try testing.expectEqual(@as(u32, 2), cm.cursor_y);
+
+    // Straight backward path (pass 1): cursor below/at the end of the line.
+    cm.cursor_x = 2;
+    cm.cursor_y = 2;
+    cm.scroll_offset = 0;
+    try testing.expect(cm.searchBackward(&g, testing.allocator, "ba"));
+    try testing.expectEqual(@as(u32, 0), cm.cursor_x);
+    try testing.expectEqual(@as(u32, 2), cm.cursor_y);
+}
+
+test "searchBackward does not match past the cursor inside a wrapped line — bug #281" {
+    var cm = CopyMode.init(.vi);
+    // "foobar" wrapped over lines 0-1, with the cursor on the continuation
+    // line at column 1 (logical cell 4). Searching backward for "ar" (logical
+    // cell 4) must NOT match — it starts at/after the cursor. "oo" (cell 1)
+    // must match.
+    var g = try Grid.init(testing.allocator, 3, 3);
+    defer g.deinit();
+
+    g.writeChar(0, 0, 'f');
+    g.writeChar(1, 0, 'o');
+    g.writeChar(2, 0, 'o');
+    g.getLineMut(0).wrapped = true;
+
+    g.writeChar(0, 1, 'b');
+    g.writeChar(1, 1, 'a');
+    g.writeChar(2, 1, 'r');
+
+    cm.cursor_x = 1;
+    cm.cursor_y = 1;
+    try testing.expect(!cm.searchBackward(&g, testing.allocator, "ar"));
+
+    cm.cursor_x = 1;
+    cm.cursor_y = 1;
+    cm.scroll_offset = 0;
+    try testing.expect(cm.searchBackward(&g, testing.allocator, "oo"));
+    try testing.expectEqual(@as(u32, 1), cm.cursor_x);
+    try testing.expectEqual(@as(u32, 0), cm.cursor_y);
 }
 
 test "searchForward tolerates inconsistent history state — bug #293" {

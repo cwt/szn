@@ -1,6 +1,10 @@
 const std = @import("std");
 
 comptime {
+    // Run the status-click hit-test tests early: they allocate a Server and
+    // therefore need a fresh DebugAllocator budget (the full suite otherwise
+    // exhausts the allocator's retained metadata before they run).
+    _ = @import("status_click_test.zig");
     _ = @import("colour.zig");
     _ = @import("grid.zig");
     _ = @import("screen.zig");

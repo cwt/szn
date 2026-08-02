@@ -955,7 +955,7 @@ test "renderStatusBar with long window name" {
         .right_length = 0,
         .window_status_current_format = "#I:#W",
         .width = 200,
-    });
+    }, null);
     defer line.deinit(allocator);
 
     try display.renderStatusBar(line.line, Colour.default_(), Colour.default_(), null, false, "", 0, false);
@@ -990,7 +990,7 @@ test "renderStatusBar truncates long name to fit terminal width — bug #185" {
         .right_length = 0,
         .window_status_current_format = "#I:#W#F",
         .width = 30,
-    });
+    }, null);
     defer line.deinit(allocator);
 
     try display.renderStatusBar(line.line, Colour.default_(), Colour.default_(), null, false, "", 0, false);

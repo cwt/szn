@@ -7,6 +7,11 @@ const Window = @import("../window.zig").Window;
 const ChooseItem = @import("../choose.zig").ChooseItem;
 const char_width = @import("../char_width.zig");
 
+/// Upper bound for a pane dimension set through `resize-pane`. Keeps a
+/// saturated relative adjustment from attempting an absurd grid allocation,
+/// and makes an out-of-range explicit `-x`/`-y` an error (bug #289).
+pub const MAX_PANE_DIM: u32 = 10_000;
+
 pub const CmdResult = enum(u8) {
     ok,
     err,
@@ -374,31 +379,36 @@ fn cmdJoinPane(server: *Server, args: []const []const u8) CmdResult {
 
     const sp = src_pane orelse return .err;
 
-    // bug #287: do the fallible splitPane BEFORE extracting sp from src_win.
-    // If splitPane fails, sp is still owned by src_win. Extracting first would
-    // orphan sp (no window list, live pty, master fd still polled) and could
-    // even kill src_win before the failure.
+    // bug #287: every fallible step runs BEFORE ownership of `sp` changes, and
+    // a failure undoes whatever was already done. Extracting first would orphan
+    // sp (in no window's list, live pty, master fd still polled); leaving the
+    // dst split behind on a later failure would strand an empty stray pane.
     const dummy_pane = dst_win.splitPane(server.allocator, dst_pane, vertical, 0.5) catch return .err;
     const dummy_width = dummy_pane.screen.grid.width;
     const dummy_height = dummy_pane.screen.grid.height;
 
-    src_win.extractPane(server.allocator, sp);
-    if (src_win.panes.items.len == 0) {
+    // When sp is src_win's only pane, src_win is torn down below and
+    // killWindow needs a placeholder leaf in its layout root. Allocate it now
+    // so that nothing can fail once sp has been extracted.
+    const placeholder: ?*Pane = if (src_win != dst_win and src_win.panes.items.len == 1) blk: {
         const a = session.arenaAllocator();
         const dummy = a.create(Pane) catch {
-            // sp was extracted but we can't prepare src_win for teardown.
-            // Put it back so it is not orphaned.
-            src_win.panes.append(a, sp) catch {};
-            src_win.layout.root.leaf = sp;
+            undoSplit(dst_win, server.allocator, dummy_pane);
             return .err;
         };
         dummy.* = Pane.init(a, 9999, 1, 1) catch {
-            src_win.panes.append(a, sp) catch {};
-            src_win.layout.root.leaf = sp;
+            undoSplit(dst_win, server.allocator, dummy_pane);
             return .err;
         };
-        src_win.layout.root.leaf = dummy;
-        session.killWindow(server.allocator, src_win);
+        break :blk dummy;
+    } else null;
+
+    src_win.extractPane(server.allocator, sp);
+    if (src_win.panes.items.len == 0) {
+        if (placeholder) |dummy| {
+            src_win.layout.root.leaf = dummy;
+            session.killWindow(server.allocator, src_win);
+        }
     }
 
     for (dst_win.panes.items) |*p| {
@@ -417,6 +427,13 @@ fn cmdJoinPane(server: *Server, args: []const []const u8) CmdResult {
 
     dst_win.setActivePane(sp);
     return .ok;
+}
+
+/// Roll back a `splitPane` performed as part of a larger operation that later
+/// failed, leaving the window exactly as it was found (bug #287).
+fn undoSplit(win: *Window, allocator: std.mem.Allocator, pane: *Pane) void {
+    win.extractPane(allocator, pane);
+    pane.deinit();
 }
 
 fn cmdBreakPane(server: *Server, args: []const []const u8) CmdResult {
@@ -1015,11 +1032,17 @@ fn cmdResizePane(server: *Server, args: []const []const u8) CmdResult {
             adjust_w +|= val;
         } else if (std.mem.eql(u8, args[i], "-x")) {
             if (i + 1 >= args.len) return .err;
-            exact_w = std.fmt.parseUnsigned(u32, args[i + 1], 10) catch return .err;
+            const v = std.fmt.parseUnsigned(u32, args[i + 1], 10) catch return .err;
+            // bug #289: an explicit size out of range is a user error — report
+            // it instead of silently clamping to something else.
+            if (v < 1 or v > MAX_PANE_DIM) return .err;
+            exact_w = v;
             i += 1;
         } else if (std.mem.eql(u8, args[i], "-y")) {
             if (i + 1 >= args.len) return .err;
-            exact_h = std.fmt.parseUnsigned(u32, args[i + 1], 10) catch return .err;
+            const v = std.fmt.parseUnsigned(u32, args[i + 1], 10) catch return .err;
+            if (v < 1 or v > MAX_PANE_DIM) return .err;
+            exact_h = v;
             i += 1;
         }
     }
@@ -1029,15 +1052,14 @@ fn cmdResizePane(server: *Server, args: []const []const u8) CmdResult {
 
     // bug #289: use saturating arithmetic so huge -U/-D/-L/-R adjustments
     // cannot overflow i32 (panic in Debug, silent wrap in ReleaseFast), and
-    // clamp to a sane ceiling so a saturated huge value can't attempt an
-    // absurd grid allocation.
-    const MAX_DIM: u32 = 10_000;
+    // clamp the relative result to a sane ceiling so a saturated value can't
+    // attempt an absurd grid allocation.
     const new_w = @as(i32, @intCast(current_w)) +| adjust_w;
     if (new_w < 1) return .err;
-    const target_w = @min(exact_w orelse @as(u32, @intCast(new_w)), MAX_DIM);
+    const target_w = exact_w orelse @min(@as(u32, @intCast(new_w)), MAX_PANE_DIM);
     const new_h = @as(i32, @intCast(current_h)) +| adjust_h;
     if (new_h < 1) return .err;
-    const target_h = @min(exact_h orelse @as(u32, @intCast(new_h)), MAX_DIM);
+    const target_h = exact_h orelse @min(@as(u32, @intCast(new_h)), MAX_PANE_DIM);
 
     pane.resizeTerminal(target_w, target_h) catch return .err;
     return .ok;
@@ -2395,6 +2417,28 @@ test "break-pane and join-pane keep pane ownership consistent — bug #287" {
     }
 }
 
+test "undoSplit restores the window after a rolled-back split — bug #287" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    const session = try server.newSession("test", 80, 24);
+    const win = session.active_window.?;
+    const pane1 = win.active_pane.?;
+    try testing.expectEqual(@as(usize, 1), win.panes.items.len);
+
+    // join-pane splits the destination window first; when a later step fails
+    // the split must be rolled back so no stray empty pane is left behind.
+    const dummy = try win.splitPane(server.allocator, pane1, true, 0.5);
+    try testing.expectEqual(@as(usize, 2), win.panes.items.len);
+
+    undoSplit(win, server.allocator, dummy);
+
+    try testing.expectEqual(@as(usize, 1), win.panes.items.len);
+    try testing.expectEqual(pane1, win.panes.items[0]);
+    try testing.expectEqual(pane1, win.layout.root.leaf);
+    try testing.expectEqual(pane1, win.active_pane.?);
+}
+
 test "paste-buffer exec" {
     var server = try Server.init(testing.allocator);
     defer server.deinit();
@@ -2566,19 +2610,28 @@ test "resize-pane saturates on huge adjustments — bug #289" {
     var server = try Server.init(testing.allocator);
     defer server.deinit();
 
-    _ = try server.newSession("testsession", 80, 24);
+    // A single-row pane keeps the worst-case clamped grid at MAX_PANE_DIM x 1
+    // (~160 KB) instead of MAX_PANE_DIM x 24 (~3.8 MB), so the test does not
+    // blow up the DebugAllocator's retained metadata across the suite.
+    _ = try server.newSession("testsession", 80, 1);
     const session = server.activeSession().?;
     const pane = session.active_window.?.active_pane.?;
 
     // Accumulating two maxInt(i32) values previously overflowed i32 before the
     // < 1 bounds check ran. With saturating arithmetic this must not panic,
-    // must not wrap into a bogus small/big size, and must clamp to MAX_DIM.
+    // must not wrap into a bogus size, and must clamp to MAX_PANE_DIM.
+    // Only ONE dimension is grown: clamping both would allocate
+    // MAX_PANE_DIM^2 cells (~1.6 GB) just to assert the clamp.
     {
-        var c = try parse("resize-pane -D 2147483647 -D 2147483647", testing.allocator);
+        var c = try parse("resize-pane -R 2147483647 -R 2147483647", testing.allocator);
         defer c.deinit(testing.allocator);
         try testing.expectEqual(CmdResult.ok, c.exec(&server));
     }
-    try testing.expectEqual(@as(u32, 10_000), pane.screen.grid.height);
+    try testing.expectEqual(MAX_PANE_DIM, pane.screen.grid.width);
+    try testing.expectEqual(@as(u32, 1), pane.screen.grid.height);
+
+    // Reset before exercising the other direction so the grid stays small.
+    pane.resizeTerminal(80, 1) catch return error.Unexpected;
 
     // Huge shrink saturates below 1 -> command returns .err, size unchanged.
     {
@@ -2586,16 +2639,49 @@ test "resize-pane saturates on huge adjustments — bug #289" {
         defer c.deinit(testing.allocator);
         try testing.expectEqual(CmdResult.err, c.exec(&server));
     }
-    try testing.expectEqual(@as(u32, 10_000), pane.screen.grid.height);
-
-    // Width direction likewise clamps to MAX_DIM, never wraps.
+    try testing.expectEqual(@as(u32, 1), pane.screen.grid.height);
     {
-        var c = try parse("resize-pane -R 2147483647 -R 2147483647", testing.allocator);
+        var c = try parse("resize-pane -L 2147483647 -L 2147483647", testing.allocator);
+        defer c.deinit(testing.allocator);
+        try testing.expectEqual(CmdResult.err, c.exec(&server));
+    }
+    try testing.expectEqual(@as(u32, 80), pane.screen.grid.width);
+}
+
+test "resize-pane rejects out-of-range explicit sizes — bug #289" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    _ = try server.newSession("testsession", 80, 24);
+    const session = server.activeSession().?;
+    const pane = session.active_window.?.active_pane.?;
+
+    // An explicit -x/-y beyond the ceiling is a user error: report it instead
+    // of silently resizing to something the user did not ask for.
+    {
+        var c = try parse("resize-pane -x 20000", testing.allocator);
+        defer c.deinit(testing.allocator);
+        try testing.expectEqual(CmdResult.err, c.exec(&server));
+    }
+    {
+        var c = try parse("resize-pane -y 20000", testing.allocator);
+        defer c.deinit(testing.allocator);
+        try testing.expectEqual(CmdResult.err, c.exec(&server));
+    }
+    {
+        var c = try parse("resize-pane -x 0", testing.allocator);
+        defer c.deinit(testing.allocator);
+        try testing.expectEqual(CmdResult.err, c.exec(&server));
+    }
+    try testing.expectEqual(@as(u32, 80), pane.screen.grid.width);
+    try testing.expectEqual(@as(u32, 24), pane.screen.grid.height);
+
+    // In-range explicit sizes still apply exactly.
+    {
+        var c = try parse("resize-pane -x 100 -y 40", testing.allocator);
         defer c.deinit(testing.allocator);
         try testing.expectEqual(CmdResult.ok, c.exec(&server));
     }
-    try testing.expectEqual(@as(u32, 10_000), pane.screen.grid.width);
-
-    // Reset to a normal size so the test teardown doesn't resize a 10k grid.
-    pane.resizeTerminal(80, 24) catch return error.Unexpected;
+    try testing.expectEqual(@as(u32, 100), pane.screen.grid.width);
+    try testing.expectEqual(@as(u32, 40), pane.screen.grid.height);
 }

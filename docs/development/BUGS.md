@@ -3825,7 +3825,7 @@ Two paths append a **static string literal** (`""`) to `pane_border_owned`: (1) 
 ### 281. `searchBackward` cyclic wrap (pass 2) skips the head of a wrapped logical line
 **File:** `src/mode_copy.zig:492–513`
 **Severity:** HIGH
-**Status:** ✅ FIXED — pass 2 now walks `li` backward to the start of the logical line (mirroring pass 1) before searching, and stops early if the walk crosses into the cursor's own line. Regression test: cursor at top, "foobar" wrapped across lines 1-2 at the bottom, previously missed.
+**Status:** ✅ FIXED — `searchBackward` now writes a `WHOLE_LINE` sentinel at the logical-line start (mirroring `searchForward`) and seeds `start_col` from the search origin's column, so the back-search examines the whole wrapped logical line instead of only the tail physical line. Regression tests: `searchBackward` finds a `foobar` wrapped across lines 1-2 at the bottom with the cursor at the top (`mode_copy.zig`), and finds a match that crosses into the cursor's own line only after the wrap.
 
 Pass 2 of `searchBackward` starts at `li = total -| 1` — the **tail** of the bottom logical line — and calls `searchLogicalLineBackward` there. `lineBytes(li)` reconstructs only *from* `li` forward, so a logical line that wraps across two physical lines (e.g. `"foo"`@line1 wrapped + `"bar"`@line2) is searched starting from `"bar"`. The skip block then walks back to the line head and jumps past the whole logical line — the head `"foo"` is **never searched**.
 
@@ -3849,7 +3849,7 @@ Pass 2 of `searchBackward` starts at `li = total -| 1` — the **tail** of the b
 ### 283. Dangling `mouse_autoscroll_pane` / `mouse_press_pane` after pane destruction
 **File:** `src/server/server.zig:154–156`
 **Severity:** HIGH
-**Status:** ✅ FIXED — `destroyPane` now calls `clearPaneMouseRefs(pane)` before freeing; `tickAutoscroll` validates the cached pane with `isPaneValid` (covers session kills); drag/release handlers guard `mouse_press_pane`. Two regression tests.
+**Status:** ✅ FIXED — `destroyPane` calls `clearPaneMouseRefs(pane)` before the pane is freed, and `killSession`/`killAllSessions` call `clearPaneMouseRefsBulk()`, which nulls `mouse_press_pane`, `mouse_autoscroll_pane`, and `mouse_autoscroll_dir`. This closes the UAF for both a single-pane kill (during a drag/autoscroll) and a whole-session kill mid-drag/autoscroll, without needing per-dereference guards.
 
 ```zig
 mouse_press_pane: ?*Pane = null,
@@ -3909,7 +3909,7 @@ If `insert` fails, `w` has already been removed from the list and is dropped —
 ### 287. `cmdBreakPane` / `cmdJoinPane` orphan the pane on failure after extraction
 **File:** `src/cmd/cmd.zig:364–374`, `src/cmd/cmd.zig:404–406`
 **Severity:** MEDIUM
-**Status:** ✅ FIXED — `cmdBreakPane` creates the new window before extracting; `cmdJoinPane` runs the fallible `splitPane` before extracting, and restores the pane to `src_win` if teardown preparation fails. Regression test verifies pane ownership across break/join round trips.
+**Status:** ✅ FIXED — `cmdJoinPane` now splits the destination window *first* (the fallible step), stows the pane in a pre-allocated placeholder window so it is never orphaned, and on `splitPane` failure restores the original layout via `undoSplit` (which also re-attaches the source window's surviving panes if the only source window was about to be dropped). `cmdBreakPane` likewise creates the new window before extracting. Regression test: a `split-window` failure after a `join-pane -h` leaves no orphaned pane and the session's pane count is unchanged.
 
 Both commands call `extractPane` first, then a fallible operation (`newWindow` / `splitPane`). If the fallible step fails (OOM), the extracted pane is in no window's list but its pty child keeps running and its master fd stays in the poll set. `cmdJoinPane` is worse: it may kill `src_win` at lines 366–372 *before* the failing `splitPane`, leaving `sp` orphaned after its window is gone.
 
@@ -3933,7 +3933,7 @@ No `errdefer buf.deinit(allocator)`. Any `try` failure leaks the accumulator. Ca
 ### 289. `cmdResizePane` signed overflow on accumulated adjustments
 **File:** `src/cmd/cmd.zig:949–1006`
 **Severity:** MEDIUM
-**Status:** ✅ FIXED — adjustments use saturating `+|`/`-|` arithmetic and the final target is clamped to `MAX_DIM` (10,000) so a saturated huge value can't attempt an absurd grid allocation. Regression test verifies -D/-R clamp to MAX_DIM and a huge -U returns .err.
+**Status:** ✅ FIXED — `cmdResizePane` defines `MAX_PANE_DIM = 10_000`; explicit `-x`/`-y` sizes outside `[1, MAX_PANE_DIM]` now return `.err` instead of being silently clamped, and relative `-U/-D/-L/-R` adjustments are clamped with `@min(..., MAX_PANE_DIM)` so a saturated huge value can't attempt an absurd grid allocation. Regression tests: `resize-pane -U 2147483647 -U 1` clamps to `MAX_PANE_DIM`, and an explicit `resize-pane -y 2147483647` returns `.err`.
 
 ```zig
 adjust_h += val;   // lines 959/968/977
@@ -3947,7 +3947,7 @@ Adjustments use plain `i32` arithmetic on user-parsed values with the bounds che
 ### 290. `handleMouseFocus` status-bar hit-testing doesn't match the rendered status line
 **File:** `src/server/server.zig:1678–1707`
 **Severity:** MEDIUM
-**Status:** ✅ FIXED — added `status.windowRanges()`, which mirrors `buildLine`'s packing and reports each window entry's exact visible column span; `handleMouseFocus` uses these ranges and treats `y >= session.height` as the status row. Three unit tests cover exact columns, left-prefix offset, and centre truncation.
+**Status:** ✅ FIXED — `buildLine` now fills an optional `out_ranges: ?*std.ArrayList(WindowRange)` with each window entry's exact rendered column span (the raw offsets are converted to absolute columns after `renderWithCache`), replacing the separate `status.windowRanges()` helper. `buildStatusLine` stores these into `Server.status_click_ranges`, `status_click_row`, and `status_click_width`; `handleMouseFocus` hit-tests against `status_click_ranges` only when `status_enabled` and `y == status_click_row` (the status row, `session.height`), and ignores clicks when the status bar is off. Regression tests (in `src/status_click_test.zig`): a status-bar click on window entry `i` selects that window, and a bottom-row click with `status off` is ignored.
 
 The hit-test assumes a left prefix of `[name] ` (3 + name.len) and per-window entries of `#I:#W` (1 + idx + 1 + name), ignoring `base-index`, `window_flags`, `status-left-length` truncation, and `status-right`. It also checks `y == session.height`, but the status row renders at `dc.sy - 1` (`render.zig:668`), so on any display client larger than the smallest, status-bar clicks fail entirely; on smaller ones they can select the wrong window.
 
@@ -4025,7 +4025,7 @@ If `init` succeeded but `append` fails, the session's arena (windows/panes) is n
 ### 297. `out_buf` / `command_buf` unbounded growth with a non-reading client
 **File:** `src/server/server.zig:2212–2234`, `src/server/server.zig:1219–1231`
 **Severity:** LOW
-**Status:** ✅ FIXED — `appendCommandChar` caps the prompt buffer at `MAX_COMMAND_BUF` (64 KiB); `appendClientOut` caps a display client's pending output at `MAX_OUT_BUF` (1 MiB), used by `queueToClient` and `sendRequestCellSize`. Regression test feeds more chars than the cap and verifies the buffer stays bounded.
+**Status:** ✅ FIXED — `appendClientOut` self-heals on overflow instead of silently dropping or truncating the client's pending output: when `dc.out_buf.items.len + data.len > MAX_OUT_BUF`, it first retries `flushDisplayClient` (a transient EAGAIN may have cleared), and if the buffer is still over the cap it resets `dc.out_buf` *and* `dc.last_cells` (dropping the stalled backlog and resyncing the diff state) and returns `false`. The next full `renderToDisplayClient` then repaints a coherent screen rather than a corrupt partial packet. (`appendCommandChar` was already bounded at `MAX_COMMAND_BUF`; its cap is covered by the existing command-buffer regression test.) Regression test (`src/status_click_test.zig`): a non-reading display client whose `out_buf` is filled past `MAX_OUT_BUF` causes `appendClientOut` to return `false` with an empty buffer afterward.
 
 `queueToClient` and `sendRequestCellSize` append to `dc.out_buf` with no cap; a client that stops reading but keeps issuing commands grows it without bound (slow-loris). `command_buf` likewise has no cap while in command mode. The per-frame `out_buf` replacement path is bounded; only the queue append paths are not.
 

@@ -92,6 +92,10 @@ fn expandCached(
 
 pub const RenderedStatus = struct {
     line: []const u8,
+    /// Visible column where the centre (window-list) region begins.
+    centre_start: u32 = 0,
+    /// Number of visible columns occupied by the centre region.
+    centre_cols: u32 = 0,
 
     pub fn deinit(self: *const RenderedStatus, allocator: std.mem.Allocator) void {
         allocator.free(self.line);
@@ -199,6 +203,7 @@ fn packLine(
         .centre => pad_total / 2,
     };
     const pad_right = pad_total -| pad_left;
+    const centre_start = left_cols + pad_left;
 
     var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(allocator);
@@ -221,7 +226,11 @@ fn packLine(
         try out.appendSlice(allocator, trimmed);
     }
 
-    return .{ .line = try out.toOwnedSlice(allocator) };
+    return .{
+        .line = try out.toOwnedSlice(allocator),
+        .centre_start = @intCast(centre_start),
+        .centre_cols = @intCast(centre_cols),
+    };
 }
 
 fn appendSpaces(allocator: std.mem.Allocator, out: *std.ArrayList(u8), n: usize) Error!void {
@@ -257,7 +266,17 @@ pub const BuildInput = struct {
 };
 
 /// Build a full tmux-style status line: left | window-list | right.
-pub fn buildLine(allocator: std.mem.Allocator, input: BuildInput) Error!RenderedStatus {
+///
+/// When `out_ranges` is non-null it is filled with the visible column range of
+/// each window entry in the centre region, derived from the same per-window
+/// pieces that end up rendered — so mouse hit-testing matches the real layout
+/// exactly (bug #290). This is the single source of truth: `handleMouseFocus`
+/// consumes these ranges instead of re-deriving the packing.
+pub fn buildLine(
+    allocator: std.mem.Allocator,
+    input: BuildInput,
+    out_ranges: ?*std.ArrayList(WindowRange),
+) Error!RenderedStatus {
     var ctx = Context.init(allocator);
     defer ctx.deinit();
 
@@ -270,7 +289,12 @@ pub fn buildLine(allocator: std.mem.Allocator, input: BuildInput) Error!Rendered
     var centre_buf: std.ArrayList(u8) = .empty;
     defer centre_buf.deinit(allocator);
 
-    for (input.windows) |w| {
+    if (out_ranges) |r| {
+        r.clearRetainingCapacity();
+    }
+
+    var centre_cursor: usize = 0;
+    for (input.windows, 0..) |w, pos| {
         var idx_buf: [16]u8 = undefined;
         const idx_str = std.fmt.bufPrint(&idx_buf, "{d}", .{w.index}) catch "0";
         try ctx.set("window_index", idx_str);
@@ -283,6 +307,18 @@ pub fn buildLine(allocator: std.mem.Allocator, input: BuildInput) Error!Rendered
         const piece = try expandCached(allocator, tmpl, &ctx, cache);
         defer allocator.free(piece);
         try centre_buf.appendSlice(allocator, piece);
+
+        if (out_ranges) |r| {
+            const cols = visibleLen(piece);
+            const start_col = centre_cursor;
+            centre_cursor += cols;
+            const end_col = centre_cursor;
+            try r.append(allocator, .{
+                .pos = @intCast(pos),
+                .start_col = @intCast(start_col),
+                .end_col = @intCast(end_col),
+            });
+        }
     }
 
     // The centre loop (above) overwrote window_index/name/flags/active for every
@@ -308,7 +344,30 @@ pub fn buildLine(allocator: std.mem.Allocator, input: BuildInput) Error!Rendered
     sb.right_length = input.right_length;
     sb.justify = input.justify;
 
-    return try sb.renderWithCache(allocator, &ctx, input.width, input.left_cache, input.right_cache);
+    const res = try sb.renderWithCache(allocator, &ctx, input.width, input.left_cache, input.right_cache);
+
+    // Convert the raw per-window offsets (counted from the start of the centre
+    // buffer) into absolute, rendered column ranges. When the centre overflows
+    // the available width it is truncated by `avail` visible columns, so any
+    // entry whose start lies beyond `centre_cols` is pushed off-screen and any
+    // partially-overflowing entry is clamped at the truncation boundary.
+    if (out_ranges) |r| {
+        var w: usize = 0;
+        while (w < r.items.len) {
+            const range = &r.items[w];
+            if (range.start_col >= res.centre_cols) {
+                _ = r.orderedRemove(w);
+                continue;
+            }
+            const new_start = res.centre_start + range.start_col;
+            const new_end = res.centre_start + @min(range.end_col, res.centre_cols);
+            range.start_col = @intCast(new_start);
+            range.end_col = @intCast(new_end);
+            w += 1;
+        }
+    }
+
+    return res;
 }
 
 pub const WindowRange = struct {
@@ -319,90 +378,6 @@ pub const WindowRange = struct {
     /// One past the last visible column of the entry (exclusive).
     end_col: u32,
 };
-
-/// Mirror `buildLine`'s left/centre/right packing and report the visible
-/// column range of each window entry in the centre region. This lets mouse
-/// hit-testing match clicks to windows using exactly what would be rendered,
-/// instead of re-deriving the layout by hand (bug #290).
-pub fn windowRanges(allocator: std.mem.Allocator, input: BuildInput) Error![]WindowRange {
-    var ctx = Context.init(allocator);
-    defer ctx.deinit();
-
-    try ctx.set("session_name", input.session_name);
-    try ctx.set("pane_title", input.pane_title);
-    try ctx.set("pane_index", input.pane_index);
-    try ctx.set("host", input.host);
-    try ctx.set("host_short", input.host_short);
-
-    const left = try expandCached(allocator, input.left, &ctx, input.left_cache);
-    defer allocator.free(left);
-    const right = try expandCached(allocator, input.right, &ctx, input.right_cache);
-    defer allocator.free(right);
-
-    const left_trim = try truncateVisible(allocator, left, input.left_length);
-    defer allocator.free(left_trim);
-    const right_trim = try truncateVisible(allocator, right, input.right_length);
-    defer allocator.free(right_trim);
-
-    const left_cols = visibleLen(left_trim);
-    const right_cols = visibleLen(right_trim);
-    const avail: usize = if (input.width > left_cols + right_cols)
-        input.width - left_cols - right_cols
-    else
-        0;
-
-    // Build each window's rendered piece and record its visible length, so the
-    // centre region can be sub-divided exactly as buildLine lays it out.
-    const Piece = struct { pos: usize, cols: usize };
-    var pieces: std.ArrayList(Piece) = .empty;
-    defer pieces.deinit(allocator);
-
-    for (input.windows, 0..) |w, pos| {
-        var idx_buf: [16]u8 = undefined;
-        const idx_str = std.fmt.bufPrint(&idx_buf, "{d}", .{w.index}) catch "0";
-        try ctx.set("window_index", idx_str);
-        try ctx.set("window_name", w.name);
-        try ctx.set("window_flags", w.flags);
-        try ctx.set("window_active", if (w.is_active) "1" else "0");
-
-        const tmpl = if (w.is_active) input.window_status_current_format else input.window_status_format;
-        const cache = if (w.is_active) input.win_cur_cache else input.win_fmt_cache;
-        const piece = try expandCached(allocator, tmpl, &ctx, cache);
-        defer allocator.free(piece);
-        try pieces.append(allocator, .{ .pos = pos, .cols = visibleLen(piece) });
-    }
-
-    // Same centre-packing arithmetic as packLine.
-    var centre_cols: usize = 0;
-    for (pieces.items) |p| centre_cols += p.cols;
-    centre_cols = @min(centre_cols, avail);
-
-    const pad_total = avail -| centre_cols;
-    const pad_left: usize = switch (input.justify) {
-        .left => 0,
-        .right => pad_total,
-        .centre => pad_total / 2,
-    };
-    const centre_start = left_cols + pad_left;
-
-    var ranges: std.ArrayList(WindowRange) = .empty;
-    errdefer ranges.deinit(allocator);
-    var cursor: usize = 0;
-    for (pieces.items) |p| {
-        const start = @min(centre_start + cursor, centre_start + centre_cols);
-        cursor += p.cols;
-        const end = @min(centre_start + cursor, centre_start + centre_cols);
-        if (end > start) {
-            try ranges.append(allocator, .{
-                .pos = @intCast(p.pos),
-                .start_col = @intCast(start),
-                .end_col = @intCast(end),
-            });
-        }
-    }
-
-    return try ranges.toOwnedSlice(allocator);
-}
 
 // ── Tests ──────────────────────────────────────────────────────────────
 
@@ -594,12 +569,14 @@ test "truncateVisible keeps styles" {
     try testing.expect(std.mem.indexOf(u8, t, "\x1b[31m") != null);
 }
 
-test "windowRanges reports exact columns for each window entry — bug #290" {
+test "buildLine reports exact columns for each window entry — bug #290" {
     const windows = [_]WindowInfo{
         .{ .index = 0, .name = "one", .flags = "", .is_active = false },
         .{ .index = 1, .name = "two", .flags = "", .is_active = true },
     };
-    const ranges = try windowRanges(testing.allocator, .{
+    var ranges = std.ArrayList(WindowRange).empty;
+    defer ranges.deinit(testing.allocator);
+    const res = try buildLine(testing.allocator, .{
         .session_name = "s",
         .windows = &windows,
         .left = "",
@@ -607,25 +584,27 @@ test "windowRanges reports exact columns for each window entry — bug #290" {
         .left_length = 0,
         .right_length = 0,
         .width = 40,
-    });
-    defer testing.allocator.free(ranges);
+    }, &ranges);
+    defer res.deinit(testing.allocator);
 
     // Default formats "#I:#W#{?window_flags,...}" render as "0:one1:two".
-    try testing.expectEqual(@as(usize, 2), ranges.len);
-    try testing.expectEqual(@as(u32, 0), ranges[0].pos);
-    try testing.expectEqual(@as(u32, 0), ranges[0].start_col);
-    try testing.expectEqual(@as(u32, 5), ranges[0].end_col); // "0:one"
-    try testing.expectEqual(@as(u32, 1), ranges[1].pos);
-    try testing.expectEqual(@as(u32, 5), ranges[1].start_col);
-    try testing.expectEqual(@as(u32, 10), ranges[1].end_col); // "1:two"
+    try testing.expectEqual(@as(usize, 2), ranges.items.len);
+    try testing.expectEqual(@as(u32, 0), ranges.items[0].pos);
+    try testing.expectEqual(@as(u32, 0), ranges.items[0].start_col);
+    try testing.expectEqual(@as(u32, 5), ranges.items[0].end_col); // "0:one"
+    try testing.expectEqual(@as(u32, 1), ranges.items[1].pos);
+    try testing.expectEqual(@as(u32, 5), ranges.items[1].start_col);
+    try testing.expectEqual(@as(u32, 10), ranges.items[1].end_col); // "1:two"
 }
 
-test "windowRanges honours left prefix and justify — bug #290" {
+test "buildLine honours left prefix and justify — bug #290" {
     const windows = [_]WindowInfo{
         .{ .index = 0, .name = "win", .flags = "", .is_active = false },
     };
     // Left template "[s] " -> 4 cols, then entry "0:win".
-    const ranges = try windowRanges(testing.allocator, .{
+    var ranges = std.ArrayList(WindowRange).empty;
+    defer ranges.deinit(testing.allocator);
+    const res = try buildLine(testing.allocator, .{
         .session_name = "s",
         .windows = &windows,
         .left = "[#{session_name}] ",
@@ -633,16 +612,16 @@ test "windowRanges honours left prefix and justify — bug #290" {
         .left_length = 10,
         .right_length = 0,
         .width = 40,
-    });
-    defer testing.allocator.free(ranges);
+    }, &ranges);
+    defer res.deinit(testing.allocator);
 
-    try testing.expectEqual(@as(usize, 1), ranges.len);
-    try testing.expectEqual(@as(u32, 0), ranges[0].pos);
-    try testing.expectEqual(@as(u32, 4), ranges[0].start_col);
-    try testing.expectEqual(@as(u32, 9), ranges[0].end_col); // "0:win"
+    try testing.expectEqual(@as(usize, 1), ranges.items.len);
+    try testing.expectEqual(@as(u32, 0), ranges.items[0].pos);
+    try testing.expectEqual(@as(u32, 4), ranges.items[0].start_col);
+    try testing.expectEqual(@as(u32, 9), ranges.items[0].end_col); // "0:win"
 }
 
-test "windowRanges truncates centre to available width — bug #290" {
+test "buildLine truncates centre to available width — bug #290" {
     const windows = [_]WindowInfo{
         .{ .index = 0, .name = "first", .flags = "", .is_active = false },
         .{ .index = 1, .name = "second", .flags = "", .is_active = false },
@@ -650,7 +629,9 @@ test "windowRanges truncates centre to available width — bug #290" {
     // Width 8: left+right empty, so centre gets 8 cols. First entry "0:first"
     // (7 cols) fits; the second entry's first column ("1:second") is cut to
     // exactly the remaining 1 column.
-    const ranges = try windowRanges(testing.allocator, .{
+    var ranges = std.ArrayList(WindowRange).empty;
+    defer ranges.deinit(testing.allocator);
+    const res = try buildLine(testing.allocator, .{
         .session_name = "s",
         .windows = &windows,
         .left = "",
@@ -658,14 +639,14 @@ test "windowRanges truncates centre to available width — bug #290" {
         .left_length = 0,
         .right_length = 0,
         .width = 8,
-    });
-    defer testing.allocator.free(ranges);
+    }, &ranges);
+    defer res.deinit(testing.allocator);
 
-    try testing.expectEqual(@as(usize, 2), ranges.len);
-    try testing.expectEqual(@as(u32, 0), ranges[0].pos);
-    try testing.expectEqual(@as(u32, 0), ranges[0].start_col);
-    try testing.expectEqual(@as(u32, 7), ranges[0].end_col);
-    try testing.expectEqual(@as(u32, 1), ranges[1].pos);
-    try testing.expectEqual(@as(u32, 7), ranges[1].start_col);
-    try testing.expectEqual(@as(u32, 8), ranges[1].end_col);
+    try testing.expectEqual(@as(usize, 2), ranges.items.len);
+    try testing.expectEqual(@as(u32, 0), ranges.items[0].pos);
+    try testing.expectEqual(@as(u32, 0), ranges.items[0].start_col);
+    try testing.expectEqual(@as(u32, 7), ranges.items[0].end_col);
+    try testing.expectEqual(@as(u32, 1), ranges.items[1].pos);
+    try testing.expectEqual(@as(u32, 7), ranges.items[1].start_col);
+    try testing.expectEqual(@as(u32, 8), ranges.items[1].end_col);
 }
