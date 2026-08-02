@@ -4,6 +4,14 @@ const colour = @import("colour.zig");
 const grid = @import("grid.zig");
 const char_width = @import("char_width.zig");
 
+/// Upper bound on a sixel's DCS payload. Larger images (e.g. a 1024×1536 PNG
+/// previewed at native resolution, whose sixel is ~2.6 MiB) can never fit in a
+/// single output frame — the client's `MAX_OUT_BUF` is 1 MiB — so emitting
+/// them produces an oversized frame the server drops and then re-renders
+/// forever, freezing the display (bug #298). Cap is kept well under 1 MiB to
+/// leave room for the frame header and any text diff.
+pub const MAX_SIXEL_DATA = 768 * 1024;
+
 /// A sixel image stored as the raw DCS bytes (ESC P ... ESC \) received from
 /// the child process. We keep the original bytes so we can re-emit them
 /// verbatim to the outer terminal, which handles actual pixel rendering.
@@ -227,6 +235,15 @@ pub const Screen = struct {
         // built-in defaults the footprint could be wrong and we must wait for
         // the real dimensions before deciding (see #203).
         if (self.cell_size_known and (footprint_rows > self.grid.height or footprint_cols > self.grid.width)) {
+            self.allocator.free(dcs_bytes);
+            return;
+        }
+        // A sixel whose raw DCS is too large to fit in one output frame can't
+        // be relayed to the client; placing it would make the renderer emit an
+        // oversized frame that gets dropped and re-rendered in a loop, freezing
+        // the display (bug #298). Drop it outright.
+        if (dcs_bytes.len > MAX_SIXEL_DATA) {
+            std.log.warn("dropping oversized sixel: {d} bytes (cap {d})", .{ dcs_bytes.len, MAX_SIXEL_DATA });
             self.allocator.free(dcs_bytes);
             return;
         }
@@ -1688,6 +1705,26 @@ test "addSixelImage drops an image larger than the pane — bug #203" {
     try testing.expect(screen.sixel_images[0] == null);
     try testing.expect(!screen.grid.getCell(0, 0).attr.sixel);
     try testing.expectEqual(@as(u32, 0), screen.cursor.y);
+}
+
+test "addSixelImage drops a sixel whose DCS exceeds the frame size cap — bug #298" {
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+    screen.cell_px_width = 20;
+    screen.cell_px_height = 20;
+    screen.cell_size_known = true;
+
+    // A 2.6 MiB sixel (e.g. a 1024×1536 PNG at native resolution) can never
+    // fit in a single output frame; it must be dropped, not placed and then
+    // re-rendered forever.
+    const dcs = try testing.allocator.alloc(u8, MAX_SIXEL_DATA + 1);
+    @memset(dcs, 'x'); // addSixelImage takes ownership and frees on drop
+    screen.cursor.x = 0;
+    screen.cursor.y = 0;
+    try screen.addSixelImage(dcs, 100, 200);
+
+    try testing.expect(screen.sixel_images[0] == null);
+    try testing.expect(screen.pending_sixel == null);
 }
 
 test "addSixelImage buffers an image before cell size is known — bug #203" {
