@@ -24,6 +24,15 @@ pub const std_options: std.Options = .{
 extern "c" fn tcflush(fd: c_int, queue_selector: c_int) c_int;
 const TCIFLUSH = 1;
 
+fn currentMillis() i64 {
+    var tv: extern struct {
+        tv_sec: i64,
+        tv_usec: i64,
+    } = undefined;
+    _ = std.c.gettimeofday(@ptrCast(&tv), null);
+    return tv.tv_sec * 1000 + @divFloor(tv.tv_usec, 1000);
+}
+
 var sigwinchFlag = std.atomic.Value(bool).init(false);
 // Set when the controlling terminal hangs up (mosh/ssh transport drop). The
 // client must survive it — mosh -a keeps the pty alive and resumes it.
@@ -661,6 +670,7 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
     var awaiting_cell_size = false;
     var cell_resp_buf: [32]u8 = undefined;
     var cell_resp_len: usize = 0;
+    var last_diag_ms: i64 = 0;
 
     // Client logging is opt-in: the server sends the `client_log` message with
     // the `client-log-file` path when a client connects (empty = disabled). The
@@ -688,6 +698,14 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
         if (congested != backpressure) {
             backpressure = congested;
             std.log.warn("client backpressure {s} (out_buf={d})", .{ if (congested) "on" else "off", out_buf.items.len });
+        }
+        // CPU-spike diagnostic (bug #298): every ~2 s report how much is queued
+        // for the downstream pty, so a 90% CPU report can be attributed to the
+        // client relaying a large frame vs the server spinning.
+        const diag_now = currentMillis();
+        if (diag_now - last_diag_ms > 2000) {
+            last_diag_ms = diag_now;
+            std.log.info("client: out_buf={d} backpressure={any}", .{ out_buf.items.len, congested });
         }
         if (congested) {
             pollfds[0] = .{ .fd = -1, .events = 0, .revents = 0 };

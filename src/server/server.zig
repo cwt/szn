@@ -220,6 +220,13 @@ pub const Server = struct {
     /// `client_log` message, since the client never loads the server config.
     client_log_file: []const u8 = "",
 
+    /// CPU-spike diagnostic (bug #298): count loop iterations and log the rate
+    /// every 2 s. A run-away number means the event loop is busy-spinning; a
+    /// bounded number with a large render_buf means it is doing legitimate heavy
+    /// work (e.g. rendering a big sixel).
+    loop_iters: u64 = 0,
+    last_iter_log_ms: i64 = 0,
+
     /// Frame-flow diagnostics (bug #298): total frames/bytes queued to display
     /// clients, to attribute a frozen screen to server→client, client→pty, or
     /// mosh.
@@ -2602,6 +2609,13 @@ fn pumpPaneInput(self: *Server) void {
     }
 
     pub fn renderToDisplayClient(self: *Server) void {
+        self.loop_iters += 1;
+        const iter_now = currentMillis();
+        if (iter_now - self.last_iter_log_ms > 2000) {
+            self.last_iter_log_ms = iter_now;
+            std.log.info("server loop: {d} iters/2s, behind={any}", .{ self.loop_iters, self.anyDisplayClientBehind() });
+            self.loop_iters = 0;
+        }
         self.sendRequestCellSize();
         const session = self.activeSession() orelse return;
         const window = session.active_window orelse return;
