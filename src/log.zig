@@ -27,6 +27,10 @@ const O_TRUNC = switch (builtin.os.tag) {
     .macos, .ios, .watchos, .tvos => 0x0400,
     else => 0x0200,
 };
+const O_APPEND = switch (builtin.os.tag) {
+    .macos, .ios, .watchos, .tvos => 0x0008,
+    else => 0x0400,
+};
 
 var log_fd: ?std.posix.fd_t = null;
 var log_fd_failed: std.atomic.Value(bool) = std.atomic.Value(bool).init(false);
@@ -128,11 +132,11 @@ pub fn enable(path_or_default: []const u8) void {
     const fd = if (std.mem.eql(u8, path_or_default, "default")) blk: {
         var buf: [256]u8 = undefined;
         const resolved = resolveLogPath(&buf) catch return;
-        break :blk open(resolved, O_WRONLY | O_CREAT | O_TRUNC, 0o600);
+        break :blk open(resolved, O_WRONLY | O_CREAT | O_APPEND, 0o600);
     } else blk2: {
         var path_buf: [256]u8 = undefined;
         const path_z = std.fmt.bufPrintZ(&path_buf, "{s}", .{path_or_default}) catch return;
-        break :blk2 open(path_z.ptr, O_WRONLY | O_CREAT | O_TRUNC, 0o600);
+        break :blk2 open(path_z.ptr, O_WRONLY | O_CREAT | O_APPEND, 0o600);
     };
     if (fd < 0) return;
     if (log_fd) |old| _ = c.close(old);
