@@ -208,6 +208,12 @@ pub const Server = struct {
     /// of writing them starved client-socket reads, wedging the whole loop.
     last_flow_warn_ms: i64 = 0,
 
+    /// Frame-flow diagnostics (bug #298): total frames/bytes queued to display
+    /// clients, to attribute a frozen screen to server→client, client→pty, or
+    /// mosh.
+    rendered_frames: u64 = 0,
+    rendered_bytes: u64 = 0,
+
     pub fn init(allocator: std.mem.Allocator) ServerError!Server {
         const key_binding = @import("../key_binding.zig");
         const key_mod = @import("../key.zig");
@@ -2438,6 +2444,12 @@ fn pumpPaneInput(self: *Server) void {
             return true;
         }
         dc.out_buf.appendSlice(self.allocator, data) catch return false;
+        // Frame-flow diagnostics (bug #298): count what is queued for clients.
+        self.rendered_frames += 1;
+        self.rendered_bytes += @as(u64, @intCast(data.len));
+        if (self.rendered_frames % 200 == 0) {
+            std.log.info("server queued {d} frames / {d} bytes to clients", .{ self.rendered_frames, self.rendered_bytes });
+        }
         return true;
     }
 

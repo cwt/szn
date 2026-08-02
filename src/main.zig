@@ -644,6 +644,10 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
     // it and probe for revival instead of exiting (bug #298).
     var stdin_alive = true;
     var stdin_check_counter: usize = 0;
+    // Frame-flow diagnostics (bug #298): count what the server sends us so a
+    // frozen screen can be attributed to server→client, client→pty, or mosh.
+    var recv_frames: u64 = 0;
+    var recv_bytes: u64 = 0;
 
     // The client never loads the server config that enables logging (and the
     // server's log path can be overridden by the `log-file` option), so write
@@ -794,6 +798,11 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
                 switch (msg_type) {
                     .ready => {},
                     .output => {
+                        recv_frames += 1;
+                        recv_bytes += @as(u64, @intCast(data.len));
+                        if (recv_frames % 200 == 0) {
+                            std.log.info("client received {d} frames / {d} bytes from server", .{ recv_frames, recv_bytes });
+                        }
                         // Never block on a full downstream pty. Queue the frame
                         // and flush; the poll loop drains on POLL.OUT. If the
                         // cap was hit and a backlog dropped, request a full
