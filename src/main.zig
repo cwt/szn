@@ -524,46 +524,47 @@ fn runServerDaemon(allocator: std.mem.Allocator) Error!void {
     server.shutdownServer();
 }
 
-fn queryCellSize(server_fd: i32, stdout_fd: i32, stdin_fd: i32, sx: u32, sy: u32) bool {
-    _ = c.write(stdout_fd, "\x1b[14t", 5);
+const CellSize = struct { h: u32, w: u32 };
 
-    // bug #224: use a short poll timeout (5 ms) instead of blocking for 200 ms.
-    // Terminals that don't support CSI 14 t will never reply; a 5 ms timeout
-    // keeps the client responsive while still catching fast responders.
-    var pollfd: [1]std.posix.pollfd = .{.{ .fd = stdin_fd, .events = @as(i16, @intCast(std.posix.POLL.IN)), .revents = 0 }};
-    const rc = std.posix.poll(&pollfd, 5) catch return false;
-    if (rc < 1) return false;
-
-    var buf: [64]u8 = undefined;
-    const n = c.read(stdin_fd, &buf, buf.len);
-    if (n <= 0) return false;
-    const len: usize = @intCast(n);
-
-    if (len < 6 or buf[0] != 0x1b or buf[1] != '[' or buf[2] != '4' or buf[3] != ';') return false;
-    var i: usize = 4;
-    var px_h: u32 = 0;
-    while (i < len and buf[i] >= '0' and buf[i] <= '9') : (i += 1) {
-        px_h = px_h * 10 + @as(u32, buf[i] - '0');
-    }
-    if (i >= len or buf[i] != ';') return false;
-    i += 1;
-    var px_w: u32 = 0;
-    while (i < len and buf[i] >= '0' and buf[i] <= '9') : (i += 1) {
-        px_w = px_w * 10 + @as(u32, buf[i] - '0');
-    }
-    if (i >= len or buf[i] != 't' or sy == 0 or sx == 0) return false;
-
-    const cell_h: u32 = @max(px_h / sy, 1);
-    const cell_w: u32 = @max(px_w / sx, 1);
-
+fn sendCellSize(server_fd: i32, cell: CellSize) void {
     var cell_data: [8]u8 = undefined;
-    std.mem.writeInt(u32, cell_data[0..4], cell_h, .little);
-    std.mem.writeInt(u32, cell_data[4..8], cell_w, .little);
+    std.mem.writeInt(u32, cell_data[0..4], cell.h, .little);
+    std.mem.writeInt(u32, cell_data[4..8], cell.w, .little);
     const cs_pkt = protocol.Packet.make(.cell_size, &cell_data);
     var cs_buf: [128]u8 = undefined;
     const cs_ser = cs_pkt.serialize(&cs_buf);
     writeServer(server_fd, cs_ser);
-    return true;
+}
+
+/// Length of a complete CSI 14 t response starting at data[0], or null if it
+/// isn't one or is incomplete. Format: ESC [ 4 ; <h> ; <w> t
+fn cellSizeResponseLen(data: []const u8) ?usize {
+    if (data.len < 6) return null;
+    if (data[0] != 0x1b or data[1] != '[' or data[2] != '4' or data[3] != ';') return null;
+    var i: usize = 4;
+    while (i < data.len and data[i] >= '0' and data[i] <= '9') : (i += 1) {}
+    if (i >= data.len or data[i] != ';') return null;
+    i += 1;
+    while (i < data.len and data[i] >= '0' and data[i] <= '9') : (i += 1) {}
+    if (i >= data.len or data[i] != 't') return null;
+    return i + 1;
+}
+
+/// Parse a CSI 14 t response into pixel-per-cell dimensions.
+fn parseCellSizeResponse(data: []const u8, sx: u32, sy: u32) ?CellSize {
+    const rl = cellSizeResponseLen(data) orelse return null;
+    if (sx == 0 or sy == 0) return null;
+    var i: usize = 4;
+    var px_h: u32 = 0;
+    while (i < rl and data[i] >= '0' and data[i] <= '9') : (i += 1) {
+        px_h = px_h * 10 + @as(u32, data[i] - '0');
+    }
+    i += 1; // skip ';'
+    var px_w: u32 = 0;
+    while (i < rl and data[i] >= '0' and data[i] <= '9') : (i += 1) {
+        px_w = px_w * 10 + @as(u32, data[i] - '0');
+    }
+    return .{ .h = @max(px_h / sy, 1), .w = @max(px_w / sx, 1) };
 }
 
 fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
@@ -653,6 +654,13 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
     var pkt_cellsize: u64 = 0;
     var pkt_detach: u64 = 0;
     var pkt_other: u64 = 0;
+    // Set while a CSI 14 t cell-size query is outstanding. The terminal's reply
+    // (ESC [ 4 ; h ; w t) arrives on stdin, possibly after the old 5 ms poll
+    // would have given up (mosh latency); it must be consumed here rather than
+    // forwarded to the pane as a keystroke, which leaked it to the screen.
+    var awaiting_cell_size = false;
+    var cell_resp_buf: [32]u8 = undefined;
+    var cell_resp_len: usize = 0;
 
     // Client logging is opt-in: the server sends the `client_log` message with
     // the `client-log-file` path when a client connects (empty = disabled). The
@@ -730,11 +738,72 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
             if (n > 0) {
                 const len: usize = @intCast(n);
                 const was_dead = !stdin_alive;
-                const sd_pkt = protocol.Packet.make(.stdin_data, stdin_buf[0..len]);
-                var sd_buf: [4096 + 5]u8 = undefined;
-                const sd_ser = sd_pkt.serialize(&sd_buf);
-                writeServer(server_fd, sd_ser);
                 stdin_alive = true;
+
+                // While a cell-size query is outstanding, consume the terminal's
+                // reply (which can arrive late over mosh) instead of leaking it
+                // to the pane as a keystroke.
+                var forward: []const u8 = stdin_buf[0..len];
+                if (awaiting_cell_size) {
+                    const copy = @min(len, cell_resp_buf.len - cell_resp_len);
+                    @memcpy(cell_resp_buf[cell_resp_len..][0..copy], stdin_buf[0..copy]);
+                    cell_resp_len += copy;
+                    if (cellSizeResponseLen(cell_resp_buf[0..cell_resp_len])) |rl| {
+                        if (parseCellSizeResponse(cell_resp_buf[0..rl], sx, sy)) |cell| {
+                            sendCellSize(server_fd, cell);
+                        }
+                        awaiting_cell_size = false;
+                        // Forward any bytes that followed the response.
+                        var leftover: [40]u8 = undefined;
+                        var l: usize = 0;
+                        for (cell_resp_buf[rl..cell_resp_len]) |b| {
+                            if (l < leftover.len) {
+                                leftover[l] = b;
+                                l += 1;
+                            }
+                        }
+                        for (stdin_buf[copy..len]) |b| {
+                            if (l < leftover.len) {
+                                leftover[l] = b;
+                                l += 1;
+                            }
+                        }
+                        cell_resp_len = 0;
+                        forward = leftover[0..l];
+                    } else if (cell_resp_len >= cell_resp_buf.len or
+                        (cell_resp_len >= 2 and (cell_resp_buf[0] != 0x1b or cell_resp_buf[1] != '[')))
+                    {
+                        // Not a reply (bad prefix, or terminal won't answer) —
+                        // stop waiting and forward everything buffered.
+                        awaiting_cell_size = false;
+                        var leftover: [40]u8 = undefined;
+                        var l: usize = 0;
+                        for (cell_resp_buf[0..cell_resp_len]) |b| {
+                            if (l < leftover.len) {
+                                leftover[l] = b;
+                                l += 1;
+                            }
+                        }
+                        for (stdin_buf[copy..len]) |b| {
+                            if (l < leftover.len) {
+                                leftover[l] = b;
+                                l += 1;
+                            }
+                        }
+                        cell_resp_len = 0;
+                        forward = leftover[0..l];
+                    } else {
+                        // Partial reply — keep buffering; don't forward yet.
+                        forward = stdin_buf[0..0];
+                    }
+                }
+
+                if (forward.len > 0) {
+                    const sd_pkt = protocol.Packet.make(.stdin_data, forward);
+                    var sd_buf: [4096 + 5]u8 = undefined;
+                    const sd_ser = sd_pkt.serialize(&sd_buf);
+                    writeServer(server_fd, sd_ser);
+                }
                 if (was_dead) {
                     // The display link is back; ask for a full repaint so any
                     // frames dropped while it was down are replaced coherently.
@@ -833,7 +902,12 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
                     },
                     .request_cell_size => {
                         pkt_cellsize += 1;
-                        _ = queryCellSize(server_fd, stdout_fd, stdin_fd, sx, sy);
+                        // Ask the terminal for its pixel size; consume the
+                        // (possibly late) reply in the stdin handler so it can't
+                        // leak to the pane as a keystroke (bug #298).
+                        _ = c.write(stdout_fd, "\x1b[14t", 5);
+                        awaiting_cell_size = true;
+                        cell_resp_len = 0;
                     },
                     .client_log => {
                         // The server tells us where to log (from its
@@ -990,4 +1064,20 @@ test "ignoring SIGPIPE turns a write to a closed peer into EPIPE, not a crash �
     const n = std.c.write(fds[1], "x", 1);
     const err = std.c.errno(n);
     try testing.expect(err == .PIPE);
+}
+
+test "parseCellSizeResponse parses a CSI 14 t reply and computes cell px — bug #298" {
+    const resp = "\x1b[4;1920;3260t";
+    const cell = parseCellSizeResponse(resp, 80, 24).?;
+    try testing.expectEqual(@as(u32, 80), cell.h); // 1920 / 24
+    try testing.expectEqual(@as(u32, 40), cell.w); // 3260 / 80
+}
+
+test "cellSizeResponseLen rejects non-responses and incomplete replies — bug #298" {
+    // Not a response at all.
+    try testing.expect(cellSizeResponseLen("hello world") == null);
+    // Incomplete: missing the trailing 't'.
+    try testing.expect(cellSizeResponseLen("\x1b[4;1920;3260") == null);
+    // Valid.
+    try testing.expect(cellSizeResponseLen("\x1b[4;1920;3260t").? == "\x1b[4;1920;3260t".len);
 }
