@@ -237,6 +237,10 @@ pub const SESSION_OPTIONS = &[_]OptionDef{
     .{ .name = "pane-active-border-fg", .type = .colour, .default = OptionValue{ .colour = Colour.fromRgb(0x00, 0x5f, 0xaf) } },
     .{ .name = "pane-border-format", .type = .string, .default = OptionValue{ .string = "#P" } },
     .{ .name = "history-limit", .type = .number, .default = OptionValue{ .number = 2000 }, .min = 0, .max = 1000000 },
+    // Soft RLIMIT_NOFILE floor applied to every pane shell (mirrors `ulimit -n`).
+    // The launchd session default on macOS is 256; raise this so panes aren't
+    // starved of file descriptors. Set to 0 to disable the raise.
+    .{ .name = "nofile-limit", .type = .number, .default = OptionValue{ .number = 1024 }, .min = 0, .max = 100000000 },
     .{ .name = "mouse", .type = .flag, .default = OptionValue{ .flag = true } },
     .{ .name = "prefix", .type = .key, .default = OptionValue{ .key = Key{ .char = .{ .code = 'b', .mod = .{ .ctrl = true } } } } }, // C-b
     .{ .name = "prefix2", .type = .key, .default = OptionValue{ .key = .{ .special = .{ .key = .escape } } } },

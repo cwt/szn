@@ -81,6 +81,34 @@ pub fn setCloexec(fd: i32) void {
     _ = fcntl(fd, F_SETFD, FD_CLOEXEC);
 }
 
+/// Best-effort raise of the soft RLIMIT_NOFILE to at least MIN_NOFILE_SOFT before
+/// exec'ing a pane shell. The launchd session default on macOS is 256 (and gets
+/// reset by OS upgrades), which is far too low for a terminal multiplexer. The
+/// hard limit still caps us and any failure is non-fatal: we just keep whatever
+/// the process already inherited.
+/// Best-effort raise of the soft RLIMIT_NOFILE to at least `min_soft` before
+/// exec'ing a pane shell. The launchd session default on macOS is 256 (and gets
+/// reset by OS upgrades), which is far too low for a terminal multiplexer. The
+/// hard limit still caps us and any failure is non-fatal: we just keep whatever
+/// the process already inherited. `min_soft == 0` disables the raise.
+fn raiseNoFileLimit(min_soft: u64) void {
+    if (min_soft == 0) return;
+    if (comptime @import("builtin").os.tag != .windows) {
+        var rlim: std.c.rlimit = undefined;
+        if (std.c.getrlimit(.NOFILE, &rlim) != 0) {
+            std.log.warn("getrlimit(NOFILE) failed: {s}", .{@tagName(std.c.errno(-1))});
+            return;
+        }
+        if (rlim.cur >= min_soft) return;
+
+        const target: std.c.rlim_t = if (rlim.max < min_soft) rlim.max else @intCast(min_soft);
+        rlim.cur = target;
+        if (std.c.setrlimit(.NOFILE, &rlim) != 0) {
+            std.log.warn("could not raise RLIMIT_NOFILE to {d}: {s}", .{ target, @tagName(std.c.errno(-1)) });
+        }
+    }
+}
+
 const TIOCSWINSZ: c_ulong = if (@import("builtin").os.tag == .macos) 0x80087467 else 0x5414;
 const DEFAULT_SHELL: []const u8 = "/bin/zsh";
 const WNOHANG: c_int = 1;
@@ -111,7 +139,7 @@ pub const Pty = struct {
         return Pty{ .master = master, .slave = slave, .pid = -1 };
     }
 
-    pub fn spawn(self: *Pty, allocator: std.mem.Allocator, argv: ?[]const []const u8, szn_env: []const u8, szn_pane: []const u8, cwd: ?[]const u8) Error!void {
+    pub fn spawn(self: *Pty, allocator: std.mem.Allocator, argv: ?[]const []const u8, szn_env: []const u8, szn_pane: []const u8, cwd: ?[]const u8, min_nofile_soft: u64) Error!void {
         const args = argv orelse &.{DEFAULT_SHELL};
 
         var argv_z = try allocator.alloc(?[*:0]const u8, args.len + 1);
@@ -150,6 +178,7 @@ pub const Pty = struct {
         const pid = fork();
         if (pid < 0) return error.ForkFailed;
         if (pid == 0) {
+            raiseNoFileLimit(min_nofile_soft);
             _ = close(self.master);
             _ = login_tty(self.slave);
 
@@ -317,7 +346,7 @@ test "spawn with multiple argv elements — bug #123" {
     defer pty.deinit();
 
     const argv = [_][]const u8{ "sh", "-c", "true" };
-    try pty.spawn(testing.allocator, &argv, "", "", null);
+    try pty.spawn(testing.allocator, &argv, "", "", null, 1024);
 }
 
 test "writeInput retries partial write — bug #124" {
@@ -343,7 +372,7 @@ test "reap only clears pid on actual child exit — bug #125" {
     defer pty.deinit();
 
     const argv = [_][]const u8{ "sh", "-c", "exit 42" };
-    try pty.spawn(testing.allocator, &argv, "", "", null);
+    try pty.spawn(testing.allocator, &argv, "", "", null, 1024);
     try testing.expect(pty.pid > 0);
 
     // reap immediately — child might not have exited yet
@@ -357,7 +386,7 @@ test "getCwd with zero-terminated stack buffer — bug #242" {
     defer pty.deinit();
 
     const argv = [_][]const u8{"true"};
-    try pty.spawn(testing.allocator, &argv, "", "", null);
+    try pty.spawn(testing.allocator, &argv, "", "", null, 1024);
 
     // Call getCwd: should return duplicated cwd or ProcessExited
     if (pty.getCwd(testing.allocator)) |cwd| {

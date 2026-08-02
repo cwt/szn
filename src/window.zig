@@ -76,7 +76,7 @@ pub const Pane = struct {
 
     extern "c" fn getpid() c_int;
 
-    pub fn spawn(self: *Pane, allocator: std.mem.Allocator, argv: ?[]const []const u8, cwd: ?[]const u8) Error!void {
+    pub fn spawn(self: *Pane, allocator: std.mem.Allocator, argv: ?[]const []const u8, cwd: ?[]const u8, min_nofile_soft: u64) Error!void {
         var pty = try Pty.open();
         errdefer pty.deinit();
         const ws = std.c.winsize{
@@ -96,7 +96,7 @@ pub const Pane = struct {
         var szn_pane_buf: [32]u8 = undefined;
         const szn_pane = std.fmt.bufPrint(&szn_pane_buf, "%{d}", .{self.id}) catch "%0";
 
-        try pty.spawn(allocator, argv, szn_env, szn_pane, cwd);
+        try pty.spawn(allocator, argv, szn_env, szn_pane, cwd, min_nofile_soft);
         self.pty = pty;
         self.cwd = if (cwd) |cwd_val| try self.screen.grid.allocator.dupe(u8, cwd_val) else null;
     }
@@ -567,7 +567,7 @@ test "pane initial size matches window" {
 test "pane pty deinit ownership" {
     var pane = try Pane.init(testing.allocator, 1, 80, 24);
     const argv = [_][]const u8{"true"};
-    try pane.spawn(testing.allocator, &argv, null);
+    try pane.spawn(testing.allocator, &argv, null, 1024);
     try testing.expect(pane.pty != null);
     pane.deinit();
 }
@@ -575,7 +575,7 @@ test "pane pty deinit ownership" {
 test "pane double deinit is safe" {
     var pane = try Pane.init(testing.allocator, 1, 80, 24);
     const argv = [_][]const u8{"true"};
-    try pane.spawn(testing.allocator, &argv, null);
+    try pane.spawn(testing.allocator, &argv, null, 1024);
     pane.deinit(); // first deinit: closes pty, sets pty = null
     pane.deinit(); // second deinit: pty is null, skips pty.deinit()
 }

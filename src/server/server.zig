@@ -782,7 +782,9 @@ pub const Server = struct {
     pub fn setupPane(self: *Server, session: *Session, pane: *Pane, cwd: ?[]const u8) ServerError!void {
         const shell = try self.resolveShell(self.allocator, session);
         defer self.allocator.free(shell);
-        try pane.spawn(self.allocator, &[_][]const u8{shell}, cwd);
+        const raw_nofile = self.global_options.asNumber("nofile-limit") orelse 1024;
+        const min_nofile: u64 = if (raw_nofile > 0) @intCast(raw_nofile) else 0;
+        try pane.spawn(self.allocator, &[_][]const u8{shell}, cwd, min_nofile);
         try self.watchPanePty(pane);
         pane.drainPty();
     }
@@ -2335,7 +2337,6 @@ pub const Server = struct {
             // A transient EAGAIN may have cleared by now — drain before giving up.
             _ = self.flushDisplayClient(dc);
             if (dc.out_buf.items.len + data.len > MAX_OUT_BUF) {
-                std.log.warn("display client {d} output buffer overflow, resetting pending output", .{dc.fd});
                 // Drop the stalled backlog and resync the diff state so the next
                 // render repaints a complete screen instead of a truncated one.
                 dc.out_buf.clearRetainingCapacity();
