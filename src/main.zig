@@ -145,6 +145,19 @@ fn getVersionComptime() []const u8 {
 fn mainInner(init: std.process.Init) Error!void {
     const allocator = init.gpa;
 
+    // Ignore SIGPIPE: a write to a closed peer (a mosh link that dropped, a
+    // detached terminal, a display client that went away) must return EPIPE so
+    // the caller can handle it, not kill the process with a signal. Without
+    // this the interactive client dies the instant the downstream pty closes
+    // mid-redraw, which is exactly the freeze seen when running opencode over
+    // mosh (bug #298).
+    var ignore_pipe: std.posix.Sigaction = .{
+        .handler = .{ .handler = std.c.SIG.IGN },
+        .mask = std.posix.sigemptyset(),
+        .flags = std.posix.SA.RESTART,
+    };
+    std.posix.sigaction(.PIPE, &ignore_pipe, null);
+
     if (detectNested()) {
         std.debug.print("szn: you are already running szn; nested instances are not supported\n", .{});
         std.process.exit(1);
@@ -789,4 +802,27 @@ test "flushStdout keeps the remainder on a full pipe and drains later — bug #2
         if (flushStdout(fds[1], &out_buf)) break;
     }
     try testing.expectEqual(@as(usize, 0), out_buf.items.len);
+}
+
+test "ignoring SIGPIPE turns a write to a closed peer into EPIPE, not a crash — bug #298" {
+    // The interactive client over mosh must survive a closed downstream pty.
+    // Mirror main.zig's disposition so the test process is not killed by the
+    // signal, then confirm write() to a closed fd returns EPIPE.
+    var act: std.posix.Sigaction = .{
+        .handler = .{ .handler = std.c.SIG.IGN },
+        .mask = std.posix.sigemptyset(),
+        .flags = std.posix.SA.RESTART,
+    };
+    var old: std.posix.Sigaction = undefined;
+    std.posix.sigaction(.PIPE, &act, &old);
+    defer std.posix.sigaction(.PIPE, &old, null);
+
+    var fds: [2]i32 = undefined;
+    if (std.c.pipe(&fds) != 0) return error.Unexpected;
+    defer _ = std.c.close(fds[1]);
+    _ = std.c.close(fds[0]); // close read end so writes get EPIPE
+
+    const n = std.c.write(fds[1], "x", 1);
+    const err = std.c.errno(n);
+    try testing.expect(err == .PIPE);
 }
