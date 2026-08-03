@@ -10,7 +10,7 @@ timestamp: 2026-08-03T00:00:00Z
 Track progress toward a fully functional tmux clone.
 Based on code audit as of 2026-06-21.
 
-## Current State: 802 tests passing, all bugs resolved (#249–#299), OKF documentation reform (BUGS.md split into 299 individual bug files), interactive client hardened for mosh/SSH transport drops, sixel rendering stability pass, server/client backpressure flow control.
+## Current State: 802 tests passing, all bugs resolved (#249–#309), 11 new performance bugs documented (#300–#310), OKF documentation reform (BUGS.md split into 299 individual bug files), interactive client hardened for mosh/SSH transport drops, sixel rendering stability pass, server/client backpressure flow control.
 
 ---
 
