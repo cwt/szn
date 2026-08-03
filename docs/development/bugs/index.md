@@ -15,14 +15,14 @@ Sorted by number. See individual bug files for details.
 |---|---:|
 | CRITICAL | 41 |
 | HIGH | 70 |
-| MEDIUM | 99 |
-| LOW | 71 |
+| MEDIUM | 101 |
+| LOW | 78 |
 | LOW (architecture) | 3 |
 | LOW (code quality) | 5 |
 | LOW (correctness) | 1 |
 | LOW (cosmetic) | 1 |
 | LOW (performance) | 1 |
-| LOW (performance) → **MEDIUM** (correctness regression in original fix) | 1 |
+| LOW (performance) → MEDIUM (correctness regression in original fix) | 1 |
 | LOW (safety) | 1 |
 | MEDIUM (dead code / refcount drift) | 1 |
 | MEDIUM (performance) | 4 |
@@ -317,7 +317,7 @@ Sorted by number. See individual bug files for details.
 | [273](273.md) | Dead Range Check in `isCombining` Omits Hangul Jamo Marks | LOW | Fixed |
 | [274](274.md) | Unchecked `@intCast` in `combiningIndex` | LOW | Fixed |
 | [275](275.md) | Format Loop Bug in `appendWithStrftime` | LOW | Fixed |
-| [276](276.md) | $O(M^2)$ Re-evaluations in Copy Mode Search | LOW (performance) → **MEDIUM** (correctness regression in original fix) | Fixed |
+| [276](276.md) | O(M²) Re-evaluations in Copy Mode Search | LOW (performance) → MEDIUM (correctness regression in original fix) | Fixed |
 | [277](277.md) | `renderAll` cursor position unclamped to pane and terminal bounds — CUP writes outside pane area | MEDIUM | Fixed |
 | [278](278.md) | `insertLines` double-decrements sixel refcount of the discarded bottom line | CRITICAL | Fixed |
 | [279](279.md) | `deleteLines` decrements the refcount of the *preserved* bottom line | CRITICAL | Fixed |
@@ -341,8 +341,6 @@ Sorted by number. See individual bug files for details.
 | [297](297.md) | `out_buf` / `command_buf` unbounded growth with a non-reading client | LOW | Fixed |
 | [298](298.md) | Client freezes on a full stdout — blocking `writeAll` stalls input forwarding (mosh backpressure) | HIGH | Fixed |
 | [299](299.md) | `awaiting_cell_size` stdin forwarding overruns a 40-byte buffer — client crash / input corruption (regression from #298) | HIGH | Fixed |
-
-
 | [300](300.md) | getForegroundProcessName called every render for automatic_rename windows | MEDIUM | Fixed |
 | [303](303.md) | anyDisplayClientBehind() called 3+ times per render loop | LOW | Fixed |
 | [304](304.md) | pane_border format strings allocated per-pane per-client every render | MEDIUM | Fixed |
