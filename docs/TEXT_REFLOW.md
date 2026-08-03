@@ -44,7 +44,7 @@ Unlike Latin-based scripts where characters are rendered sequentially side-by-si
 Splitting a Thai cluster across line boundaries makes the text unreadable and corrupts the script.
 
 ### Anatomy of a Thai Cluster
-A single Thai character cell is defined as a base consonant that may contain up to two combining marks (stored inside `comb1` and `comb2` of the [Cell](file:///Users/cwt/Projects/szn/src/grid.zig#L25) struct). A cluster spans across a sequence of cells matching this syntax:
+A single Thai character cell is defined as a base consonant that may contain up to two combining marks (stored inside `comb1` and `comb2` of the [Cell](../src/grid.zig) struct). A cluster spans across a sequence of cells matching this syntax:
 
 ```
 [Leading Vowel]? ➔ Base Consonant [รร]? ➔ [Following Vowel]? ➔ [Right-Attaching Marks]*
@@ -58,7 +58,7 @@ A single Thai character cell is defined as a base consonant that may contain up 
 4. **Right-Attaching Marks** (U+0E2F PAIYANNOI ฯ, U+0E46 MAI YAMOK ๆ): Width 1.
 5. **Combining Marks** (SARA U ◌ุ, MAI EK ◌่, SARA I ◌ิ, etc.): Stored directly inside the cell attributes of the base or following vowel, occupying 0 additional cells.
 
-The function [findThaiClusterEnd](file:///Users/cwt/Projects/szn/src/thai.zig) identifies these boundary rules to ensure that a cluster is treated as an indivisible unit during wrapping.
+The function [findThaiClusterEnd](../src/thai.zig) identifies these boundary rules to ensure that a cluster is treated as an indivisible unit during wrapping.
 
 ---
 
@@ -91,7 +91,7 @@ Instead of separate grow and shrink logic, `szn` runs a unified, lossless, three
 ### Step 2: Rewrapping
 * The flat array of cells is re-wrapped into physical rows fitting the `new_width`.
 * Wrap boundaries are calculated by checking:
-  * Thai cluster endings ([findThaiClusterEnd](file:///Users/cwt/Projects/szn/src/thai.zig)).
+    * Thai cluster endings ([findThaiClusterEnd](../src/thai.zig)).
   * CJK wide character pairs (`is_padding` matches).
   * Syllable look-ahead boundaries.
 * If a line wraps, its physical row is marked `wrapped = true`, and padded with empty `char = 0` cells to the new width.
