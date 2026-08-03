@@ -80,15 +80,15 @@ All core development phases (Phases 0 to 11) are fully implemented and complete.
 - Standard VT100 wrap-pending and Background Color Erase (BCE) support for accurate rendering.
 - Full multi-pane layouts, interactive copy mode, status bars, and config parsing (`.szn.conf`).
 - **Advanced Text Reflow** — automatically rewraps text on pane resizing, respecting CJK characters, combining marks, and Thai cluster integrity (including an $O(1)$ syllable backtracking algorithm). See [docs/TEXT_REFLOW.md](docs/TEXT_REFLOW.md) for full design details.
-- **760 unit and integration tests passing.**
+- **861 unit and integration tests passing (1 skipped).**
 
 ### Performance
 
 szn is designed to be lean:
 
-- **Startup:** ~7.5ms from launch to prompt (competitive with tmux's ~8.1ms).
-- **Memory:** ~2 MB RSS idle — roughly half of tmux's ~4 MB.
-- **Binary size:** 674 KB stripped (x86-64 Linux), 537 KB on macOS.
+- **Startup:** ~7.5 ms from launch to prompt (tmux: ~7.8 ms).
+- **Memory:** ~2.2 MB RSS idle — szn uses ~2200 kB vs tmux's ~4000 kB.
+- **Binary size:** 831 KB stripped (x86-64 Linux), 685 KB on macOS.
 
 A hyperfine-based benchmark suite is included at [`bench.sh`](bench.sh) for tracking these metrics.
 
