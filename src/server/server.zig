@@ -2748,17 +2748,18 @@ fn pumpPaneInput(self: *Server) void {
 
             const pane_base_index: i64 = session.options.asNumber("pane-base-index") orelse 0;
 
-            var pane_border_owned: std.ArrayList([]const u8) = .empty;
-            defer {
-                for (pane_border_owned.items) |f| self.allocator.free(f);
-                pane_border_owned.deinit(self.allocator);
-            }
             const pane_border_fmt_str = session.options.asString("pane-border-format") orelse "";
+            const border_gen = session.border_format_gen;
             for (dc.bounds_buf.items) |*pb| {
                 if (pane_border_fmt_str.len == 0) {
                     // bug #280: never enqueue the literal "" — the defer would
                     // free a static string. Leave the default (also "") and skip.
                     pb.border_format = "";
+                    continue;
+                }
+                // Use cached expanded format if generation matches (bug #304/#307).
+                if (pb.pane.border_format_gen == border_gen and pb.pane.border_format_cached != null) {
+                    pb.border_format = pb.pane.border_format_cached.?;
                     continue;
                 }
                 var pane_idx: i64 = pane_base_index;
@@ -2775,7 +2776,6 @@ fn pumpPaneInput(self: *Server) void {
                 const win_idx_str = std.fmt.bufPrint(&win_idx_buf, "{d}", .{window.id}) catch "0";
 
                 var ctx = format_mod.Context.init(self.allocator);
-                defer ctx.deinit();
                 ctx.set("session_name", session.name) catch {};
                 ctx.set("pane_index", pane_idx_str) catch {};
                 ctx.set("window_index", win_idx_str) catch {};
@@ -2784,16 +2784,20 @@ fn pumpPaneInput(self: *Server) void {
                 ctx.set("host", self.host_name) catch {};
                 ctx.set("host_short", self.host_short) catch {};
 
-                const expanded = format_mod.expand(self.allocator, pane_border_fmt_str, &ctx) catch |err| blk: {
+                const expanded = format_mod.expand(pb.pane.screen.grid.allocator, pane_border_fmt_str, &ctx) catch |err| blk: {
                     std.log.warn("pane-border-format expand error: {any}", .{err});
                     // bug #280: the fallback is a literal — do NOT enqueue it
                     // for the defer-free; leave the default empty format.
                     pb.border_format = "";
                     break :blk null;
                 };
+                ctx.deinit();
                 if (expanded) |exp| {
-                    pane_border_owned.append(self.allocator, exp) catch {};
+                    pb.pane.border_format_cached = exp;
+                    pb.pane.border_format_gen = border_gen;
                     pb.border_format = exp;
+                } else {
+                    pb.border_format = "";
                 }
             }
 

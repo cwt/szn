@@ -18,6 +18,9 @@ pub const Session = struct {
     options: options_mod.Options,
     window_options: options_mod.Options,
     next_win_id: u32 = 0,
+    /// Incremented when pane-border-format changes. Used to invalidate
+    /// per-pane border format caches (bug #304/#307).
+    border_format_gen: u32 = 0,
 
     pub fn init(self: *Session, backing: std.mem.Allocator, id: u32, name: []const u8, width: u32, height: u32, global_options: ?*const options_mod.Options, global_window_options: ?*const options_mod.Options) Error!void {
         self.arena = std.heap.ArenaAllocator.init(backing);

@@ -31,6 +31,10 @@ pub const Pane = struct {
     /// false in destroyPane so isPaneValid becomes an O(1) pointer check
     /// instead of an O(N*M*P) tree walk (bug #305).
     valid: bool = true,
+    /// Cached expanded pane-border-format. Valid when border_format_gen matches
+    /// the session's current gen. Only re-expand on cache miss (bug #304/#307).
+    border_format_cached: ?[]const u8 = null,
+    border_format_gen: u32 = 0,
     choose_mode: choose_mod.ChooseMode = .{},
     saved_grid: ?@import("grid.zig").Grid = null,
     clock_time: u64 = 0,
@@ -48,6 +52,7 @@ pub const Pane = struct {
     pub fn deinit(self: *Pane) void {
         if (self.deinited) return;
         self.deinited = true;
+        if (self.border_format_cached) |bf| self.screen.grid.allocator.free(bf);
         self.choose_mode.deinit(self.screen.grid.allocator);
         if (self.saved_grid) |*g| g.deinit();
         if (self.parser) |*p| p.deinit(self.screen.grid.allocator);
