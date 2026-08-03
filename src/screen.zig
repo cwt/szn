@@ -241,7 +241,10 @@ pub const Screen = struct {
         // oversized frame that gets dropped and re-rendered in a loop, freezing
         // the display (bug #298). Drop it outright.
         if (dcs_bytes.len > MAX_SIXEL_DATA) {
-            std.log.warn("dropping oversized sixel: {d} bytes (cap {d})", .{ dcs_bytes.len, MAX_SIXEL_DATA });
+            // Verbose diagnostic only — stripped in ReleaseFast so it doesn't
+            // noise the test build (the oversized-image drop is expected
+            // behaviour, exercised by the oversized-sixel regression test).
+            std.log.debug("dropping oversized sixel: {d} bytes (cap {d})", .{ dcs_bytes.len, MAX_SIXEL_DATA });
             self.allocator.free(dcs_bytes);
             return;
         }

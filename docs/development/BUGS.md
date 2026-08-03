@@ -4078,3 +4078,30 @@ This is the client-side mirror of bug #207: the server's display sockets were ma
 
 **Follow-up (session unresponsive after img2sixel):** after a few img2sixel runs the session froze even though the server never spun (loop diag stayed at 1 iters/2s) and the client drained its output (out_buf 0). The client's `awaiting_cell_size` stdin handling buffered any input starting with `\x1b[` as a "possible CSI 14 t reply"; with the server re-requesting cell size every 500 ms, escape-sequence input (arrow keys etc.) could be swallowed, making the session feel frozen. Fix: only buffer input that actually starts like a cell-size reply (`\x1b[4`); everything else forwards immediately. **Verified fixed** — no CPU spike, no frozen client, no ghost images.
 
+---
+
+### 299. `awaiting_cell_size` stdin forwarding overruns a 40-byte buffer — client crash / input corruption (regression from #298)
+
+**File:** `src/main.zig` (interactive client `awaiting_cell_size` handler in `runInteractiveClient`)
+**Severity:** HIGH
+**Status:** ✅ FIXED — bytes that follow a cell-size reply (or a non-reply escape sequence) are now assembled into a scratch buffer sized for the worst case (32-byte response buffer + full 4096-byte read) via `assembleCellSizeForward`; the forwarded slice is always bounded to what was copied, so nothing is truncated and no OOB slice is taken. Regression test: `assembleCellSizeForward forwards all interleaved input — bug #299`.
+
+The #298 fix (rev 507) that stops arrow keys being swallowed while a cell-size reply is awaited reassembles the bytes to forward through a fixed 40-byte `leftover` buffer, but forwards `leftover[0..l]` where `l` is **unbounded**:
+
+```zig
+var leftover: [40]u8 = undefined;
+var l: usize = 0;
+for (cell_resp_buf[rl..cell_resp_len]) |b| { if (l < leftover.len) { leftover[l] = b; l += 1; } }
+for (stdin_buf[copy..len]) |b| { if (l < leftover.len) { leftover[l] = b; l += 1; } }
+forward = leftover[0..l];   // ← l can be > 40
+```
+
+`stdin_buf` is up to 4096 bytes. If a cell-size reply arrives in the same read as more than 40 bytes of following input (e.g. a paste or bracketed paste while an image is on screen, exactly the opencode/mosh scenario #298 targets), `l` exceeds 40. The `if (l < leftover.len)` guard only bounds the *write*; the final `leftover[0..l]` slice is not bounded, so:
+
+- In safe/debug builds it is an **index-out-of-bounds panic** that kills the client (worse than the original freeze).
+- In release builds it forwards `l - 40` bytes of **uninitialized stack memory** to the pane (data corruption), because only the first 40 bytes were ever written.
+
+The bug is conditional on the brief `awaiting_cell_size` window (open only while a sixel awaits a measured cell size, re-opened ~every 500 ms by the server's rate-limited `sendRequestCellSize`) and on >40 bytes of interleaved input — narrow, but reachable and a direct regression introduced by the #298 follow-up. No test covered interleaved input of this size (the existing tests only check `parseCellSizeResponse` / `cellSizeResponseLen`), so it slipped through.
+
+**Fix:** `assembleCellSizeForward(buffered, incoming, scratch)` copies both byte ranges into `scratch` and returns `scratch[0..n]` where `n` is exactly the number copied (capped at `scratch.len`), and the call site passes a stack buffer of `[4096 + 64]u8` — large enough for the worst case (32 + 4096 = 4128 < 4160). The returned slice can therefore never overrun the buffer, and the full interleaved input is forwarded intact.
+

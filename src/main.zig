@@ -578,6 +578,27 @@ fn parseCellSizeResponse(data: []const u8, sx: u32, sy: u32) ?CellSize {
     return .{ .h = @max(px_h / sy, 1), .w = @max(px_w / sx, 1) };
 }
 
+/// Concatenate `buffered` (bytes already read while awaiting a cell-size reply)
+/// and `incoming` (the rest of the current stdin read) into `scratch`, returning
+/// the slice that should be forwarded to the pane as keystrokes. The scratch must
+/// be large enough for the worst case (the 32-byte response buffer + a full
+/// 4096-byte read); callers must pass a correctly-sized buffer so no bytes are
+/// truncated and the returned slice never overruns `scratch` (bug #299).
+fn assembleCellSizeForward(buffered: []const u8, incoming: []const u8, scratch: []u8) []const u8 {
+    var n: usize = 0;
+    for (buffered) |b| {
+        if (n >= scratch.len) break;
+        scratch[n] = b;
+        n += 1;
+    }
+    for (incoming) |b| {
+        if (n >= scratch.len) break;
+        scratch[n] = b;
+        n += 1;
+    }
+    return scratch[0..n];
+}
+
 fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
     const stdin_fd = c.STDIN_FILENO;
     const stdout_fd = c.STDOUT_FILENO;
@@ -760,6 +781,10 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
                 const was_dead = !stdin_alive;
                 stdin_alive = true;
 
+                // Scratch buffer for forwarding bytes that arrived while a
+                // cell-size reply was awaited. Sized for the worst case: a full
+                // 4096-byte read plus the 32-byte response buffer (bug #299).
+                var fwd_scratch: [4096 + 64]u8 = undefined;
                 // While a cell-size query is outstanding, consume the terminal's
                 // reply (which can arrive late over mosh) instead of leaking it
                 // to the pane as a keystroke.
@@ -768,54 +793,34 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
                     const copy = @min(len, cell_resp_buf.len - cell_resp_len);
                     @memcpy(cell_resp_buf[cell_resp_len..][0..copy], stdin_buf[0..copy]);
                     cell_resp_len += copy;
-                    if (cellSizeResponseLen(cell_resp_buf[0..cell_resp_len])) |rl| {
-                        if (parseCellSizeResponse(cell_resp_buf[0..rl], sx, sy)) |cell| {
+                    // A complete reply? `rl` is its length; bytes after it (and
+                    // the rest of this read) must still be forwarded.
+                    const rl = cellSizeResponseLen(cell_resp_buf[0..cell_resp_len]);
+                    const is_reply = rl != null;
+                    // Definitely NOT a reply (e.g. an arrow key / other escape
+                    // sequence) — forward everything immediately so keyboard
+                    // input isn't swallowed (bug #298).
+                    const is_not_reply = cell_resp_len >= cell_resp_buf.len or
+                        (cell_resp_len >= 2 and (cell_resp_buf[0] != 0x1b or cell_resp_buf[1] != '[')) or
+                        (cell_resp_len >= 3 and cell_resp_buf[2] != '4');
+                    if (is_reply) {
+                        if (parseCellSizeResponse(cell_resp_buf[0..rl.?], sx, sy)) |cell| {
                             sendCellSize(server_fd, cell);
                         }
                         awaiting_cell_size = false;
-                        // Forward any bytes that followed the response.
-                        var leftover: [40]u8 = undefined;
-                        var l: usize = 0;
-                        for (cell_resp_buf[rl..cell_resp_len]) |b| {
-                            if (l < leftover.len) {
-                                leftover[l] = b;
-                                l += 1;
-                            }
-                        }
-                        for (stdin_buf[copy..len]) |b| {
-                            if (l < leftover.len) {
-                                leftover[l] = b;
-                                l += 1;
-                            }
-                        }
+                        // Forward the bytes that trailed the reply plus the rest
+                        // of this read. The scratch must hold the worst case
+                        // (32-byte response buffer + full 4096-byte read); a tiny
+                        // fixed buffer would truncate input or panic on an OOB
+                        // slice in safe builds (bug #299).
+                        const trailing = cell_resp_buf[rl.?..cell_resp_len];
+                        forward = assembleCellSizeForward(trailing, stdin_buf[copy..len], &fwd_scratch);
                         cell_resp_len = 0;
-                        forward = leftover[0..l];
-                    } else if (cell_resp_len >= cell_resp_buf.len or
-                        (cell_resp_len >= 2 and (cell_resp_buf[0] != 0x1b or cell_resp_buf[1] != '[')) or
-                        (cell_resp_len >= 3 and cell_resp_buf[2] != '4'))
-                    {
-                        // Not a cell-size reply — e.g. an arrow key or other
-                        // escape sequence. Forward it immediately instead of
-                        // buffering it as a possible reply, which would swallow
-                        // keyboard input while awaiting_cell_size is set (the
-                        // server re-requests every 500 ms) (bug #298).
+                    } else if (is_not_reply) {
                         awaiting_cell_size = false;
-                        var leftover: [40]u8 = undefined;
-                        var l: usize = 0;
-                        for (cell_resp_buf[0..cell_resp_len]) |b| {
-                            if (l < leftover.len) {
-                                leftover[l] = b;
-                                l += 1;
-                            }
-                        }
-                        for (stdin_buf[copy..len]) |b| {
-                            if (l < leftover.len) {
-                                leftover[l] = b;
-                                l += 1;
-                            }
-                        }
+                        const buffered = cell_resp_buf[0..cell_resp_len];
+                        forward = assembleCellSizeForward(buffered, stdin_buf[copy..len], &fwd_scratch);
                         cell_resp_len = 0;
-                        forward = leftover[0..l];
                     } else {
                         // Partial reply — keep buffering; don't forward yet.
                         forward = stdin_buf[0..0];
@@ -1104,4 +1109,33 @@ test "cellSizeResponseLen rejects non-responses and incomplete replies — bug #
     try testing.expect(cellSizeResponseLen("\x1b[4;1920;3260") == null);
     // Valid.
     try testing.expect(cellSizeResponseLen("\x1b[4;1920;3260t").? == "\x1b[4;1920;3260t".len);
+}
+
+test "assembleCellSizeForward forwards all interleaved input — bug #299" {
+    // A 32-byte response buffer plus a 4096-byte read is the worst case the
+    // stdin handler must forward without truncation or an OOB slice.
+    var scratch: [4096 + 64]u8 = undefined;
+
+    // 1) A complete cell-size reply immediately followed by a long keystroke
+    //    burst (> 40 bytes) must all be forwarded, not truncated.
+    const reply = "\x1b[4;1920;3260t";
+    const after = "hello world this is a long paste that exceeds the old 40-byte leftover buffer limit by a lot ";
+    const fwd = assembleCellSizeForward(reply, after, &scratch);
+    var expect: [1024]u8 = undefined;
+    const total = reply.len + after.len;
+    @memcpy(expect[0..reply.len], reply);
+    @memcpy(expect[reply.len..total], after);
+    try testing.expectEqualSlices(u8, expect[0..total], fwd);
+
+    // 2) A non-reply escape sequence (arrow key) buffered in the 32-byte
+    //    response buffer plus a large following read must forward everything.
+    const esc = "\x1b[OA";
+    var big: [4000]u8 = undefined;
+    @memset(&big, 'x');
+    const fwd2 = assembleCellSizeForward(esc, &big, &scratch);
+    var expect2: [4096]u8 = undefined;
+    @memcpy(expect2[0..esc.len], esc);
+    @memcpy(expect2[esc.len..][0..big.len], &big);
+    try testing.expectEqualSlices(u8, expect2[0 .. esc.len + big.len], fwd2);
+    try testing.expectEqual(@as(usize, esc.len + big.len), fwd2.len);
 }
