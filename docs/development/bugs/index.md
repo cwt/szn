@@ -33,9 +33,9 @@ Sorted by number. See individual bug files for details.
 | Status | Count |
 |---|---:|
 | Fixed | 286 |
-| False Positive | 9 |
+| False Positive | 12 |
 | Intentional | 1 |
-| Open | 3 |
+| Open | 0 |
 | **Total** | **299** |
 
 ## All Bugs
@@ -45,9 +45,9 @@ Sorted by number. See individual bug files for details.
 | [1](001.md) | Use-after-free in Session.rename() | CRITICAL | Fixed |
 | [2](002.md) | Invalid-free of string literal in dispatch | CRITICAL | Fixed |
 | [3](003.md) | Stack overflow when >64 fds registered | CRITICAL | Fixed |
-| [4](004.md) | Pane memory leak on Window.deinit | CRITICAL | Open |
-| [5](005.md) | cmdKillPane leaks killed pane | CRITICAL | Open |
-| [6](006.md) | cmdJoinPane leaks dummy pane | CRITICAL | Open |
+| [4](004.md) | Pane memory leak on Window.deinit | CRITICAL | False Positive |
+| [5](005.md) | cmdKillPane leaks killed pane | CRITICAL | False Positive |
+| [6](006.md) | cmdJoinPane leaks dummy pane | CRITICAL | False Positive |
 | [7](007.md) | Child process inherits all parent fds after fork | CRITICAL | Fixed |
 | [8](008.md) | reverseIndex emits wrong escape sequence | CRITICAL | Fixed |
 | [9](009.md) | Memory leak in Grid.scrollDown() | HIGH | Fixed |
