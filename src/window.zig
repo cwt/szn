@@ -27,6 +27,10 @@ pub const Pane = struct {
     title_ctx: ?*anyopaque = null,
     cwd: ?[]const u8 = null,
     deinited: bool = false,
+    /// Track whether this pane is still registered in a live window. Set to
+    /// false in destroyPane so isPaneValid becomes an O(1) pointer check
+    /// instead of an O(N*M*P) tree walk (bug #305).
+    valid: bool = true,
     choose_mode: choose_mod.ChooseMode = .{},
     saved_grid: ?@import("grid.zig").Grid = null,
     clock_time: u64 = 0,

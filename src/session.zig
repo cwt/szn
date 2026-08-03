@@ -99,6 +99,7 @@ pub const Session = struct {
 
         _ = self.windows.swapRemove(idx);
         for (win.panes.items) |p| {
+            p.valid = false;
             p.deinit();
         }
 

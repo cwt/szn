@@ -232,6 +232,10 @@ pub const Server = struct {
     /// mosh.
     rendered_frames: u64 = 0,
     rendered_bytes: u64 = 0,
+    /// Counter of how many display clients are currently behind. Incremented
+    /// when a client transitions into behind state, decremented when it
+    /// clears. anyDisplayClientBehind() becomes O(1) (bug #303).
+    behind_count: u32 = 0,
 
     pub fn init(allocator: std.mem.Allocator) ServerError!Server {
         const key_binding = @import("../key_binding.zig");
@@ -625,15 +629,9 @@ fn pumpPaneInput(self: *Server) void {
     }
 }
 
-    fn isPaneValid(self: *Server, pane: *Pane) bool {
-        for (self.sessions.items) |session| {
-            for (session.windows.items) |win| {
-                for (win.panes.items) |p| {
-                    if (p == pane) return true;
-                }
-            }
-        }
-        return false;
+    fn isPaneValid(_self: *Server, pane: *Pane) bool {
+        _ = _self;
+        return pane.valid;
     }
 
     /// Drop cached mouse pointers (`mouse_press_pane`, `mouse_autoscroll_pane`)
@@ -822,6 +820,7 @@ fn pumpPaneInput(self: *Server) void {
                 session.killWindow(self.allocator, win);
             } else {
                 win.removePane(self.allocator, pane);
+                pane.valid = false;
                 pane.deinit();
             }
 
@@ -2492,11 +2491,19 @@ fn pumpPaneInput(self: *Server) void {
         // watermark — only ADDITIONAL frames are skipped once the buffer is
         // already large.
         if (dc.behind or dc.out_buf.items.len >= RENDER_HIGH_WATERMARK) {
-            dc.behind = true;
+            if (!dc.behind) {
+                dc.behind = true;
+                self.behind_count += 1;
+            }
             return true;
         }
         dc.out_buf.appendSlice(self.allocator, data) catch return false;
-        if (dc.out_buf.items.len > RENDER_HIGH_WATERMARK) dc.behind = true;
+        if (dc.out_buf.items.len > RENDER_HIGH_WATERMARK) {
+            if (!dc.behind) {
+                dc.behind = true;
+                self.behind_count += 1;
+            }
+        }
         // Frame-flow diagnostics (bug #298): count what is queued for clients.
         self.rendered_frames += 1;
         self.rendered_bytes += @as(u64, @intCast(data.len));
@@ -2531,7 +2538,10 @@ fn pumpPaneInput(self: *Server) void {
             dc.out_buf.clearRetainingCapacity();
             // Client has caught up — clear the flow-control flag so pane reads
             // (and thus the child) resume at full speed.
-            dc.behind = false;
+            if (dc.behind) {
+                dc.behind = false;
+                self.behind_count -= 1;
+            }
             self.loop.removeFdEvents(dc.fd, std.posix.POLL.OUT);
             if (!self.anyDisplayClientBehind()) {
                 self.resumePaneReads();
@@ -2549,10 +2559,7 @@ fn pumpPaneInput(self: *Server) void {
     /// True when any attached display client is behind and flow control should
     /// throttle pane reads.
     fn anyDisplayClientBehind(self: *Server) bool {
-        for (self.display_clients.items) |*dc| {
-            if (dc.behind) return true;
-        }
-        return false;
+        return self.behind_count > 0;
     }
 
     /// Re-arm POLL.IN on every pane master after flow control clears, so the
@@ -4444,6 +4451,7 @@ test "appendClientOut marks display client behind on watermark and skips frames 
     // Draining the buffer (writable fd) clears behind and empties out_buf,
     // letting the child resume at full speed.
     dc.behind = true;
+    server.behind_count += 1;
     dc.out_buf.clearRetainingCapacity();
     try dc.out_buf.appendSlice(testing.allocator, "small");
     try testing.expect(server.flushDisplayClient(dc));
