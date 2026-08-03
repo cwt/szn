@@ -9,6 +9,8 @@ timestamp: 2026-08-03T00:00:00Z
 
 Sorted by number. See individual bug files for details.
 
+> **Note:** Bugs **#301** and **#302** were never filed (MIA). The #300–#310 performance sweep skipped straight from #300 to #303, so the tracker covers #1–#300 and #303–#310 — 308 bugs total.
+
 ## Summary by Severity
 
 | Severity | Count |
