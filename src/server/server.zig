@@ -96,6 +96,10 @@ pub const DisplayClient = struct {
     /// bug #298 follow-up).
     behind: bool = false,
     bounds_buf: std.ArrayList(render.PaneBounds) = .empty,
+    /// Cached expanded status line. Valid when `status_line_width` matches the
+    /// client's current width and the server is not dirty (bug #309).
+    status_line: ?[]const u8 = null,
+    status_line_width: u32 = 0,
 
     pub fn deinit(self: *DisplayClient, allocator: std.mem.Allocator) void {
         self.last_cells.deinit(allocator);
@@ -2805,10 +2809,21 @@ fn pumpPaneInput(self: *Server) void {
             defer if (status_line_owned) |sl| self.allocator.free(sl);
 
             if (status_enabled and self.message == null and !self.command_mode) {
-                status_line_owned = self.buildStatusLine(session, dc.sx) catch |err| blk: {
-                    std.log.warn("buildStatusLine error: {any}", .{err});
-                    break :blk null;
-                };
+                // Use cached status line when valid (bug #309).
+                const use_cache = !self.dirty and dc.status_line_width == dc.sx and dc.status_line != null;
+                if (use_cache) {
+                    status_line_owned = dc.status_line;
+                } else {
+                    status_line_owned = self.buildStatusLine(session, dc.sx) catch |err| blk: {
+                        std.log.warn("buildStatusLine error: {any}", .{err});
+                        break :blk null;
+                    };
+                    if (status_line_owned) |sl| {
+                        if (dc.status_line) |prev| self.allocator.free(prev);
+                        dc.status_line = sl;
+                        dc.status_line_width = dc.sx;
+                    }
+                }
             }
 
             const pane_in_copy_mode = pane.screen.copy_mode != null;
