@@ -2812,7 +2812,11 @@ fn pumpPaneInput(self: *Server) void {
                 // Use cached status line when valid (bug #309).
                 const use_cache = !self.dirty and dc.status_line_width == dc.sx and dc.status_line != null;
                 if (use_cache) {
-                    status_line_owned = dc.status_line;
+                    // Clone the cached status line so the defer doesn't double-free.
+                    status_line_owned = self.allocator.dupe(u8, dc.status_line.?) catch |err| blk: {
+                        std.log.warn("status line dupe error: {any}", .{err});
+                        break :blk null;
+                    };
                 } else {
                     status_line_owned = self.buildStatusLine(session, dc.sx) catch |err| blk: {
                         std.log.warn("buildStatusLine error: {any}", .{err});
