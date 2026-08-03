@@ -105,6 +105,9 @@ pub const DisplayClient = struct {
         self.last_cells.deinit(allocator);
         self.out_buf.deinit(allocator);
         self.bounds_buf.deinit(allocator);
+        if (self.status_line) |sl| {
+            allocator.free(sl);
+        }
         if (self.merged_screen) |*ms| {
             ms.deinit();
         }
@@ -1008,6 +1011,10 @@ fn pumpPaneInput(self: *Server) void {
                     }
                     for (self.display_clients.items, 0..) |*dc, idx| {
                         if (dc.fd == cfd) {
+                            if (dc.behind) {
+                                dc.behind = false;
+                                self.behind_count -|= 1;
+                            }
                             dc.deinit(self.allocator);
                             _ = self.display_clients.swapRemove(idx);
                             break;
@@ -2322,6 +2329,10 @@ fn pumpPaneInput(self: *Server) void {
                 .detach => {
                     for (self.display_clients.items, 0..) |*dc, idx| {
                         if (dc.fd == fd) {
+                            if (dc.behind) {
+                                dc.behind = false;
+                                self.behind_count -|= 1;
+                            }
                             dc.deinit(self.allocator);
                             _ = self.display_clients.swapRemove(idx);
                             break;
@@ -2367,6 +2378,10 @@ fn pumpPaneInput(self: *Server) void {
         _ = c.close(fd);
         for (self.display_clients.items, 0..) |*dc, idx| {
             if (dc.fd == fd) {
+                if (dc.behind) {
+                    dc.behind = false;
+                    self.behind_count -|= 1;
+                }
                 dc.deinit(self.allocator);
                 _ = self.display_clients.swapRemove(idx);
                 break;
@@ -2532,6 +2547,10 @@ fn pumpPaneInput(self: *Server) void {
                 if (err == .AGAIN) break;
                 // Broken pipe / fatal — give up on this client's backlog.
                 dc.out_buf.clearRetainingCapacity();
+                if (dc.behind) {
+                    dc.behind = false;
+                    self.behind_count -|= 1;
+                }
                 self.loop.removeFdEvents(dc.fd, std.posix.POLL.OUT);
                 return true;
             }
@@ -2657,12 +2676,17 @@ fn pumpPaneInput(self: *Server) void {
             if (win.automatic_rename) {
                 if (win.active_pane) |ap| {
                     if (ap.pty) |pty| {
-                        var proc_buf: [128]u8 = undefined;
-                        // Only call the syscall when the cached name differs
-                        // from the current window name (bug #300).
+                        const now = currentMillis();
+                        // Rate-limit the syscall to once per second. Caching
+                        // forever (bug #300) froze the title after the first
+                        // rename because last_foreground_name aliased win.name,
+                        // so the skip-check was always true. A timer re-checks
+                        // and stays cheap.
                         if (win.last_foreground_name.len == 0 or
-                            !std.mem.eql(u8, win.last_foreground_name, win.name))
+                            now - win.last_foreground_check_ms >= 1000)
                         {
+                            win.last_foreground_check_ms = now;
+                            var proc_buf: [128]u8 = undefined;
                             if (pty.getForegroundProcessName(&proc_buf)) |proc_name_val| {
                                 if (proc_name_val.len > 0 and !std.mem.eql(u8, win.name, proc_name_val)) {
                                     const duped = win.allocator.dupe(u8, proc_name_val) catch break;
@@ -2824,7 +2848,10 @@ fn pumpPaneInput(self: *Server) void {
                     };
                     if (status_line_owned) |sl| {
                         if (dc.status_line) |prev| self.allocator.free(prev);
-                        dc.status_line = sl;
+                        // The cache owns an independent copy so the defer's
+                        // free of `status_line_owned` cannot leave dc.status_line
+                        // dangling (bug #309 double-free).
+                        dc.status_line = self.allocator.dupe(u8, sl) catch null;
                         dc.status_line_width = dc.sx;
                     }
                 }

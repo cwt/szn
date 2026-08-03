@@ -343,13 +343,12 @@ Sorted by number. See individual bug files for details.
 | [299](299.md) | `awaiting_cell_size` stdin forwarding overruns a 40-byte buffer — client crash / input corruption (regression from #298) | HIGH | Fixed |
 
 
-| [300](300.md) | getForegroundProcessName called every render for automatic_rename windows | MEDIUM | Open |
-| [303](303.md) | anyDisplayClientBehind() called 3+ times per render loop | LOW | Open |
-| [304](304.md) | pane_border format strings allocated per-pane per-client every render | MEDIUM | Open |
-| [305](305.md) | isPaneValid is O(N*M*P) called on every PTY event | LOW | Open |
-| [306](306.md) | collectPaneBounds allocates ArrayList on every call | LOW | Open |
-| [307](307.md) | pane_border_format re-expanded every render even when unchanged | LOW | Open |
-| [308](308.md) | merged screen init/deinit path has unnecessary allocation checks | LOW | Open |
-| [309](309.md) | status line built from scratch every render | LOW | Open |
-| [310](310.md) | tickAutoscroll traverses full session tree on every loop iteration | LOW | Open |
-| [310](310.md) | tickAutoscroll traverses full session tree on every loop iteration | LOW | Open |
+| [300](300.md) | getForegroundProcessName called every render for automatic_rename windows | MEDIUM | Fixed |
+| [303](303.md) | anyDisplayClientBehind() called 3+ times per render loop | LOW | Fixed |
+| [304](304.md) | pane_border format strings allocated per-pane per-client every render | MEDIUM | Fixed |
+| [305](305.md) | isPaneValid is O(N*M*P) called on every PTY event | LOW | Fixed |
+| [306](306.md) | collectPaneBounds allocates ArrayList on every call | LOW | False Positive |
+| [307](307.md) | pane_border_format re-expanded every render even when unchanged | LOW | Fixed |
+| [308](308.md) | merged screen init/deinit path has unnecessary allocation checks | LOW | False Positive |
+| [309](309.md) | status line built from scratch every render | LOW | Fixed |
+| [310](310.md) | tickAutoscroll traverses full session tree on every loop iteration | LOW | Fixed |

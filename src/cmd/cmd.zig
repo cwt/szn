@@ -928,6 +928,14 @@ fn cmdSetOption(server: *Server, args: []const []const u8) CmdResult {
             session.options.set(option_name, parsed_val) catch {};
         }
     }
+    // Invalidate the per-pane border format cache: the generation counter must
+    // move or a runtime pane-border-format change would stay frozen forever
+    // (bug #304/#307 follow-up).
+    if (std.mem.eql(u8, option_name, "pane-border-format")) {
+        if (server.activeSession()) |session| {
+            session.border_format_gen +%= 1;
+        }
+    }
     return .ok;
 }
 

@@ -10,7 +10,7 @@ timestamp: 2026-08-03T00:00:00Z
 Track progress toward a fully functional tmux clone.
 Based on code audit as of 2026-06-21.
 
-## Current State: 802 tests passing, all performance bugs resolved (#300–#310), 0 open performance issues remaining, OKF documentation reform (BUGS.md split into 299 individual bug files), interactive client hardened for mosh/SSH transport drops, sixel rendering stability pass, server/client backpressure flow control.
+## Current State: 862 tests passing, performance fixes (#300–#310) corrected — the original fixes introduced a status-line double-free crash and froze automatic_rename / pane-border-format / pane reads, now resolved, OKF documentation reform (BUGS.md split into 299 individual bug files), interactive client hardened for mosh/SSH transport drops, sixel rendering stability pass, server/client backpressure flow control.
 
 ---
 
@@ -31,7 +31,7 @@ Based on code audit as of 2026-06-21.
 | 10 | Commands | ✅ Done | ~73 | All 33+ MVP commands functional (including copy-mode, paste-buffer, find-window, show-messages, and list-keys) |
 | 11 | Full Integration | ✅ Done | ~30 | integration.zig integration test suite complete |
 
-**Total: 802 / 802 tests passing. All Phases 0–11 fully complete.**
+**Total: 862 / 862 tests passing. All Phases 0–11 fully complete.**
 
 ---
 

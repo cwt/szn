@@ -256,6 +256,10 @@ pub const Window = struct {
     /// Cached foreground process name from the last getForegroundProcessName
     /// call. Only call the syscall when this differs from win.name (bug #300).
     last_foreground_name: []const u8 = "",
+    /// Last time the foreground-process syscall ran, in ms. Rate-limits the
+    /// check to 1/sec so process changes are still detected without a syscall
+    /// on every render (bug #300 follow-up).
+    last_foreground_check_ms: i64 = 0,
 
     pub fn init(allocator: std.mem.Allocator, id: u32, name: []const u8, width: u32, height: u32, global_window_options: ?*const options_mod.Options, parent_screen: ?*const Screen) Error!Window {
         var options = if (global_window_options) |gwo| try gwo.clone(allocator) else try options_mod.Options.init(allocator, options_mod.WINDOW_OPTIONS);
