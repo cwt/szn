@@ -26,7 +26,7 @@ Sorted by number. See individual bug files for details.
 | LOW (safety) | 1 |
 | MEDIUM (dead code / refcount drift) | 1 |
 | MEDIUM (performance) | 4 |
-| **Total** | **309** |
+| **Total** | **308** |
 
 ## Summary by Status
 
@@ -36,7 +36,7 @@ Sorted by number. See individual bug files for details.
 | False Positive | 12 |
 | Intentional | 1 |
 | Open | 4 |
-| **Total** | **309** |
+| **Total** | **308** |
 
 ## All Bugs
 
