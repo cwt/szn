@@ -2,7 +2,7 @@
 type: project_priority
 title: "szn Functional Clone Progress"
 description: "Progress tracker toward a fully functional tmux clone."
-timestamp: 2026-07-30T00:00:00Z
+timestamp: 2026-08-03T00:00:00Z
 ---
 
 # szn — Functional Clone Progress
@@ -10,7 +10,7 @@ timestamp: 2026-07-30T00:00:00Z
 Track progress toward a fully functional tmux clone.
 Based on code audit as of 2026-06-21.
 
-## Current State: 802 tests passing, all MVP commands fully implemented, copy-mode fully integrated, all unit tests verified, tmux-compatible status bar with format engine rewrite, pane-border-format support, and a systematic 39-bug cleanup sweep (#210-#248).
+## Current State: 802 tests passing, all bugs resolved (#249–#299), OKF documentation reform (BUGS.md split into 299 individual bug files), interactive client hardened for mosh/SSH transport drops, sixel rendering stability pass, server/client backpressure flow control.
 
 ---
 

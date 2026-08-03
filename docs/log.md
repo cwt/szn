@@ -14,6 +14,10 @@ This file tracks all modifications, extensions, and updates to the `szn` documen
 | 2026-08-03T00:00:00Z | [BUGS.md](development/bugs/index.md) | Split | Split 299 bug entries into individual files in `docs/development/bugs/001.md`–`299.md` with `index.md` and `README.md` symlink. |
 | 2026-08-03T00:00:00Z | [index.md](development/index.md) | Updated | Changed Bugs link from `BUGS.md` to `bugs/index.md`; bumped timestamp. |
 | 2026-08-03T00:00:00Z | [index.md](development/bugs/index.md) | Created | Bug tracker index with summary tables and links to all 299 bug files. |
+| 2026-08-03T00:00:00Z | [v0.8.0.md](releases/v0.8.0.md) | Created | Created release notes for v0.8.0. |
+| 2026-08-03T00:00:00Z | [index.md](releases/index.md) | Updated | Added v0.8.0 to releases index; bumped timestamp. |
+| 2026-08-03T00:00:00Z | [PROGRESS.md](development/PROGRESS.md) | Updated | Updated current state description for v0.8.0; bumped timestamp. |
+| 2026-08-03T00:00:00Z | [build.zig.zon](../build.zig.zon) | Updated | Bumped version to 0.8.0. |
 | 2026-07-30T22:14:00Z | [BUGS.md](development/bugs/index.md) | Updated | Added entry #277 for render cursor clamping bug. |
 | 2026-07-30T00:00:00Z | [index.md](index.md) | Updated | Added log.md link and bumped timestamp. |
 | 2026-07-30T00:00:00Z | [index.md](development/index.md) | Updated | Added improvements.md link and bumped timestamp. |
