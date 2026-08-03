@@ -2654,16 +2654,29 @@ fn pumpPaneInput(self: *Server) void {
                 if (win.active_pane) |ap| {
                     if (ap.pty) |pty| {
                         var proc_buf: [128]u8 = undefined;
-                        if (pty.getForegroundProcessName(&proc_buf)) |proc_name_val| {
-                            if (proc_name_val.len > 0 and !std.mem.eql(u8, win.name, proc_name_val)) {
-                                if (win.allocator.dupe(u8, proc_name_val)) |new_name| {
+                        // Only call the syscall when the cached name differs
+                        // from the current window name (bug #300).
+                        if (win.last_foreground_name.len == 0 or
+                            !std.mem.eql(u8, win.last_foreground_name, win.name))
+                        {
+                            if (pty.getForegroundProcessName(&proc_buf)) |proc_name_val| {
+                                if (proc_name_val.len > 0 and !std.mem.eql(u8, win.name, proc_name_val)) {
+                                    const duped = win.allocator.dupe(u8, proc_name_val) catch break;
                                     win.allocator.free(win.name);
-                                    win.name = new_name;
+                                    win.name = duped;
+                                    if (win.last_foreground_name.len > 0) win.allocator.free(win.last_foreground_name);
+                                    win.last_foreground_name = duped;
                                     ap.dirty = true;
                                     self.dirty = true;
-                                } else |_| {}
-                            }
-                        } else |_| {}
+                                } else {
+                                    // Name unchanged — cache it to skip future syscalls.
+                                    if (win.last_foreground_name.len == 0) {
+                                        const cached = win.allocator.dupe(u8, proc_name_val) catch break;
+                                        win.last_foreground_name = cached;
+                                    }
+                                }
+                            } else |_| {}
+                        }
                     }
                 }
             }

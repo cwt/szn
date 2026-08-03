@@ -248,6 +248,9 @@ pub const Window = struct {
     layout: layout.Layout,
     options: options_mod.Options,
     automatic_rename: bool = true,
+    /// Cached foreground process name from the last getForegroundProcessName
+    /// call. Only call the syscall when this differs from win.name (bug #300).
+    last_foreground_name: []const u8 = "",
 
     pub fn init(allocator: std.mem.Allocator, id: u32, name: []const u8, width: u32, height: u32, global_window_options: ?*const options_mod.Options, parent_screen: ?*const Screen) Error!Window {
         var options = if (global_window_options) |gwo| try gwo.clone(allocator) else try options_mod.Options.init(allocator, options_mod.WINDOW_OPTIONS);
@@ -295,6 +298,7 @@ pub const Window = struct {
 
     pub fn deinit(self: *Window, allocator: std.mem.Allocator) void {
         allocator.free(self.name);
+        if (self.last_foreground_name.len > 0) allocator.free(self.last_foreground_name);
         self.layout.deinit();
         self.panes.deinit(allocator);
         self.options.deinit();
