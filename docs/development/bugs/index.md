@@ -9,16 +9,16 @@ timestamp: 2026-08-03T00:00:00Z
 
 Sorted by number. See individual bug files for details.
 
-> **Note:** Bugs **#301** and **#302** were never filed (MIA). The #300–#310 performance sweep skipped straight from #300 to #303, so the tracker covers #1–#300 and #303–#311 — 309 bugs total.
+> **Note:** Bugs **#301** and **#302** were never filed (MIA). The #300–#310 performance sweep skipped straight from #300 to #303, so the tracker covers #1–#300 and #303–#338 — 336 bugs total.
 
 ## Summary by Severity
 
 | Severity | Count |
 |---|---:|
-| CRITICAL | 41 |
-| HIGH | 71 |
-| MEDIUM | 101 |
-| LOW | 78 |
+| CRITICAL | 42 |
+| HIGH | 81 |
+| MEDIUM | 112 |
+| LOW | 83 |
 | LOW (architecture) | 3 |
 | LOW (code quality) | 5 |
 | LOW (correctness) | 1 |
@@ -28,7 +28,7 @@ Sorted by number. See individual bug files for details.
 | LOW (safety) | 1 |
 | MEDIUM (dead code / refcount drift) | 1 |
 | MEDIUM (performance) | 4 |
-| **Total** | **309** |
+| **Total** | **336** |
 
 ## Summary by Status
 
@@ -37,8 +37,8 @@ Sorted by number. See individual bug files for details.
 | Fixed | 294 |
 | False Positive | 14 |
 | Intentional | 1 |
-| Open | 0 |
-| **Total** | **308** |
+| Open | 27 |
+| **Total** | **336** |
 
 ## All Bugs
 
@@ -353,3 +353,30 @@ Sorted by number. See individual bug files for details.
 | [309](309.md) | status line built from scratch every render | LOW | Fixed |
 | [310](310.md) | tickAutoscroll traverses full session tree on every loop iteration | LOW | Fixed |
 | [311](311.md) | Multiline prompt cursor jumping and text scrambling during line editing | HIGH | Fixed |
+| [312](312.md) | Use-after-free in Server.processInput when action destroys active pane or session | CRITICAL | Open |
+| [313](313.md) | Window title callback calls allocator.free on Session arena | HIGH | Open |
+| [314](314.md) | Memory leak when expanding pane border format strings during rendering | HIGH | Open |
+| [315](315.md) | cmdMoveWindow orphans window and leaks memory on insert OOM rollback failure | HIGH | Open |
+| [316](316.md) | Sixel image refcounts leaked on vertical screen shrink in Screen.resize | HIGH | Open |
+| [317](317.md) | Sixel image refcounts leaked on grid history limit eviction | HIGH | Open |
+| [318](318.md) | Layout split failure leaves pane internal dimensions un-restored | HIGH | Open |
+| [319](319.md) | Desynchronization between Window.panes array rotation and Layout tree DFS rotation | HIGH | Open |
+| [320](320.md) | State desync on cmdJoinPane layout node lookup failure | HIGH | Open |
+| [321](321.md) | Uncapped loop in CSI 'Z' handler causes CPU exhaustion DoS | HIGH | Open |
+| [322](322.md) | Synchronous blocking write in server response dispatch halts main loop | HIGH | Open |
+| [323](323.md) | Dummy pane allocation wasted in cmdBreakPane | MEDIUM | Open |
+| [324](324.md) | cmdRenameWindow leaks window name memory into session arena | MEDIUM | Open |
+| [325](325.md) | Option set -u directive silently ignored in configuration parser | MEDIUM | Open |
+| [326](326.md) | Substring flag matching and combined flag failure in mapCommandToAction | MEDIUM | Open |
+| [327](327.md) | Copy mode single-line backward selection yank failure | MEDIUM | Open |
+| [328](328.md) | Format string truncation specifier slices UTF-8 codepoints | MEDIUM | Open |
+| [329](329.md) | Missing OSC discard transition on buffer overflow causes input injection | MEDIUM | Open |
+| [330](330.md) | Input parser drops interrupting Escape (0x1B) control bytes | MEDIUM | Open |
+| [331](331.md) | SIGWINCH configured with SA_RESTART delays client resize redraws | MEDIUM | Open |
+| [332](332.md) | Recursive layout tree traversals risk stack overflow on deep split hierarchies | MEDIUM | Open |
+| [333](333.md) | O(L^2) re-evaluation loop during Thai line rewrapping | MEDIUM | Open |
+| [334](334.md) | Dropped keystroke on interrupted UTF-8 continuation sequence | LOW | Open |
+| [335](335.md) | Command table execution uses function pointer dispatch violating AGENTS.md | LOW | Open |
+| [336](336.md) | Duplicated key binding flag parsing loop in cfg.zig | LOW | Open |
+| [337](337.md) | Duplicated target window index resolution in cmd.zig | LOW | Open |
+| [338](338.md) | Redundant status line string duplication per render frame | LOW | Open |
