@@ -37,7 +37,7 @@ Sorted by number. See individual bug files for details.
 | Fixed | 327 |
 | False Positive | 17 |
 | Intentional | 1 |
-| Open | 1 |
+| Open | 0 |
 | **Total** | **346** |
 
 ## All Bugs
@@ -384,7 +384,7 @@ Sorted by number. See individual bug files for details.
 | [340](340.md) | `std.StringHashMap` / `std.AutoHashMap` managed — false positive, still exists | HIGH | False Positive |
 | [341](341.md) | `std.ArrayList.initCapacity()` is a pre-0.16 API removed in Zig 0.16 | HIGH | Fixed |
 | [342](342.md) | `std.ArrayList.toOwnedSlice()` removed — false positive, still exists | HIGH | False Positive |
-| [343](343.md) | `std.c.getenv()` used instead of `init.environ_map` — ~15 call sites | MEDIUM | Open |
+| [343](343.md) | `std.c.getenv()` in main.zig → `init.environ_map` (partial fix) | MEDIUM | Fixed (partial) |
 | [344](344.md) | `main()` returns `void` instead of `!void` (Zig 0.16 rule #1) | LOW | Fixed |
 | [345](345.md) | `std.process.Args.Iterator` is pre-0.16; should use `toSlice(arena)` | MEDIUM | Fixed |
 | [346](346.md) | Missing `io` param — false positive, raw POSIX syscall codebase | MEDIUM | False Positive |
