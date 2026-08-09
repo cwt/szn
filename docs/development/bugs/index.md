@@ -2,7 +2,7 @@
 type: index
 title: "Bug Tracker — szn"
 description: "Individual bug entries for szn, one file per bug."
-timestamp: 2026-08-03T00:00:00Z
+timestamp: 2026-08-09T00:00:00Z
 ---
 
 # Bugs — szn
