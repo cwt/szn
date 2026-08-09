@@ -2,22 +2,22 @@
 type: index
 title: "Bug Tracker — szn"
 description: "Individual bug entries for szn, one file per bug."
-timestamp: 2026-08-09T00:00:00Z
+timestamp: 2026-08-09T23:00:00Z
 ---
 
 # Bugs — szn
 
 Sorted by number. See individual bug files for details.
 
-> **Note:** Bugs **#301** and **#302** were never filed (MIA). The #300–#310 performance sweep skipped straight from #300 to #303, so the tracker covers #1–#300 and #303–#338 — 336 bugs total.
+> **Note:** Bugs **#301** and **#302** were never filed (MIA). The #300–#310 performance sweep skipped straight from #300 to #303. The tracker covers #1–#300, #303–#346 — 346 bugs total (338 existing + 8 new Zig 0.16 compliance bugs).
 
 ## Summary by Severity
 
 | Severity | Count |
 |---|---:|
 | CRITICAL | 42 |
-| HIGH | 81 |
-| MEDIUM | 112 |
+| HIGH | 83 |
+| MEDIUM | 115 |
 | LOW | 83 |
 | LOW (architecture) | 3 |
 | LOW (code quality) | 5 |
@@ -28,7 +28,7 @@ Sorted by number. See individual bug files for details.
 | LOW (safety) | 1 |
 | MEDIUM (dead code / refcount drift) | 1 |
 | MEDIUM (performance) | 4 |
-| **Total** | **336** |
+| **Total** | **346** |
 
 ## Summary by Status
 
@@ -37,8 +37,8 @@ Sorted by number. See individual bug files for details.
 | Fixed | 321 |
 | False Positive | 14 |
 | Intentional | 1 |
-| Open | 0 |
-| **Total** | **336** |
+| Open | 10 |
+| **Total** | **346** |
 
 ## All Bugs
 
@@ -380,3 +380,11 @@ Sorted by number. See individual bug files for details.
 | [336](336.md) | Duplicated key binding flag parsing loop in cfg.zig | LOW | Fixed |
 | [337](337.md) | Duplicated target window index resolution in cmd.zig | LOW | Fixed |
 | [338](338.md) | Redundant status line string duplication per render frame | LOW | Fixed |
+| [339](339.md) | `catch {}` silent error suppression — 91 instances violate Zig 0.16 rule #6 | HIGH | Open |
+| [340](340.md) | `std.StringHashMap` / `std.AutoHashMap` use managed (pre-0.16) API | HIGH | Open |
+| [341](341.md) | `std.ArrayList.initCapacity()` is a pre-0.16 API removed in Zig 0.16 | HIGH | Open |
+| [342](342.md) | `std.ArrayList.toOwnedSlice()` is removed in Zig 0.16 | HIGH | Open |
+| [343](343.md) | `std.c.getenv()` used instead of `init.environ_map` — ~15 call sites | MEDIUM | Open |
+| [344](344.md) | `main()` returns `void` instead of `!void` (Zig 0.16 rule #1) | LOW | Open |
+| [345](345.md) | `std.process.Args.Iterator` is a pre-0.16 pattern; should use `toSlice(arena)` | MEDIUM | Open |
+| [346](346.md) | I/O functions do not receive `io: std.Io` parameter (Zig 0.16 rule #2) | MEDIUM | Open |
