@@ -1694,6 +1694,10 @@ fn pumpPaneInput(self: *Server) void {
                                     self.dispatcher.prefix_state = .normal;
                                     if (self.dispatcher.prefix_table.lookup(k)) |action| {
                                         self.executeAction(action) catch {};
+                                        if (!self.isPaneValid(pane)) {
+                                            self.esc_buf.clearRetainingCapacity();
+                                            break;
+                                        }
                                     }
                                     handled = true;
                                 }
@@ -1706,7 +1710,9 @@ fn pumpPaneInput(self: *Server) void {
                                     } else if (m.button == .scroll_up or m.button == .scroll_down) {
                                         self.handleMouseFocus(m.x, m.y) catch {};
                                     }
-                                    const active_pane = window.active_pane orelse return;
+                                    const active_pane_opt = if (self.activeSession()) |s| if (s.active_window) |w| w.active_pane else null else null;
+                                    const active_pane = active_pane_opt orelse return;
+                                    if (!self.isPaneValid(active_pane)) return;
                                     const wants_mouse = active_pane.screen.mode.mouse_standard or
                                         active_pane.screen.mode.mouse_button or
                                         active_pane.screen.mode.mouse_sgr;
@@ -1819,7 +1825,7 @@ fn pumpPaneInput(self: *Server) void {
                             else => {},
                         }
 
-                        if (!handled) {
+                        if (!handled and self.isPaneValid(pane)) {
                             switch (event) {
                                 .key => |k| writeKeyToPty(pane, k),
                                 else => pane.writeInput(self.esc_buf.items) catch {},
@@ -1827,12 +1833,16 @@ fn pumpPaneInput(self: *Server) void {
                         }
                         self.esc_buf.clearRetainingCapacity();
                     } else if (self.input_reader.state == .ground) {
-                        pane.writeInput(self.esc_buf.items) catch {};
+                        if (self.isPaneValid(pane)) {
+                            pane.writeInput(self.esc_buf.items) catch {};
+                        }
                         self.esc_buf.clearRetainingCapacity();
                     }
                 } else {
                     if (self.dispatcher.prefix_state == .normal) {
-                        pane.writeInput(&[_]u8{byte}) catch {};
+                        if (self.isPaneValid(pane)) {
+                            pane.writeInput(&[_]u8{byte}) catch {};
+                        }
                     } else {
                         if (self.input_reader.feed(byte)) |event| {
                             self.dispatcher.prefix_state = .normal;

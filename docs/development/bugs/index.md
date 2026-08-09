@@ -34,10 +34,10 @@ Sorted by number. See individual bug files for details.
 
 | Status | Count |
 |---|---:|
-| Fixed | 298 |
+| Fixed | 299 |
 | False Positive | 14 |
 | Intentional | 1 |
-| Open | 23 |
+| Open | 22 |
 | **Total** | **336** |
 
 ## All Bugs
@@ -353,7 +353,7 @@ Sorted by number. See individual bug files for details.
 | [309](309.md) | status line built from scratch every render | LOW | Fixed |
 | [310](310.md) | tickAutoscroll traverses full session tree on every loop iteration | LOW | Fixed |
 | [311](311.md) | Multiline prompt cursor jumping and text scrambling during line editing | HIGH | Fixed |
-| [312](312.md) | Use-after-free in Server.processInput when action destroys active pane or session | CRITICAL | Open |
+| [312](312.md) | Use-after-free in Server.processInput when action destroys active pane or session | CRITICAL | Fixed |
 | [313](313.md) | Window title callback calls allocator.free on Session arena | HIGH | Fixed |
 | [314](314.md) | Memory leak when expanding pane border format strings during rendering | HIGH | Fixed |
 | [315](315.md) | cmdMoveWindow orphans window and leaks memory on insert OOM rollback failure | HIGH | Open |
