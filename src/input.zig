@@ -638,9 +638,9 @@ pub const InputParser = struct {
                 self.screen.deleteChars(n);
             },
             'Z' => {
-                const n = self.paramDefault(0, 1);
+                const count = @min(self.paramDefault(0, 1), 1000);
                 var i: u32 = 0;
-                while (i < n) : (i += 1) {
+                while (i < count) : (i += 1) {
                     if (self.screen.cursor.x > 0) {
                         const ts = self.screen.tab_stop;
                         const remainder = self.screen.cursor.x % ts;
@@ -654,6 +654,8 @@ pub const InputParser = struct {
                     } else if (self.screen.cursor.y > 0 and self.screen.grid.getLine(self.screen.cursor.y - 1).wrapped) {
                         self.screen.cursor.y -= 1;
                         self.screen.cursor.x = self.screen.grid.width -| 1;
+                    } else {
+                        break;
                     }
                 }
                 self.screen.dirty = true;

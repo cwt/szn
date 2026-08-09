@@ -122,6 +122,9 @@ pub const Layout = struct {
             a.destroy(new_pane);
         }
 
+        const old_w = pane.screen.grid.width;
+        const old_h = pane.screen.grid.height;
+
         const split = try a.create(Split);
         errdefer a.destroy(split);
         const a_node = try a.create(Node);
@@ -130,6 +133,7 @@ pub const Layout = struct {
         errdefer a.destroy(b_node);
 
         try pane.resizeTerminal(child_w1, child_h1);
+        errdefer pane.resizeTerminal(old_w, old_h) catch {};
 
         a_node.* = Node{ .leaf = leaf_node.leaf };
         b_node.* = Node{ .leaf = new_pane };

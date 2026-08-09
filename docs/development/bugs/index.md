@@ -34,10 +34,10 @@ Sorted by number. See individual bug files for details.
 
 | Status | Count |
 |---|---:|
-| Fixed | 306 |
+| Fixed | 312 |
 | False Positive | 14 |
 | Intentional | 1 |
-| Open | 15 |
+| Open | 9 |
 | **Total** | **336** |
 
 ## All Bugs
@@ -357,13 +357,13 @@ Sorted by number. See individual bug files for details.
 | [313](313.md) | Window title callback calls allocator.free on Session arena | HIGH | Fixed |
 | [314](314.md) | Memory leak when expanding pane border format strings during rendering | HIGH | Fixed |
 | [315](315.md) | cmdMoveWindow orphans window and leaks memory on insert OOM rollback failure | HIGH | Fixed |
-| [316](316.md) | Sixel image refcounts leaked on vertical screen shrink in Screen.resize | HIGH | Open |
-| [317](317.md) | Sixel image refcounts leaked on grid history limit eviction | HIGH | Open |
-| [318](318.md) | Layout split failure leaves pane internal dimensions un-restored | HIGH | Open |
-| [319](319.md) | Desynchronization between Window.panes array rotation and Layout tree DFS rotation | HIGH | Open |
+| [316](316.md) | Sixel image refcounts leaked on vertical screen shrink in Screen.resize | HIGH | Fixed |
+| [317](317.md) | Sixel image refcounts leaked on grid history limit eviction | HIGH | Fixed |
+| [318](318.md) | Layout split failure leaves pane internal dimensions un-restored | HIGH | Fixed |
+| [319](319.md) | Desynchronization between Window.panes array rotation and Layout tree DFS rotation | HIGH | Fixed |
 | [320](320.md) | State desync on cmdJoinPane layout node lookup failure | HIGH | Fixed |
-| [321](321.md) | Uncapped loop in CSI 'Z' handler causes CPU exhaustion DoS | HIGH | Open |
-| [322](322.md) | Synchronous blocking write in server response dispatch halts main loop | HIGH | Open |
+| [321](321.md) | Uncapped loop in CSI 'Z' handler causes CPU exhaustion DoS | HIGH | Fixed |
+| [322](322.md) | Synchronous blocking write in server response dispatch halts main loop | HIGH | Fixed |
 | [323](323.md) | Dummy pane allocation wasted in cmdBreakPane | MEDIUM | Fixed |
 | [324](324.md) | cmdRenameWindow leaks window name memory into session arena | MEDIUM | Fixed |
 | [325](325.md) | Option set -u directive silently ignored in configuration parser | MEDIUM | Fixed |

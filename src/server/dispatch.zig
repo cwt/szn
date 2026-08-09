@@ -98,7 +98,8 @@ pub fn sendResponse(fd: i32, result: *const DispatchResult) Error!void {
     while (hdr_remaining.len > 0) {
         const n = std.c.write(fd, hdr_remaining.ptr, hdr_remaining.len);
         if (n < 0) {
-            if (std.c.errno(n) == .INTR) continue;
+            const err = std.c.errno(n);
+            if (err == .INTR or err == .AGAIN or err == .WOULDBLOCK) continue;
             return error.WriteFailed;
         }
         if (n == 0) return error.ConnectionClosed;
@@ -111,7 +112,8 @@ pub fn sendResponse(fd: i32, result: *const DispatchResult) Error!void {
         while (body_remaining.len > 0) {
             const n = std.c.write(fd, body_remaining.ptr, body_remaining.len);
             if (n < 0) {
-                if (std.c.errno(n) == .INTR) continue;
+                const err = std.c.errno(n);
+                if (err == .INTR or err == .AGAIN or err == .WOULDBLOCK) continue;
                 return error.WriteFailed;
             }
             if (n == 0) return error.ConnectionClosed;

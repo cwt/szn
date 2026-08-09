@@ -329,14 +329,21 @@ pub const Window = struct {
         try self.resizeNode(self.layout.root, new_width, new_height);
     }
 
+    pub fn syncPanesFromLayout(self: *Window) Error!void {
+        var leaves: std.ArrayList(*@import("layout.zig").Node) = .empty;
+        defer leaves.deinit(self.allocator);
+        try self.layout.collectLeafNodes(self.layout.root, &leaves);
+        for (leaves.items, 0..) |node, i| {
+            if (i < self.panes.items.len) {
+                self.panes.items[i] = node.leaf;
+            }
+        }
+    }
+
     pub fn rotatePanes(self: *Window) Error!void {
         if (self.panes.items.len > 1) {
-            const first = self.panes.items[0];
-            for (0..self.panes.items.len - 1) |i| {
-                self.panes.items[i] = self.panes.items[i + 1];
-            }
-            self.panes.items[self.panes.items.len - 1] = first;
             self.layout.rotatePanes();
+            try self.syncPanesFromLayout();
             try self.resize(self.width, self.height);
         }
     }

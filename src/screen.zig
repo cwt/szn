@@ -507,12 +507,26 @@ pub const Screen = struct {
         };
     }
 
+    fn screenEvictCallback(ctx: *anyopaque, cells: []const Cell) void {
+        const self: *Screen = @ptrCast(@alignCast(ctx));
+        self.decrementLineRefs(cells);
+    }
+
+    pub fn setupGridEviction(self: *Screen) void {
+        self.grid.on_line_evict = screenEvictCallback;
+        self.grid.on_line_evict_ctx = self;
+        if (self.alt_grid) |*g| {
+            g.on_line_evict = screenEvictCallback;
+            g.on_line_evict_ctx = self;
+        }
+    }
+
     pub fn resize(self: *Screen, width: u32, height: u32) Error!void {
+        self.setupGridEviction();
         var cx = self.cursor.x;
         var cy = self.cursor.y;
         try self.grid.setSizeCursor(width, height, self.cursor.x, self.cursor.y, &cx, &cy);
         if (self.alt_grid) |*g| {
-            // Use alt_cursor for the alt grid (bug #223: was using main cursor).
             var alt_cx = self.alt_cursor.x;
             var alt_cy = self.alt_cursor.y;
             try g.setSizeCursor(width, height, self.alt_cursor.x, self.alt_cursor.y, &alt_cx, &alt_cy);

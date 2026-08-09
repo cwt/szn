@@ -75,6 +75,16 @@ pub const Grid = struct {
     history_limit: u32 = 2000,
     history_start: usize = 0,
     start_index: u32 = 0,
+    on_line_evict: ?*const fn (ctx: *anyopaque, cells: []const Cell) void = null,
+    on_line_evict_ctx: ?*anyopaque = null,
+
+    fn notifyEvict(self: *const Grid, cells: []const Cell) void {
+        if (self.on_line_evict) |cb| {
+            if (self.on_line_evict_ctx) |ctx| {
+                cb(ctx, cells);
+            }
+        }
+    }
 
     pub fn init(allocator: std.mem.Allocator, width: u32, height: u32) Error!Grid {
         return initWithLimit(allocator, width, height, 2000);
@@ -178,6 +188,7 @@ pub const Grid = struct {
         }
         while (self.lines.items.len > new_height) {
             var line = self.lines.pop().?;
+            self.notifyEvict(line.cells.items);
             line.deinit(self.allocator);
         }
         self.height = new_height;
@@ -232,6 +243,7 @@ pub const Grid = struct {
         errdefer old_line.deinit(self.allocator);
         try self.history.append(self.allocator, old_line);
         if (self.history.items.len - self.history_start > self.history_limit) {
+            self.notifyEvict(self.history.items[self.history_start].cells.items);
             self.history.items[self.history_start].deinit(self.allocator);
             self.history_start += 1;
 
