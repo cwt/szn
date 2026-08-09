@@ -214,7 +214,7 @@ pub const Pane = struct {
         }};
         const ready = std.posix.poll(&pfd, 0) catch return;
         if (ready > 0) {
-            self.feedPty() catch {};
+            self.feedPty() catch |err| std.log.warn("feedPty failed: {any}", .{err});
         }
     }
 
@@ -430,7 +430,7 @@ pub const Window = struct {
                 self.active_pane = sibling orelse (if (self.panes.items.len > 0) self.panes.items[0] else null);
                 if (self.active_pane) |p| p.active = true;
             }
-            self.resize(self.width, self.height) catch {};
+            self.resize(self.width, self.height) catch |err| std.log.warn("resize failed: {any}", .{err});
         }
     }
 
@@ -449,7 +449,7 @@ pub const Window = struct {
             self.active_pane = sibling orelse (if (self.panes.items.len > 0) self.panes.items[0] else null);
             if (self.active_pane) |p| p.active = true;
         }
-        self.resize(self.width, self.height) catch {};
+        self.resize(self.width, self.height) catch |err| std.log.warn("resize failed: {any}", .{err});
     }
 
     pub fn setActivePane(self: *Window, pane: *Pane) void {

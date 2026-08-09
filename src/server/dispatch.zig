@@ -27,7 +27,7 @@ pub fn dispatchCommand(allocator: std.mem.Allocator, server: *Server, cmd_line: 
     // Log command line
     var cmd_log_buf: [256]u8 = undefined;
     const log_msg = std.fmt.bufPrint(&cmd_log_buf, "command: {s}", .{cmd_line}) catch "command: unknown";
-    server.addLogMessage(log_msg) catch {};
+    server.addLogMessage(log_msg) catch |err| std.log.warn("addLogMessage failed: {any}", .{err});
 
     server.response_buf.clearRetainingCapacity();
     var parsed = cmd_mod.parse(cmd_line, allocator) catch |err| {

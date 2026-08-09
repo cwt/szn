@@ -238,7 +238,7 @@ fn cmdMoveWindow(server: *Server, args: []const []const u8) CmdResult {
 
     const w = session.windows.orderedRemove(indices.src);
     session.windows.insert(arena_alloc, indices.dst, w) catch {
-        session.windows.insert(arena_alloc, indices.src, w) catch {};
+        session.windows.insert(arena_alloc, indices.src, w) catch |err| std.log.warn("insert failed: {any}", .{err});
         return .err;
     };
     return .ok;
@@ -411,7 +411,7 @@ fn cmdJoinPane(server: *Server, args: []const []const u8) CmdResult {
     }
 
     dummy_pane.deinit();
-    sp.resizeTerminal(dummy_width, dummy_height) catch {};
+    sp.resizeTerminal(dummy_width, dummy_height) catch |err| std.log.warn("resizeTerminal failed: {any}", .{err});
 
     dst_win.setActivePane(sp);
     return .ok;
@@ -471,7 +471,7 @@ fn cmdPasteBuffer(server: *Server, args: []const []const u8) CmdResult {
         if (pb.len > Server.MAX_PASTE_SIZE) {
             var msg_buf: [128]u8 = undefined;
             const msg = std.fmt.bufPrint(&msg_buf, "Error: paste buffer too large ({d} bytes, limit is {d}B)", .{ pb.len, Server.MAX_PASTE_SIZE }) catch "Error: paste buffer too large";
-            server.setMessage(msg) catch {};
+            server.setMessage(msg) catch |err| std.log.warn("setMessage failed: {any}", .{err});
             return .err;
         }
         pane.writeInput(pb) catch return .err;
@@ -913,7 +913,7 @@ fn cmdSetOption(server: *Server, args: []const []const u8) CmdResult {
     // -g updates should also land on the active session so live config works.
     if (is_global and !is_window) {
         if (server.activeSession()) |session| {
-            session.options.set(option_name, parsed_val) catch {};
+            session.options.set(option_name, parsed_val) catch |err| std.log.warn("options.set failed: {any}", .{err});
         }
     }
     // Invalidate the per-pane border format cache: the generation counter must

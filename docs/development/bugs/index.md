@@ -34,10 +34,10 @@ Sorted by number. See individual bug files for details.
 
 | Status | Count |
 |---|---:|
-| Fixed | 326 |
+| Fixed | 327 |
 | False Positive | 17 |
 | Intentional | 1 |
-| Open | 2 |
+| Open | 1 |
 | **Total** | **346** |
 
 ## All Bugs
@@ -380,7 +380,7 @@ Sorted by number. See individual bug files for details.
 | [336](336.md) | Duplicated key binding flag parsing loop in cfg.zig | LOW | Fixed |
 | [337](337.md) | Duplicated target window index resolution in cmd.zig | LOW | Fixed |
 | [338](338.md) | Redundant status line string duplication per render frame | LOW | Fixed |
-| [339](339.md) | `catch {}` silent error suppression — 91 instances violate Zig 0.16 rule #6 | HIGH | Open |
+| [339](339.md) | `catch {}` silent error suppression — 91 instances (Zig 0.16 rule #6) | HIGH | Fixed |
 | [340](340.md) | `std.StringHashMap` / `std.AutoHashMap` managed — false positive, still exists | HIGH | False Positive |
 | [341](341.md) | `std.ArrayList.initCapacity()` is a pre-0.16 API removed in Zig 0.16 | HIGH | Fixed |
 | [342](342.md) | `std.ArrayList.toOwnedSlice()` removed — false positive, still exists | HIGH | False Positive |

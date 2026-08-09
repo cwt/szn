@@ -356,7 +356,7 @@ pub const InputParser = struct {
 
     fn advanceOscEsc(self: *InputParser, byte: u8) void {
         if (byte == '\\') {
-            self.dispatchOsc() catch {};
+            self.dispatchOsc() catch |err| std.log.warn("dispatchOsc failed: {any}", .{err});
         }
         self.toGround();
     }

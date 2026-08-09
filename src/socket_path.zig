@@ -53,5 +53,5 @@ pub fn resolve(buf: []u8) Error![:0]const u8 {
 
 test "resolve produces a valid path — bug #97, #121" {
     var buf: [MAX_PATH]u8 = undefined;
-    _ = resolve(&buf) catch {};
+    _ = resolve(&buf) catch |err| std.log.warn("resolve failed: {any}", .{err});
 }

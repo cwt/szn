@@ -643,8 +643,8 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
         .sx = sx,
         .sy = sy,
     };
-    display.enterAltScreen() catch {};
-    defer display.exitAltScreen() catch {};
+    display.enterAltScreen() catch |err| std.log.warn("enterAltScreen failed: {any}", .{err});
+    defer display.exitAltScreen() catch |err| std.log.warn("exitAltScreen failed: {any}", .{err});
 
     var read_buf: std.ArrayList(u8) = .empty;
     defer read_buf.deinit(allocator);

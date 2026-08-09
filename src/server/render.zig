@@ -456,7 +456,7 @@ pub const Display = struct {
             if (self.last_sx.?.* != self.sx or self.last_sy.?.* != self.sy or lc.items.len != expected_len) {
                 if (self.capture_allocator) |alloc| {
                     lc.clearRetainingCapacity();
-                    lc.resize(alloc, expected_len) catch {};
+                    lc.resize(alloc, expected_len) catch |err| std.log.warn("resize failed: {any}", .{err});
                     var inv = Cell.empty();
                     inv.char = 0x1FFFFF; // invalid Unicode to force redraw
                     @memset(lc.items, inv);

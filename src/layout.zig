@@ -133,7 +133,7 @@ pub const Layout = struct {
         errdefer a.destroy(b_node);
 
         try pane.resizeTerminal(child_w1, child_h1);
-        errdefer pane.resizeTerminal(old_w, old_h) catch {};
+        errdefer pane.resizeTerminal(old_w, old_h) catch |err| std.log.warn("resizeTerminal failed: {any}", .{err});
 
         a_node.* = Node{ .leaf = leaf_node.leaf };
         b_node.* = Node{ .leaf = new_pane };

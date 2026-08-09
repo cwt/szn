@@ -504,7 +504,7 @@ pub const Server = struct {
                 return;
             }
             self.command_buf_overflow_warned = false;
-            self.command_buf.appendSlice(self.allocator, enc[0..len]) catch {};
+            self.command_buf.appendSlice(self.allocator, enc[0..len]) catch |err| std.log.warn("command_buf appendSlice failed: {any}", .{err});
         }
     }
 
@@ -741,7 +741,7 @@ fn pumpPaneInput(self: *Server) void {
             }
         } else if (has_hup) {
             // Read any pending data before the fd leaves the poll set.
-            _ = pane.feedPty() catch {};
+            _ = pane.feedPty() catch |err| std.log.warn("feedPty failed: {any}", .{err});
             if (pane.screen.cell_size_needs_refresh) {
                 self.needs_cell_size_refresh = true;
                 pane.screen.cell_size_needs_refresh = false;
@@ -765,8 +765,8 @@ fn pumpPaneInput(self: *Server) void {
                     extern "c" fn usleep(usec: c_uint) c_int;
                 }.usleep;
                 _ = c_usleep(5000);
-                _ = pane.feedPty() catch {};
-                self.watchPanePty(pane) catch {};
+                _ = pane.feedPty() catch |err| std.log.warn("feedPty failed: {any}", .{err});
+                self.watchPanePty(pane) catch |err| std.log.warn("watchPanePty failed: {any}", .{err});
             }
         } else if (has_err) {
             self.loop.removeFd(ev.fd);
@@ -832,7 +832,7 @@ fn pumpPaneInput(self: *Server) void {
             }
 
             if (session.windows.items.len == 0) {
-                self.killSession(session.name) catch {};
+                self.killSession(session.name) catch |err| std.log.warn("killSession failed: {any}", .{err});
             }
 
             if (self.sessions.items.len == 0) {
@@ -1035,21 +1035,21 @@ fn pumpPaneInput(self: *Server) void {
                 }
             },
             .copy_mode => {
-                pane.enterCopyMode() catch {};
+                pane.enterCopyMode() catch |err| std.log.warn("enterCopyMode failed: {any}", .{err});
             },
             .paste_buffer => {
                 if (self.buffers.get(null)) |pb| {
                     if (pb.len > MAX_PASTE_SIZE) {
                         var msg_buf: [128]u8 = undefined;
                         const msg = std.fmt.bufPrint(&msg_buf, "Error: paste buffer too large ({d} bytes, limit is {d}B)", .{ pb.len, MAX_PASTE_SIZE }) catch "Error: paste buffer too large";
-                        self.setMessage(msg) catch {};
+                        self.setMessage(msg) catch |err| std.log.warn("setMessage failed: {any}", .{err});
                     } else {
                         if (pane.screen.mode.paste) {
-                            pane.writeInput("\x1b[200~") catch {};
-                            pane.writeInput(pb) catch {};
-                            pane.writeInput("\x1b[201~") catch {};
+                            pane.writeInput("\x1b[200~") catch |err| std.log.warn("writeInput failed: {any}", .{err});
+                            pane.writeInput(pb) catch |err| std.log.warn("writeInput failed: {any}", .{err});
+                            pane.writeInput("\x1b[201~") catch |err| std.log.warn("writeInput failed: {any}", .{err});
                         } else {
-                            pane.writeInput(pb) catch {};
+                            pane.writeInput(pb) catch |err| std.log.warn("writeInput failed: {any}", .{err});
                         }
                     }
                 }
@@ -1060,25 +1060,25 @@ fn pumpPaneInput(self: *Server) void {
                 const current_w = pane.screen.grid.width;
                 const current_h = pane.screen.grid.height;
                 const target_w = @as(u32, @intCast(@max(1, @as(i32, @intCast(current_w)) - 1)));
-                pane.resizeTerminal(target_w, current_h) catch {};
+                pane.resizeTerminal(target_w, current_h) catch |err| std.log.warn("resizeTerminal failed: {any}", .{err});
             },
             .resize_right => {
                 const current_w = pane.screen.grid.width;
                 const current_h = pane.screen.grid.height;
                 const target_w = current_w +| 1;
-                pane.resizeTerminal(target_w, current_h) catch {};
+                pane.resizeTerminal(target_w, current_h) catch |err| std.log.warn("resizeTerminal failed: {any}", .{err});
             },
             .resize_up => {
                 const current_w = pane.screen.grid.width;
                 const current_h = pane.screen.grid.height;
                 const target_h = @as(u32, @intCast(@max(1, @as(i32, @intCast(current_h)) - 1)));
-                pane.resizeTerminal(current_w, target_h) catch {};
+                pane.resizeTerminal(current_w, target_h) catch |err| std.log.warn("resizeTerminal failed: {any}", .{err});
             },
             .resize_down => {
                 const current_w = pane.screen.grid.width;
                 const current_h = pane.screen.grid.height;
                 const target_h = current_h +| 1;
-                pane.resizeTerminal(current_w, target_h) catch {};
+                pane.resizeTerminal(current_w, target_h) catch |err| std.log.warn("resizeTerminal failed: {any}", .{err});
             },
             .send_prefix => {
                 const prefix_key = self.dispatcher.prefix;
@@ -1105,7 +1105,7 @@ fn pumpPaneInput(self: *Server) void {
                 self.dirty = true;
             },
             .reflow_pane => {
-                pane.forceReflow() catch {};
+                pane.forceReflow() catch |err| std.log.warn("forceReflow failed: {any}", .{err});
             },
             else => {},
         }
@@ -1134,14 +1134,14 @@ fn pumpPaneInput(self: *Server) void {
                 // kitty protocol encodes Tab as codepoint 9 with modifiers.
                 if (ch.code == 9) {
                     if (ch.mod.shift and !ch.mod.ctrl and !ch.mod.alt) {
-                        pane.writeInput("\x1b[Z") catch {};
+                        pane.writeInput("\x1b[Z") catch |err| std.log.warn("writeInput failed: {any}", .{err});
                         return;
                     }
                     if (ch.mod.alt) {
-                        pane.writeInput("\x1b\x09") catch {};
+                        pane.writeInput("\x1b\x09") catch |err| std.log.warn("writeInput failed: {any}", .{err});
                         return;
                     }
-                    pane.writeInput("\t") catch {};
+                    pane.writeInput("\t") catch |err| std.log.warn("writeInput failed: {any}", .{err});
                     return;
                 }
                 // Kitty private-use arrow codepoints (57344-57347)
@@ -1153,28 +1153,28 @@ fn pumpPaneInput(self: *Server) void {
                         57346 => "\x1bOD",
                         else => unreachable,
                     };
-                    pane.writeInput(seq) catch {};
+                    pane.writeInput(seq) catch |err| std.log.warn("writeInput failed: {any}", .{err});
                     return;
                 }
                 if (ch.mod.ctrl) {
                     const ctrl_byte: u8 = @intCast(ch.code & 0x1F);
                     if (ch.mod.alt) {
-                        pane.writeInput(&[_]u8{ 0x1b, ctrl_byte }) catch {};
+                        pane.writeInput(&[_]u8{ 0x1b, ctrl_byte }) catch |err| std.log.warn("writeInput failed: {any}", .{err});
                     } else {
-                        pane.writeInput(&[_]u8{ctrl_byte}) catch {};
+                        pane.writeInput(&[_]u8{ctrl_byte}) catch |err| std.log.warn("writeInput failed: {any}", .{err});
                     }
                 } else if (ch.mod.alt) {
                     if (ch.code <= 0x7F) {
-                        pane.writeInput(&[_]u8{ 0x1b, @intCast(ch.code) }) catch {};
+                        pane.writeInput(&[_]u8{ 0x1b, @intCast(ch.code) }) catch |err| std.log.warn("writeInput failed: {any}", .{err});
                     }
                 } else if (ch.code >= 0x20 and ch.code <= 0x7E) {
-                    pane.writeInput(&[_]u8{@intCast(ch.code)}) catch {};
+                    pane.writeInput(&[_]u8{@intCast(ch.code)}) catch |err| std.log.warn("writeInput failed: {any}", .{err});
                 } else if (ch.code < 0x20 or ch.code == 0x7F) {
-                    pane.writeInput(&[_]u8{@intCast(ch.code)}) catch {};
+                    pane.writeInput(&[_]u8{@intCast(ch.code)}) catch |err| std.log.warn("writeInput failed: {any}", .{err});
                 } else if (ch.code > 0x7F) {
                     var utf8_buf: [4]u8 = undefined;
                     const len = std.unicode.utf8Encode(ch.code, &utf8_buf) catch return;
-                    pane.writeInput(utf8_buf[0..len]) catch {};
+                    pane.writeInput(utf8_buf[0..len]) catch |err| std.log.warn("writeInput failed: {any}", .{err});
                 }
             },
             .arrow => |a| {
@@ -1184,21 +1184,21 @@ fn pumpPaneInput(self: *Server) void {
                     .right => "\x1bOC",
                     .left => "\x1bOD",
                 };
-                pane.writeInput(seq) catch {};
+                pane.writeInput(seq) catch |err| std.log.warn("writeInput failed: {any}", .{err});
             },
             .special => |s| {
                 switch (s.key) {
-                    .enter => pane.writeInput("\r") catch {},
-                    .tab => pane.writeInput("\t") catch {},
-                    .backspace => pane.writeInput("\x7f") catch {},
-                    .escape => pane.writeInput("\x1b") catch {},
-                    .home => pane.writeInput("\x1b[H") catch {},
-                    .end => pane.writeInput("\x1b[F") catch {},
-                    .page_up => pane.writeInput("\x1b[5~") catch {},
-                    .page_down => pane.writeInput("\x1b[6~") catch {},
-                    .insert => pane.writeInput("\x1b[2~") catch {},
-                    .delete_ => pane.writeInput("\x1b[3~") catch {},
-                    .btab => pane.writeInput("\x1b[Z") catch {},
+                    .enter => pane.writeInput("\r") catch |err| std.log.warn("writeInput failed: {any}", .{err}),
+                    .tab => pane.writeInput("\t") catch |err| std.log.warn("writeInput failed: {any}", .{err}),
+                    .backspace => pane.writeInput("\x7f") catch |err| std.log.warn("writeInput failed: {any}", .{err}),
+                    .escape => pane.writeInput("\x1b") catch |err| std.log.warn("writeInput failed: {any}", .{err}),
+                    .home => pane.writeInput("\x1b[H") catch |err| std.log.warn("writeInput failed: {any}", .{err}),
+                    .end => pane.writeInput("\x1b[F") catch |err| std.log.warn("writeInput failed: {any}", .{err}),
+                    .page_up => pane.writeInput("\x1b[5~") catch |err| std.log.warn("writeInput failed: {any}", .{err}),
+                    .page_down => pane.writeInput("\x1b[6~") catch |err| std.log.warn("writeInput failed: {any}", .{err}),
+                    .insert => pane.writeInput("\x1b[2~") catch |err| std.log.warn("writeInput failed: {any}", .{err}),
+                    .delete_ => pane.writeInput("\x1b[3~") catch |err| std.log.warn("writeInput failed: {any}", .{err}),
+                    .btab => pane.writeInput("\x1b[Z") catch |err| std.log.warn("writeInput failed: {any}", .{err}),
                 }
             },
             .function => |f| {
@@ -1216,7 +1216,7 @@ fn pumpPaneInput(self: *Server) void {
                     .f11 => "\x1b[23~",
                     .f12 => "\x1b[24~",
                 };
-                pane.writeInput(seq) catch {};
+                pane.writeInput(seq) catch |err| std.log.warn("writeInput failed: {any}", .{err});
             },
             else => {},
         }
@@ -1230,7 +1230,7 @@ fn pumpPaneInput(self: *Server) void {
             else => return,
         };
         const bounds = layout_tree.findPaneBounds(target_pane) orelse return;
-        _ = pane.resizeTerminal(bounds.w, bounds.h) catch {};
+        _ = pane.resizeTerminal(bounds.w, bounds.h) catch |err| std.log.warn("resizeTerminal failed: {any}", .{err});
     }
 
     fn swapPaneRelative(window: *Window, pane: *Pane, dir: i2) void {
@@ -1288,7 +1288,7 @@ fn pumpPaneInput(self: *Server) void {
                     const next_byte = buf[i + run_len];
                     if (next_byte < 0x20 or next_byte == 0x7f) break;
                 }
-                pane.writeInput(buf[i .. i + run_len]) catch {};
+                pane.writeInput(buf[i .. i + run_len]) catch |err| std.log.warn("writeInput failed: {any}", .{err});
                 i += run_len - 1;
                 continue;
             }
@@ -1333,7 +1333,7 @@ fn pumpPaneInput(self: *Server) void {
                                     if (pane.screen.copy_mode) |*cm| {
                                         const query = self.command_buf.items;
                                         self.last_search.clearRetainingCapacity();
-                                        self.last_search.appendSlice(self.allocator, query) catch {};
+                                        self.last_search.appendSlice(self.allocator, query) catch |err| std.log.warn("appendSlice failed: {any}", .{err});
                                         _ = cm.submitSearch(&pane.screen.grid, self.allocator, query, dir);
                                         pane.dirty = true;
                                     }
@@ -1347,7 +1347,7 @@ fn pumpPaneInput(self: *Server) void {
                                         var result = dispatch.dispatchCommand(self.allocator, self, cmd);
                                         defer result.deinit();
                                         if (result.response_type == .ready or result.response_type == .err) {
-                                            if (result.data.len > 0) self.setMessage(result.data) catch {};
+                                            if (result.data.len > 0) self.setMessage(result.data) catch |err| std.log.warn("setMessage failed: {any}", .{err});
                                         }
                                     }
                                     self.command_mode = false;
@@ -1365,7 +1365,7 @@ fn pumpPaneInput(self: *Server) void {
                                         matches.append(self.allocator, .{
                                             .name = entry.name,
                                             .data = entry.name,
-                                        }) catch {};
+                                        }) catch |err| std.log.warn("append failed: {any}", .{err});
                                     }
                                 }
 
@@ -1468,15 +1468,15 @@ fn pumpPaneInput(self: *Server) void {
                                                 if (data.len > MAX_PASTE_SIZE) {
                                                     var msg_buf: [128]u8 = undefined;
                                                     const msg = std.fmt.bufPrint(&msg_buf, "Error: paste buffer too large ({d} bytes, limit is {d}B)", .{ data.len, MAX_PASTE_SIZE }) catch "Error: paste buffer too large";
-                                                    self.setMessage(msg) catch {};
+                                                    self.setMessage(msg) catch |err| std.log.warn("setMessage failed: {any}", .{err});
                                                 } else {
                                                     if (pane.pty) |*chosen_pty| {
                                                         if (pane.screen.mode.paste) {
-                                                            _ = chosen_pty.writeInput("\x1b[200~") catch {};
-                                                            _ = chosen_pty.writeInput(data) catch {};
-                                                            _ = chosen_pty.writeInput("\x1b[201~") catch {};
+                                                            chosen_pty.writeInput("\x1b[200~") catch |err| std.log.warn("writeInput failed: {any}", .{err});
+                                                            chosen_pty.writeInput(data) catch |err| std.log.warn("writeInput failed: {any}", .{err});
+                                                            chosen_pty.writeInput("\x1b[201~") catch |err| std.log.warn("writeInput failed: {any}", .{err});
                                                         } else {
-                                                            _ = chosen_pty.writeInput(data) catch {};
+                                                            chosen_pty.writeInput(data) catch |err| std.log.warn("writeInput failed: {any}", .{err});
                                                         }
                                                     }
                                                 }
@@ -1571,7 +1571,7 @@ fn pumpPaneInput(self: *Server) void {
                             } else {
                                 self.dispatcher.prefix_state = .normal;
                                 if (self.dispatcher.prefix_table.lookup(k)) |action| {
-                                    self.executeAction(action) catch {};
+                                    self.executeAction(action) catch |err| std.log.warn("executeAction failed: {any}", .{err});
                                 }
                             }
                         },
@@ -1579,7 +1579,7 @@ fn pumpPaneInput(self: *Server) void {
                             const mouse_opt = session.options.asFlag("mouse") orelse false;
                             if (mouse_opt) {
                                 if (m.button == .scroll_up or m.button == .scroll_down) {
-                                    self.handleMouseFocus(m.x, m.y) catch {};
+                                    self.handleMouseFocus(m.x, m.y) catch |err| std.log.warn("handleMouseFocus failed: {any}", .{err});
                                     const target_pane = window.active_pane orelse return;
                                     const target_wants_mouse = target_pane.screen.mode.mouse_standard or
                                         target_pane.screen.mode.mouse_button or
@@ -1600,7 +1600,7 @@ fn pumpPaneInput(self: *Server) void {
                                             target_pane.dirty = true;
                                         } else {
                                             if (m.button == .scroll_up) {
-                                                target_pane.enterCopyMode() catch {};
+                                                target_pane.enterCopyMode() catch |err| std.log.warn("enterCopyMode failed: {any}", .{err});
                                                 if (target_pane.screen.copy_mode) |*target_cm| {
                                                     target_cm.scroll_offset = @min(3, @as(u32, @intCast(target_pane.screen.grid.history.items.len - target_pane.screen.grid.history_start)));
                                                 }
@@ -1610,7 +1610,7 @@ fn pumpPaneInput(self: *Server) void {
                                     }
                                 } else if (m.button == .left) {
                                     const old_active_pane = window.active_pane;
-                                    self.handleMouseFocus(m.x, m.y) catch {};
+                                    self.handleMouseFocus(m.x, m.y) catch |err| std.log.warn("handleMouseFocus failed: {any}", .{err});
                                     const current_active_pane = window.active_pane orelse return;
                                     if (current_active_pane == old_active_pane) {
                                         if (self.findPaneBounds(window, current_active_pane)) |pb| {
@@ -1682,7 +1682,7 @@ fn pumpPaneInput(self: *Server) void {
                                     const key_str = @import("../key.zig").format(k, &key_name_buf);
                                     var log_msg_buf: [128]u8 = undefined;
                                     const log_msg = std.fmt.bufPrint(&log_msg_buf, "key (esc): {s} [prefix: {s}]", .{ key_str, @tagName(self.dispatcher.prefix_state) }) catch "log err";
-                                    self.addLogMessage(log_msg) catch {};
+                                    self.addLogMessage(log_msg) catch |err| std.log.warn("addLogMessage failed: {any}", .{err});
                                 }
 
                                 if (self.dispatcher.prefix_state == .normal) {
@@ -1693,7 +1693,7 @@ fn pumpPaneInput(self: *Server) void {
                                 } else {
                                     self.dispatcher.prefix_state = .normal;
                                     if (self.dispatcher.prefix_table.lookup(k)) |action| {
-                                        self.executeAction(action) catch {};
+                                        self.executeAction(action) catch |err| std.log.warn("executeAction failed: {any}", .{err});
                                         if (!self.isPaneValid(pane)) {
                                             self.esc_buf.clearRetainingCapacity();
                                             break;
@@ -1706,9 +1706,9 @@ fn pumpPaneInput(self: *Server) void {
                                 const mouse_opt = session.options.asFlag("mouse") orelse false;
                                 if (mouse_opt) {
                                     if (m.button == .left) {
-                                        self.handleMouseFocus(m.x, m.y) catch {};
+                                        self.handleMouseFocus(m.x, m.y) catch |err| std.log.warn("handleMouseFocus failed: {any}", .{err});
                                     } else if (m.button == .scroll_up or m.button == .scroll_down) {
-                                        self.handleMouseFocus(m.x, m.y) catch {};
+                                        self.handleMouseFocus(m.x, m.y) catch |err| std.log.warn("handleMouseFocus failed: {any}", .{err});
                                     }
                                     const active_pane_opt = if (self.activeSession()) |s| if (s.active_window) |w| w.active_pane else null else null;
                                     const active_pane = active_pane_opt orelse return;
@@ -1729,7 +1729,7 @@ fn pumpPaneInput(self: *Server) void {
                                             if (active_pane.screen.copy_mode) |*target_cm| {
                                                 target_cm.scroll_offset = @min(target_cm.scroll_offset + 3, @as(u32, @intCast(active_pane.screen.grid.history.items.len - active_pane.screen.grid.history_start)));
                                             } else {
-                                                active_pane.enterCopyMode() catch {};
+                                                active_pane.enterCopyMode() catch |err| std.log.warn("enterCopyMode failed: {any}", .{err});
                                                 if (active_pane.screen.copy_mode) |*target_cm| {
                                                     target_cm.scroll_offset = @min(3, @as(u32, @intCast(active_pane.screen.grid.history.items.len - active_pane.screen.grid.history_start)));
                                                 }
@@ -1753,7 +1753,7 @@ fn pumpPaneInput(self: *Server) void {
                                                     self.mouse_autoscroll_dir = null;
                                                 } else if (self.findPaneBounds(window, press_pane)) |pb| {
                                                     if (press_pane.screen.copy_mode == null) {
-                                                        press_pane.enterCopyMode() catch {};
+                                                        press_pane.enterCopyMode() catch |err| std.log.warn("enterCopyMode failed: {any}", .{err});
                                                     }
                                                     if (press_pane.screen.copy_mode) |*cm| {
                                                         const grid_w = press_pane.screen.grid.width;
@@ -1793,7 +1793,7 @@ fn pumpPaneInput(self: *Server) void {
                                         } else if (m.button == .left) {
                                             self.mouse_press_x = m.x;
                                             self.mouse_press_y = m.y;
-                                            self.handleMouseFocus(m.x, m.y) catch {};
+                                            self.handleMouseFocus(m.x, m.y) catch |err| std.log.warn("handleMouseFocus failed: {any}", .{err});
                                             self.mouse_press_pane = window.active_pane;
                                         } else if (m.button == .release) {
                                             self.mouse_autoscroll_dir = null;
@@ -1828,20 +1828,20 @@ fn pumpPaneInput(self: *Server) void {
                         if (!handled and self.isPaneValid(pane)) {
                             switch (event) {
                                 .key => |k| writeKeyToPty(pane, k),
-                                else => pane.writeInput(self.esc_buf.items) catch {},
+                                else => pane.writeInput(self.esc_buf.items) catch |err| std.log.warn("writeInput failed: {any}", .{err}),
                             }
                         }
                         self.esc_buf.clearRetainingCapacity();
                     } else if (self.input_reader.state == .ground) {
                         if (self.isPaneValid(pane)) {
-                            pane.writeInput(self.esc_buf.items) catch {};
+                            pane.writeInput(self.esc_buf.items) catch |err| std.log.warn("writeInput failed: {any}", .{err});
                         }
                         self.esc_buf.clearRetainingCapacity();
                     }
                 } else {
                     if (self.dispatcher.prefix_state == .normal) {
                         if (self.isPaneValid(pane)) {
-                            pane.writeInput(&[_]u8{byte}) catch {};
+                            pane.writeInput(&[_]u8{byte}) catch |err| std.log.warn("writeInput failed: {any}", .{err});
                         }
                     } else {
                         if (self.input_reader.feed(byte)) |event| {
@@ -1854,17 +1854,17 @@ fn pumpPaneInput(self: *Server) void {
                                         const key_str = @import("../key.zig").format(k, &key_name_buf);
                                         var log_msg_buf: [128]u8 = undefined;
                                         const log_msg = std.fmt.bufPrint(&log_msg_buf, "key (ground): {s} [prefix: prefix_seen]", .{key_str}) catch "log err";
-                                        self.addLogMessage(log_msg) catch {};
+                                        self.addLogMessage(log_msg) catch |err| std.log.warn("addLogMessage failed: {any}", .{err});
                                     }
 
                                     if (self.dispatcher.prefix_table.lookup(k)) |action| {
-                                        self.executeAction(action) catch {};
+                                        self.executeAction(action) catch |err| std.log.warn("executeAction failed: {any}", .{err});
                                     }
                                 },
                                 .mouse => |m| {
                                     const mouse_opt = session.options.asFlag("mouse") orelse false;
                                     if (mouse_opt and m.button == .left) {
-                                        self.handleMouseFocus(m.x, m.y) catch {};
+                                        self.handleMouseFocus(m.x, m.y) catch |err| std.log.warn("handleMouseFocus failed: {any}", .{err});
                                     }
                                 },
                                 else => {},
@@ -1960,14 +1960,14 @@ fn pumpPaneInput(self: *Server) void {
                             final_char,
                         }) catch null;
                         if (sgr_seq) |s| {
-                            ap_pty.writeInput(s) catch {};
+                            ap_pty.writeInput(s) catch |err| std.log.warn("writeInput failed: {any}", .{err});
                         }
                     } else {
                         var legacy_buf: [6]u8 = .{ 0x1b, '[', 'M', 0, 0, 0 };
                         legacy_buf[3] = btn + 32;
                         legacy_buf[4] = @intCast(@min(local_x + 33, 255));
                         legacy_buf[5] = @intCast(@min(local_y + 33, 255));
-                        ap_pty.writeInput(&legacy_buf) catch {};
+                        ap_pty.writeInput(&legacy_buf) catch |err| std.log.warn("writeInput failed: {any}", .{err});
                     }
                 }
             }
@@ -2416,7 +2416,7 @@ fn pumpPaneInput(self: *Server) void {
         self.display_sx = @max(min_sx, 2);
         self.display_sy = @max(min_sy, 2);
         if (self.activeSession()) |s| {
-            s.resize(self.display_sx, self.display_sy - 1) catch {};
+            s.resize(self.display_sx, self.display_sy - 1) catch |err| std.log.warn("session resize failed: {any}", .{err});
         }
     }
 
@@ -2814,13 +2814,13 @@ fn pumpPaneInput(self: *Server) void {
                 const win_idx_str = std.fmt.bufPrint(&win_idx_buf, "{d}", .{window.id}) catch "0";
 
                 var ctx = format_mod.Context.init(self.allocator);
-                ctx.set("session_name", session.name) catch {};
-                ctx.set("pane_index", pane_idx_str) catch {};
-                ctx.set("window_index", win_idx_str) catch {};
-                ctx.set("pane_title", window.name) catch {};
-                ctx.set("window_name", window.name) catch {};
-                ctx.set("host", self.host_name) catch {};
-                ctx.set("host_short", self.host_short) catch {};
+                ctx.set("session_name", session.name) catch |err| std.log.warn("ctx.set failed: {any}", .{err});
+                ctx.set("pane_index", pane_idx_str) catch |err| std.log.warn("ctx.set failed: {any}", .{err});
+                ctx.set("window_index", win_idx_str) catch |err| std.log.warn("ctx.set failed: {any}", .{err});
+                ctx.set("pane_title", window.name) catch |err| std.log.warn("ctx.set failed: {any}", .{err});
+                ctx.set("window_name", window.name) catch |err| std.log.warn("ctx.set failed: {any}", .{err});
+                ctx.set("host", self.host_name) catch |err| std.log.warn("ctx.set failed: {any}", .{err});
+                ctx.set("host_short", self.host_short) catch |err| std.log.warn("ctx.set failed: {any}", .{err});
 
                 const expanded = format_mod.expand(pb.pane.screen.grid.allocator, pane_border_fmt_str, &ctx) catch |err| blk: {
                     std.log.warn("pane-border-format expand error: {any}", .{err});
@@ -3043,7 +3043,7 @@ fn pumpPaneInput(self: *Server) void {
                     }
                     if (s.flags.unset) {
                         self.global_options.unset(s.option) catch {
-                            self.global_window_options.unset(s.option) catch {};
+                            self.global_window_options.unset(s.option) catch |err| std.log.warn("unset failed: {any}", .{err});
                         };
                     } else {
                         self.global_options.set(s.option, s.value) catch |err| {
