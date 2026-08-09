@@ -170,7 +170,7 @@ pub fn detectNested() bool {
     return std.c.getenv("SZN") != null;
 }
 
-pub fn main(init: std.process.Init) void {
+pub fn main(init: std.process.Init) !void {
     mainInner(init) catch |err| {
         // Log propagated errors to the file too, so a client/server death is
         // visible in szn.log rather than only on the (possibly dropped) pty.
