@@ -35,9 +35,9 @@ Sorted by number. See individual bug files for details.
 | Status | Count |
 |---|---:|
 | Fixed | 325 |
-| False Positive | 15 |
+| False Positive | 16 |
 | Intentional | 1 |
-| Open | 5 |
+| Open | 4 |
 | **Total** | **346** |
 
 ## All Bugs
@@ -381,7 +381,7 @@ Sorted by number. See individual bug files for details.
 | [337](337.md) | Duplicated target window index resolution in cmd.zig | LOW | Fixed |
 | [338](338.md) | Redundant status line string duplication per render frame | LOW | Fixed |
 | [339](339.md) | `catch {}` silent error suppression — 91 instances violate Zig 0.16 rule #6 | HIGH | Open |
-| [340](340.md) | `std.StringHashMap` / `std.AutoHashMap` use managed (pre-0.16) API | HIGH | Open |
+| [340](340.md) | `std.StringHashMap` / `std.AutoHashMap` managed — false positive, still exists | HIGH | False Positive |
 | [341](341.md) | `std.ArrayList.initCapacity()` is a pre-0.16 API removed in Zig 0.16 | HIGH | Fixed |
 | [342](342.md) | `std.ArrayList.toOwnedSlice()` removed — false positive, still exists | HIGH | False Positive |
 | [343](343.md) | `std.c.getenv()` used instead of `init.environ_map` — ~15 call sites | MEDIUM | Open |
