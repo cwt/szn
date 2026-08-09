@@ -382,7 +382,7 @@ Sorted by number. See individual bug files for details.
 | [338](338.md) | Redundant status line string duplication per render frame | LOW | Fixed |
 | [339](339.md) | `catch {}` silent error suppression — 91 instances (Zig 0.16 rule #6) | HIGH | Fixed |
 | [340](340.md) | `std.StringHashMap` / `std.AutoHashMap` managed — false positive, still exists | HIGH | False Positive |
-| [341](341.md) | `std.ArrayList.initCapacity()` is a pre-0.16 API removed in Zig 0.16 | HIGH | Fixed |
+| [341](341.md) | `initCapacity` not deprecated but code modernized to `.empty` + `ensureTotalCapacity` | HIGH | Fixed |
 | [342](342.md) | `std.ArrayList.toOwnedSlice()` removed — false positive, still exists | HIGH | False Positive |
 | [343](343.md) | `std.c.getenv()` in main.zig → `init.environ_map` (partial fix) | MEDIUM | Fixed (partial) |
 | [344](344.md) | `main()` returns `void` instead of `!void` (Zig 0.16 rule #1) | LOW | Fixed |
