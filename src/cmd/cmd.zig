@@ -186,8 +186,7 @@ fn cmdRenameWindow(server: *Server, args: []const []const u8) CmdResult {
     if (args.len < 2) return .err;
     const session = server.activeSession() orelse return .err;
     const window = session.active_window orelse return .err;
-    const a = session.arenaAllocator();
-    window.name = a.dupe(u8, args[1]) catch return .err;
+    window.setName(args[1]);
     window.automatic_rename = false;
     return .ok;
 }

@@ -253,6 +253,7 @@ pub const Window = struct {
     layout: layout.Layout,
     options: options_mod.Options,
     automatic_rename: bool = true,
+    name_buf: [256]u8 = undefined,
     /// Cached foreground process name from the last getForegroundProcessName
     /// call. Only call the syscall when this differs from win.name (bug #300).
     last_foreground_name: []const u8 = "",
@@ -261,6 +262,12 @@ pub const Window = struct {
     /// on every render (bug #300 follow-up).
     last_foreground_check_ms: i64 = 0,
 
+    pub fn setName(self: *Window, new_name: []const u8) void {
+        const len = @min(new_name.len, self.name_buf.len);
+        @memcpy(self.name_buf[0..len], new_name[0..len]);
+        self.name = self.name_buf[0..len];
+    }
+
     pub fn init(allocator: std.mem.Allocator, id: u32, name: []const u8, width: u32, height: u32, global_window_options: ?*const options_mod.Options, parent_screen: ?*const Screen) Error!Window {
         var options = if (global_window_options) |gwo| try gwo.clone(allocator) else try options_mod.Options.init(allocator, options_mod.WINDOW_OPTIONS);
         errdefer options.deinit();
@@ -268,13 +275,14 @@ pub const Window = struct {
         var window = Window{
             .allocator = allocator,
             .id = id,
-            .name = try allocator.dupe(u8, name),
+            .name = "",
             .width = width,
             .height = height,
             .layout = undefined,
             .options = options,
             .automatic_rename = true,
         };
+        window.setName(name);
         var pane = try allocator.create(Pane);
         errdefer allocator.destroy(pane);
         pane.* = Pane.init(allocator, 0, width, height) catch |err| {
@@ -306,7 +314,6 @@ pub const Window = struct {
     }
 
     pub fn deinit(self: *Window, allocator: std.mem.Allocator) void {
-        allocator.free(self.name);
         if (self.last_foreground_name.len > 0) allocator.free(self.last_foreground_name);
         self.layout.deinit();
         self.panes.deinit(allocator);
@@ -464,9 +471,7 @@ fn windowTitleCallback(ctx: ?*anyopaque, title: []const u8) void {
     if (title.len == 0) return;
     if (std.mem.eql(u8, self.name, title)) return;
 
-    const new_name = self.allocator.dupe(u8, title) catch return;
-    self.allocator.free(self.name);
-    self.name = new_name;
+    self.setName(title);
     for (self.panes.items) |p| {
         p.dirty = true;
     }
@@ -623,4 +628,17 @@ test "Window.init and addPane cleanup on allocation failure — bug #239" {
     // Test successful Window.init cleaned up cleanly
     var window = try Window.init(testing.allocator, 1, "test", 80, 24, null, null);
     defer window.deinit(testing.allocator);
+}
+
+test "window setName and title callback — bug #313 #324" {
+    var window = try Window.init(testing.allocator, 1, "initial", 80, 24, null, null);
+    defer window.deinit(testing.allocator);
+
+    try testing.expectEqualStrings("initial", window.name);
+
+    window.setName("renamed");
+    try testing.expectEqualStrings("renamed", window.name);
+
+    windowTitleCallback(&window, "callback_title");
+    try testing.expectEqualStrings("callback_title", window.name);
 }

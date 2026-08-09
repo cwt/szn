@@ -34,10 +34,10 @@ Sorted by number. See individual bug files for details.
 
 | Status | Count |
 |---|---:|
-| Fixed | 294 |
+| Fixed | 298 |
 | False Positive | 14 |
 | Intentional | 1 |
-| Open | 27 |
+| Open | 23 |
 | **Total** | **336** |
 
 ## All Bugs
@@ -354,8 +354,8 @@ Sorted by number. See individual bug files for details.
 | [310](310.md) | tickAutoscroll traverses full session tree on every loop iteration | LOW | Fixed |
 | [311](311.md) | Multiline prompt cursor jumping and text scrambling during line editing | HIGH | Fixed |
 | [312](312.md) | Use-after-free in Server.processInput when action destroys active pane or session | CRITICAL | Open |
-| [313](313.md) | Window title callback calls allocator.free on Session arena | HIGH | Open |
-| [314](314.md) | Memory leak when expanding pane border format strings during rendering | HIGH | Open |
+| [313](313.md) | Window title callback calls allocator.free on Session arena | HIGH | Fixed |
+| [314](314.md) | Memory leak when expanding pane border format strings during rendering | HIGH | Fixed |
 | [315](315.md) | cmdMoveWindow orphans window and leaks memory on insert OOM rollback failure | HIGH | Open |
 | [316](316.md) | Sixel image refcounts leaked on vertical screen shrink in Screen.resize | HIGH | Open |
 | [317](317.md) | Sixel image refcounts leaked on grid history limit eviction | HIGH | Open |
@@ -365,7 +365,7 @@ Sorted by number. See individual bug files for details.
 | [321](321.md) | Uncapped loop in CSI 'Z' handler causes CPU exhaustion DoS | HIGH | Open |
 | [322](322.md) | Synchronous blocking write in server response dispatch halts main loop | HIGH | Open |
 | [323](323.md) | Dummy pane allocation wasted in cmdBreakPane | MEDIUM | Open |
-| [324](324.md) | cmdRenameWindow leaks window name memory into session arena | MEDIUM | Open |
+| [324](324.md) | cmdRenameWindow leaks window name memory into session arena | MEDIUM | Fixed |
 | [325](325.md) | Option set -u directive silently ignored in configuration parser | MEDIUM | Open |
 | [326](326.md) | Substring flag matching and combined flag failure in mapCommandToAction | MEDIUM | Open |
 | [327](327.md) | Copy mode single-line backward selection yank failure | MEDIUM | Open |
@@ -379,4 +379,4 @@ Sorted by number. See individual bug files for details.
 | [335](335.md) | Command table execution uses function pointer dispatch violating AGENTS.md | LOW | Open |
 | [336](336.md) | Duplicated key binding flag parsing loop in cfg.zig | LOW | Open |
 | [337](337.md) | Duplicated target window index resolution in cmd.zig | LOW | Open |
-| [338](338.md) | Redundant status line string duplication per render frame | LOW | Open |
+| [338](338.md) | Redundant status line string duplication per render frame | LOW | Fixed |

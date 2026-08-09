@@ -2821,6 +2821,9 @@ fn pumpPaneInput(self: *Server) void {
                 };
                 ctx.deinit();
                 if (expanded) |exp| {
+                    if (pb.pane.border_format_cached) |old_exp| {
+                        self.allocator.free(old_exp);
+                    }
                     pb.pane.border_format_cached = exp;
                     pb.pane.border_format_gen = border_gen;
                     pb.border_format = exp;
@@ -2829,30 +2832,25 @@ fn pumpPaneInput(self: *Server) void {
                 }
             }
 
-            var status_line_owned: ?[]const u8 = null;
-            defer if (status_line_owned) |sl| self.allocator.free(sl);
+            var status_line_new: ?[]const u8 = null;
+            defer if (status_line_new) |sl| self.allocator.free(sl);
+            var status_line_slice: ?[]const u8 = null;
 
             if (status_enabled and self.message == null and !self.command_mode) {
                 // Use cached status line when valid (bug #309).
                 const use_cache = !self.dirty and dc.status_line_width == dc.sx and dc.status_line != null;
                 if (use_cache) {
-                    // Clone the cached status line so the defer doesn't double-free.
-                    status_line_owned = self.allocator.dupe(u8, dc.status_line.?) catch |err| blk: {
-                        std.log.warn("status line dupe error: {any}", .{err});
-                        break :blk null;
-                    };
+                    status_line_slice = dc.status_line;
                 } else {
-                    status_line_owned = self.buildStatusLine(session, dc.sx) catch |err| blk: {
+                    status_line_new = self.buildStatusLine(session, dc.sx) catch |err| blk: {
                         std.log.warn("buildStatusLine error: {any}", .{err});
                         break :blk null;
                     };
-                    if (status_line_owned) |sl| {
+                    if (status_line_new) |sl| {
                         if (dc.status_line) |prev| self.allocator.free(prev);
-                        // The cache owns an independent copy so the defer's
-                        // free of `status_line_owned` cannot leave dc.status_line
-                        // dangling (bug #309 double-free).
                         dc.status_line = self.allocator.dupe(u8, sl) catch null;
                         dc.status_line_width = dc.sx;
+                        status_line_slice = sl;
                     }
                 }
             }
@@ -2878,7 +2876,7 @@ fn pumpPaneInput(self: *Server) void {
                 if (self.search_pending) |dir| (if (dir == .forward) '/' else '?') else 0,
                 pane_in_copy_mode,
                 self.dirty,
-                status_line_owned,
+                status_line_slice,
                 status_enabled,
             ) catch |err| {
                 std.log.warn("render error: {any}", .{err});
