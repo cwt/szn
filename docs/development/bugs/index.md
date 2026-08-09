@@ -386,5 +386,5 @@ Sorted by number. See individual bug files for details.
 | [342](342.md) | `std.ArrayList.toOwnedSlice()` is removed in Zig 0.16 | HIGH | Open |
 | [343](343.md) | `std.c.getenv()` used instead of `init.environ_map` — ~15 call sites | MEDIUM | Open |
 | [344](344.md) | `main()` returns `void` instead of `!void` (Zig 0.16 rule #1) | LOW | Fixed |
-| [345](345.md) | `std.process.Args.Iterator` is a pre-0.16 pattern; should use `toSlice(arena)` | MEDIUM | Open |
+| [345](345.md) | `std.process.Args.Iterator` is pre-0.16; should use `toSlice(arena)` | MEDIUM | Fixed |
 | [346](346.md) | I/O functions do not receive `io: std.Io` parameter (Zig 0.16 rule #2) | MEDIUM | Open |
