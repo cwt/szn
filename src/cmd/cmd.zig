@@ -200,46 +200,8 @@ fn cmdSelectWindow(server: *Server, args: []const []const u8) CmdResult {
     return .ok;
 }
 
-fn cmdMoveWindow(server: *Server, args: []const []const u8) CmdResult {
-    if (args.len < 2) return .err;
-    const session = server.activeSession() orelse return .err;
-    if (session.windows.items.len == 0) return .err;
-
-    var src_idx: usize = 0;
-    var dst_idx: usize = 0;
-
-    if (args.len == 2) {
-        const active = session.active_window orelse session.windows.items[0];
-        src_idx = for (session.windows.items, 0..) |w, idx| {
-            if (w == active) break idx;
-        } else return .err;
-        dst_idx = std.fmt.parseInt(usize, args[1], 10) catch return .err;
-    } else {
-        src_idx = std.fmt.parseInt(usize, args[1], 10) catch return .err;
-        dst_idx = std.fmt.parseInt(usize, args[2], 10) catch return .err;
-    }
-
-    if (src_idx >= session.windows.items.len or dst_idx >= session.windows.items.len) return .err;
-
-    // session.windows is managed by the session's arena allocator, so use that
-    // for any growth (using server.allocator here would realloc arena memory
-    // with the wrong allocator if capacity is exceeded).
-    const arena_alloc = session.arenaAllocator();
-    const w = session.windows.orderedRemove(src_idx);
-    session.windows.insert(arena_alloc, dst_idx, w) catch {
-        // bug #286: if the insert fails, put the window back at its original
-        // position so it is not orphaned (its panes/ptys would otherwise
-        // become unreachable and never be killed or deinit'd).
-        session.windows.insert(arena_alloc, src_idx, w) catch {};
-        return .err;
-    };
-    return .ok;
-}
-
-fn cmdSwapWindow(server: *Server, args: []const []const u8) CmdResult {
-    const session = server.activeSession() orelse return .err;
-    if (session.windows.items.len == 0) return .err;
-
+fn resolveWindowIndices(session: *@import("../session.zig").Session, args: []const []const u8) ?struct { src: usize, dst: usize } {
+    if (session.windows.items.len == 0) return null;
     var src_idx: usize = 0;
     var dst_idx: usize = 0;
 
@@ -247,24 +209,50 @@ fn cmdSwapWindow(server: *Server, args: []const []const u8) CmdResult {
         const active = session.active_window orelse session.windows.items[0];
         src_idx = for (session.windows.items, 0..) |w, idx| {
             if (w == active) break idx;
-        } else return .err;
+        } else return null;
         dst_idx = if (src_idx + 1 < session.windows.items.len) src_idx + 1 else if (src_idx > 0) src_idx - 1 else src_idx;
     } else if (args.len == 2) {
         const active = session.active_window orelse session.windows.items[0];
         src_idx = for (session.windows.items, 0..) |w, idx| {
             if (w == active) break idx;
-        } else return .err;
-        dst_idx = std.fmt.parseInt(usize, args[1], 10) catch return .err;
+        } else return null;
+        dst_idx = std.fmt.parseInt(usize, args[1], 10) catch return null;
+    } else if (args.len >= 3) {
+        src_idx = std.fmt.parseInt(usize, args[1], 10) catch return null;
+        dst_idx = std.fmt.parseInt(usize, args[2], 10) catch return null;
     } else {
-        src_idx = std.fmt.parseInt(usize, args[1], 10) catch return .err;
-        dst_idx = std.fmt.parseInt(usize, args[2], 10) catch return .err;
+        return null;
     }
 
-    if (src_idx >= session.windows.items.len or dst_idx >= session.windows.items.len) return .err;
+    if (src_idx >= session.windows.items.len or dst_idx >= session.windows.items.len) return null;
+    return .{ .src = src_idx, .dst = dst_idx };
+}
 
-    const tmp = session.windows.items[src_idx];
-    session.windows.items[src_idx] = session.windows.items[dst_idx];
-    session.windows.items[dst_idx] = tmp;
+fn cmdMoveWindow(server: *Server, args: []const []const u8) CmdResult {
+    const session = server.activeSession() orelse return .err;
+    const indices = resolveWindowIndices(session, args) orelse return .err;
+
+    const arena_alloc = session.arenaAllocator();
+    session.windows.ensureTotalCapacity(arena_alloc, session.windows.items.len) catch return .err;
+
+    const w = session.windows.orderedRemove(indices.src);
+    session.windows.insert(arena_alloc, indices.dst, w) catch {
+        session.windows.insert(arena_alloc, indices.src, w) catch {
+            w.deinit(arena_alloc);
+            arena_alloc.destroy(w);
+        };
+        return .err;
+    };
+    return .ok;
+}
+
+fn cmdSwapWindow(server: *Server, args: []const []const u8) CmdResult {
+    const session = server.activeSession() orelse return .err;
+    const indices = resolveWindowIndices(session, args) orelse return .err;
+
+    const tmp = session.windows.items[indices.src];
+    session.windows.items[indices.src] = session.windows.items[indices.dst];
+    session.windows.items[indices.dst] = tmp;
     return .ok;
 }
 
@@ -410,6 +398,12 @@ fn cmdJoinPane(server: *Server, args: []const []const u8) CmdResult {
         }
     }
 
+    const dummy_node = dst_win.layout.findLeafParent(dst_win.layout.root, dummy_pane) orelse {
+        dummy_pane.deinit();
+        return .err;
+    };
+    dummy_node.leaf = sp;
+
     for (dst_win.panes.items) |*p| {
         if (p.* == dummy_pane) {
             p.* = sp;
@@ -417,12 +411,9 @@ fn cmdJoinPane(server: *Server, args: []const []const u8) CmdResult {
             break;
         }
     }
-    const dummy_node = dst_win.layout.findLeafParent(dst_win.layout.root, dummy_pane) orelse return .err;
-    dummy_node.leaf = sp;
 
     dummy_pane.deinit();
-
-    sp.resizeTerminal(dummy_width, dummy_height) catch return .err;
+    sp.resizeTerminal(dummy_width, dummy_height) catch {};
 
     dst_win.setActivePane(sp);
     return .ok;
@@ -454,6 +445,7 @@ fn cmdBreakPane(server: *Server, args: []const []const u8) CmdResult {
     if (new_win.panes.items.len > 0) {
         var old_pane = new_win.panes.items[0];
         old_pane.deinit();
+        server.allocator.destroy(old_pane);
         new_win.panes.items[0] = pane;
         new_win.registerPane(pane);
         new_win.layout.root.leaf = pane;
@@ -1651,6 +1643,11 @@ pub const CmdArgs = struct {
     }
 
     pub fn exec(self: CmdArgs, server: *Server) CmdResult {
+        inline for (CMD_TABLE) |entry| {
+            if (entry == self.entry) {
+                return entry.exec(server, self.args);
+            }
+        }
         return self.entry.exec(server, self.args);
     }
 };

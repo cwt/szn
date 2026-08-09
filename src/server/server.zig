@@ -3041,19 +3041,25 @@ fn pumpPaneInput(self: *Server) void {
                         }
                         continue;
                     }
-                    self.global_options.set(s.option, s.value) catch |err| {
-                        if (err == error.UnknownOption) {
-                            self.global_window_options.set(s.option, s.value) catch |err2| {
-                                if (err2 == error.UnknownOption) {
-                                    std.log.warn("unknown option: {s}", .{s.option});
-                                } else {
-                                    return err2;
-                                }
-                            };
-                        } else {
-                            return err;
-                        }
-                    };
+                    if (s.flags.unset) {
+                        self.global_options.unset(s.option) catch {
+                            self.global_window_options.unset(s.option) catch {};
+                        };
+                    } else {
+                        self.global_options.set(s.option, s.value) catch |err| {
+                            if (err == error.UnknownOption) {
+                                self.global_window_options.set(s.option, s.value) catch |err2| {
+                                    if (err2 == error.UnknownOption) {
+                                        std.log.warn("unknown option: {s}", .{s.option});
+                                    } else {
+                                        return err2;
+                                    }
+                                };
+                            } else {
+                                return err;
+                            }
+                        };
+                    }
                     if (std.mem.eql(u8, s.option, "prefix")) {
                         if (s.value == .key) {
                             self.dispatcher.prefix = s.value.key;

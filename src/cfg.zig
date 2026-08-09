@@ -24,6 +24,7 @@ pub const SetOpt = struct {
         session: bool = false,
         window: bool = false,
         server: bool = false,
+        unset: bool = false,
     },
     option: []const u8,
     value: OptionValue,
@@ -186,21 +187,24 @@ fn parseSet(allocator: std.mem.Allocator, args: []const u8, result: *ParseResult
             'g' => flags.flags.global = true,
             's' => flags.flags.session = true,
             'w' => flags.flags.window = true,
-            'u' => return,
+            'u' => flags.flags.unset = true,
             else => break,
         }
         remaining = std.mem.trim(u8, if (remaining.len > 2) remaining[2..] else "", " \t");
     }
 
-    // Parse option name
-    const space_pos = std.mem.indexOfAny(u8, remaining, " \t") orelse return error.MissingValue;
-    flags.option = try allocator.dupe(u8, remaining[0..space_pos]);
-    errdefer allocator.free(flags.option);
-    const val_str = std.mem.trim(u8, remaining[space_pos + 1 ..], " \t");
-
-    // Parse value based on content
-    flags.value = try parseValue(allocator, val_str);
-    errdefer if (flags.value == .string) allocator.free(flags.value.string);
+    if (remaining.len == 0) return error.MissingValue;
+    const space_pos = std.mem.indexOfAny(u8, remaining, " \t");
+    if (space_pos) |sp| {
+        flags.option = try allocator.dupe(u8, remaining[0..sp]);
+        errdefer allocator.free(flags.option);
+        const val_str = std.mem.trim(u8, remaining[sp + 1 ..], " \t");
+        flags.value = parseValue(allocator, val_str) catch .{ .string = try allocator.dupe(u8, val_str) };
+    } else {
+        flags.option = try allocator.dupe(u8, remaining);
+        errdefer allocator.free(flags.option);
+        flags.value = .{ .string = try allocator.dupe(u8, "") };
+    }
 
     try result.directives.append(allocator, Directive{ .set = flags });
 }
@@ -253,14 +257,11 @@ fn trimLeft(slice: []const u8, chars: []const u8) []const u8 {
     return slice[start..];
 }
 
-fn parseBindKey(allocator: std.mem.Allocator, args: []const u8, result: *ParseResult) Error!void {
-    const trimmed = std.mem.trim(u8, args, " \t");
-    var remaining = trimmed;
-    var reverse = false;
+fn parseKeyFlags(allocator: std.mem.Allocator, args: []const u8, reverse_opt: ?*bool) Error!struct { remaining: []const u8, key_table: ?[]const u8 } {
+    var remaining = args;
     var key_table: ?[]const u8 = null;
     errdefer if (key_table) |kt| allocator.free(kt);
 
-    // Parse flags
     while (remaining.len > 0 and remaining[0] == '-') {
         if (std.mem.startsWith(u8, remaining, "-T")) {
             remaining = trimLeft(remaining[2..], " \t");
@@ -272,13 +273,23 @@ fn parseBindKey(allocator: std.mem.Allocator, args: []const u8, result: *ParseRe
             if (key_table) |kt| allocator.free(kt);
             key_table = try allocator.dupe(u8, "root");
             remaining = trimLeft(remaining[2..], " \t");
-        } else if (std.mem.startsWith(u8, remaining, "-r")) {
-            reverse = true;
+        } else if (reverse_opt != null and std.mem.startsWith(u8, remaining, "-r")) {
+            reverse_opt.?.* = true;
             remaining = trimLeft(remaining[2..], " \t");
         } else {
             break;
         }
     }
+    return .{ .remaining = remaining, .key_table = key_table };
+}
+
+fn parseBindKey(allocator: std.mem.Allocator, args: []const u8, result: *ParseResult) Error!void {
+    const trimmed = std.mem.trim(u8, args, " \t");
+    var reverse = false;
+    const flags_res = try parseKeyFlags(allocator, trimmed, &reverse);
+    const key_table = flags_res.key_table;
+    errdefer if (key_table) |kt| allocator.free(kt);
+    const remaining = flags_res.remaining;
 
     // Now remaining contains: "key command"
     const space = std.mem.indexOfAny(u8, remaining, " \t") orelse return error.InvalidBind;
@@ -303,26 +314,10 @@ fn parseBindKey(allocator: std.mem.Allocator, args: []const u8, result: *ParseRe
 
 fn parseUnbindKey(allocator: std.mem.Allocator, args: []const u8, result: *ParseResult) Error!void {
     const trimmed = std.mem.trim(u8, args, " \t");
-    var remaining = trimmed;
-    var key_table: ?[]const u8 = null;
+    const flags_res = try parseKeyFlags(allocator, trimmed, null);
+    const key_table = flags_res.key_table;
     errdefer if (key_table) |kt| allocator.free(kt);
-
-    // Parse flags
-    while (remaining.len > 0 and remaining[0] == '-') {
-        if (std.mem.startsWith(u8, remaining, "-T")) {
-            remaining = trimLeft(remaining[2..], " \t");
-            const space = std.mem.indexOfAny(u8, remaining, " \t") orelse return error.InvalidBind;
-            if (key_table) |kt| allocator.free(kt);
-            key_table = try allocator.dupe(u8, remaining[0..space]);
-            remaining = trimLeft(remaining[space..], " \t");
-        } else if (std.mem.startsWith(u8, remaining, "-n")) {
-            if (key_table) |kt| allocator.free(kt);
-            key_table = try allocator.dupe(u8, "root");
-            remaining = trimLeft(remaining[2..], " \t");
-        } else {
-            break;
-        }
-    }
+    const remaining = flags_res.remaining;
 
     const parsed_key = try key.parseKeyName(remaining);
 
@@ -681,4 +676,16 @@ test "unescapeQuoted handles escaped backslashes correctly — bug #259" {
     const s2 = try unescapeQuoted(allocator, "path\\\\to\\\\file");
     defer allocator.free(s2);
     try testing.expectEqualStrings("path\\to\\file", s2);
+}
+
+test "parseConfig handles set -u directive — bug #325 #336" {
+    const allocator = testing.allocator;
+    var res = try parseConfig(allocator, "set -u status-interval");
+    defer res.deinit(allocator);
+
+    try testing.expectEqual(@as(usize, 1), res.directives.items.len);
+    const d = res.directives.items[0];
+    try testing.expect(d == .set);
+    try testing.expect(d.set.flags.unset);
+    try testing.expectEqualStrings("status-interval", d.set.option);
 }

@@ -34,10 +34,10 @@ Sorted by number. See individual bug files for details.
 
 | Status | Count |
 |---|---:|
-| Fixed | 299 |
+| Fixed | 306 |
 | False Positive | 14 |
 | Intentional | 1 |
-| Open | 22 |
+| Open | 15 |
 | **Total** | **336** |
 
 ## All Bugs
@@ -356,17 +356,17 @@ Sorted by number. See individual bug files for details.
 | [312](312.md) | Use-after-free in Server.processInput when action destroys active pane or session | CRITICAL | Fixed |
 | [313](313.md) | Window title callback calls allocator.free on Session arena | HIGH | Fixed |
 | [314](314.md) | Memory leak when expanding pane border format strings during rendering | HIGH | Fixed |
-| [315](315.md) | cmdMoveWindow orphans window and leaks memory on insert OOM rollback failure | HIGH | Open |
+| [315](315.md) | cmdMoveWindow orphans window and leaks memory on insert OOM rollback failure | HIGH | Fixed |
 | [316](316.md) | Sixel image refcounts leaked on vertical screen shrink in Screen.resize | HIGH | Open |
 | [317](317.md) | Sixel image refcounts leaked on grid history limit eviction | HIGH | Open |
 | [318](318.md) | Layout split failure leaves pane internal dimensions un-restored | HIGH | Open |
 | [319](319.md) | Desynchronization between Window.panes array rotation and Layout tree DFS rotation | HIGH | Open |
-| [320](320.md) | State desync on cmdJoinPane layout node lookup failure | HIGH | Open |
+| [320](320.md) | State desync on cmdJoinPane layout node lookup failure | HIGH | Fixed |
 | [321](321.md) | Uncapped loop in CSI 'Z' handler causes CPU exhaustion DoS | HIGH | Open |
 | [322](322.md) | Synchronous blocking write in server response dispatch halts main loop | HIGH | Open |
-| [323](323.md) | Dummy pane allocation wasted in cmdBreakPane | MEDIUM | Open |
+| [323](323.md) | Dummy pane allocation wasted in cmdBreakPane | MEDIUM | Fixed |
 | [324](324.md) | cmdRenameWindow leaks window name memory into session arena | MEDIUM | Fixed |
-| [325](325.md) | Option set -u directive silently ignored in configuration parser | MEDIUM | Open |
+| [325](325.md) | Option set -u directive silently ignored in configuration parser | MEDIUM | Fixed |
 | [326](326.md) | Substring flag matching and combined flag failure in mapCommandToAction | MEDIUM | Open |
 | [327](327.md) | Copy mode single-line backward selection yank failure | MEDIUM | Open |
 | [328](328.md) | Format string truncation specifier slices UTF-8 codepoints | MEDIUM | Open |
@@ -376,7 +376,7 @@ Sorted by number. See individual bug files for details.
 | [332](332.md) | Recursive layout tree traversals risk stack overflow on deep split hierarchies | MEDIUM | Open |
 | [333](333.md) | O(L^2) re-evaluation loop during Thai line rewrapping | MEDIUM | Open |
 | [334](334.md) | Dropped keystroke on interrupted UTF-8 continuation sequence | LOW | Open |
-| [335](335.md) | Command table execution uses function pointer dispatch violating AGENTS.md | LOW | Open |
-| [336](336.md) | Duplicated key binding flag parsing loop in cfg.zig | LOW | Open |
-| [337](337.md) | Duplicated target window index resolution in cmd.zig | LOW | Open |
+| [335](335.md) | Command table execution uses function pointer dispatch violating AGENTS.md | LOW | Fixed |
+| [336](336.md) | Duplicated key binding flag parsing loop in cfg.zig | LOW | Fixed |
+| [337](337.md) | Duplicated target window index resolution in cmd.zig | LOW | Fixed |
 | [338](338.md) | Redundant status line string duplication per render frame | LOW | Fixed |
