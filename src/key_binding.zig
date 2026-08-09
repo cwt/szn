@@ -472,28 +472,34 @@ test "dispatcher two prefixes in sequence" {
 }
 
 pub fn mapCommandToAction(cmd: []const u8) ?Action {
-    // Trim surrounding whitespace/quotes, then split on first space to get command name.
     const trimmed = std.mem.trim(u8, cmd, " \t\"");
-    const space_idx = std.mem.indexOfScalar(u8, trimmed, ' ') orelse trimmed.len;
-    const name = trimmed[0..space_idx];
+    var it = std.mem.tokenizeAny(u8, trimmed, " \t");
+    const name = it.next() orelse return null;
 
-    // Exact command names (no arguments) are compared using the isolated name.
     if (std.mem.eql(u8, name, "new-window") or std.mem.eql(u8, name, "neww")) return .new_window;
 
-    // split-window may include flags; handle -h for horizontal split.
-    if (std.mem.startsWith(u8, name, "split-window") or std.mem.startsWith(u8, name, "splitw")) {
-        // Look for "-h" flag anywhere after the command name.
-        if (std.mem.indexOf(u8, trimmed, " -h")) |idx| {
-            const after = idx + 3;
-            if (after >= trimmed.len or trimmed[after] == ' ') return .split_horizontal;
+    if (std.mem.eql(u8, name, "split-window") or std.mem.eql(u8, name, "splitw")) {
+        var is_h = false;
+        while (it.next()) |token| {
+            if (token.len > 1 and token[0] == '-') {
+                if (std.mem.indexOfScalar(u8, token[1..], 'h') != null) {
+                    is_h = true;
+                }
+            }
         }
-        return .split_vertical;
+        return if (is_h) .split_horizontal else .split_vertical;
     }
 
-    if (std.mem.eql(u8, trimmed, "select-pane -L")) return .select_pane_left;
-    if (std.mem.eql(u8, trimmed, "select-pane -R")) return .select_pane_right;
-    if (std.mem.eql(u8, trimmed, "select-pane -U")) return .select_pane_up;
-    if (std.mem.eql(u8, trimmed, "select-pane -D")) return .select_pane_down;
+    if (std.mem.eql(u8, name, "select-pane") or std.mem.eql(u8, name, "selectp")) {
+        while (it.next()) |token| {
+            if (token.len > 1 and token[0] == '-') {
+                if (std.mem.indexOfScalar(u8, token[1..], 'L') != null) return .select_pane_left;
+                if (std.mem.indexOfScalar(u8, token[1..], 'R') != null) return .select_pane_right;
+                if (std.mem.indexOfScalar(u8, token[1..], 'U') != null) return .select_pane_up;
+                if (std.mem.indexOfScalar(u8, token[1..], 'D') != null) return .select_pane_down;
+            }
+        }
+    }
 
     if (std.mem.eql(u8, name, "kill-pane") or std.mem.eql(u8, name, "killp")) return .kill_pane;
     if (std.mem.eql(u8, name, "next-window") or std.mem.eql(u8, name, "next")) return .next_window;

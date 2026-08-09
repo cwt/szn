@@ -149,14 +149,19 @@ pub const Layout = struct {
     }
 
     pub fn findLeafParent(self: *Layout, node: *Node, target: *Pane) ?*Node {
+        return self.findLeafParentDepth(node, target, 0);
+    }
+
+    fn findLeafParentDepth(self: *Layout, node: *Node, target: *Pane, depth: usize) ?*Node {
+        if (depth > 64) return null;
         switch (node.*) {
             .leaf => |p| {
                 if (p == target) return node;
                 return null;
             },
             .split => |s| {
-                if (self.findLeafParent(s.a, target)) |found| return found;
-                if (self.findLeafParent(s.b, target)) |found| return found;
+                if (self.findLeafParentDepth(s.a, target, depth + 1)) |found| return found;
+                if (self.findLeafParentDepth(s.b, target, depth + 1)) |found| return found;
                 return null;
             },
         }

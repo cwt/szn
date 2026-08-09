@@ -720,20 +720,41 @@ fn expandTruncateInto(allocator: std.mem.Allocator, out: *std.ArrayList(u8), con
 
     if (n == 0) return;
 
-    if (negative) {
-        if (value.len <= n) {
-            try out.appendSlice(allocator, value);
-        } else {
-            try out.appendSlice(allocator, value[value.len - n ..]);
-        }
+    var count: usize = 0;
+    var idx: usize = 0;
+    while (idx < value.len) {
+        const len = std.unicode.utf8ByteSequenceLength(value[idx]) catch 1;
+        if (count >= n) break;
+        count += 1;
+        idx += len;
+    }
+
+    if (!negative) {
+        try out.appendSlice(allocator, value[0..idx]);
         return;
     }
 
-    if (value.len <= n) {
-        try out.appendSlice(allocator, value);
-    } else {
-        try out.appendSlice(allocator, value[0..n]);
+    var total_chars: usize = 0;
+    var j: usize = 0;
+    while (j < value.len) {
+        const len = std.unicode.utf8ByteSequenceLength(value[j]) catch 1;
+        total_chars += 1;
+        j += len;
     }
+    if (total_chars <= n) {
+        try out.appendSlice(allocator, value);
+        return;
+    }
+
+    const skip = total_chars - n;
+    var cur: usize = 0;
+    var k: usize = 0;
+    while (k < value.len and cur < skip) {
+        const len = std.unicode.utf8ByteSequenceLength(value[k]) catch 1;
+        cur += 1;
+        k += len;
+    }
+    try out.appendSlice(allocator, value[k..]);
 }
 
 fn isTruthy(value: []const u8) bool {

@@ -34,10 +34,10 @@ Sorted by number. See individual bug files for details.
 
 | Status | Count |
 |---|---:|
-| Fixed | 312 |
+| Fixed | 321 |
 | False Positive | 14 |
 | Intentional | 1 |
-| Open | 9 |
+| Open | 0 |
 | **Total** | **336** |
 
 ## All Bugs
@@ -367,15 +367,15 @@ Sorted by number. See individual bug files for details.
 | [323](323.md) | Dummy pane allocation wasted in cmdBreakPane | MEDIUM | Fixed |
 | [324](324.md) | cmdRenameWindow leaks window name memory into session arena | MEDIUM | Fixed |
 | [325](325.md) | Option set -u directive silently ignored in configuration parser | MEDIUM | Fixed |
-| [326](326.md) | Substring flag matching and combined flag failure in mapCommandToAction | MEDIUM | Open |
-| [327](327.md) | Copy mode single-line backward selection yank failure | MEDIUM | Open |
-| [328](328.md) | Format string truncation specifier slices UTF-8 codepoints | MEDIUM | Open |
-| [329](329.md) | Missing OSC discard transition on buffer overflow causes input injection | MEDIUM | Open |
-| [330](330.md) | Input parser drops interrupting Escape (0x1B) control bytes | MEDIUM | Open |
-| [331](331.md) | SIGWINCH configured with SA_RESTART delays client resize redraws | MEDIUM | Open |
-| [332](332.md) | Recursive layout tree traversals risk stack overflow on deep split hierarchies | MEDIUM | Open |
-| [333](333.md) | O(L^2) re-evaluation loop during Thai line rewrapping | MEDIUM | Open |
-| [334](334.md) | Dropped keystroke on interrupted UTF-8 continuation sequence | LOW | Open |
+| [326](326.md) | Substring flag matching and combined flag failure in mapCommandToAction | MEDIUM | Fixed |
+| [327](327.md) | Copy mode single-line backward selection yank failure | MEDIUM | Fixed |
+| [328](328.md) | Format string truncation specifier slices UTF-8 codepoints | MEDIUM | Fixed |
+| [329](329.md) | Missing OSC discard transition on buffer overflow causes input injection | MEDIUM | Fixed |
+| [330](330.md) | Input parser drops interrupting Escape (0x1B) control bytes | MEDIUM | Fixed |
+| [331](331.md) | SIGWINCH configured with SA_RESTART delays client resize redraws | MEDIUM | Fixed |
+| [332](332.md) | Recursive layout tree traversals risk stack overflow on deep split hierarchies | MEDIUM | Fixed |
+| [333](333.md) | O(L^2) re-evaluation loop during Thai line rewrapping | MEDIUM | Fixed |
+| [334](334.md) | Dropped keystroke on interrupted UTF-8 continuation sequence | LOW | Fixed |
 | [335](335.md) | Command table execution uses function pointer dispatch violating AGENTS.md | LOW | Fixed |
 | [336](336.md) | Duplicated key binding flag parsing loop in cfg.zig | LOW | Fixed |
 | [337](337.md) | Duplicated target window index resolution in cmd.zig | LOW | Fixed |

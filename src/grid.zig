@@ -531,7 +531,10 @@ pub const Grid = struct {
                     // If libthai returned word boundaries, use them to break at a valid boundary.
                     var found_wb: ?usize = null;
                     if (word_breaks.len > 0) {
-                        for (word_breaks) |wb| {
+                        var wb_idx: usize = word_breaks.len;
+                        while (wb_idx > 0) {
+                            wb_idx -= 1;
+                            const wb = word_breaks[wb_idx];
                             if (wb > line_start and wb <= i) {
                                 // Only wrap if this boundary borders a Thai character or space adjacent to a Thai word
                                 const is_thai_boundary = blk: {
@@ -548,7 +551,10 @@ pub const Grid = struct {
                                 };
                                 if (is_thai_boundary) {
                                     found_wb = wb;
+                                    break;
                                 }
+                            } else if (wb <= line_start) {
+                                break;
                             }
                         }
                     }

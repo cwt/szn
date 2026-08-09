@@ -41,6 +41,8 @@ pub const InputParser = struct {
         csi_final,
         osc_string,
         osc_esc,
+        osc_discard,
+        osc_discard_esc,
         dcs_entry,
         dcs_param,
         dcs_intermediate,
@@ -161,6 +163,8 @@ pub const InputParser = struct {
             .csi_final => self.advanceCsiFinal(byte),
             .osc_string => try self.advanceOsc(byte),
             .osc_esc => self.advanceOscEsc(byte),
+            .osc_discard => self.advanceOscDiscard(byte),
+            .osc_discard_esc => self.advanceOscDiscardEsc(byte),
             .dcs_entry => try self.advanceDcsEntry(byte),
             .dcs_param => try self.advanceDcsParam(byte),
             .dcs_intermediate => try self.advanceDcsIntermediate(byte),
@@ -300,6 +304,10 @@ pub const InputParser = struct {
                 self.pushParam();
                 try self.dispatchCsi(byte);
             },
+            0x1B => {
+                self.toGround();
+                self.state = .esc;
+            },
             else => self.toGround(),
         }
     }
@@ -311,6 +319,10 @@ pub const InputParser = struct {
             },
             0x40...0x7E => {
                 try self.dispatchCsi(byte);
+            },
+            0x1B => {
+                self.toGround();
+                self.state = .esc;
             },
             else => self.toGround(),
         }
@@ -336,7 +348,7 @@ pub const InputParser = struct {
                     try self.osc_buf.append(self.screen.allocator, byte);
                 } else {
                     self.osc_buf.clearRetainingCapacity();
-                    self.toGround();
+                    self.state = .osc_discard;
                 }
             },
         }
@@ -347,6 +359,21 @@ pub const InputParser = struct {
             self.dispatchOsc() catch {};
         }
         self.toGround();
+    }
+
+    fn advanceOscDiscard(self: *InputParser, byte: u8) void {
+        switch (byte) {
+            0x07 => self.toGround(),
+            0x1B => self.state = .osc_discard_esc,
+            else => {},
+        }
+    }
+
+    fn advanceOscDiscardEsc(self: *InputParser, byte: u8) void {
+        switch (byte) {
+            '\\' => self.toGround(),
+            else => self.state = .osc_discard,
+        }
     }
 
     fn advanceDcsEntry(self: *InputParser, byte: u8) !void {

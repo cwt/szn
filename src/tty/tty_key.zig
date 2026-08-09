@@ -173,7 +173,7 @@ pub const InputReader = struct {
     fn feedUtf8(rd: *InputReader, byte: u8, expected: usize) ?Event {
         if (byte & 0xc0 != 0x80) {
             rd.state = .ground;
-            return null;
+            return rd.feed(byte);
         }
         if (rd.pos >= rd.buf.len) {
             std.log.debug("input: buffer overflow, dropping sequence", .{});

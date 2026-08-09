@@ -642,7 +642,7 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
     var act: std.posix.Sigaction = .{
         .handler = .{ .handler = sigwinch_handler },
         .mask = std.posix.sigemptyset(),
-        .flags = std.posix.SA.RESTART,
+        .flags = 0,
     };
     std.posix.sigaction(.WINCH, &act, null);
 

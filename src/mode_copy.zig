@@ -321,9 +321,18 @@ pub const CopyMode = struct {
 
         const sy = @min(sy_i64, ey_i64);
         const ey = @max(sy_i64, ey_i64);
-        const start_is_top = (sy == sy_i64);
-        const sx = if (start_is_top) self.selection.start_x else self.selection.end_x;
-        const ex = if (start_is_top) self.selection.end_x else self.selection.start_x;
+        var sx: u32 = 0;
+        var ex: u32 = 0;
+        if (sy_i64 == ey_i64) {
+            sx = @min(self.selection.start_x, self.selection.end_x);
+            ex = @max(self.selection.start_x, self.selection.end_x);
+        } else if (sy_i64 < ey_i64) {
+            sx = self.selection.start_x;
+            ex = self.selection.end_x;
+        } else {
+            sx = self.selection.end_x;
+            ex = self.selection.start_x;
+        }
 
         var result: std.ArrayList(u8) = .empty;
         errdefer result.deinit(allocator);
