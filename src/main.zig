@@ -234,31 +234,18 @@ fn mainInner(init: std.process.Init) Error!void {
         std.process.exit(1);
     }
 
-    var args: std.ArrayList([]const u8) = .empty;
-    defer args.deinit(allocator);
+    const arena = init.arena.allocator();
+    const args = try init.minimal.args.toSlice(arena);
 
-    var arg_it = try std.process.Args.Iterator.initAllocator(init.minimal.args, allocator);
-    defer arg_it.deinit();
-
-    while (arg_it.next()) |arg| {
-        const arg_dupe = try allocator.dupe(u8, arg);
-        try args.append(allocator, arg_dupe);
-    }
-    defer {
-        for (args.items) |arg| {
-            allocator.free(arg);
-        }
-    }
-
-    if (args.items.len > 1 and std.mem.eql(u8, args.items[1], "-V")) {
+    if (args.len > 1 and std.mem.eql(u8, args[1], "-V")) {
         const version = getVersionComptime();
         std.debug.print("szn {s}\n", .{version});
         std.process.exit(0);
     }
 
-    if (args.items.len > 1) {
-        const is_attach = std.mem.eql(u8, args.items[1], "attach") or
-            std.mem.eql(u8, args.items[1], "attach-session");
+    if (args.len > 1) {
+        const is_attach = std.mem.eql(u8, args[1], "attach") or
+            std.mem.eql(u8, args[1], "attach-session");
         if (is_attach) {
             if (socket_mod.socketExists()) {
                 try runInteractiveClient(allocator);
@@ -269,10 +256,10 @@ fn mainInner(init: std.process.Init) Error!void {
             }
         }
 
-        const is_help = std.mem.eql(u8, args.items[1], "help") or
-            std.mem.eql(u8, args.items[1], "?");
+        const is_help = std.mem.eql(u8, args[1], "help") or
+            std.mem.eql(u8, args[1], "?");
         if (is_help and !socket_mod.socketExists()) {
-            const target = if (args.items.len > 2) args.items[2] else null;
+            const target = if (args.len > 2) args[2] else null;
             const text = cmd_mod.formatHelp(allocator, target) catch {
                 std.debug.print("Failed to format help\n", .{});
                 std.process.exit(1);
@@ -282,11 +269,11 @@ fn mainInner(init: std.process.Init) Error!void {
             std.process.exit(0);
         }
 
-        const is_new_cmd = std.mem.eql(u8, args.items[1], "new-session") or
-            std.mem.eql(u8, args.items[1], "new");
+        const is_new_cmd = std.mem.eql(u8, args[1], "new-session") or
+            std.mem.eql(u8, args[1], "new");
 
         var is_detached = false;
-        for (args.items[2..]) |arg| {
+        for (args[2..]) |arg| {
             if (std.mem.eql(u8, arg, "-d") or std.mem.eql(u8, arg, "--detached")) {
                 is_detached = true;
             }
@@ -345,7 +332,7 @@ fn mainInner(init: std.process.Init) Error!void {
 
         var cmd_len: usize = 0;
         var cmd_count: usize = 0;
-        for (args.items[1..]) |arg| {
+        for (args[1..]) |arg| {
             if (std.mem.eql(u8, arg, "-d") or std.mem.eql(u8, arg, "--detached")) continue;
             cmd_len += arg.len;
             cmd_count += 1;
@@ -356,7 +343,7 @@ fn mainInner(init: std.process.Init) Error!void {
 
         var offset: usize = 0;
         var first = true;
-        for (args.items[1..]) |arg| {
+        for (args[1..]) |arg| {
             if (std.mem.eql(u8, arg, "-d") or std.mem.eql(u8, arg, "--detached")) continue;
             if (!first) {
                 cmd_buf[offset] = ' ';
