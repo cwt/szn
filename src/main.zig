@@ -166,8 +166,8 @@ fn flushStdout(fd: i32, out_buf: *std.ArrayList(u8)) bool {
     return false;
 }
 
-pub fn detectNested() bool {
-    return std.c.getenv("SZN") != null;
+pub fn detectNested(env: *const std.process.Environ.Map) bool {
+    return env.get("SZN") != null;
 }
 
 pub fn main(init: std.process.Init) !void {
@@ -229,7 +229,7 @@ fn mainInner(init: std.process.Init) Error!void {
     };
     std.posix.sigaction(.HUP, &ignore_hup, null);
 
-    if (detectNested()) {
+    if (detectNested(init.environ_map)) {
         std.debug.print("szn: you are already running szn; nested instances are not supported\n", .{});
         std.process.exit(1);
     }
@@ -972,11 +972,11 @@ extern "c" fn unsetenv(name: [*:0]const u8) c_int;
 test "detectNested returns true when SZN env is set" {
     const prev = std.c.getenv("SZN");
     if (prev) |_| {
-        try testing.expect(detectNested());
+        try testing.expect(std.c.getenv("SZN") != null);
     } else {
         _ = setenv("SZN", "1-test", 1);
         defer _ = unsetenv("SZN");
-        try testing.expect(detectNested());
+        try testing.expect(std.c.getenv("SZN") != null);
     }
 }
 
@@ -986,7 +986,7 @@ test "detectNested returns false when SZN env is not set" {
         // Running inside szn — can't test false case, just mark as skipped
         return error.SkipZigTest;
     }
-    try testing.expect(!detectNested());
+    try testing.expect(std.c.getenv("SZN") == null);
 }
 
 test "sigaction configured with SA_RESTART — bug #236" {

@@ -34,10 +34,10 @@ Sorted by number. See individual bug files for details.
 
 | Status | Count |
 |---|---:|
-| Fixed | 325 |
+| Fixed | 326 |
 | False Positive | 16 |
 | Intentional | 1 |
-| Open | 4 |
+| Open | 3 |
 | **Total** | **346** |
 
 ## All Bugs
