@@ -229,6 +229,7 @@ fn resolveWindowIndices(session: *@import("../session.zig").Session, args: []con
 }
 
 fn cmdMoveWindow(server: *Server, args: []const []const u8) CmdResult {
+    if (args.len < 2) return .err;
     const session = server.activeSession() orelse return .err;
     const indices = resolveWindowIndices(session, args) orelse return .err;
 
@@ -237,10 +238,7 @@ fn cmdMoveWindow(server: *Server, args: []const []const u8) CmdResult {
 
     const w = session.windows.orderedRemove(indices.src);
     session.windows.insert(arena_alloc, indices.dst, w) catch {
-        session.windows.insert(arena_alloc, indices.src, w) catch {
-            w.deinit(arena_alloc);
-            arena_alloc.destroy(w);
-        };
+        session.windows.insert(arena_alloc, indices.src, w) catch {};
         return .err;
     };
     return .ok;
@@ -445,7 +443,6 @@ fn cmdBreakPane(server: *Server, args: []const []const u8) CmdResult {
     if (new_win.panes.items.len > 0) {
         var old_pane = new_win.panes.items[0];
         old_pane.deinit();
-        server.allocator.destroy(old_pane);
         new_win.panes.items[0] = pane;
         new_win.registerPane(pane);
         new_win.layout.root.leaf = pane;

@@ -253,7 +253,7 @@ pub const Layout = struct {
         }
     }
 
-    fn collectLeafNodes(self: *Layout, node: *Node, out: *std.ArrayList(*Node)) !void {
+    pub fn collectLeafNodes(self: *Layout, node: *Node, out: *std.ArrayList(*Node)) !void {
         switch (node.*) {
             .leaf => try out.append(self.allocator, node),
             .split => |s| {
