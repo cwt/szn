@@ -906,12 +906,14 @@ pub const Grid = struct {
             const h_count = total_len - height;
 
             // Allocate visible portion (last `height` lines)
-            var vis_list = try std.ArrayList(GridLine).initCapacity(allocator, height);
+            var vis_list: std.ArrayList(GridLine) = .empty;
+            try vis_list.ensureTotalCapacity(allocator, height);
             vis_list.appendSliceAssumeCapacity(new_lines.items[h_count..]);
             self.lines = vis_list;
 
             // Allocate history portion (first `h_count` lines)
-            var hist_list = try std.ArrayList(GridLine).initCapacity(allocator, h_count);
+            var hist_list: std.ArrayList(GridLine) = .empty;
+            try hist_list.ensureTotalCapacity(allocator, h_count);
             hist_list.appendSliceAssumeCapacity(new_lines.items[0..h_count]);
             self.history = hist_list;
 

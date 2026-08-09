@@ -364,7 +364,8 @@ fn parseSetEnv(allocator: std.mem.Allocator, args: []const u8, result: *ParseRes
 
 fn unescapeQuoted(allocator: std.mem.Allocator, s: []const u8) Error![]const u8 {
     if (std.mem.indexOfScalar(u8, s, '\\') == null) return allocator.dupe(u8, s);
-    var result = try std.ArrayList(u8).initCapacity(allocator, s.len);
+    var result: std.ArrayList(u8) = .empty;
+    try result.ensureTotalCapacity(allocator, s.len);
     errdefer result.deinit(allocator);
     var i: usize = 0;
     while (i < s.len) {
