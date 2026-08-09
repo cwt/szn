@@ -573,6 +573,9 @@ pub const Screen = struct {
             self.last_char = null;
         }
         if (char == '\n') {
+            if (self.cursor.x >= self.grid.width) {
+                self.grid.getLineMut(self.cursor.y).wrapped = true;
+            }
             if (self.cursor.y + 1 >= self.grid.height) {
                 try self.grid.scrollUp();
                 self.shiftSixelAnchors(-1);
@@ -580,6 +583,7 @@ pub const Screen = struct {
                 // bug #225: decrement refcounts for fill cells.
                 self.decrementLineRefs(bottom_line.cells.items);
                 @memset(bottom_line.cells.items, self.eraseCell());
+                bottom_line.wrapped = false;
                 bottom_line.dirty = true;
             } else if (self.scroll_region != null and self.cursor.y == self.scroll_region.?[1]) {
                 try self.scrollUpInRegion();
@@ -592,6 +596,9 @@ pub const Screen = struct {
             return;
         }
         if (char == '\r') {
+            if (self.cursor.x >= self.grid.width) {
+                self.grid.getLineMut(self.cursor.y).wrapped = true;
+            }
             self.cursor.x = 0;
             self.dirty = true;
             return;
@@ -610,7 +617,12 @@ pub const Screen = struct {
         }
         if (char == 0x08) {
             // BS
-            if (self.cursor.x > 0) self.cursor.x -= 1;
+            if (self.cursor.x > 0) {
+                self.cursor.x -= 1;
+            } else if (self.cursor.y > 0 and self.grid.getLine(self.cursor.y - 1).wrapped) {
+                self.cursor.y -= 1;
+                self.cursor.x = self.grid.width -| 1;
+            }
             return;
         }
         if (char < 0x20 and char != '\x1b') return;
@@ -684,6 +696,7 @@ pub const Screen = struct {
                     // bug #225: decrement refcounts for fill cells.
                     self.decrementLineRefs(bottom_line.cells.items);
                     @memset(bottom_line.cells.items, self.eraseCell());
+                    bottom_line.wrapped = false;
                     bottom_line.dirty = true;
                 } else if (self.scroll_region != null and self.cursor.y == self.scroll_region.?[1]) {
                     try self.scrollUpInRegion();
@@ -731,6 +744,7 @@ pub const Screen = struct {
                     // bug #225: decrement refcounts for fill cells.
                     self.decrementLineRefs(bottom_line.cells.items);
                     @memset(bottom_line.cells.items, self.eraseCell());
+                    bottom_line.wrapped = false;
                     bottom_line.dirty = true;
                 } else if (self.scroll_region != null and self.cursor.y == self.scroll_region.?[1]) {
                     try self.scrollUpInRegion();
@@ -789,6 +803,7 @@ pub const Screen = struct {
     }
 
     pub fn cursorUp(self: *Screen, n: u32) void {
+        self.cursor.x = @min(self.cursor.x, self.grid.width -| 1);
         const top = if (self.mode.origin) blk: {
             break :blk if (self.scroll_region) |r| r[0] else 0;
         } else 0;
@@ -798,6 +813,7 @@ pub const Screen = struct {
     }
 
     pub fn cursorDown(self: *Screen, n: u32) void {
+        self.cursor.x = @min(self.cursor.x, self.grid.width -| 1);
         const bottom: u32 = if (self.mode.origin) blk: {
             break :blk if (self.scroll_region) |r| r[1] else self.grid.height - 1;
         } else self.grid.height - 1;
@@ -807,12 +823,35 @@ pub const Screen = struct {
     }
 
     pub fn cursorForward(self: *Screen, n: u32) void {
-        self.cursor.x = @min(self.cursor.x + n, self.grid.width - 1);
+        var count = n;
+        while (count > 0) : (count -= 1) {
+            if (self.cursor.x < self.grid.width -| 1) {
+                self.cursor.x += 1;
+            } else if (self.cursor.y + 1 < self.grid.height and self.grid.getLine(self.cursor.y).wrapped) {
+                self.cursor.y += 1;
+                self.cursor.x = 0;
+            } else {
+                self.cursor.x = self.grid.width -| 1;
+                break;
+            }
+        }
         self.dirty = true;
     }
 
     pub fn cursorBack(self: *Screen, n: u32) void {
-        self.cursor.x -|= n;
+        var count = n;
+        while (count > 0) : (count -= 1) {
+            if (self.cursor.x >= self.grid.width) {
+                self.cursor.x = self.grid.width - 1;
+            } else if (self.cursor.x > 0) {
+                self.cursor.x -= 1;
+            } else if (self.cursor.y > 0 and self.grid.getLine(self.cursor.y - 1).wrapped) {
+                self.cursor.y -= 1;
+                self.cursor.x = self.grid.width -| 1;
+            } else {
+                break;
+            }
+        }
         self.dirty = true;
     }
 
@@ -822,6 +861,7 @@ pub const Screen = struct {
     }
 
     pub fn cursorLine(self: *Screen, y: u32) void {
+        self.cursor.x = @min(self.cursor.x, self.grid.width -| 1);
         const origin_y = if (self.mode.origin) blk: {
             break :blk if (self.scroll_region) |r| r[0] else 0;
         } else 0;
@@ -844,21 +884,28 @@ pub const Screen = struct {
 
     pub fn eraseLine(self: *Screen, mode: u8) void {
         const fill = self.eraseCell();
+        const cx = @min(self.cursor.x, self.grid.width -| 1);
         switch (mode) {
             0 => {
-                var x = self.cursor.x;
+                var x = cx;
                 while (x < self.grid.width) : (x += 1) {
                     // bug #225: decrement refcount before erasing.
                     self.decrementMainGridRef(x, self.cursor.y);
                     self.grid.setCell(x, self.cursor.y, fill);
                 }
+                if (self.cursor.x == 0) {
+                    self.grid.getLineMut(self.cursor.y).wrapped = false;
+                }
             },
             1 => {
                 var x: u32 = 0;
-                while (x <= self.cursor.x) : (x += 1) {
+                while (x <= cx) : (x += 1) {
                     // bug #225: decrement refcount before erasing.
                     self.decrementMainGridRef(x, self.cursor.y);
                     self.grid.setCell(x, self.cursor.y, fill);
+                }
+                if (cx >= self.grid.width -| 1) {
+                    self.grid.getLineMut(self.cursor.y).wrapped = false;
                 }
             },
             2 => {
@@ -866,6 +913,7 @@ pub const Screen = struct {
                 // bug #225: decrement refcounts for all cells in this line.
                 self.decrementLineRefs(line.cells.items);
                 @memset(line.cells.items, fill);
+                line.wrapped = false;
                 line.dirty = true;
             },
             else => {},
@@ -886,6 +934,7 @@ pub const Screen = struct {
                         // bug #225: decrement refcounts for all cells in this line.
                         self.decrementLineRefs(line.cells.items);
                         @memset(line.cells.items, fill);
+                        line.wrapped = false;
                         line.dirty = true;
                     }
                 }
@@ -900,6 +949,7 @@ pub const Screen = struct {
                         // bug #225: decrement refcounts for all cells in this line.
                         self.decrementLineRefs(line.cells.items);
                         @memset(line.cells.items, fill);
+                        line.wrapped = false;
                         line.dirty = true;
                     }
                 }
@@ -910,6 +960,7 @@ pub const Screen = struct {
                     // bug #225: decrement refcounts for all cells in this line.
                     self.decrementLineRefs(line.cells.items);
                     @memset(line.cells.items, fill);
+                    line.wrapped = false;
                     line.dirty = true;
                 }
             },
@@ -950,12 +1001,13 @@ pub const Screen = struct {
 
     pub fn eraseChars(self: *Screen, n: u32) void {
         const fill = self.eraseCell();
-        const end = @min(self.cursor.x + n, self.grid.width);
-        if (self.cursor.x < end) {
+        const cx = @min(self.cursor.x, self.grid.width -| 1);
+        const end = @min(cx + n, self.grid.width);
+        if (cx < end) {
             const line = self.grid.getLineMut(self.cursor.y);
             // bug #225: decrement refcounts for erased cells.
-            self.decrementLineRefs(line.cells.items[self.cursor.x..end]);
-            @memset(line.cells.items[self.cursor.x..end], fill);
+            self.decrementLineRefs(line.cells.items[cx..end]);
+            @memset(line.cells.items[cx..end], fill);
             line.dirty = true;
         }
         self.dirty = true;
@@ -982,6 +1034,7 @@ pub const Screen = struct {
             self.grid.getLineMut(y).* = temp;
             const line = self.grid.getLineMut(y);
             @memset(line.cells.items, fill);
+            line.wrapped = false;
             line.dirty = true;
         }
         self.dirty = true;
@@ -1009,13 +1062,15 @@ pub const Screen = struct {
             const line = self.grid.getLineMut(bottom);
             self.decrementLineRefs(line.cells.items);
             @memset(line.cells.items, fill);
+            line.wrapped = false;
             line.dirty = true;
         }
         self.dirty = true;
     }
 
     pub fn insertChars(self: *Screen, n: u32) void {
-        const num = @min(n, self.grid.width -| self.cursor.x);
+        const cx = @min(self.cursor.x, self.grid.width -| 1);
+        const num = @min(n, self.grid.width -| cx);
         // bug #292: inserting chars shifts [cursor.x, width-1] right by `num`;
         // the markers in the rightmost `num` cells are shifted off the edge and
         // destroyed, so exactly those must have their refcounts released.
@@ -1026,24 +1081,25 @@ pub const Screen = struct {
                 self.decrementMainGridRef(x, self.cursor.y);
             }
         }
-        self.grid.insertChars(self.cursor.x, self.cursor.y, n);
+        self.grid.insertChars(cx, self.cursor.y, n);
         self.dirty = true;
     }
 
     pub fn deleteChars(self: *Screen, n: u32) void {
-        const num = @min(n, self.grid.width -| self.cursor.x);
+        const cx = @min(self.cursor.x, self.grid.width -| 1);
+        const num = @min(n, self.grid.width -| cx);
         // bug #292: deleting chars shifts [cursor.x, width-1] left by `num`;
         // the markers at [cursor.x, cursor.x+num-1] are shifted off the left
         // edge and destroyed — release their refcounts (previously the wrong
         // tail cells were decremented).
         if (num > 0) {
-            var x: u32 = self.cursor.x;
-            const end = self.cursor.x + num;
+            var x: u32 = cx;
+            const end = cx + num;
             while (x < end) : (x += 1) {
                 self.decrementMainGridRef(x, self.cursor.y);
             }
         }
-        self.grid.deleteChars(self.cursor.x, self.cursor.y, n);
+        self.grid.deleteChars(cx, self.cursor.y, n);
         self.dirty = true;
     }
 
@@ -1053,16 +1109,20 @@ pub const Screen = struct {
                 try self.scrollUpInRegion();
                 return;
             }
-        } else if (self.cursor.y + 1 >= self.grid.height) {
+        }
+        if (self.cursor.y + 1 >= self.grid.height) {
             try self.grid.scrollUp();
+            self.shiftSixelAnchors(-1);
             const bottom_line = self.grid.getLineMut(self.grid.height - 1);
-            // bug #225: decrement refcounts for the fill cells.
+            // bug #225: decrement refcounts for fill cells.
             self.decrementLineRefs(bottom_line.cells.items);
             @memset(bottom_line.cells.items, self.eraseCell());
+            bottom_line.wrapped = false;
             bottom_line.dirty = true;
-            return;
+        } else {
+            self.cursor.y += 1;
         }
-        self.cursor.y += 1;
+        self.dirty = true;
     }
 
     pub fn reverseIndex(self: *Screen) Error!void {
@@ -1072,6 +1132,7 @@ pub const Screen = struct {
             return;
         }
         self.cursor.y -|= 1;
+        self.dirty = true;
     }
 
     pub fn scrollUp(self: *Screen, n: u32) Error!void {
@@ -2662,3 +2723,98 @@ test "deleteLines does not decrement preserved bottom line refcount — bug #279
     try testing.expectEqual(@as(usize, 1), screen.sixel_refcounts[0]);
     try testing.expect(screen.grid.getCell(0, 3).attr.sixel);
 }
+
+test "eraseLine mode 0 when cursor.x equals grid.width" {
+    var screen = try Screen.init(testing.allocator, 10, 3);
+    defer screen.deinit();
+
+    try screen.writeStr("123456789A");
+    try testing.expectEqual(@as(u32, 10), screen.cursor.x);
+
+    screen.eraseLine(0);
+    try testing.expectEqual(@as(u21, 0), screen.grid.getCell(9, 0).char);
+}
+
+test "cursorBack steps back across soft-wrapped line boundaries" {
+    var screen = try Screen.init(testing.allocator, 5, 5);
+    defer screen.deinit();
+
+    try screen.writeStr("1234567890"); // wraps: line 0 = 12345 (wrapped), line 1 = 67890 (cursor at (5,1))
+    try testing.expect(screen.grid.getLine(0).wrapped);
+    screen.cursor.x = 0;
+    screen.cursor.y = 1;
+
+    screen.cursorBack(1);
+    try testing.expectEqual(@as(u32, 4), screen.cursor.x);
+    try testing.expectEqual(@as(u32, 0), screen.cursor.y);
+}
+
+test "eraseDisplay resets wrapped flag on erased lines" {
+    var screen = try Screen.init(testing.allocator, 5, 5);
+    defer screen.deinit();
+
+    try screen.writeStr("1234567890");
+    try testing.expect(screen.grid.getLine(0).wrapped);
+
+    screen.cursorPosition(0, 0);
+    screen.eraseDisplay(0);
+
+    try testing.expect(!screen.grid.getLine(0).wrapped);
+    try testing.expect(!screen.grid.getLine(1).wrapped);
+}
+
+test "cursorDown and cursorUp clamp cursor.x when cursor.x equals grid.width" {
+    var screen = try Screen.init(testing.allocator, 5, 5);
+    defer screen.deinit();
+
+    try screen.writeStr("12345"); // cursor.x = 5
+    try testing.expectEqual(@as(u32, 5), screen.cursor.x);
+
+    screen.cursorDown(1);
+    try testing.expectEqual(@as(u32, 4), screen.cursor.x);
+    try testing.expectEqual(@as(u32, 1), screen.cursor.y);
+
+    screen.cursorUp(1);
+    try testing.expectEqual(@as(u32, 4), screen.cursor.x);
+    try testing.expectEqual(@as(u32, 0), screen.cursor.y);
+}
+
+test "CR and LF on full line set wrapped flag for seamless backward navigation" {
+    var screen = try Screen.init(testing.allocator, 5, 5);
+    defer screen.deinit();
+
+    try screen.writeStr("12345"); // Fills line 0 (cursor.x = 5)
+    try screen.writeStr("\r\n"); // Line editor moves to line 1 via CR/LF
+
+    // Line 0 must be marked wrapped because 5 chars filled a 5-wide screen
+    try testing.expect(screen.grid.getLine(0).wrapped);
+
+    try screen.writeStr("67");
+    screen.cursor.x = 0;
+    screen.cursor.y = 1;
+
+    // Moving back from (0, 1) steps back to (4, 0) on line 0
+    screen.cursorBack(1);
+    try testing.expectEqual(@as(u32, 4), screen.cursor.x);
+    try testing.expectEqual(@as(u32, 0), screen.cursor.y);
+}
+
+test "cursorForward steps forward across soft-wrapped line boundaries" {
+    var screen = try Screen.init(testing.allocator, 5, 5);
+    defer screen.deinit();
+
+    try screen.writeStr("1234567890"); // wraps: line 0 = 12345 (wrapped), line 1 = 67890
+    try testing.expect(screen.grid.getLine(0).wrapped);
+
+    screen.cursor.x = 4;
+    screen.cursor.y = 0;
+
+    screen.cursorForward(1);
+    try testing.expectEqual(@as(u32, 0), screen.cursor.x);
+    try testing.expectEqual(@as(u32, 1), screen.cursor.y);
+}
+
+
+
+
+

@@ -637,6 +637,27 @@ pub const InputParser = struct {
                 const n = self.paramDefault(0, 1);
                 self.screen.deleteChars(n);
             },
+            'Z' => {
+                const n = self.paramDefault(0, 1);
+                var i: u32 = 0;
+                while (i < n) : (i += 1) {
+                    if (self.screen.cursor.x > 0) {
+                        const ts = self.screen.tab_stop;
+                        const remainder = self.screen.cursor.x % ts;
+                        if (remainder > 0) {
+                            self.screen.cursor.x -= remainder;
+                        } else if (self.screen.cursor.x >= ts) {
+                            self.screen.cursor.x -= ts;
+                        } else {
+                            self.screen.cursor.x = 0;
+                        }
+                    } else if (self.screen.cursor.y > 0 and self.screen.grid.getLine(self.screen.cursor.y - 1).wrapped) {
+                        self.screen.cursor.y -= 1;
+                        self.screen.cursor.x = self.screen.grid.width -| 1;
+                    }
+                }
+                self.screen.dirty = true;
+            },
             'S' => {
                 if (self.intermediate == '?') {
                     // XTSMGRAPHICS — graphics attribute query.

@@ -9,14 +9,14 @@ timestamp: 2026-08-03T00:00:00Z
 
 Sorted by number. See individual bug files for details.
 
-> **Note:** Bugs **#301** and **#302** were never filed (MIA). The #300–#310 performance sweep skipped straight from #300 to #303, so the tracker covers #1–#300 and #303–#310 — 308 bugs total.
+> **Note:** Bugs **#301** and **#302** were never filed (MIA). The #300–#310 performance sweep skipped straight from #300 to #303, so the tracker covers #1–#300 and #303–#311 — 309 bugs total.
 
 ## Summary by Severity
 
 | Severity | Count |
 |---|---:|
 | CRITICAL | 41 |
-| HIGH | 70 |
+| HIGH | 71 |
 | MEDIUM | 101 |
 | LOW | 78 |
 | LOW (architecture) | 3 |
@@ -28,13 +28,13 @@ Sorted by number. See individual bug files for details.
 | LOW (safety) | 1 |
 | MEDIUM (dead code / refcount drift) | 1 |
 | MEDIUM (performance) | 4 |
-| **Total** | **308** |
+| **Total** | **309** |
 
 ## Summary by Status
 
 | Status | Count |
 |---|---:|
-| Fixed | 293 |
+| Fixed | 294 |
 | False Positive | 14 |
 | Intentional | 1 |
 | Open | 0 |
@@ -352,3 +352,4 @@ Sorted by number. See individual bug files for details.
 | [308](308.md) | merged screen init/deinit path has unnecessary allocation checks | LOW | False Positive |
 | [309](309.md) | status line built from scratch every render | LOW | Fixed |
 | [310](310.md) | tickAutoscroll traverses full session tree on every loop iteration | LOW | Fixed |
+| [311](311.md) | Multiline prompt cursor jumping and text scrambling during line editing | HIGH | Fixed |
