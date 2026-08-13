@@ -760,6 +760,9 @@ pub const Grid = struct {
                 }
             }
         }
+        if (new_width == self.width and hist_len > 0) {
+            process_limit = @max(process_limit, total);
+        }
 
         // ── Flatten all lines into logical lines ──
         var flat_cells: std.ArrayList(Cell) = .empty;
@@ -1713,6 +1716,46 @@ test "forceReflow at current width" {
     try testing.expectEqual(@as(u21, '5'), grid.getCell(0, 1).char);
     try testing.expectEqual(@as(u21, '3'), grid.getCell(1, 1).char);
     try testing.expectEqual(@as(u21, '4'), grid.getCell(2, 1).char);
+}
+
+test "forceReflow with history and trailing empty lines on screen" {
+    var grid = try Grid.init(testing.allocator, 10, 5);
+    defer grid.deinit();
+
+    // Push 2 lines into history
+    var h1 = GridLine{};
+    try h1.cells.resize(testing.allocator, 10);
+    @memset(h1.cells.items, Cell.withChar('H'));
+    try grid.history.append(testing.allocator, h1);
+
+    var h2 = GridLine{};
+    try h2.cells.resize(testing.allocator, 10);
+    @memset(h2.cells.items, Cell.withChar('I'));
+    try grid.history.append(testing.allocator, h2);
+
+    // Visible grid: height 5.
+    // Line 0: "Prompt", Line 1..4: empty.
+    grid.writeChar(0, 0, 'P');
+    grid.writeChar(1, 0, 'r');
+    grid.writeChar(2, 0, 'o');
+    grid.writeChar(3, 0, 'm');
+    grid.writeChar(4, 0, 'p');
+    grid.writeChar(5, 0, 't');
+
+    var out_cx: u32 = 0;
+    var out_cy: u32 = 0;
+    try grid.forceReflowCursor(6, 0, &out_cx, &out_cy);
+
+    // History should remain 2 lines
+    try testing.expectEqual(@as(usize, 2), grid.historyLen());
+    // Line 0 of visible grid must still be "Prompt" (not shifted down by history)
+    try testing.expectEqual(@as(u21, 'P'), grid.getCell(0, 0).char);
+    try testing.expectEqual(@as(u21, 'r'), grid.getCell(1, 0).char);
+    try testing.expectEqual(@as(u21, 'o'), grid.getCell(2, 0).char);
+    // Line 1 of visible grid must be empty (0)
+    try testing.expectEqual(@as(u21, 0), grid.getCell(0, 1).char);
+    // Cursor row must still be 0
+    try testing.expectEqual(@as(u32, 0), out_cy);
 }
 
 test "setSize reflow Thai word breaking via libthai" {

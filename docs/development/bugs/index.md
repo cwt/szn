@@ -9,14 +9,14 @@ timestamp: 2026-08-09T23:00:00Z
 
 Sorted by number. See individual bug files for details.
 
-> **Note:** Bugs **#301** and **#302** were never filed (MIA). The #300–#310 performance sweep skipped straight from #300 to #303. The tracker covers #1–#300, #303–#346 — 346 bugs total (338 existing + 8 new Zig 0.16 compliance bugs).
+> **Note:** Bugs **#301** and **#302** were never filed (MIA). The #300–#310 performance sweep skipped straight from #300 to #303. The tracker covers #1–#300, #303–#347 — 347 bugs total (338 existing + 8 new Zig 0.16 compliance bugs + 1 copy-mode reflow bug).
 
 ## Summary by Severity
 
 | Severity | Count |
 |---|---:|
 | CRITICAL | 42 |
-| HIGH | 83 |
+| HIGH | 84 |
 | MEDIUM | 115 |
 | LOW | 83 |
 | LOW (architecture) | 3 |
@@ -28,17 +28,17 @@ Sorted by number. See individual bug files for details.
 | LOW (safety) | 1 |
 | MEDIUM (dead code / refcount drift) | 1 |
 | MEDIUM (performance) | 4 |
-| **Total** | **346** |
+| **Total** | **347** |
 
 ## Summary by Status
 
 | Status | Count |
 |---|---:|
-| Fixed | 327 |
+| Fixed | 328 |
 | False Positive | 17 |
 | Intentional | 1 |
 | Open | 0 |
-| **Total** | **346** |
+| **Total** | **347** |
 
 ## All Bugs
 
@@ -388,3 +388,4 @@ Sorted by number. See individual bug files for details.
 | [344](344.md) | `main()` returns `void` instead of `!void` (Zig 0.16 rule #1) | LOW | Fixed |
 | [345](345.md) | `std.process.Args.Iterator` is pre-0.16; should use `toSlice(arena)` | MEDIUM | Fixed |
 | [346](346.md) | Missing `io` param — false positive, raw POSIX syscall codebase | MEDIUM | False Positive |
+| [347](347.md) | `reflowCursorInternal` trims trailing empty screen lines during copy-mode entry, shifting visible grid down and corrupting prompt | HIGH | Fixed |
