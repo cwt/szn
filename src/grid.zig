@@ -458,11 +458,9 @@ pub const Grid = struct {
             gl.cells = line_cells;
             try lines.append(allocator, gl);
             if (cursor_offset) |co| {
-                if (co == 0) {
-                    if (out_cursor_pos) |ocp| {
-                        ocp.line_idx = 0;
-                        ocp.col_idx = 0;
-                    }
+                if (out_cursor_pos) |ocp| {
+                    ocp.line_idx = 0;
+                    ocp.col_idx = @min(co, new_width -| 1);
                 }
             }
             try out_lines.ensureUnusedCapacity(allocator, lines.items.len);
@@ -650,10 +648,10 @@ pub const Grid = struct {
             }
 
             if (cursor_offset) |co| {
-                if (co >= line_start and (co < i or (co == i and i == cells.len))) {
+                if (co >= line_start and (co < i or (i == cells.len and co >= i))) {
                     if (out_cursor_pos) |ocp| {
                         ocp.line_idx = lines.items.len;
-                        ocp.col_idx = co - line_start;
+                        ocp.col_idx = @min(co - line_start, new_width -| 1);
                     }
                 }
             }
@@ -1756,6 +1754,38 @@ test "forceReflow with history and trailing empty lines on screen" {
     try testing.expectEqual(@as(u21, 0), grid.getCell(0, 1).char);
     // Cursor row must still be 0
     try testing.expectEqual(@as(u32, 0), out_cy);
+}
+
+test "forceReflow preserves cursor position when cursor is past trimmed text or on empty prompt line" {
+    var grid = try Grid.init(testing.allocator, 20, 5);
+    defer grid.deinit();
+
+    // Push 1 line into history
+    var h1 = GridLine{};
+    try h1.cells.resize(testing.allocator, 20);
+    @memset(h1.cells.items, Cell.withChar('H'));
+    try grid.history.append(testing.allocator, h1);
+
+    // Line 0: "Prompt> " (8 chars). Cursor is at x=12, y=0 (4 spaces past text).
+    const text = "Prompt> ";
+    for (text, 0..) |c, idx| {
+        grid.writeChar(@intCast(idx), 0, c);
+    }
+
+    var out_cx: u32 = 0;
+    var out_cy: u32 = 0;
+    try grid.forceReflowCursor(12, 0, &out_cx, &out_cy);
+
+    try testing.expectEqual(@as(u32, 12), out_cx);
+    try testing.expectEqual(@as(u32, 0), out_cy);
+
+    // Line 1 is empty, cursor at x=5, y=1
+    out_cx = 0;
+    out_cy = 0;
+    try grid.forceReflowCursor(5, 1, &out_cx, &out_cy);
+
+    try testing.expectEqual(@as(u32, 5), out_cx);
+    try testing.expectEqual(@as(u32, 1), out_cy);
 }
 
 test "setSize reflow Thai word breaking via libthai" {
