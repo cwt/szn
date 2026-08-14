@@ -72,6 +72,8 @@ pub const StatusBar = struct {
             right,
             self.left_length,
             self.right_length,
+            self.fg,
+            self.bg,
             self.justify,
         );
     }
@@ -176,6 +178,8 @@ fn packLine(
     right_raw: []const u8,
     left_max: u32,
     right_max: u32,
+    fg: Colour,
+    bg: Colour,
     justify: Alignment,
 ) Error!RenderedStatus {
     if (width == 0) return .{ .line = try allocator.dupe(u8, "") };
@@ -209,10 +213,19 @@ fn packLine(
     errdefer out.deinit(allocator);
 
     try out.appendSlice(allocator, left);
+    if (std.mem.indexOfScalar(u8, left, 0x1b) != null) {
+        try colour.appendReset(allocator, &out, fg, bg);
+    }
     try appendSpaces(allocator, &out, pad_left);
     try out.appendSlice(allocator, centre);
+    if (std.mem.indexOfScalar(u8, centre, 0x1b) != null) {
+        try colour.appendReset(allocator, &out, fg, bg);
+    }
     try appendSpaces(allocator, &out, pad_right);
     try out.appendSlice(allocator, right);
+    if (std.mem.indexOfScalar(u8, right, 0x1b) != null) {
+        try colour.appendReset(allocator, &out, fg, bg);
+    }
 
     // Ensure exactly `width` visible columns (fill if left+right overflowed).
     const used = visibleLen(out.items);
@@ -255,6 +268,8 @@ pub const BuildInput = struct {
     right: []const u8 = "\"#{=21:pane_title}\" %H:%M %d-%b-%y",
     left_length: u32 = 10,
     right_length: u32 = 40,
+    fg: Colour = Colour.default_(),
+    bg: Colour = Colour.default_(),
     justify: Alignment = .left,
     window_status_format: []const u8 = "#I:#W#{?window_flags,#{window_flags}, }",
     window_status_current_format: []const u8 = "#I:#W#{?window_flags,#{window_flags}, }",
@@ -279,6 +294,8 @@ pub fn buildLine(
 ) Error!RenderedStatus {
     var ctx = Context.init(allocator);
     defer ctx.deinit();
+    ctx.default_fg = input.fg;
+    ctx.default_bg = input.bg;
 
     try ctx.set("session_name", input.session_name);
     try ctx.set("pane_title", input.pane_title);
@@ -307,6 +324,9 @@ pub fn buildLine(
         const piece = try expandCached(allocator, tmpl, &ctx, cache);
         defer allocator.free(piece);
         try centre_buf.appendSlice(allocator, piece);
+        if (std.mem.indexOfScalar(u8, piece, 0x1b) != null) {
+            try colour.appendReset(allocator, &centre_buf, input.fg, input.bg);
+        }
 
         if (out_ranges) |r| {
             const cols = visibleLen(piece);
@@ -342,6 +362,8 @@ pub fn buildLine(
     sb.centre = centre_buf.items;
     sb.left_length = input.left_length;
     sb.right_length = input.right_length;
+    sb.fg = input.fg;
+    sb.bg = input.bg;
     sb.justify = input.justify;
 
     const res = try sb.renderWithCache(allocator, &ctx, input.width, input.left_cache, input.right_cache);
@@ -649,4 +671,118 @@ test "buildLine truncates centre to available width — bug #290" {
     try testing.expectEqual(@as(u32, 1), ranges.items[1].pos);
     try testing.expectEqual(@as(u32, 7), ranges.items[1].start_col);
     try testing.expectEqual(@as(u32, 8), ranges.items[1].end_col);
+}
+
+test "buildLine with style in window-status-current-format" {
+    const windows = [_]WindowInfo{
+        .{ .index = 0, .name = "editor", .flags = "*", .is_active = true },
+        .{ .index = 1, .name = "shell", .flags = "", .is_active = false },
+    };
+    var ranges = std.ArrayList(WindowRange).empty;
+    defer ranges.deinit(testing.allocator);
+    const res = try buildLine(testing.allocator, .{
+        .session_name = "s",
+        .windows = &windows,
+        .left = "",
+        .right = "",
+        .left_length = 0,
+        .right_length = 0,
+        .width = 40,
+        .window_status_current_format = "#[bold,fg=yellow]#I:#W#[default]",
+    }, &ranges);
+    defer res.deinit(testing.allocator);
+
+    // Should be exactly 40 visible columns
+    try testing.expectEqual(@as(usize, 40), visibleLen(res.line));
+    // Should contain the escape sequences
+    try testing.expect(std.mem.indexOf(u8, res.line, "\x1b[1m") != null); // bold
+    try testing.expect(std.mem.indexOf(u8, res.line, "\x1b[38;5;3m") != null); // yellow fg (indexed)
+    try testing.expect(std.mem.indexOf(u8, res.line, "\x1b[m") != null); // reset
+    // Should contain the text
+    try testing.expect(std.mem.indexOf(u8, res.line, "0:editor") != null);
+    try testing.expect(std.mem.indexOf(u8, res.line, "1:shell") != null);
+}
+
+test "buildLine with space-separated style" {
+    const windows = [_]WindowInfo{
+        .{ .index = 0, .name = "editor", .flags = "*", .is_active = true },
+    };
+    var ranges = std.ArrayList(WindowRange).empty;
+    defer ranges.deinit(testing.allocator);
+    const res = try buildLine(testing.allocator, .{
+        .session_name = "s",
+        .windows = &windows,
+        .left = "",
+        .right = "",
+        .left_length = 0,
+        .right_length = 0,
+        .width = 40,
+        .window_status_current_format = "#[bold fg=yellow]#I:#W#[default]",
+    }, &ranges);
+    defer res.deinit(testing.allocator);
+
+    // Should be exactly 40 visible columns
+    try testing.expectEqual(@as(usize, 40), visibleLen(res.line));
+    // Space-separated style now works (tmux-compatible)
+    try testing.expect(std.mem.indexOf(u8, res.line, "\x1b[1m") != null); // bold
+    try testing.expect(std.mem.indexOf(u8, res.line, "\x1b[38;5;3m") != null); // yellow fg (indexed)
+    try testing.expect(std.mem.indexOf(u8, res.line, "\x1b[m") != null); // default reset
+    // Text should still be there
+    try testing.expect(std.mem.indexOf(u8, res.line, "0:editor") != null);
+}
+
+test "buildLine restores status bar bg after styled current window" {
+    const windows = [_]WindowInfo{
+        .{ .index = 0, .name = "editor", .flags = "*", .is_active = true },
+        .{ .index = 1, .name = "shell", .flags = "", .is_active = false },
+    };
+    var ranges = std.ArrayList(WindowRange).empty;
+    defer ranges.deinit(testing.allocator);
+    const res = try buildLine(testing.allocator, .{
+        .session_name = "s",
+        .windows = &windows,
+        .left = "",
+        .right = "",
+        .left_length = 0,
+        .right_length = 0,
+        .width = 40,
+        .fg = Colour.fromIndexed(15), // white fg
+        .bg = Colour.fromIndexed(4), // blue status bar bg
+        .window_status_current_format = "#[bg=red,fg=white]#I:#W#[default]",
+    }, &ranges);
+    defer res.deinit(testing.allocator);
+
+    try testing.expectEqual(@as(usize, 40), visibleLen(res.line));
+    // Contains red bg for active window
+    try testing.expect(std.mem.indexOf(u8, res.line, "\x1b[48;5;1m") != null);
+    // Contains reset + blue bg restore for status bar
+    try testing.expect(std.mem.indexOf(u8, res.line, "\x1b[m\x1b[38;5;15m\x1b[48;5;4m") != null or
+        std.mem.indexOf(u8, res.line, "\x1b[48;5;4m") != null);
+}
+
+test "buildLine prevents style leakage when window format omits default reset" {
+    const windows = [_]WindowInfo{
+        .{ .index = 0, .name = "editor", .flags = "*", .is_active = true },
+        .{ .index = 1, .name = "shell", .flags = "", .is_active = false },
+    };
+    var ranges = std.ArrayList(WindowRange).empty;
+    defer ranges.deinit(testing.allocator);
+    const res = try buildLine(testing.allocator, .{
+        .session_name = "s",
+        .windows = &windows,
+        .left = "",
+        .right = "",
+        .left_length = 0,
+        .right_length = 0,
+        .width = 40,
+        .bg = Colour.fromRgb(0x00, 0x5f, 0xaf),
+        .window_status_current_format = "#[bg=red,fg=white]#I:#W", // no #[default]
+    }, &ranges);
+    defer res.deinit(testing.allocator);
+
+    try testing.expectEqual(@as(usize, 40), visibleLen(res.line));
+    // Contains red bg for active window
+    try testing.expect(std.mem.indexOf(u8, res.line, "\x1b[48;5;1m") != null);
+    // Automatically restored status bar bg after active window piece
+    try testing.expect(std.mem.indexOf(u8, res.line, "\x1b[m\x1b[48;2;0;95;175m") != null);
 }

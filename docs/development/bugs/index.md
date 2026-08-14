@@ -389,3 +389,4 @@ Sorted by number. See individual bug files for details.
 | [345](345.md) | `std.process.Args.Iterator` is pre-0.16; should use `toSlice(arena)` | MEDIUM | Fixed |
 | [346](346.md) | Missing `io` param — false positive, raw POSIX syscall codebase | MEDIUM | False Positive |
 | [347](347.md) | `reflowCursorInternal` trims trailing empty screen lines during copy-mode entry, shifting visible grid down and corrupting prompt | HIGH | Fixed |
+| [348](348.md) | `#[default]` in `window-status-current-format` resets terminal background and drops status bar background color | MEDIUM | Fixed |

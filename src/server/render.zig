@@ -667,6 +667,7 @@ pub const Display = struct {
     ) Error!void {
         try self.moveTo(0, self.sy -| 1);
 
+        try self.writeBytes("\x1b[m");
         try self.writeColourFg(if (in_copy_mode) Colour.fromIndexed(0) else fg);
         try self.writeColourBg(if (in_copy_mode) Colour.fromIndexed(11) else bg);
 

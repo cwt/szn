@@ -420,7 +420,7 @@ pub const Server = struct {
         }
     }
 
-    fn buildStatusLine(self: *Server, session: *Session, width: u32) ![]const u8 {
+    fn buildStatusLine(self: *Server, session: *Session, width: u32, in_copy_mode: bool) ![]const u8 {
         const base_index: i64 = session.options.asNumber("base-index") orelse 0;
         self.status_win_infos.clearRetainingCapacity();
         for (session.windows.items, 0..) |win, i| {
@@ -450,6 +450,8 @@ pub const Server = struct {
         const left_len: u32 = @intCast(@max(session.options.asNumber("status-left-length") orelse 10, 0));
         const right_len: u32 = @intCast(@max(session.options.asNumber("status-right-length") orelse 40, 0));
         const justify = status_mod.Alignment.fromString(session.options.asString("status-justify") orelse "left");
+        const status_fg = if (in_copy_mode) Colour.fromIndexed(0) else session.options.asColour("status-fg") orelse Colour.default_();
+        const status_bg = if (in_copy_mode) Colour.fromIndexed(11) else session.options.asColour("status-bg") orelse Colour.default_();
 
         // window-status formats are window options (fall back to global)
         const win_opts = if (session.active_window) |aw| &aw.options else &self.global_window_options;
@@ -471,6 +473,8 @@ pub const Server = struct {
             .right = right,
             .left_length = left_len,
             .right_length = right_len,
+            .fg = status_fg,
+            .bg = status_bg,
             .justify = justify,
             .window_status_format = win_fmt,
             .window_status_current_format = win_cur,
@@ -609,32 +613,32 @@ pub const Server = struct {
             if (is_client) continue;
         }
 
-    // Keep POLLOUT armed for any pane whose keystroke queue is waiting on a
-    // writable master, so queued input drains once the child reads stdin
-    // (flow control, bug #298 follow-up).
-    self.pumpPaneInput();
+        // Keep POLLOUT armed for any pane whose keystroke queue is waiting on a
+        // writable master, so queued input drains once the child reads stdin
+        // (flow control, bug #298 follow-up).
+        self.pumpPaneInput();
 
-    // Manage the sixel-wait: pause panes with a buffered sixel (removing their
-    // POLL.IN so the loop sleeps instead of spinning at 100% CPU) and re-arm
-    // them once the sixel resolves (bug #298).
-    self.tickSixelWait();
-}
+        // Manage the sixel-wait: pause panes with a buffered sixel (removing their
+        // POLL.IN so the loop sleeps instead of spinning at 100% CPU) and re-arm
+        // them once the sixel resolves (bug #298).
+        self.tickSixelWait();
+    }
 
-/// Arm POLLOUT on the master of every pane that still has queued keystrokes
-/// (see Pty.writeInput / flushInput). No-op for panes whose queue is empty.
-fn pumpPaneInput(self: *Server) void {
-    for (self.sessions.items) |session| {
-        for (session.windows.items) |win| {
-            for (win.panes.items) |p| {
-                if (p.pty) |pty| {
-                    if (pty.input_buf.items.len > 0) {
-                        self.loop.addFdEvents(pty.master, std.posix.POLL.OUT);
+    /// Arm POLLOUT on the master of every pane that still has queued keystrokes
+    /// (see Pty.writeInput / flushInput). No-op for panes whose queue is empty.
+    fn pumpPaneInput(self: *Server) void {
+        for (self.sessions.items) |session| {
+            for (session.windows.items) |win| {
+                for (win.panes.items) |p| {
+                    if (p.pty) |pty| {
+                        if (pty.input_buf.items.len > 0) {
+                            self.loop.addFdEvents(pty.master, std.posix.POLL.OUT);
+                        }
                     }
                 }
             }
         }
     }
-}
 
     fn isPaneValid(_self: *Server, pane: *Pane) bool {
         _ = _self;
@@ -2842,6 +2846,7 @@ fn pumpPaneInput(self: *Server) void {
                 }
             }
 
+            const pane_in_copy_mode = pane.screen.copy_mode != null;
             var status_line_new: ?[]const u8 = null;
             defer if (status_line_new) |sl| self.allocator.free(sl);
             var status_line_slice: ?[]const u8 = null;
@@ -2852,7 +2857,7 @@ fn pumpPaneInput(self: *Server) void {
                 if (use_cache) {
                     status_line_slice = dc.status_line;
                 } else {
-                    status_line_new = self.buildStatusLine(session, dc.sx) catch |err| blk: {
+                    status_line_new = self.buildStatusLine(session, dc.sx, pane_in_copy_mode) catch |err| blk: {
                         std.log.warn("buildStatusLine error: {any}", .{err});
                         break :blk null;
                     };
@@ -2865,7 +2870,6 @@ fn pumpPaneInput(self: *Server) void {
                 }
             }
 
-            const pane_in_copy_mode = pane.screen.copy_mode != null;
             display.renderAll(
                 self.allocator,
                 dc.bounds_buf.items,

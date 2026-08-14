@@ -26,9 +26,15 @@ const Tm = extern struct {
 
 pub const Context = struct {
     map: std.StringHashMap([]const u8),
+    default_fg: colour_mod.Colour = colour_mod.Colour.default_(),
+    default_bg: colour_mod.Colour = colour_mod.Colour.default_(),
 
     pub fn init(allocator: std.mem.Allocator) Context {
-        return .{ .map = std.StringHashMap([]const u8).init(allocator) };
+        return .{
+            .map = std.StringHashMap([]const u8).init(allocator),
+            .default_fg = colour_mod.Colour.default_(),
+            .default_bg = colour_mod.Colour.default_(),
+        };
     }
 
     pub fn deinit(self: *Context) void {
@@ -216,7 +222,7 @@ fn expandOpsInto(
                 try expandContentInto(allocator, out, content, ctx);
             },
             .style => |content| {
-                try expandStyleInto(allocator, out, content);
+                try expandStyleInto(allocator, out, content, ctx);
             },
             .alias => |ch| {
                 if (aliasName(ch)) |name| {
@@ -275,21 +281,23 @@ fn appendWithStrftime(allocator: std.mem.Allocator, out: *std.ArrayList(u8), tex
     }
 }
 
-fn expandStyleInto(allocator: std.mem.Allocator, out: *std.ArrayList(u8), content: []const u8) FormatError!void {
+fn expandStyleInto(allocator: std.mem.Allocator, out: *std.ArrayList(u8), content: []const u8, ctx: *const Context) FormatError!void {
     var start: usize = 0;
     var i: usize = 0;
     while (i <= content.len) : (i += 1) {
-        if (i < content.len and content[i] != ',') continue;
+        // Split on commas or whitespace (tmux-compatible: #[bold fg=yellow] and
+        // #[bold,fg=yellow] both work).
+        if (i < content.len and content[i] != ',' and content[i] != ' ' and content[i] != '\t' and content[i] != '\n' and content[i] != '\r') continue;
         const part = std.mem.trim(u8, content[start..i], " \t");
         start = i + 1;
         if (part.len == 0) continue;
-        try applyStyleAttr(allocator, out, part);
+        try applyStyleAttr(allocator, out, part, ctx);
     }
 }
 
-fn applyStyleAttr(allocator: std.mem.Allocator, out: *std.ArrayList(u8), attr: []const u8) FormatError!void {
-    if (std.mem.eql(u8, attr, "default")) {
-        try out.appendSlice(allocator, "\x1b[m");
+fn applyStyleAttr(allocator: std.mem.Allocator, out: *std.ArrayList(u8), attr: []const u8, ctx: *const Context) FormatError!void {
+    if (std.mem.eql(u8, attr, "default") or std.mem.eql(u8, attr, "none")) {
+        try colour_mod.appendReset(allocator, out, ctx.default_fg, ctx.default_bg);
         return;
     }
     if (std.mem.eql(u8, attr, "bold") or std.mem.eql(u8, attr, "bright")) {
@@ -341,31 +349,27 @@ fn applyStyleAttr(allocator: std.mem.Allocator, out: *std.ArrayList(u8), attr: [
         return;
     }
     if (std.mem.startsWith(u8, attr, "fg=")) {
-        try appendColourSgr(allocator, out, attr[3..], true);
+        try appendColourSgr(allocator, out, attr[3..], true, ctx);
         return;
     }
     if (std.mem.startsWith(u8, attr, "bg=")) {
-        try appendColourSgr(allocator, out, attr[3..], false);
+        try appendColourSgr(allocator, out, attr[3..], false, ctx);
         return;
     }
 }
 
-fn appendColourSgr(allocator: std.mem.Allocator, out: *std.ArrayList(u8), name: []const u8, is_fg: bool) FormatError!void {
+fn appendColourSgr(allocator: std.mem.Allocator, out: *std.ArrayList(u8), name: []const u8, is_fg: bool, ctx: *const Context) FormatError!void {
+    if (std.ascii.eqlIgnoreCase(name, "default")) {
+        const col = if (is_fg) ctx.default_fg else ctx.default_bg;
+        if (col.tag != .default_ and col.tag != .terminal) {
+            try col.appendSgr(allocator, out, is_fg);
+        } else {
+            try out.appendSlice(allocator, if (is_fg) "\x1b[39m" else "\x1b[49m");
+        }
+        return;
+    }
     const col = colour_mod.parse(name) catch return;
-    var buf: [32]u8 = undefined;
-    const s = switch (col.tag) {
-        .default_, .terminal => if (is_fg) "\x1b[39m" else "\x1b[49m",
-        .indexed => blk: {
-            const base: u8 = if (is_fg) 38 else 48;
-            break :blk std.fmt.bufPrint(&buf, "\x1b[{d};5;{d}m", .{ base, @as(u8, @truncate(col.value)) }) catch return;
-        },
-        .rgb => blk: {
-            const rgb = col.toRgb().?;
-            const base: u8 = if (is_fg) 38 else 48;
-            break :blk std.fmt.bufPrint(&buf, "\x1b[{d};2;{d};{d};{d}m", .{ base, rgb[0], rgb[1], rgb[2] }) catch return;
-        },
-    };
-    try out.appendSlice(allocator, s);
+    try col.appendSgr(allocator, out, is_fg);
 }
 
 const ExpandResult = struct {

@@ -54,7 +54,39 @@ pub const Colour = packed struct(u32) {
             .terminal => "terminal",
         };
     }
+
+    pub fn writeSgr(self: Colour, buf: []u8, is_fg: bool) ?[]const u8 {
+        return switch (self.tag) {
+            .default_, .terminal => if (is_fg) "\x1b[39m" else "\x1b[49m",
+            .indexed => blk: {
+                const base: u8 = if (is_fg) 38 else 48;
+                break :blk std.fmt.bufPrint(buf, "\x1b[{d};5;{d}m", .{ base, @as(u8, @truncate(self.value)) }) catch null;
+            },
+            .rgb => blk: {
+                const rgb = self.toRgb() orelse return null;
+                const base: u8 = if (is_fg) 38 else 48;
+                break :blk std.fmt.bufPrint(buf, "\x1b[{d};2;{d};{d};{d}m", .{ base, rgb[0], rgb[1], rgb[2] }) catch null;
+            },
+        };
+    }
+
+    pub fn appendSgr(self: Colour, allocator: std.mem.Allocator, out: *std.ArrayList(u8), is_fg: bool) error{OutOfMemory}!void {
+        var buf: [32]u8 = undefined;
+        if (self.writeSgr(&buf, is_fg)) |s| {
+            try out.appendSlice(allocator, s);
+        }
+    }
 };
+
+pub fn appendReset(allocator: std.mem.Allocator, out: *std.ArrayList(u8), fg: Colour, bg: Colour) error{OutOfMemory}!void {
+    try out.appendSlice(allocator, "\x1b[m");
+    if (fg.tag != .default_ and fg.tag != .terminal) {
+        try fg.appendSgr(allocator, out, true);
+    }
+    if (bg.tag != .default_ and bg.tag != .terminal) {
+        try bg.appendSgr(allocator, out, false);
+    }
+}
 
 pub const ParseError = error{
     InvalidHexColour,
