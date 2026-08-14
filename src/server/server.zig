@@ -97,9 +97,11 @@ pub const DisplayClient = struct {
     behind: bool = false,
     bounds_buf: std.ArrayList(render.PaneBounds) = .empty,
     /// Cached expanded status line. Valid when `status_line_width` matches the
-    /// client's current width and the server is not dirty (bug #309).
+    /// client's current width, `status_line_copy_mode` matches active pane copy mode,
+    /// and the server is not dirty (bug #309).
     status_line: ?[]const u8 = null,
     status_line_width: u32 = 0,
+    status_line_copy_mode: bool = false,
 
     pub fn deinit(self: *DisplayClient, allocator: std.mem.Allocator) void {
         self.last_cells.deinit(allocator);
@@ -1040,6 +1042,8 @@ pub const Server = struct {
             },
             .copy_mode => {
                 pane.enterCopyMode() catch |err| std.log.warn("enterCopyMode failed: {any}", .{err});
+                self.dirty = true;
+                pane.dirty = true;
             },
             .paste_buffer => {
                 if (self.buffers.get(null)) |pb| {
@@ -1558,6 +1562,7 @@ pub const Server = struct {
                                         }
                                         pane.screen.copy_mode = null;
                                         pane.dirty = true;
+                                        self.dirty = true;
                                     } else {
                                         const res = cm.handleKey(k, &pane.screen.grid);
                                         switch (res) {
@@ -1567,6 +1572,7 @@ pub const Server = struct {
                                             .exit_mode => {
                                                 pane.screen.copy_mode = null;
                                                 pane.dirty = true;
+                                                self.dirty = true;
                                             },
                                             .ignored => {},
                                         }
@@ -1597,6 +1603,7 @@ pub const Server = struct {
                                             } else {
                                                 if (target_cm.scroll_offset == 0) {
                                                     target_pane.screen.copy_mode = null;
+                                                    self.dirty = true;
                                                 } else {
                                                     target_cm.scroll_offset = target_cm.scroll_offset -| 3;
                                                 }
@@ -1609,6 +1616,7 @@ pub const Server = struct {
                                                     target_cm.scroll_offset = @min(3, @as(u32, @intCast(target_pane.screen.grid.history.items.len - target_pane.screen.grid.history_start)));
                                                 }
                                                 target_pane.dirty = true;
+                                                self.dirty = true;
                                             }
                                         }
                                     }
@@ -1737,12 +1745,14 @@ pub const Server = struct {
                                                 if (active_pane.screen.copy_mode) |*target_cm| {
                                                     target_cm.scroll_offset = @min(3, @as(u32, @intCast(active_pane.screen.grid.history.items.len - active_pane.screen.grid.history_start)));
                                                 }
+                                                self.dirty = true;
                                             }
                                             active_pane.dirty = true;
                                         } else if (m.button == .scroll_down) {
                                             if (active_pane.screen.copy_mode) |*target_cm| {
                                                 if (target_cm.scroll_offset == 0) {
                                                     active_pane.screen.copy_mode = null;
+                                                    self.dirty = true;
                                                 } else {
                                                     target_cm.scroll_offset = target_cm.scroll_offset -| 3;
                                                 }
@@ -1758,6 +1768,7 @@ pub const Server = struct {
                                                 } else if (self.findPaneBounds(window, press_pane)) |pb| {
                                                     if (press_pane.screen.copy_mode == null) {
                                                         press_pane.enterCopyMode() catch |err| std.log.warn("enterCopyMode failed: {any}", .{err});
+                                                        self.dirty = true;
                                                     }
                                                     if (press_pane.screen.copy_mode) |*cm| {
                                                         const grid_w = press_pane.screen.grid.width;
@@ -1815,6 +1826,7 @@ pub const Server = struct {
                                                             }
                                                             press_pane.screen.copy_mode = null;
                                                             press_pane.dirty = true;
+                                                            self.dirty = true;
                                                         }
                                                     }
                                                 }
@@ -2853,7 +2865,7 @@ pub const Server = struct {
 
             if (status_enabled and self.message == null and !self.command_mode) {
                 // Use cached status line when valid (bug #309).
-                const use_cache = !self.dirty and dc.status_line_width == dc.sx and dc.status_line != null;
+                const use_cache = !self.dirty and dc.status_line_width == dc.sx and dc.status_line != null and dc.status_line_copy_mode == pane_in_copy_mode;
                 if (use_cache) {
                     status_line_slice = dc.status_line;
                 } else {
@@ -2865,6 +2877,7 @@ pub const Server = struct {
                         if (dc.status_line) |prev| self.allocator.free(prev);
                         dc.status_line = self.allocator.dupe(u8, sl) catch null;
                         dc.status_line_width = dc.sx;
+                        dc.status_line_copy_mode = pane_in_copy_mode;
                         status_line_slice = sl;
                     }
                 }
