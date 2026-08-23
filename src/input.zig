@@ -162,7 +162,7 @@ pub const InputParser = struct {
             .csi_intermediate => try self.advanceCsiIntermediate(byte),
             .csi_final => self.advanceCsiFinal(byte),
             .osc_string => try self.advanceOsc(byte),
-            .osc_esc => self.advanceOscEsc(byte),
+            .osc_esc => try self.advanceOscEsc(byte),
             .osc_discard => self.advanceOscDiscard(byte),
             .osc_discard_esc => self.advanceOscDiscardEsc(byte),
             .dcs_entry => try self.advanceDcsEntry(byte),
@@ -354,11 +354,21 @@ pub const InputParser = struct {
         }
     }
 
-    fn advanceOscEsc(self: *InputParser, byte: u8) void {
+    fn advanceOscEsc(self: *InputParser, byte: u8) Error!void {
         if (byte == '\\') {
+            // ESC \ = ST — terminate and dispatch the OSC.
             self.dispatchOsc() catch |err| std.log.warn("dispatchOsc failed: {any}", .{err});
+            self.toGround();
+            return;
         }
+        // Stray ESC inside an OSC aborts the string (toGround clears
+        // osc_buf). Reprocess the pending ESC plus this byte as a fresh
+        // escape sequence — swallowing either corrupted the following
+        // sequence into literal text (bug #377): `ESC]0;t ESC[31m`.
         self.toGround();
+        self.state = .esc;
+        if (byte == 0x1B) return; // a new ESC: stay pending for its final
+        try self.advanceEsc(byte);
     }
 
     fn advanceOscDiscard(self: *InputParser, byte: u8) void {
@@ -1398,6 +1408,22 @@ test "osc title ignored no crash" {
     try parser.feed("\x1b]0;my title\x07");
     // Just verify no crash and parser returns to ground
     try testing.expectEqual(@as(u8, @intFromEnum(InputParser.State.ground)), @intFromEnum(parser.state));
+}
+
+test "stray ESC in OSC aborts string and next sequence still runs — bug #377" {
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+    var parser = InputParser.init(&screen);
+    defer parser.deinit(testing.allocator);
+
+    // Title terminated by a bare ESC (no ST), followed by SGR red.
+    // With the bug the '[' was swallowed and "31m" printed as literal text.
+    try parser.feed("\x1b]0;broken title\x1b[31mX");
+
+    try testing.expectEqual(@as(u32, 1), screen.cursor.x);
+    const cell = screen.grid.getCell(0, 0);
+    try testing.expectEqual(@as(u21, 'X'), cell.char);
+    try testing.expect(cell.fg == @import("colour.zig").Colour.fromIndexed(1));
 }
 
 test "BS backspace moves cursor back" {
