@@ -598,15 +598,9 @@ pub const CopyMode = struct {
         const bytes = out.items;
         if (ncell == 0 or needle.len > bytes.len) return null;
         const byte_start = if (start_col < offsets.items.len) offsets.items[start_col] else bytes.len;
-        var byte_pos = @min(byte_start, bytes.len - needle.len);
-        while (true) {
-            if (std.mem.eql(u8, bytes[byte_pos .. byte_pos + needle.len], needle)) {
-                return byteToColumn(offsets.items, byte_pos);
-            }
-            if (byte_pos == 0) break;
-            byte_pos -= 1;
-        }
-        return null;
+        const search_limit = @min(byte_start + needle.len, bytes.len);
+        const at = std.mem.lastIndexOf(u8, bytes[0..search_limit], needle) orelse return null;
+        return byteToColumn(offsets.items, at);
     }
 
     /// Render logical line `li` (history or visible) into `out` as UTF-8,

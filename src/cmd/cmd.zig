@@ -665,21 +665,7 @@ fn cmdCopyMode(server: *Server, args: []const []const u8) CmdResult {
 }
 
 fn indexOfIgnoreCase(haystack: []const u8, needle: []const u8) ?usize {
-    if (needle.len == 0) return 0;
-    if (haystack.len < needle.len) return null;
-    var i: usize = 0;
-    while (i <= haystack.len - needle.len) : (i += 1) {
-        var match = true;
-        for (needle, 0..) |nc, j| {
-            const hc = haystack[i + j];
-            if (std.ascii.toLower(hc) != std.ascii.toLower(nc)) {
-                match = false;
-                break;
-            }
-        }
-        if (match) return i;
-    }
-    return null;
+    return std.ascii.indexOfIgnoreCase(haystack, needle);
 }
 
 fn cmdFindWindow(server: *Server, args: []const []const u8) CmdResult {
