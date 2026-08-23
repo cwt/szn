@@ -531,9 +531,18 @@ fn cmdLoadBuffer(server: *Server, args: []const []const u8) CmdResult {
         data.appendSlice(server.allocator, chunk[0..@as(usize, @intCast(n))]) catch return .err;
     }
 
+    // Transfer ownership to the buffer stack. BufferEntry.deinit frees
+    // `name`/`data` by their .len, so the data must be an exactly-sized
+    // allocation — passing data.items (len < capacity) tripped the
+    // allocator's canary check on free (bug #357).
     const name = server.buffers.generateName() catch return .err;
-    server.buffers.pushOwned(name, data.items) catch return .err;
-    data.items = &.{};
+    errdefer server.allocator.free(name);
+    const owned_data = data.toOwnedSlice(server.allocator) catch return .err;
+    server.buffers.pushOwned(name, owned_data) catch {
+        server.allocator.free(owned_data);
+        return .err;
+    };
+    // Both name and owned_data now belong to the buffer stack.
     return .ok;
 }
 
@@ -2479,6 +2488,35 @@ test "paste-buffer exec too large" {
     try testing.expectEqual(CmdResult.err, c.exec(&server));
     try testing.expect(server.message != null);
     try testing.expect(std.mem.indexOf(u8, server.message.?, "Error: paste buffer too large") != null);
+}
+
+test "load-buffer transfers ownership without invalid free — bug #357" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    // Write a small temp file via raw POSIX (project style).
+    const path = "/tmp/szn-bug357-loadb.txt";
+    {
+        const fd = std.c.open(path, std.c.O{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true }, @as(std.c.mode_t, 0o644));
+        try testing.expect(fd >= 0);
+        const payload = "hello load buffer";
+        _ = std.c.write(fd, payload.ptr, payload.len);
+        _ = std.c.close(fd);
+    }
+    defer _ = std.c.unlink(path);
+
+    // Under testing.allocator (leak/ownership checked), the stale-capacity
+    // free tripped DebugAllocator on every successful loadb.
+    const cmdline = try std.fmt.allocPrint(testing.allocator, "load-buffer {s}", .{path});
+    defer testing.allocator.free(cmdline);
+    var c = try parse(cmdline, testing.allocator);
+    defer c.deinit(testing.allocator);
+    try testing.expectEqual(CmdResult.ok, c.exec(&server));
+
+    // The transferred bytes live in the newest buffer and stay valid after
+    // the command's ArrayList teardown.
+    const data = server.buffers.get(null).?;
+    try testing.expectEqualStrings("hello load buffer", data);
 }
 
 test "display-message exec" {
