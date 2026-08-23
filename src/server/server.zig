@@ -2206,9 +2206,15 @@ pub const Server = struct {
             self.queueToClient(dc.fd, raw_buf);
         }
 
-        // 2. Decode base64 and push to self.buffers
+        // 2. Decode base64 and push to self.buffers. Enforce MAX_PASTE_SIZE:
+        // the payload is pane-controlled and must not balloon server memory
+        // (bug #363).
         const decoder = std.base64.standard.Decoder;
         const decoded_len = decoder.calcSizeForSlice(base64) catch return;
+        if (decoded_len > MAX_PASTE_SIZE) {
+            std.log.warn("OSC52 clipboard payload too large ({d} bytes), dropping", .{decoded_len});
+            return;
+        }
         const decoded = self.allocator.alloc(u8, decoded_len) catch return;
         errdefer self.allocator.free(decoded);
         decoder.decode(decoded, base64) catch {

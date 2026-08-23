@@ -14,6 +14,9 @@ pub const BufferEntry = struct {
 pub const BufferList = struct {
     allocator: std.mem.Allocator,
     items: std.ArrayList(BufferEntry) = .empty,
+    /// Maximum number of retained paste buffers (tmux defaults to ~50).
+    /// Oldest entries are evicted on push (bug #363).
+    max_buffers: usize = 50,
 
     pub fn init(allocator: std.mem.Allocator) BufferList {
         return .{ .allocator = allocator };
@@ -24,11 +27,22 @@ pub const BufferList = struct {
         self.items.deinit(self.allocator);
     }
 
+    /// Evict the oldest buffer when at capacity, keeping memory bounded.
+    fn evictOldestIfFull(self: *BufferList) void {
+        if (self.items.items.len < self.max_buffers) return;
+        const oldest = self.items.items[self.items.items.len - 1];
+        self.items.items.len -= 1;
+        var entry = oldest;
+        entry.deinit(self.allocator);
+    }
+
     pub fn pushOwned(self: *BufferList, name: []const u8, data: []const u8) !void {
+        self.evictOldestIfFull();
         try self.items.insert(self.allocator, 0, .{ .name = name, .data = data });
     }
 
     pub fn push(self: *BufferList, name: []const u8, data: []const u8) !void {
+        self.evictOldestIfFull();
         const n = try self.allocator.dupe(u8, name);
         errdefer self.allocator.free(n);
         const d = try self.allocator.dupe(u8, data);
@@ -147,4 +161,27 @@ test "appendToList writes formatted output" {
     const output = buf.items;
     try testing.expect(std.mem.indexOf(u8, output, "b1: 5 bytes") != null);
     try testing.expect(std.mem.indexOf(u8, output, "b0: 5 bytes") != null);
+}
+
+test "buffer list evicts oldest past max_buffers — bug #363" {
+    var bl = BufferList.init(testing.allocator);
+    defer bl.deinit();
+    bl.max_buffers = 3;
+
+    var i: usize = 0;
+    while (i < 5) : (i += 1) {
+        const name = try std.fmt.allocPrint(testing.allocator, "buf{d}", .{i});
+        // pushOwned transfers ownership of both name and data (bug #357
+        // contract); free them ourselves when the list drops the entry.
+        const data = try testing.allocator.dupe(u8, "x");
+        try bl.pushOwned(name, data);
+    }
+
+    try testing.expectEqual(@as(usize, 3), bl.items.items.len);
+    // Newest three survive; the two oldest were evicted.
+    try testing.expect(bl.get("buf4") != null);
+    try testing.expect(bl.get("buf3") != null);
+    try testing.expect(bl.get("buf2") != null);
+    try testing.expect(bl.get("buf1") == null);
+    try testing.expect(bl.get("buf0") == null);
 }

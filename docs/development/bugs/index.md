@@ -404,7 +404,7 @@ Sorted by number. See individual bug files for details.
 | [360](360.md) | Scrollback eviction never reclaims memory (arena no-op frees) | HIGH | Open |
 | [361](361.md) | saved_grid churn leaks one grid clone per mode toggle | HIGH | Open |
 | [362](362.md) | Stale poll events after killSession in same batch dereference freed pane memory | HIGH | Open |
-| [363](363.md) | OSC52 payloads unbounded size + paste-buffer list unbounded count | HIGH | Open |
+| [363](363.md) | OSC52 payloads unbounded size + paste-buffer list unbounded count | HIGH | Fixed |
 | [364](364.md) | remain-on-exit closes pty master without removeFd → POLLNVAL busy-loop | HIGH | Fixed |
 | [365](365.md) | kill-window leaks pty poll registrations | MEDIUM | Fixed |
 | [366](366.md) | Layout destroys pane, then caller writes `pane.valid` and deinits again | MEDIUM | Open |
