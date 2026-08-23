@@ -1024,6 +1024,9 @@ pub const Screen = struct {
             // bug #225: decrement refcounts for erased cells.
             self.decrementLineRefs(line.cells.items[cx..end]);
             @memset(line.cells.items[cx..end], fill);
+            // A full-line ECH blanks the line in place, so it is no longer a
+            // wrap continuation — same policy as EL 2 (bug #369).
+            if (cx == 0 and end >= self.grid.width) line.wrapped = false;
             line.dirty = true;
         }
         self.dirty = true;
@@ -2805,6 +2808,25 @@ test "eraseDisplay resets wrapped flag on erased lines" {
 
     try testing.expect(!screen.grid.getLine(0).wrapped);
     try testing.expect(!screen.grid.getLine(1).wrapped);
+}
+
+test "full-line ECH clears wrapped flag, partial ECH keeps it — bug #369" {
+    var screen = try Screen.init(testing.allocator, 5, 5);
+    defer screen.deinit();
+
+    try screen.writeStr("1234567890"); // line 0 carries the wrapped flag
+    try testing.expect(screen.grid.getLine(0).wrapped);
+
+    // Partial ECH on the wrapped line: it remains a continuation.
+    screen.cursor.x = 1;
+    screen.cursor.y = 0;
+    screen.eraseChars(2);
+    try testing.expect(screen.grid.getLine(0).wrapped);
+
+    // Full-line ECH over the same line: no longer a continuation.
+    screen.cursor.x = 0;
+    screen.eraseChars(screen.grid.width);
+    try testing.expect(!screen.grid.getLine(0).wrapped);
 }
 
 test "cursorDown and cursorUp clamp cursor.x when cursor.x equals grid.width" {
