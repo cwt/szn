@@ -2261,6 +2261,10 @@ pub const Server = struct {
     fn handleClient(self: *Server, fd: i32) ServerError!void {
         var buf: [4096]u8 = undefined;
         const n = std.posix.read(fd, &buf) catch |err| {
+            // Display sockets are O_NONBLOCK; a spurious POLLIN or transient
+            // WouldBlock is benign and must not tear the client down
+            // (bug #373).
+            if (err == error.WouldBlock) return;
             std.log.err("read from client fd {d} failed: {s}", .{ fd, @errorName(err) });
             return error.ReadFailed;
         };
@@ -3903,6 +3907,37 @@ test "kill-window removes pane ptys from the poll set — bug #365" {
     // stayed registered and reported POLLNVAL forever).
     try testing.expect(!server.loop.hasFd(fds2[1]));
     try testing.expect(server.loop.hasFd(fds1[1]));
+}
+
+test "handleClient tolerates EAGAIN on non-blocking fd — bug #373" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    var fds: [2]i32 = undefined;
+    if (std.c.pipe(&fds) != 0) return error.Unexpected;
+    defer _ = std.c.close(fds[0]);
+    defer _ = std.c.close(fds[1]);
+
+    // Non-blocking read end with nothing to read: a read returns WouldBlock.
+    const F_GETFL: c_int = 3;
+    const F_SETFL: c_int = 4;
+    const O_NONBLOCK: c_int = comptime switch (@import("builtin").os.tag) {
+        .linux => 0o4000,
+        else => 0x0004,
+    };
+    const flags = std.c.fcntl(fds[0], F_GETFL, @as(c_int, 0));
+    try testing.expect(flags >= 0);
+    _ = std.c.fcntl(fds[0], F_SETFL, flags | O_NONBLOCK);
+
+    // Register the reader the way handleAccept does (server.deinit owns and
+    // destroys entries left in client_readers).
+    const reader = try testing.allocator.create(MessageReader);
+    reader.* = .{};
+    try server.client_readers.put(fds[0], reader);
+
+    // With the bug this returned error.ReadFailed and run() disconnected
+    // the client; it must be a benign no-op.
+    try server.handleClient(fds[0]);
 }
 
 test "mouse scroll uses guarded historyLen even with corrupt history_start — bug #380" {
