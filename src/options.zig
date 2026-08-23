@@ -243,7 +243,7 @@ pub const SESSION_OPTIONS = &[_]OptionDef{
     .{ .name = "nofile-limit", .type = .number, .default = OptionValue{ .number = 1024 }, .min = 0, .max = 100000000 },
     .{ .name = "mouse", .type = .flag, .default = OptionValue{ .flag = true } },
     .{ .name = "prefix", .type = .key, .default = OptionValue{ .key = Key{ .char = .{ .code = 'b', .mod = .{ .ctrl = true } } } } }, // C-b
-    .{ .name = "prefix2", .type = .key, .default = OptionValue{ .key = .{ .special = .{ .key = .escape } } } },
+    // `prefix2` removed (bug #384): defined but never consulted anywhere.
     .{ .name = "escape-time", .type = .number, .default = OptionValue{ .number = 500 }, .min = 0, .max = 10000 },
     .{ .name = "base-index", .type = .number, .default = OptionValue{ .number = 0 }, .min = 0, .max = 9999 },
     .{ .name = "pane-base-index", .type = .number, .default = OptionValue{ .number = 0 }, .min = 0, .max = 9999 },

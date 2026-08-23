@@ -907,6 +907,12 @@ pub const CopyMode = struct {
             }
         }
 
+        // tmux 3.x binds plain `q` to cancel in its unified copy-mode table
+        // for both keymaps.
+        if (k == .char and !k.char.mod.ctrl and !k.char.mod.alt and k.char.code == 'q') {
+            return .exit_mode;
+        }
+
         return .ignored;
     }
 };
