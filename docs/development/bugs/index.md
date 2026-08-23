@@ -9,26 +9,26 @@ timestamp: 2026-08-09T23:00:00Z
 
 Sorted by number. See individual bug files for details.
 
-> **Note:** Bugs **#301** and **#302** were never filed (MIA). The #300–#310 performance sweep skipped straight from #300 to #303. The tracker covers #1–#300, #303–#347 — 347 bugs total (338 existing + 8 new Zig 0.16 compliance bugs + 1 copy-mode reflow bug).
+> **Note:** Bugs **#301** and **#302** were never filed (MIA). The #300–#310 performance sweep skipped straight from #300 to #303. Bugs **#349–#394** were filed by the 2026-08-23 deep-audit sweep (full-codebase review; 46 open bugs). The tracker covers #1–#300, #303–#394.
 
 ## Summary by Severity
 
 | Severity | Count |
 |---|---:|
-| CRITICAL | 42 |
-| HIGH | 84 |
-| MEDIUM | 115 |
-| LOW | 83 |
+| CRITICAL | 48 |
+| HIGH | 97 |
+| MEDIUM | 134 |
+| LOW | 91 |
 | LOW (architecture) | 3 |
 | LOW (code quality) | 5 |
 | LOW (correctness) | 1 |
 | LOW (cosmetic) | 1 |
-| LOW (performance) | 1 |
+| LOW (performance) | 2 |
 | LOW (performance) → MEDIUM (correctness regression in original fix) | 1 |
 | LOW (safety) | 1 |
 | MEDIUM (dead code / refcount drift) | 1 |
 | MEDIUM (performance) | 4 |
-| **Total** | **347** |
+| **Total** | **393** |
 
 ## Summary by Status
 
@@ -37,8 +37,8 @@ Sorted by number. See individual bug files for details.
 | Fixed | 328 |
 | False Positive | 17 |
 | Intentional | 1 |
-| Open | 0 |
-| **Total** | **347** |
+| Open (audit sweep 2026-08-23, #349–#394) | 46 |
+| **Total** | **392** |
 
 ## All Bugs
 
@@ -390,3 +390,49 @@ Sorted by number. See individual bug files for details.
 | [346](346.md) | Missing `io` param — false positive, raw POSIX syscall codebase | MEDIUM | False Positive |
 | [347](347.md) | `reflowCursorInternal` trims trailing empty screen lines during copy-mode entry, shifting visible grid down and corrupting prompt | HIGH | Fixed |
 | [348](348.md) | `#[default]` in `window-status-current-format` resets terminal background and drops status bar background color | MEDIUM | Fixed |
+| [349](349.md) | Ctrl+J decoded as Enter — coding agents send instead of newline (user-reported) | CRITICAL | Open |
+| [350](350.md) | No escape-time timer: lone ESC delivered as Alt+next-key | HIGH | Open |
+| [351](351.md) | Modified tilde keys (`\x1b[3;5~`) silently dropped by client-side pre-parse | HIGH | Open |
+| [352](352.md) | Kitty functional-key codepoints wrong; kitty Enter forwarded as LF not CR | MEDIUM | Open |
+| [353](353.md) | Root key table (`bind-key -n`) never consulted; prefix machine duplicated 3× with drift | HIGH | Open |
+| [354](354.md) | Remote panic: SGR indexed-colour `@intCast(u32→u8)` ×6 sites | CRITICAL | Open |
+| [355](355.md) | Remote panic: modifyOtherKeys extkeys `@intCast(u32→u8)` | CRITICAL | Open |
+| [356](356.md) | Remote panic: sixel raster attribute parse overflows u32 | CRITICAL | Open |
+| [357](357.md) | `cmdLoadBuffer` invalid free of static pointer with stale capacity | CRITICAL | Open |
+| [358](358.md) | Auto window rename: invalid free of name_buf-owned string + aliased double-free | CRITICAL | Open |
+| [359](359.md) | Clock mode clones full grid+history every second; arena never reclaimed | HIGH | Open |
+| [360](360.md) | Scrollback eviction never reclaims memory (arena no-op frees) | HIGH | Open |
+| [361](361.md) | saved_grid churn leaks one grid clone per mode toggle | HIGH | Open |
+| [362](362.md) | Stale poll events after killSession in same batch dereference freed pane memory | HIGH | Open |
+| [363](363.md) | OSC52 payloads unbounded size + paste-buffer list unbounded count | HIGH | Open |
+| [364](364.md) | remain-on-exit closes pty master without removeFd → POLLNVAL busy-loop | HIGH | Open |
+| [365](365.md) | kill-window leaks pty poll registrations | MEDIUM | Open |
+| [366](366.md) | Layout destroys pane, then caller writes `pane.valid` and deinits again | MEDIUM | Open |
+| [367](367.md) | merged_screen dangling-non-null when Screen.init fails after deinit | MEDIUM | Open |
+| [368](368.md) | LF/IND inside scroll region bypasses region scrolling, corrupting scrollback | HIGH | Open |
+| [369](369.md) | Region-cleared lines keep stale `wrapped` flag, corrupting later rewrap | HIGH | Open |
+| [370](370.md) | CUF/CUB/back-tab wrap across edges incorrectly, breaking third-party TUIs | HIGH | Open |
+| [371](371.md) | Reflow result ignores history_limit → unbounded scrollback on narrow resizes | HIGH | Open |
+| [372](372.md) | Resize leaves scroll region and saved cursor out of bounds | MEDIUM | Open |
+| [373](373.md) | Benign EAGAIN on non-blocking display sockets disconnects clients | MEDIUM | Open |
+| [374](374.md) | Detach reply blocking-style write on non-blocking fd: truncated/dropped | MEDIUM | Open |
+| [375](375.md) | Client trusts packet length with no upper bound → unbounded buffering stall | MEDIUM | Open |
+| [376](376.md) | Command responses silently dropped when display client marked behind → hang | MEDIUM | Open |
+| [377](377.md) | Stray ESC inside OSC swallows next byte, corrupting following sequence | MEDIUM | Open |
+| [378](378.md) | Listener socket: unconditional unlink steals endpoint; /tmp fallback lacks chmod | MEDIUM | Open |
+| [379](379.md) | Single click in copy-mode yanks empty selection and exits copy-mode | MEDIUM | Open |
+| [380](380.md) | Six call sites bypass the historyLen() guard (regression surface of #293) | MEDIUM | Open |
+| [381](381.md) | Copy-mode g/G asymmetric: g only reaches top of current viewport | MEDIUM | Open |
+| [382](382.md) | load-buffer lacks MAX_PASTE_SIZE cap while paste-buffer enforces one | MEDIUM | Open |
+| [383](383.md) | Bright colour names encode index+90 as palette index — renders cube colours | MEDIUM | Open |
+| [384](384.md) | mode-keys option ignored: emacs copy-mode unreachable, default disagrees with behaviour | MEDIUM | Open |
+| [385](385.md) | Small unbounded arena accumulators: Session.rename, Pane.cwd dupe-over | LOW | Open |
+| [386](386.md) | Grid/screen hygiene cluster: shiftDown contract, :720 subtraction, padding half-cell cursor, dead dirty machinery, zero-width drops, RIS incomplete | LOW | Open |
+| [387](387.md) | Sixel overlay tracking: 8-pane render cap; SU shifts anchors once for n lines; SD never shifts | LOW | Open |
+| [388](388.md) | Parser fidelity cluster: 8-bit C1 misroutes, ESC ESC \ in sixel, CSI param cap 16, XTSMGRAPHICS over-claim | LOW | Open |
+| [389](389.md) | IPC/tty hygiene cluster: client socket not cloexec, packetType enumFromInt panic, Packet.make desync, setRaw parity | LOW | Open |
+| [390](390.md) | Non-global `set prefix` changes display but not dispatcher behaviour | MEDIUM | Open |
+| [391](391.md) | Command robustness cluster: break-pane err-after-relocate, split proportion coercion, resize veto, save-buffer EINTR | LOW | Open |
+| [392](392.md) | Dead code inventory: getCellAt, search_active, adjustSelectionForAutoScroll, inline-for no-op, identify_term payload | LOW | Open |
+| [393](393.md) | Performance cluster: O(n·m) backward search, per-match rescan, linear lookups vs comptime tables, per-frame allocator churn | LOW | Open |
+| [394](394.md) | char_width/thai/clock robustness cluster: mutable globals, partial table application, negative-index cast, pre-epoch panic | LOW | Open |
