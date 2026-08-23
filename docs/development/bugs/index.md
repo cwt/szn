@@ -392,7 +392,7 @@ Sorted by number. See individual bug files for details.
 | [348](348.md) | `#[default]` in `window-status-current-format` resets terminal background and drops status bar background color | MEDIUM | Fixed |
 | [349](349.md) | Ctrl+J decoded as Enter — coding agents send instead of newline (user-reported) | CRITICAL | Fixed |
 | [350](350.md) | No escape-time timer: lone ESC delivered as Alt+next-key | HIGH | Open |
-| [351](351.md) | Modified tilde keys (`\x1b[3;5~`) silently dropped by client-side pre-parse | HIGH | Open |
+| [351](351.md) | Modified tilde keys (`\x1b[3;5~`) silently dropped by client-side pre-parse | HIGH | Fixed |
 | [352](352.md) | Kitty functional-key codepoints wrong; kitty Enter forwarded as LF not CR | MEDIUM | Open |
 | [353](353.md) | Root key table (`bind-key -n`) never consulted; prefix machine duplicated 3× with drift | HIGH | Open |
 | [354](354.md) | Remote panic: SGR indexed-colour `@intCast(u32→u8)` ×6 sites | CRITICAL | Open |

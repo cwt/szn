@@ -205,13 +205,15 @@ pub const InputReader = struct {
         if (final == 'O' and params.len == 0) return Event{ .focus_out = {} };
 
         if (final == '~') {
-            const tilde_params = params;
-            const num = std.fmt.parseInt(u16, tilde_params, 10) catch {
-                std.log.debug("input: invalid tilde params '{s}'", .{tilde_params});
-                return null;
-            };
-            if (num == 200) return Event{ .paste_start = {} };
-            if (num == 201) return Event{ .paste_end = {} };
+            // Bracketed paste markers are plain numbers ("200~"/"201~").
+            // Modified keys like "3;5~" (Ctrl+Delete) must fall through to
+            // parseCsi, which splits the key number from the modifier
+            // parameter (bug #351).
+            const num = std.fmt.parseInt(u16, params, 10) catch null;
+            if (num) |n| {
+                if (n == 200) return Event{ .paste_start = {} };
+                if (n == 201) return Event{ .paste_end = {} };
+            }
         }
 
         const k = key.parseCsi(seq) catch {
@@ -422,6 +424,36 @@ test "paste end" {
     try testing.expect(rd.feed('1') == null);
     const ev = rd.feed('~').?;
     try testing.expect(ev == .paste_end);
+}
+
+test "modified tilde key ctrl delete — bug #351" {
+    var rd = InputReader{};
+    for ("\x1b[3;5~") |b| {
+        const maybe = rd.feed(b);
+        if (b == '~') {
+            const ev = maybe.?;
+            try testing.expect(ev == .key);
+            try testing.expectEqual(.delete_, ev.key.special.key);
+            try testing.expect(ev.key.special.mod.ctrl);
+        } else {
+            try testing.expect(maybe == null);
+        }
+    }
+}
+
+test "modified tilde key shift insert — bug #351" {
+    var rd = InputReader{};
+    for ("\x1b[2;2~") |b| {
+        const maybe = rd.feed(b);
+        if (b == '~') {
+            const ev = maybe.?;
+            try testing.expect(ev == .key);
+            try testing.expectEqual(.insert, ev.key.special.key);
+            try testing.expect(ev.key.special.mod.shift);
+        } else {
+            try testing.expect(maybe == null);
+        }
+    }
 }
 
 test "sgr mouse press" {
