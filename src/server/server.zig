@@ -822,6 +822,18 @@ pub const Server = struct {
         return if (destroyed) .destroyed else .handled;
     }
 
+    /// Remove every pty master of `win` from the event loop. Call before
+    /// Session.killWindow / Pane teardown: closed fds left registered report
+    /// POLLNVAL forever and their numbers can be recycled while still
+    /// watched (bug #365; same class as #364).
+    pub fn unregisterWindowFds(self: *Server, win: *Window) void {
+        for (win.panes.items) |p| {
+            if (p.pty) |pty| {
+                self.loop.removeFd(pty.master);
+            }
+        }
+    }
+
     pub fn destroyPane(self: *Server, pane: *Pane) void {
         var found_session: ?*Session = null;
         var found_window: ?*Window = null;
@@ -3860,6 +3872,37 @@ test "command buffer is capped to prevent unbounded growth — bug #297" {
     server.command_buf.items.len = Server.MAX_COMMAND_BUF - 1;
     server.appendCommandChar('y');
     try testing.expectEqual(@as(usize, Server.MAX_COMMAND_BUF), server.command_buf.items.len);
+}
+
+test "kill-window removes pane ptys from the poll set — bug #365" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    const s = try server.newSession("test", 80, 24);
+    const win1 = s.active_window.?;
+    _ = try s.newWindow(testing.allocator, "second");
+    const win2 = s.windows.items[1];
+
+    // Give each window's initial pane a fake pty registered in the loop.
+    var fds1: [2]c_int = undefined;
+    var fds2: [2]c_int = undefined;
+    if (std.c.pipe(&fds1) != 0) return error.PipeFailed;
+    if (std.c.pipe(&fds2) != 0) return error.PipeFailed;
+    defer _ = std.c.close(fds1[0]);
+    defer _ = std.c.close(fds2[0]);
+    win1.active_pane.?.pty = .{ .master = fds1[1], .slave = fds1[0], .pid = -1 };
+    win2.active_pane.?.pty = .{ .master = fds2[1], .slave = fds2[0], .pid = -1 };
+    try server.watchPanePty(win1.active_pane.?);
+    try server.watchPanePty(win2.active_pane.?);
+
+    var cmd = try @import("../cmd/cmd.zig").parse("kill-window 1", testing.allocator);
+    defer cmd.deinit(testing.allocator);
+    try testing.expectEqual(@import("../cmd/cmd.zig").CmdResult.ok, cmd.exec(&server));
+
+    // Window 2 is gone: its pty must no longer be watched (with the bug it
+    // stayed registered and reported POLLNVAL forever).
+    try testing.expect(!server.loop.hasFd(fds2[1]));
+    try testing.expect(server.loop.hasFd(fds1[1]));
 }
 
 test "processInput forwards Ctrl+J as LF byte, Enter as CR — bug #349" {

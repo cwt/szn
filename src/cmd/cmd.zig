@@ -97,6 +97,7 @@ fn cmdNewWindow(server: *Server, args: []const []const u8) CmdResult {
         const current_cwd = server.paneCwd(pane);
         defer if (current_cwd) |cwd_ptr| server.allocator.free(cwd_ptr);
         server.setupPane(session, p, current_cwd) catch {
+            server.unregisterWindowFds(new_win);
             session.killWindow(server.allocator, new_win);
             return .err;
         };
@@ -109,10 +110,13 @@ fn cmdKillWindow(server: *Server, args: []const []const u8) CmdResult {
     const idx = if (args.len > 1) std.fmt.parseInt(u32, args[1], 10) catch return .err else null;
     if (idx) |i| {
         if (i < session.windows.items.len) {
-            session.killWindow(server.allocator, session.windows.items[i]);
+            const w = session.windows.items[i];
+            server.unregisterWindowFds(w);
+            session.killWindow(server.allocator, w);
         }
     } else {
         if (session.active_window) |w| {
+            server.unregisterWindowFds(w);
             session.killWindow(server.allocator, w);
         }
     }
@@ -392,6 +396,7 @@ fn cmdJoinPane(server: *Server, args: []const []const u8) CmdResult {
     if (src_win.panes.items.len == 0) {
         if (placeholder) |dummy| {
             src_win.layout.root.leaf = dummy;
+            server.unregisterWindowFds(src_win);
             session.killWindow(server.allocator, src_win);
         }
     }
