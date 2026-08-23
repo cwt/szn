@@ -259,6 +259,10 @@ pub const Grid = struct {
         self.start_index = (self.start_index + 1) % self.height;
     }
 
+    /// Rotate the ring so the old bottom row becomes row 0. CONTRACT: the
+    /// caller must clear row 0 immediately (scrollDown does, with refcount
+    /// release + fill). The rotation deliberately does not clear — the
+    /// content is stale garbage until the caller overwrites it (#386).
     pub fn shiftDown(self: *Grid) void {
         if (self.height == 0) return;
         self.start_index = (self.start_index + self.height - 1) % self.height;
@@ -717,7 +721,8 @@ pub const Grid = struct {
 
         try self.normalize();
 
-        const hist_len = self.history.items.len - self.history_start;
+        // Guarded like every other site (bug #293 pattern; #386).
+        const hist_len = self.historyLen();
         const total = hist_len + self.lines.items.len;
 
         // Find the last non-empty line to avoid treating trailing empty lines as content.

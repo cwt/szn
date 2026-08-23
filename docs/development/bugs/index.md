@@ -427,7 +427,7 @@ Sorted by number. See individual bug files for details.
 | [383](383.md) | Bright colour names encode index+90 as palette index — renders cube colours | MEDIUM | Fixed |
 | [384](384.md) | mode-keys option ignored: emacs copy-mode unreachable, default disagrees with behaviour | MEDIUM | Fixed |
 | [385](385.md) | Small unbounded arena accumulators: Pane.cwd was write-only (deleted), Session.rename uses inline buffer | LOW | Fixed |
-| [386](386.md) | Grid/screen hygiene cluster: shiftDown contract, :720 subtraction, padding half-cell cursor, dead dirty machinery, zero-width drops, RIS incomplete | LOW | Open |
+| [386](386.md) | Grid/screen hygiene cluster: :720 guarded + contracts documented (shiftDown/cursor/dirty-flags deferred with notes) | LOW | Fixed (partial) |
 | [387](387.md) | Sixel overlay tracking: render cap raised to 32; SU shifts anchors by n; SD shifts too | LOW | Fixed |
 | [388](388.md) | Parser fidelity cluster: 8-bit C1 misroutes, ESC ESC \ in sixel, CSI param cap 16, XTSMGRAPHICS over-claim | LOW | Open |
 | [389](389.md) | IPC/tty hygiene cluster: client socket not cloexec, packetType enumFromInt panic, Packet.make desync, setRaw parity | LOW | Fixed |
