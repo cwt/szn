@@ -411,7 +411,7 @@ Sorted by number. See individual bug files for details.
 | [367](367.md) | merged_screen dangling-non-null when Screen.init fails after deinit | MEDIUM | Fixed |
 | [368](368.md) | LF/IND inside scroll region bypasses region scrolling, corrupting scrollback | HIGH | Open |
 | [369](369.md) | Region-cleared lines keep stale `wrapped` flag, corrupting later rewrap | HIGH | Open |
-| [370](370.md) | CUF/CUB/back-tab wrap across edges incorrectly, breaking third-party TUIs | HIGH | Open |
+| [370](370.md) | CUF/CUB/back-tab wrap across edges incorrectly, breaking third-party TUIs | HIGH | False Positive |
 | [371](371.md) | Reflow result ignores history_limit → unbounded scrollback on narrow resizes | HIGH | Open |
 | [372](372.md) | Resize leaves scroll region and saved cursor out of bounds | MEDIUM | Open |
 | [373](373.md) | Benign EAGAIN on non-blocking display sockets disconnects clients | MEDIUM | Fixed |
