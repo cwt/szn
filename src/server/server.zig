@@ -1040,18 +1040,14 @@ pub const Server = struct {
             .detach => {
                 const target_fd = self.current_client_fd orelse (if (self.display_clients.items.len > 0) self.display_clients.items[0].fd else null);
                 if (target_fd) |cfd| {
+                    // Route the detach notification through the POLLOUT queue:
+                    // display fds are O_NONBLOCK and the old raw retry loop
+                    // silently truncated/dropped the packet on EAGAIN, leaving
+                    // the client attached forever (bug #374).
                     const detach_pkt = protocol.Packet.make(.detach, "");
                     var detach_buf: [128]u8 = undefined;
                     const ser = detach_pkt.serialize(&detach_buf);
-                    var remaining: []const u8 = ser;
-                    while (remaining.len > 0) {
-                        const written_bytes = c.write(cfd, remaining.ptr, remaining.len);
-                        if (written_bytes < 0) {
-                            if (std.c.errno(written_bytes) == .INTR) continue;
-                            break;
-                        }
-                        remaining = remaining[@intCast(written_bytes)..];
-                    }
+                    self.queueToClient(cfd, ser);
                     for (self.display_clients.items, 0..) |*dc, idx| {
                         if (dc.fd == cfd) {
                             if (dc.behind) {
