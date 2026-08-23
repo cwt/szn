@@ -431,7 +431,7 @@ Sorted by number. See individual bug files for details.
 | [387](387.md) | Sixel overlay tracking: 8-pane render cap; SU shifts anchors once for n lines; SD never shifts | LOW | Open |
 | [388](388.md) | Parser fidelity cluster: 8-bit C1 misroutes, ESC ESC \ in sixel, CSI param cap 16, XTSMGRAPHICS over-claim | LOW | Open |
 | [389](389.md) | IPC/tty hygiene cluster: client socket not cloexec, packetType enumFromInt panic, Packet.make desync, setRaw parity | LOW | Open |
-| [390](390.md) | Non-global `set prefix` changes display but not dispatcher behaviour | MEDIUM | Open |
+| [390](390.md) | Non-global `set prefix` changes display but not dispatcher behaviour | MEDIUM | Fixed |
 | [391](391.md) | Command robustness cluster: break-pane err-after-relocate, split proportion coercion, resize veto, save-buffer EINTR | LOW | Open |
 | [392](392.md) | Dead code inventory: getCellAt, search_active, adjustSelectionForAutoScroll, inline-for no-op, identify_term payload | LOW | Open |
 | [393](393.md) | Performance cluster: O(n·m) backward search, per-match rescan, linear lookups vs comptime tables, per-frame allocator churn | LOW | Open |

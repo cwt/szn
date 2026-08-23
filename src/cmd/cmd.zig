@@ -922,6 +922,13 @@ fn cmdSetOption(server: *Server, args: []const []const u8) CmdResult {
             window.options.set(option_name, parsed_val) catch return .err;
         } else {
             session.options.set(option_name, parsed_val) catch return .err;
+            // A session-scoped prefix change on the active session must take
+            // effect immediately, like the config loader does — otherwise the
+            // option displays one key while dispatch still uses the old one
+            // (bug #390). cmdSetOption always targets the active session.
+            if (std.mem.eql(u8, option_name, "prefix") and parsed_val == .key) {
+                server.dispatcher.prefix = parsed_val.key;
+            }
         }
     }
     if (std.mem.eql(u8, option_name, "codepoint-widths") and parsed_val == .string) {
@@ -2766,4 +2773,24 @@ test "resize-pane rejects out-of-range explicit sizes — bug #289" {
     }
     try testing.expectEqual(@as(u32, 100), pane.screen.grid.width);
     try testing.expectEqual(@as(u32, 40), pane.screen.grid.height);
+}
+
+test "session-scoped set prefix updates the dispatcher — bug #390" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+    const session = try server.newSession("test", 80, 24);
+
+    var c = try parse("set prefix C-a", testing.allocator);
+    defer c.deinit(testing.allocator);
+    try testing.expectEqual(CmdResult.ok, c.exec(&server));
+
+    // The option is stored...
+    const stored = session.options.get("prefix") orelse return error.TestUnexpectedResult;
+    try testing.expect(stored == .key);
+    try testing.expectEqual(@as(u21, 'a'), stored.key.char.code);
+
+    // ...and dispatch actually uses the new prefix (with the bug only the
+    // -g path updated the dispatcher).
+    try testing.expect(server.dispatcher.prefix.char.mod.ctrl);
+    try testing.expectEqual(@as(u21, 'a'), server.dispatcher.prefix.char.code);
 }
