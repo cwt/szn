@@ -417,7 +417,7 @@ Sorted by number. See individual bug files for details.
 | [373](373.md) | Benign EAGAIN on non-blocking display sockets disconnects clients | MEDIUM | Fixed |
 | [374](374.md) | Detach reply blocking-style write on non-blocking fd: truncated/dropped | MEDIUM | Fixed |
 | [375](375.md) | Client trusts packet length with no upper bound → unbounded buffering stall | MEDIUM | Fixed |
-| [376](376.md) | Command responses silently dropped when display client marked behind → hang | MEDIUM | Open |
+| [376](376.md) | Command responses silently dropped when display client marked behind → hang | MEDIUM | Fixed |
 | [377](377.md) | Stray ESC inside OSC swallows next byte, corrupting following sequence | MEDIUM | Fixed |
 | [378](378.md) | Listener socket: unconditional unlink steals endpoint; /tmp fallback lacks chmod | MEDIUM | Fixed |
 | [379](379.md) | Single click in copy-mode yanks empty selection and exits copy-mode | MEDIUM | Fixed |

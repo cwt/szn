@@ -2351,7 +2351,10 @@ pub const Server = struct {
                         const resp_buf = try self.allocator.alloc(u8, resp_len);
                         defer self.allocator.free(resp_buf);
                         const resp_ser = resp_pkt.serialize(resp_buf);
-                        self.queueToClient(fd, resp_ser);
+                        // Replies are request/response traffic: queue them
+                        // even when the client is marked behind, otherwise a
+                        // slow client's command hangs forever (bug #376).
+                        self.queueToClientUrgent(fd, resp_ser);
                     } else {
                         dispatch.sendResponse(fd, &result) catch |err| {
                             std.log.err("failed to send command response to fd {d}: {s}", .{ fd, @errorName(err) });
@@ -2565,6 +2568,35 @@ pub const Server = struct {
     /// output buffer and flush. Used for out-of-band output (clipboard paste,
     /// command responses) that is not part of the per-frame render path but
     /// must still survive a momentarily unwritable non-blocking socket.
+    /// Queue an already-serialized packet for a display client, bypassing the
+    /// behind/flow-control drop. Used for request/response packets (command
+    /// replies) that the client is explicitly waiting on — dropping those left
+    /// it hanging forever (bug #376). The hard cap still applies.
+    fn appendClientOutUrgent(self: *Server, dc: *DisplayClient, data: []const u8) bool {
+        if (data.len == 0) return true;
+        if (dc.out_buf.items.len + data.len > MAX_OUT_BUF) {
+            _ = self.flushDisplayClient(dc);
+            if (dc.out_buf.items.len + data.len > MAX_OUT_BUF) {
+                dc.out_buf.clearRetainingCapacity();
+                dc.last_cells.clearRetainingCapacity();
+            }
+        }
+        dc.out_buf.appendSlice(self.allocator, data) catch return false;
+        return true;
+    }
+
+    fn queueToClientUrgent(self: *Server, fd: i32, data: []const u8) void {
+        for (self.display_clients.items) |*dc| {
+            if (dc.fd != fd) continue;
+            if (!self.appendClientOutUrgent(dc, data)) return;
+            _ = self.flushDisplayClient(dc);
+            if (dc.out_buf.items.len > 0) {
+                self.loop.addFdEvents(dc.fd, std.posix.POLL.OUT);
+            }
+            return;
+        }
+    }
+
     fn queueToClient(self: *Server, fd: i32, data: []const u8) void {
         for (self.display_clients.items) |*dc| {
             if (dc.fd != fd) continue;
@@ -2672,7 +2704,9 @@ pub const Server = struct {
             // (and thus the child) resume at full speed.
             if (dc.behind) {
                 dc.behind = false;
-                self.behind_count -= 1;
+                // Saturating like every other behind_count site: a stale
+                // behind flag must never underflow the count.
+                self.behind_count -|= 1;
             }
             self.loop.removeFdEvents(dc.fd, std.posix.POLL.OUT);
             if (!self.anyDisplayClientBehind()) {
@@ -4083,6 +4117,45 @@ test "writeKeyToPty maps kitty functional codepoints per spec — bug #352" {
         try testing.expect(n > 0);
         try testing.expectEqualStrings(case.expect, buf[0..@intCast(n)]);
     }
+}
+
+test "urgent queue delivers command reply even when client is behind — bug #376" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    // Real writable fd so the immediate flush in queueToClientUrgent works.
+    var fds: [2]c_int = undefined;
+    if (std.c.pipe(&fds) != 0) return error.PipeFailed;
+    defer _ = std.c.close(fds[0]);
+    defer _ = std.c.close(fds[1]);
+
+    var dc = DisplayClient{ .fd = fds[1] };
+    dc.behind = true;
+    // Keep the production invariant honest: behind=true implies count >= 1.
+    server.behind_count = 1;
+    try dc.out_buf.appendSlice(testing.allocator, "backlogged-frame");
+    try server.display_clients.append(testing.allocator, dc);
+    defer {
+        if (server.display_clients.items.len > 0) {
+            server.display_clients.items[0].out_buf.deinit(testing.allocator);
+        }
+        _ = server.display_clients.pop();
+    }
+
+    const pkt = protocol.Packet.make(.ready, "ok");
+    var buf: [64]u8 = undefined;
+    const ser = pkt.serialize(&buf);
+    server.queueToClientUrgent(fds[1], ser);
+
+    // The flush drains backlog + reply into the socket/pipe. Regular
+    // queueToClient would have dropped the reply entirely for a behind
+    // client and it would never appear on the wire.
+    var wire: [128]u8 = undefined;
+    const n = std.c.read(fds[0], &wire, wire.len);
+    try testing.expect(n > 0);
+    const got = wire[0..@intCast(n)];
+    try testing.expect(std.mem.indexOf(u8, got, "backlogged-frame") != null);
+    try testing.expect(std.mem.indexOf(u8, got, "ok") != null);
 }
 
 test "processInput forwards Ctrl+J as LF byte, Enter as CR — bug #349" {
