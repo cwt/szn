@@ -123,10 +123,10 @@ pub fn parse(s: []const u8) ParseError!Colour {
 
     inline for (named) |entry| {
         if (std.ascii.eqlIgnoreCase(s, entry.name)) {
-            return if (entry.is_bright)
-                Colour.fromIndexed(entry.index + 90)
-            else
-                Colour.fromIndexed(entry.index);
+            // Bright names map to aixterm palette slots 8-15, NOT SGR codes
+            // 90-97: index+90 selects an unrelated 256-cube colour when
+            // emitted as 38;5;N (bug #383).
+            return Colour.fromIndexed(if (entry.is_bright) entry.index + 8 else entry.index);
         }
     }
 
@@ -283,7 +283,17 @@ test "parse named colour red" {
 test "parse named colour brightgreen" {
     const c = try parse("brightgreen");
     try testing.expectEqual(Tag.indexed, c.tag);
-    try testing.expectEqual(92, @as(u8, @truncate(c.value)));
+    // Bright names are aixterm palette slots 8-15, not SGR 90-97 codes
+    // (bug #383): brightgreen = slot 10, which writeSgr emits as
+    // \x1b[38;5;10m and terminals render from their bright palette.
+    try testing.expectEqual(@as(u8, 10), @as(u8, @truncate(c.value)));
+
+    var buf: [32]u8 = undefined;
+    const sgr = c.writeSgr(&buf, true).?;
+    try testing.expectEqualStrings("\x1b[38;5;10m", sgr);
+
+    // The RGB fallback resolves to the true bright-green palette entry.
+    try testing.expectEqualDeep([3]u8{ 0x00, 0xff, 0x00 }, c.toRgb().?);
 }
 
 test "parse default" {

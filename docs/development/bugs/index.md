@@ -424,7 +424,7 @@ Sorted by number. See individual bug files for details.
 | [380](380.md) | Six call sites bypass the historyLen() guard (regression surface of #293) | MEDIUM | Fixed |
 | [381](381.md) | Copy-mode g/G asymmetric: g only reaches top of current viewport | MEDIUM | Fixed |
 | [382](382.md) | load-buffer lacks MAX_PASTE_SIZE cap while paste-buffer enforces one | MEDIUM | Fixed |
-| [383](383.md) | Bright colour names encode index+90 as palette index — renders cube colours | MEDIUM | Open |
+| [383](383.md) | Bright colour names encode index+90 as palette index — renders cube colours | MEDIUM | Fixed |
 | [384](384.md) | mode-keys option ignored: emacs copy-mode unreachable, default disagrees with behaviour | MEDIUM | Open |
 | [385](385.md) | Small unbounded arena accumulators: Session.rename, Pane.cwd dupe-over | LOW | Open |
 | [386](386.md) | Grid/screen hygiene cluster: shiftDown contract, :720 subtraction, padding half-cell cursor, dead dirty machinery, zero-width drops, RIS incomplete | LOW | Open |
