@@ -70,3 +70,12 @@ test "VMIN and VTIME match the target platform" {
         else => {},
     }
 }
+
+test "RawTerminal.setRaw/deinit are analyzable on the native target — bug #389 follow-up" {
+    // The exe build path references these but tests never did; Zig's lazy
+    // analysis let a platform-specific field error (CS8 vs CSIZE enum)
+    // reach `zig build -Doptimize=ReleaseFast` unnoticed. Referencing them
+    // here forces full semantic analysis during `zig build test`.
+    const fns = .{ &RawTerminal.setRaw, &RawTerminal.deinit };
+    _ = fns;
+}
