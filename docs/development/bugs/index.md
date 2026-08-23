@@ -390,7 +390,7 @@ Sorted by number. See individual bug files for details.
 | [346](346.md) | Missing `io` param — false positive, raw POSIX syscall codebase | MEDIUM | False Positive |
 | [347](347.md) | `reflowCursorInternal` trims trailing empty screen lines during copy-mode entry, shifting visible grid down and corrupting prompt | HIGH | Fixed |
 | [348](348.md) | `#[default]` in `window-status-current-format` resets terminal background and drops status bar background color | MEDIUM | Fixed |
-| [349](349.md) | Ctrl+J decoded as Enter — coding agents send instead of newline (user-reported) | CRITICAL | Open |
+| [349](349.md) | Ctrl+J decoded as Enter — coding agents send instead of newline (user-reported) | CRITICAL | Fixed |
 | [350](350.md) | No escape-time timer: lone ESC delivered as Alt+next-key | HIGH | Open |
 | [351](351.md) | Modified tilde keys (`\x1b[3;5~`) silently dropped by client-side pre-parse | HIGH | Open |
 | [352](352.md) | Kitty functional-key codepoints wrong; kitty Enter forwarded as LF not CR | MEDIUM | Open |

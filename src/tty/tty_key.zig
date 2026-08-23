@@ -60,7 +60,11 @@ pub const InputReader = struct {
 
     fn feedGround(rd: *InputReader, byte: u8) ?Event {
         if (byte == 0x09) return Event{ .key = .{ .special = .{ .key = .tab } } };
-        if (byte == 0x0a or byte == 0x0d) return Event{ .key = .{ .special = .{ .key = .enter } } };
+        // Enter is CR (0x0D). LF (0x0A) must stay distinct so Ctrl+J reaches
+        // the pane as a real Ctrl+J (bug #349): coding agents insert a
+        // newline on C-j and send the message on Enter.
+        if (byte == 0x0d) return Event{ .key = .{ .special = .{ .key = .enter } } };
+        if (byte == 0x0a) return Event{ .key = .{ .char = .{ .code = 'J', .mod = .{ .ctrl = true } } } };
         if (byte == 0x1b) {
             rd.state = .esc;
             return null;
@@ -299,6 +303,15 @@ test "ground enter" {
     const ev = rd.feed(0x0d).?;
     try testing.expect(ev == .key);
     try testing.expectEqual(.enter, ev.key.special.key);
+}
+
+test "ground LF is Ctrl+J not Enter — bug #349" {
+    var rd = InputReader{};
+    const ev = rd.feed(0x0a).?;
+    try testing.expect(ev == .key);
+    const ch = ev.key.char;
+    try testing.expectEqual(@as(u21, 'J'), ch.code);
+    try testing.expect(ch.mod.ctrl);
 }
 
 test "ground ctrl a" {

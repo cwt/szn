@@ -3775,6 +3775,35 @@ test "command buffer is capped to prevent unbounded growth — bug #297" {
     try testing.expectEqual(@as(usize, Server.MAX_COMMAND_BUF), server.command_buf.items.len);
 }
 
+test "processInput forwards Ctrl+J as LF byte, Enter as CR — bug #349" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    const s = try server.newSession("test", 80, 24);
+    const pane = s.active_window.?.active_pane.?;
+
+    var fds: [2]c_int = undefined;
+    if (std.c.pipe(&fds) != 0) return error.PipeFailed;
+    defer _ = std.c.close(fds[0]);
+    defer _ = std.c.close(fds[1]);
+    pane.pty = .{ .master = fds[1], .slave = fds[0], .pid = -1 };
+
+    // Ctrl+J arrives as LF (0x0A); the pane must receive exactly that byte,
+    // not "\r". With the bug (#349) it was decoded as `.enter` and forwarded
+    // as 0x0D.
+    try server.processInput("\n");
+    var buf: [4]u8 = undefined;
+    var n = std.c.read(fds[0], &buf, buf.len);
+    try testing.expect(n == 1);
+    try testing.expectEqual(@as(u8, 0x0a), buf[0]);
+
+    // Plain Enter (CR) keeps forwarding "\r".
+    try server.processInput("\r");
+    n = std.c.read(fds[0], &buf, buf.len);
+    try testing.expect(n == 1);
+    try testing.expectEqual(@as(u8, 0x0d), buf[0]);
+}
+
 test "processInput preserves split escape sequence across packets — bug #294" {
     var server = try Server.init(testing.allocator);
     defer server.deinit();
