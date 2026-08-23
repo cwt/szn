@@ -182,6 +182,12 @@ pub const Server = struct {
     /// Last completed copy-mode search string, used to repeat with `n`/`N`.
     last_search: std.ArrayList(u8) = .empty,
     esc_buf: std.ArrayList(u8) = .empty,
+    /// Milliseconds timestamp of the most recent byte appended to `esc_buf`
+    /// while the parser sits in a non-ground state. Drives the escape-time
+    /// flush: a lone ESC (or partial sequence) older than the session's
+    /// `escape-time` is forwarded to the pane verbatim instead of waiting
+    /// indefinitely for a keystroke that turns it into Alt+key (bug #350).
+    esc_pending_since_ms: i64 = 0,
     mouse_press_x: u32 = 0,
     mouse_press_y: u32 = 0,
     /// Screen coords of the last copy-mode selection *start* press. Used to
@@ -548,12 +554,62 @@ pub const Server = struct {
         }
     }
 
+    /// The session's `escape-time` budget in ms (tmux-compatible default 500).
+    fn escapeTimeMs(self: *Server) i64 {
+        if (self.activeSession()) |s| {
+            if (s.options.get("escape-time")) |v| {
+                if (v == .number) return @intCast(@max(v.number, 0));
+            }
+        }
+        return 500;
+    }
+
+    /// Forward a stale partial escape sequence to the pane verbatim and reset
+    /// the parser (bug #350). tmux calls this escape-time; without it, a lone
+    /// ESC waits for the next keystroke and becomes Alt+key.
+    pub fn flushPendingEscape(self: *Server) void {
+        defer {
+            self.esc_buf.clearRetainingCapacity();
+            self.input_reader.reset();
+            self.esc_pending_since_ms = 0;
+        }
+        if (self.esc_buf.items.len == 0) return;
+        const session = self.activeSession() orelse return;
+        const window = session.active_window orelse return;
+        const pane = window.active_pane orelse return;
+        if (!self.isPaneValid(pane)) return;
+        pane.writeInput(self.esc_buf.items) catch |err| std.log.warn("flushPendingEscape writeInput failed: {any}", .{err});
+    }
+
+    /// Flush the pending escape sequence when it has been idle longer than
+    /// `escape-time`. Called from run() before polling.
+    fn tickEscapeTime(self: *Server) void {
+        if (self.esc_pending_since_ms == 0 or self.input_reader.state == .ground) return;
+        const elapsed = currentMillis() - self.esc_pending_since_ms;
+        if (elapsed >= self.escapeTimeMs()) {
+            self.flushPendingEscape();
+        }
+    }
+
     pub fn run(self: *Server, timeout_ms: i32) ServerError!void {
         reapZombies();
         self.tickAutoscroll();
         self.tickStatusInterval();
-        const auto_timeout: i32 = if (self.mouse_autoscroll_pane != null) @min(timeout_ms, 50) else timeout_ms;
-        const events = try self.loop.pollOnce(self.allocator, auto_timeout);
+        var poll_timeout: i32 = if (self.mouse_autoscroll_pane != null) @min(timeout_ms, 50) else timeout_ms;
+        // Wake up exactly when a pending escape sequence would expire so the
+        // flush is not delayed by a long poll timeout (bug #350).
+        if (self.esc_pending_since_ms != 0 and self.input_reader.state != .ground) {
+            const elapsed = currentMillis() - self.esc_pending_since_ms;
+            const remaining = self.escapeTimeMs() - elapsed;
+            if (remaining <= 0) {
+                self.flushPendingEscape();
+            } else {
+                poll_timeout = @min(poll_timeout, @as(i32, @intCast(remaining)));
+            }
+        } else if (self.esc_pending_since_ms != 0) {
+            self.esc_pending_since_ms = 0;
+        }
+        const events = try self.loop.pollOnce(self.allocator, poll_timeout);
         for (events) |ev| {
             switch (self.handlePtyEvent(ev)) {
                 .destroyed => break,
@@ -1333,6 +1389,9 @@ pub const Server = struct {
         // packets. Clearing unconditionally here truncated such sequences.
         if (self.input_reader.state == .ground) {
             self.esc_buf.clearRetainingCapacity();
+            // Sequence completed (or was flushed): the escape-time budget no
+            // longer applies (bug #350).
+            self.esc_pending_since_ms = 0;
         }
 
         while (i < buf.len) : (i += 1) {
@@ -1756,6 +1815,10 @@ pub const Server = struct {
                         self.input_reader.state = .ground;
                     } else {
                         try self.esc_buf.append(self.allocator, byte);
+                        // Every pending byte refreshes the escape-time budget:
+                        // the flush fires after this much *inactivity* mid-
+                        // sequence, matching tmux's escape-time semantics.
+                        self.esc_pending_since_ms = currentMillis();
                     }
                     if (self.input_reader.feed(byte)) |event| {
                         var handled = false;
@@ -4156,6 +4219,74 @@ test "urgent queue delivers command reply even when client is behind — bug #37
     const got = wire[0..@intCast(n)];
     try testing.expect(std.mem.indexOf(u8, got, "backlogged-frame") != null);
     try testing.expect(std.mem.indexOf(u8, got, "ok") != null);
+}
+
+test "lone ESC flushed to pane after escape-time expires — bug #350" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    const s = try server.newSession("test", 80, 24);
+    const pane = s.active_window.?.active_pane.?;
+    try s.options.set("escape-time", .{ .number = 0 });
+
+    var fds: [2]c_int = undefined;
+    if (std.c.pipe(&fds) != 0) return error.PipeFailed;
+    defer _ = std.c.close(fds[0]);
+    defer _ = std.c.close(fds[1]);
+    pane.pty = .{ .master = fds[1], .slave = fds[0], .pid = -1 };
+
+    // Lone ESC: parser parks in .esc with the byte buffered, no event.
+    try server.processInput("\x1b");
+    try testing.expect(server.input_reader.state != .ground);
+    try testing.expectEqual(@as(usize, 1), server.esc_buf.items.len);
+
+    // escape-time is 0 → next tick flushes the raw byte verbatim instead of
+    // waiting for a keystroke that would turn it into Alt+key.
+    server.tickEscapeTime();
+    var buf: [4]u8 = undefined;
+    const n = std.c.read(fds[0], &buf, buf.len);
+    try testing.expect(n == 1);
+    try testing.expectEqual(@as(u8, 0x1b), buf[0]);
+    try testing.expectEqual(@as(usize, 0), server.esc_buf.items.len);
+    try testing.expectEqual(.ground, server.input_reader.state);
+}
+
+test "partial sequence survives within escape-time budget — bug #350" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    const s = try server.newSession("test", 80, 24);
+    const pane = s.active_window.?.active_pane.?;
+    try s.options.set("escape-time", .{ .number = 10000 });
+
+    var fds: [2]c_int = undefined;
+    if (std.c.pipe(&fds) != 0) return error.PipeFailed;
+    defer _ = std.c.close(fds[0]);
+    defer _ = std.c.close(fds[1]);
+    pane.pty = .{ .master = fds[1], .slave = fds[0], .pid = -1 };
+
+    try server.processInput("\x1bO"); // split SS3 prefix
+    server.tickEscapeTime();
+    // Well inside the budget: nothing forwarded yet.
+    try testing.expect(server.input_reader.state != .ground);
+    try testing.expectEqual(@as(usize, 2), server.esc_buf.items.len);
+}
+
+test "run() clamps poll timeout to pending escape deadline — bug #350" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    const s = try server.newSession("test", 80, 24);
+    _ = s;
+    // Simulate a stale pending sequence older than any budget.
+    server.input_reader.state = .esc;
+    server.esc_pending_since_ms = Server.currentMillis() - 60_000;
+
+    // run() must flush it rather than sleep for the full timeout; afterwards
+    // the parser is idle and the loop can block normally.
+    try server.run(10_000);
+    try testing.expectEqual(.ground, server.input_reader.state);
+    try testing.expectEqual(@as(usize, 0), server.esc_buf.items.len);
 }
 
 test "processInput forwards Ctrl+J as LF byte, Enter as CR — bug #349" {
