@@ -399,7 +399,7 @@ Sorted by number. See individual bug files for details.
 | [355](355.md) | Remote panic: modifyOtherKeys extkeys `@intCast(u32→u8)` | CRITICAL | Fixed |
 | [356](356.md) | Remote panic: sixel raster attribute parse overflows u32 | CRITICAL | Fixed |
 | [357](357.md) | `cmdLoadBuffer` invalid free of static pointer with stale capacity | CRITICAL | Fixed |
-| [358](358.md) | Auto window rename: invalid free of name_buf-owned string + aliased double-free | CRITICAL | Open |
+| [358](358.md) | Auto window rename: invalid free of name_buf-owned string + aliased double-free | CRITICAL | Fixed |
 | [359](359.md) | Clock mode clones full grid+history every second; arena never reclaimed | HIGH | Open |
 | [360](360.md) | Scrollback eviction never reclaims memory (arena no-op frees) | HIGH | Open |
 | [361](361.md) | saved_grid churn leaks one grid clone per mode toggle | HIGH | Open |

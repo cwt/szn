@@ -642,3 +642,34 @@ test "window setName and title callback — bug #313 #324" {
     windowTitleCallback(&window, "callback_title");
     try testing.expectEqualStrings("callback_title", window.name);
 }
+
+test "auto-rename: name stays in name_buf, cache never aliases it — bug #358" {
+    var window = try Window.init(testing.allocator, 1, "initial", 80, 24, null, null);
+    defer window.deinit(testing.allocator);
+
+    // Mirror exactly what renderToDisplayClient's auto-rename does now.
+    window.setName("vim");
+    const cached = try window.allocator.dupe(u8, "vim");
+    if (window.last_foreground_name.len > 0) window.allocator.free(window.last_foreground_name);
+    window.last_foreground_name = cached;
+
+    // The title lives in inline storage (freeing it was always invalid).
+    try testing.expect(window.name.ptr == @as([*]const u8, &window.name_buf));
+    try testing.expect(window.last_foreground_name.ptr != window.name.ptr);
+
+    // Second rename frees only the cache; both fields update without
+    // aliasing (the old code double-freed here).
+    window.setName("htop");
+    const cached2 = try window.allocator.dupe(u8, "htop");
+    window.allocator.free(window.last_foreground_name);
+    window.last_foreground_name = cached2;
+    try testing.expectEqualStrings("htop", window.name);
+    try testing.expectEqualStrings("htop", window.last_foreground_name);
+    try testing.expect(window.last_foreground_name.ptr != window.name.ptr);
+
+    // A later OSC title repoints name into name_buf while the heap-owned
+    // cache stays valid and independently freeable (deinit frees it once).
+    windowTitleCallback(&window, "user@host: ~");
+    try testing.expectEqualStrings("user@host: ~", window.name);
+    try testing.expectEqualStrings("htop", window.last_foreground_name);
+}
