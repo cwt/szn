@@ -423,7 +423,7 @@ Sorted by number. See individual bug files for details.
 | [379](379.md) | Single click in copy-mode yanks empty selection and exits copy-mode | MEDIUM | Open |
 | [380](380.md) | Six call sites bypass the historyLen() guard (regression surface of #293) | MEDIUM | Open |
 | [381](381.md) | Copy-mode g/G asymmetric: g only reaches top of current viewport | MEDIUM | Open |
-| [382](382.md) | load-buffer lacks MAX_PASTE_SIZE cap while paste-buffer enforces one | MEDIUM | Open |
+| [382](382.md) | load-buffer lacks MAX_PASTE_SIZE cap while paste-buffer enforces one | MEDIUM | Fixed |
 | [383](383.md) | Bright colour names encode index+90 as palette index — renders cube colours | MEDIUM | Open |
 | [384](384.md) | mode-keys option ignored: emacs copy-mode unreachable, default disagrees with behaviour | MEDIUM | Open |
 | [385](385.md) | Small unbounded arena accumulators: Session.rename, Pane.cwd dupe-over | LOW | Open |

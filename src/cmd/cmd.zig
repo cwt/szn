@@ -528,7 +528,16 @@ fn cmdLoadBuffer(server: *Server, args: []const []const u8) CmdResult {
         const n = std.c.read(fd, &chunk, chunk.len);
         if (n < 0) return .err;
         if (n == 0) break;
-        data.appendSlice(server.allocator, chunk[0..@as(usize, @intCast(n))]) catch return .err;
+        // Same cap as the paste path; `loadb /dev/zero` must not OOM the
+        // server (bug #382).
+        const chunk_len: usize = @intCast(n);
+        if (data.items.len + chunk_len > Server.MAX_PASTE_SIZE) {
+            var msg_buf: [128]u8 = undefined;
+            const msg = std.fmt.bufPrint(&msg_buf, "Error: loaded buffer exceeds limit ({d}B)", .{Server.MAX_PASTE_SIZE}) catch "Error: loaded buffer too large";
+            server.setMessage(msg) catch |err| std.log.warn("setMessage failed: {any}", .{err});
+            return .err;
+        }
+        data.appendSlice(server.allocator, chunk[0..chunk_len]) catch return .err;
     }
 
     // Transfer ownership to the buffer stack. BufferEntry.deinit frees
@@ -2517,6 +2526,35 @@ test "load-buffer transfers ownership without invalid free — bug #357" {
     // the command's ArrayList teardown.
     const data = server.buffers.get(null).?;
     try testing.expectEqualStrings("hello load buffer", data);
+}
+
+test "load-buffer enforces MAX_PASTE_SIZE — bug #382" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    // Write a file larger than the cap via raw POSIX.
+    const path = "/tmp/szn-bug382-loadb-big.txt";
+    {
+        const fd = std.c.open(path, std.c.O{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true }, @as(std.c.mode_t, 0o644));
+        try testing.expect(fd >= 0);
+        const chunk = [_]u8{'x'} ** 4096;
+        var written: usize = 0;
+        while (written <= Server.MAX_PASTE_SIZE) : (written += chunk.len) {
+            _ = std.c.write(fd, &chunk, chunk.len);
+        }
+        _ = std.c.close(fd);
+    }
+    defer _ = std.c.unlink(path);
+
+    const cmdline = try std.fmt.allocPrint(testing.allocator, "load-buffer {s}", .{path});
+    defer testing.allocator.free(cmdline);
+    var c = try parse(cmdline, testing.allocator);
+    defer c.deinit(testing.allocator);
+    try testing.expectEqual(CmdResult.err, c.exec(&server));
+    try testing.expect(server.message != null);
+
+    // Nothing was pushed onto the buffer stack.
+    try testing.expect(server.buffers.get(null) == null);
 }
 
 test "display-message exec" {
