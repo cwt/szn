@@ -43,7 +43,6 @@ pub const CopyMode = struct {
     /// True while the search prompt is open and accepting input. The actual
     /// query buffer lives in the server's command_buf so it reuses the same
     /// rendering/input path as the command prompt.
-    search_active: bool = false,
     /// Direction of the in-progress search prompt.
     search_pending_dir: SearchDir = .forward,
     /// Direction of the last completed search, used by repeat (`n`/`N`).
@@ -64,14 +63,12 @@ pub const CopyMode = struct {
     pub fn exit(self: *CopyMode) void {
         self.active = false;
         self.selection.active = false;
-        self.search_active = false;
     }
 
     /// Open the search prompt in the given direction. The query itself is
     /// collected by the server into its command_buf; CopyMode only tracks
     /// that a search is pending and which way it should go.
     pub fn enterSearch(self: *CopyMode, dir: SearchDir) void {
-        self.search_active = true;
         self.search_pending_dir = dir;
     }
 
@@ -79,7 +76,6 @@ pub const CopyMode = struct {
     /// + visible grid), starting just past the current cursor position.
     /// Returns true if a match was found (cursor is moved to it).
     pub fn submitSearch(self: *CopyMode, grid: *const Grid, allocator: std.mem.Allocator, query: []const u8, dir: SearchDir) bool {
-        self.search_active = false;
         self.last_search_dir = dir;
         if (query.len == 0) return false;
 
@@ -219,8 +215,9 @@ pub const CopyMode = struct {
         }
     }
 
-    pub fn adjustSelectionForAutoScroll(self: *CopyMode, delta: i32) void {
-        _ = delta;
+    /// Selection end tracks the live cursor during autoscroll. (The old
+    /// signature took a `delta` it never used — bug #392.)
+    pub fn adjustSelectionForAutoScroll(self: *CopyMode) void {
         self.updateSelection();
     }
 
@@ -258,10 +255,6 @@ pub const CopyMode = struct {
             return x <= ex;
         }
         return true;
-    }
-
-    fn getCellAt(self: *const CopyMode, grid: *const Grid, x: u32, screen_y: u32) Cell {
-        return self.getCellAtOffset(grid, x, screen_y, self.scroll_offset);
     }
 
     fn getCellAtOffset(_: *const CopyMode, grid: *const Grid, x: u32, screen_y: u32, scroll_offset: u32) Cell {

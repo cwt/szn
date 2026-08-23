@@ -543,11 +543,11 @@ pub const Server = struct {
                 const hist_len: u32 = @intCast(grid.historyLen());
                 if (dir == .up and cm.scroll_offset < hist_len) {
                     cm.scroll_offset += 1;
-                    cm.adjustSelectionForAutoScroll(1);
+                    cm.adjustSelectionForAutoScroll();
                     pane.dirty = true;
                 } else if (dir == .down and cm.scroll_offset > 0) {
                     cm.scroll_offset -= 1;
-                    cm.adjustSelectionForAutoScroll(-1);
+                    cm.adjustSelectionForAutoScroll();
                     pane.dirty = true;
                 }
             }
