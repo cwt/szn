@@ -397,7 +397,7 @@ Sorted by number. See individual bug files for details.
 | [353](353.md) | Root key table (`bind-key -n`) never consulted; prefix machine duplicated 3× with drift | HIGH | Open |
 | [354](354.md) | Remote panic: SGR indexed-colour `@intCast(u32→u8)` ×6 sites | CRITICAL | Fixed |
 | [355](355.md) | Remote panic: modifyOtherKeys extkeys `@intCast(u32→u8)` | CRITICAL | Fixed |
-| [356](356.md) | Remote panic: sixel raster attribute parse overflows u32 | CRITICAL | Open |
+| [356](356.md) | Remote panic: sixel raster attribute parse overflows u32 | CRITICAL | Fixed |
 | [357](357.md) | `cmdLoadBuffer` invalid free of static pointer with stale capacity | CRITICAL | Open |
 | [358](358.md) | Auto window rename: invalid free of name_buf-owned string + aliased double-free | CRITICAL | Open |
 | [359](359.md) | Clock mode clones full grid+history every second; arena never reclaimed | HIGH | Open |

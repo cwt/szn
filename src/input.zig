@@ -520,6 +520,27 @@ pub const InputParser = struct {
         }
     }
 
+    /// Saturating decimal parse of a leading digit run. Wire-controlled
+    /// sixel raster dimensions must never overflow u32 (bug #356); values
+    /// beyond maxInt(u32) saturate instead of panicking or wrapping.
+    fn parseDigitRunSaturating(s: []const u8) ?u32 {
+        var val: u32 = 0;
+        var has_val = false;
+        for (s) |c| {
+            if (!std.ascii.isDigit(c)) break;
+            has_val = true;
+            const digit: u32 = c - '0';
+            if (val > (std.math.maxInt(u32) - digit) / 10) return std.math.maxInt(u32);
+            val = val * 10 + digit;
+        }
+        return if (has_val) val else null;
+    }
+
+    /// Any sixel dimension above this is garbage from a hostile/broken
+    /// producer; real images never approach it. Clamping keeps downstream
+    /// cell math well inside u32 (bug #356).
+    const MAX_SIXEL_DIM: u32 = 65535;
+
     /// Parse sixel pixel dimensions and hand off to Screen.
     fn dispatchDcsSixel(self: *InputParser) !void {
         defer self.toGround();
@@ -545,30 +566,12 @@ pub const InputParser = struct {
             _ = it.next(); // skip Pan
             _ = it.next(); // skip Pad
             if (it.next()) |ph_str| {
-                var val: u32 = 0;
-                var has_val = false;
-                for (ph_str) |c| {
-                    if (std.ascii.isDigit(c)) {
-                        val = val * 10 + (c - '0');
-                        has_val = true;
-                    } else {
-                        break;
-                    }
-                }
-                if (has_val) px_width = val;
+                px_width = parseDigitRunSaturating(ph_str) orelse 0;
+                px_width = @min(px_width, MAX_SIXEL_DIM);
             }
             if (it.next()) |pv_str| {
-                var val: u32 = 0;
-                var has_val = false;
-                for (pv_str) |c| {
-                    if (std.ascii.isDigit(c)) {
-                        val = val * 10 + (c - '0');
-                        has_val = true;
-                    } else {
-                        break;
-                    }
-                }
-                if (has_val) px_height = val;
+                px_height = parseDigitRunSaturating(pv_str) orelse 0;
+                px_height = @min(px_height, MAX_SIXEL_DIM);
             }
         }
 
@@ -2012,6 +2015,29 @@ test "sixel pixel dimensions parsed from raster attributes" {
     const img = opt_found.?;
     try testing.expectEqual(@as(u32, 320), img.px_width);
     try testing.expectEqual(@as(u32, 240), img.px_height);
+}
+
+test "sixel raster dimensions saturate instead of overflowing — bug #356" {
+    // Helper-level semantics: leading digit runs, saturation at maxInt(u32).
+    try testing.expectEqual(@as(?u32, 240), InputParser.parseDigitRunSaturating("240;rest"));
+    try testing.expectEqual(@as(?u32, 42), InputParser.parseDigitRunSaturating("42x"));
+    try testing.expectEqual(@as(?u32, null), InputParser.parseDigitRunSaturating(""));
+    try testing.expectEqual(@as(?u32, null), InputParser.parseDigitRunSaturating("abc"));
+    try testing.expectEqual(
+        @as(?u32, std.math.maxInt(u32)),
+        InputParser.parseDigitRunSaturating("99999999999"),
+    );
+
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+    screen.cell_size_known = true;
+    var parser = InputParser.init(&screen);
+    defer parser.deinit(testing.allocator);
+
+    // 11-digit width/height overflowed u32 with the bug (checked-multiply
+    // panic in safe builds). Must parse saturated and not panic.
+    const sixel = "\x1bPq\"1;1;99999999999;88888888888A\x1b\\";
+    try parser.feed(sixel);
 }
 
 test "sixel cursor advances after image" {

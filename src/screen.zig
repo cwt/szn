@@ -227,8 +227,10 @@ pub const Screen = struct {
         // silently discarded anyway — after we'd already scrolled the whole
         // grid up and stored it. Bail out first to skip that wasted work (and
         // the scrollback destruction) and free the captured bytes.
-        const footprint_rows = if (px_height > 0) (px_height + self.cell_px_height - 1) / self.cell_px_height else 1;
-        const footprint_cols = if (px_width > 0) (px_width + self.cell_px_width - 1) / self.cell_px_width else 1;
+        // Saturating cell math: absurd raster dimensions must not overflow
+        // here either (bug #356 follow-up); a huge footprint is dropped below.
+        const footprint_rows = if (px_height > 0) (px_height +| self.cell_px_height -| 1) / self.cell_px_height else 1;
+        const footprint_cols = if (px_width > 0) (px_width +| self.cell_px_width -| 1) / self.cell_px_width else 1;
         // Only drop once we have a measured cell size; while still on the
         // built-in defaults the footprint could be wrong and we must wait for
         // the real dimensions before deciding (see #203).
