@@ -527,6 +527,8 @@ test "remove pane from window" {
     try testing.expectEqual(@as(usize, 2), window.panes.items.len);
 
     window.removePane(testing.allocator, pane);
+    pane.deinit();
+    testing.allocator.destroy(pane);
     try testing.expectEqual(@as(usize, 1), window.panes.items.len);
 }
 
@@ -551,6 +553,8 @@ test "remove active pane falls back to first" {
 
     window.setActivePane(pane);
     window.removePane(testing.allocator, pane);
+    pane.deinit();
+    testing.allocator.destroy(pane);
 
     try testing.expectEqual(original, window.active_pane);
     try testing.expect(window.active_pane.?.active);
@@ -573,6 +577,8 @@ test "nested split focus transition on exit" {
 
     // Exit pane3 (far right). Sibling pane2 (middle/right-half) should get focus, NOT pane1 (left).
     window.removePane(testing.allocator, pane3);
+    pane3.deinit();
+    testing.allocator.destroy(pane3);
 
     try testing.expectEqual(pane2, window.active_pane);
     try testing.expect(pane2.active);

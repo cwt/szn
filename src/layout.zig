@@ -265,7 +265,7 @@ pub const Layout = struct {
 
     pub fn removePane(self: *Layout, pane: *Pane) void {
         if (self.root.* == .leaf) return;
-        _ = self.removeFromNode(self.root, null, pane);
+        _ = self.extractFromNode(self.root, null, pane);
     }
 
     pub fn extractPane(self: *Layout, pane: *Pane) void {
@@ -290,36 +290,6 @@ pub const Layout = struct {
                 }
                 if (self.extractFromNode(s.b, s, target)) {
                     const survivor_value = s.a.*;
-                    self.allocator.destroy(s.a);
-                    self.allocator.destroy(s.b);
-                    self.allocator.destroy(s);
-                    node.* = survivor_value;
-                    return false;
-                }
-                return false;
-            },
-        }
-    }
-
-    fn removeFromNode(self: *Layout, node: *Node, parent_split: ?*Split, target: *Pane) bool {
-        switch (node.*) {
-            .leaf => |p| {
-                if (p == target and parent_split != null) return true;
-                return false;
-            },
-            .split => |s| {
-                if (self.removeFromNode(s.a, s, target)) {
-                    const survivor_value = s.b.*;
-                    self.deinitNode(s.a);
-                    self.allocator.destroy(s.b);
-                    self.allocator.destroy(s.a);
-                    self.allocator.destroy(s);
-                    node.* = survivor_value;
-                    return false;
-                }
-                if (self.removeFromNode(s.b, s, target)) {
-                    const survivor_value = s.a.*;
-                    self.deinitNode(s.b);
                     self.allocator.destroy(s.a);
                     self.allocator.destroy(s.b);
                     self.allocator.destroy(s);
@@ -416,6 +386,7 @@ test "close pane collapses parent split" {
     try testing.expectEqual(@as(usize, 2), layout.countLeaves());
 
     layout.removePane(pane2);
+    destroyTestPane(testing.allocator, pane2);
     try testing.expectEqual(@as(usize, 1), layout.countLeaves());
 }
 
@@ -444,6 +415,7 @@ test "close pane in nested layout" {
     try testing.expectEqual(@as(usize, 3), layout.countLeaves());
 
     layout.removePane(pane3);
+    destroyTestPane(testing.allocator, pane3);
     try testing.expectEqual(@as(usize, 2), layout.countLeaves());
 }
 
@@ -456,6 +428,7 @@ test "remove all leaves collapses to single" {
     const pane2 = try layout.splitPane(testing.allocator, pane1, .horizontal, 0.5);
 
     layout.removePane(pane2);
+    destroyTestPane(testing.allocator, pane2);
     try testing.expectEqual(@as(usize, 1), layout.countLeaves());
 
     layout.removePane(pane1);
