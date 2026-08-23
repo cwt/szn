@@ -9,8 +9,10 @@ pub const Error = screen_mod.Error;
 pub const InputParser = struct {
     screen: *Screen,
     state: State = .ground,
-    params: [16]u32 = undefined,
-    sub_params: [16]bool = undefined,
+    // 32 slots: long SGR chains (colon-heavy styling) legally exceed 16;
+    // the old cap silently folded extras (bug #388).
+    params: [32]u32 = undefined,
+    sub_params: [32]bool = undefined,
     param_count: u32 = 0,
     param_val: u32 = 0,
     collecting_param: bool = false,
@@ -201,8 +203,13 @@ pub const InputParser = struct {
             },
             0x7F => {},
             0x20...0x7E => try self.screen.writeChar(byte),
-            0x80...0x8F => {
-                // SS2, SS3, DCS, SOS, ESC, CSI, ST, OSC, PM, APC (8-bit)
+            0x84 => try self.screen.index(), // IND
+            0x85 => try self.screen.index(), // NEL (same down-move here)
+            0x88 => {}, // HTS: no configurable tab stops to record
+            0x8D => try self.screen.reverseIndex(), // RI
+            0x8E, 0x8F => {}, // SS2/SS3 single-shift: next char prints as-is
+            0x80...0x83, 0x86, 0x87, 0x89...0x8C => {
+                // Remaining C1 introducers treated like their 7-bit ESC form.
                 self.state = .esc;
                 self.clearParams();
             },
@@ -214,7 +221,12 @@ pub const InputParser = struct {
                 self.params_started = true;
             },
             0x9C => {},
-            0x9D => self.state = .sos_pm_apc_string,
+            0x9D => {
+                // 0x9D is 8-bit OSC (matching 7-bit ESC ]), not PM (bug #388).
+                self.state = .osc_string;
+                self.osc_buf.clearRetainingCapacity();
+                self.clearParams();
+            },
             0x9E => self.state = .sos_pm_apc_string,
             0x9F => self.state = .sos_pm_apc_string,
             0x91...0x97, 0x99...0x9A, 0xA0...0xBF, 0xC0...0xFF => {},
@@ -500,6 +512,10 @@ pub const InputParser = struct {
         if (byte == '\\') {
             // ESC \ = ST — dispatch the sixel image
             try self.dispatchDcsSixel();
+        } else if (byte == 0x1B) {
+            // ESC ESC: the first ESC was data, this one is the new ST
+            // candidate — stay pending so the following '\' terminates
+            // instead of being swallowed as payload (bug #388).
         } else if (self.dcs_buf.items.len < 16 * 1024 * 1024) {
             // Not a ST; the ESC was part of data. Append ESC and this byte.
             try self.dcs_buf.append(self.screen.allocator, 0x1B);
@@ -708,6 +724,11 @@ pub const InputParser = struct {
                     //   Ps1=2 = sixel geometry
                     // We report sixel as supported with no size limit (0;0).
                     const ps1 = self.param(0);
+                    // Only claim support for capabilities we actually have:
+                    // Ps1=1 (colour registers) and Ps1=2 (sixel geometry).
+                    // Replying "supported" for unknown probes caused apps to
+                    // rely on features szn lacks (bug #388).
+                    if (ps1 != 1 and ps1 != 2) return;
                     if (self.pty) |pty| {
                         var buf: [64]u8 = undefined;
                         const rep = std.fmt.bufPrint(&buf, "\x1b[?{d};0;0S", .{ps1}) catch {
@@ -2485,4 +2506,82 @@ test "OSC buffer capped at 1 MiB to prevent OOM — bug #261" {
     try testing.expectEqual(InputParser.State.ground, parser.state);
     // Buffer should have been cleared when capping.
     try testing.expectEqual(0, parser.osc_buf.items.len);
+}
+
+test "C1 NEL moves down without swallowing next byte — bug #388" {
+    var screen = try Screen.init(testing.allocator, 10, 5);
+    defer screen.deinit();
+    var parser = InputParser.init(&screen);
+    defer parser.deinit(testing.allocator);
+    try parser.feed(&[_]u8{ 0x85, 'A' });
+    try testing.expectEqual(@as(u32, 1), screen.cursor.y);
+    try testing.expectEqual(@as(u21, 'A'), screen.grid.getCell(0, 1).char);
+}
+
+test "8-bit OSC (0x9D) collects until BEL — bug #388" {
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+    var parser = InputParser.init(&screen);
+    defer parser.deinit(testing.allocator);
+    // With the bug 0x9D routed to PM/APC and the title was discarded until
+    // a 7-bit ST that never comes.
+    try parser.feed(&[_]u8{ 0x9D, '0', ';', 't', 0x07 });
+    try testing.expectEqual(@as(u8, @intFromEnum(InputParser.State.ground)), @intFromEnum(parser.state));
+    try testing.expectEqual(@as(u32, 0), screen.cursor.x);
+}
+
+test "ESC ESC backslash inside sixel payload still terminates — bug #388" {
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+    screen.cell_size_known = true;
+    var parser = InputParser.init(&screen);
+    defer parser.deinit(testing.allocator);
+
+    // Payload "A ESC B" then ESC ESC \: the double-ESC previously ate the
+    // real terminator as data.
+    try parser.feed("\x1bPqA\x1bB\x1b\x1b\\");
+    try testing.expectEqual(@as(u8, @intFromEnum(InputParser.State.ground)), @intFromEnum(parser.state));
+    var found: usize = 0;
+    for (screen.sixel_images) |img| {
+        if (img != null) found += 1;
+    }
+    try testing.expectEqual(@as(usize, 1), found);
+}
+
+test "SGR chain beyond 16 params applies trailing colour — bug #388" {
+    var screen = try Screen.init(testing.allocator, 10, 3);
+    defer screen.deinit();
+    // 18 bold toggles then an indexed colour: the old 16-slot cap dropped it.
+    var params: [21]u32 = undefined;
+    var subs: [21]bool = undefined;
+    for (0..18) |i| {
+        params[i] = 1;
+        subs[i] = false;
+    }
+    params[18] = 38;
+    params[19] = 5;
+    params[20] = 196;
+    subs[18] = false;
+    subs[19] = false;
+    subs[20] = false;
+    screen.setSgr(&params, &subs);
+    try testing.expect(screen.cur_cell.fg == @import("colour.zig").Colour.fromIndexed(196));
+}
+
+test "XTSMGRAPHICS unknown Ps1 gets no reply — bug #388" {
+    var p = try makePipePty();
+    defer _ = c_sys.close(p.read_fd);
+    defer p.pty.deinit();
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+    var parser = InputParser.init(&screen);
+    defer parser.deinit(testing.allocator);
+    parser.pty = &p.pty;
+
+    try parser.feed("\x1b[?7;1S"); // Ps1=7 unsupported
+    var buf: [64]u8 = undefined;
+    try testing.expectEqualStrings("", drainFd(p.read_fd, &buf));
+
+    try parser.feed("\x1b[?2;1S"); // sixel geometry: supported
+    try testing.expect(std.mem.indexOf(u8, drainFd(p.read_fd, &buf), "\x1b[?2;") != null);
 }
