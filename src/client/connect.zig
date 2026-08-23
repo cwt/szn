@@ -22,6 +22,8 @@ pub fn connectToServer() Error!i32 {
     const sock_rc = c.socket(c.AF.UNIX, c.SOCK.STREAM, 0);
     const fd = try mapErr(sock_rc);
     errdefer _ = c.close(fd);
+    // Don't leak the server fd into anything the client spawns (bug #389).
+    @import("../server/pty.zig").setCloexec(fd);
 
     var addr = std.mem.zeroes(c.sockaddr.un);
     addr.family = c.AF.UNIX;

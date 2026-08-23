@@ -90,8 +90,11 @@ pub fn makeExitPacket(code: u8) Packet {
     return Packet.make(.exit, exit_codes[code..][0..1]);
 }
 
-pub fn packetType(pkt: Packet) MessageType {
-    return @enumFromInt(pkt.header.msg_type);
+/// Decode a packet's message type byte safely. Returns null for bytes that
+/// are not a valid MessageType — unlike @enumFromInt on a closed enum, which
+/// would panic on wire-controlled input (bug #389).
+pub fn packetType(pkt: Packet) ?MessageType {
+    return MessageType.fromByte(pkt.header.msg_type);
 }
 
 test "message reader empty buffer" {
@@ -202,7 +205,12 @@ test "make exit packet" {
 
 test "packet type helper" {
     const pkt = Packet.make(.command, "test");
-    try testing.expectEqual(MessageType.command, packetType(pkt));
+    try testing.expectEqual(MessageType.command, packetType(pkt).?);
+
+    // Wire-controlled garbage must decode to null, not panic (bug #389).
+    var bad = pkt;
+    bad.header.msg_type = 0xEE;
+    try testing.expect(packetType(bad) == null);
 }
 
 test "serialize and parse round trip" {
@@ -214,7 +222,7 @@ test "serialize and parse round trip" {
     try reader.feed(serialized);
 
     const parsed = (try reader.tryParse()).?;
-    try testing.expectEqual(MessageType.command, packetType(parsed));
+    try testing.expectEqual(MessageType.command, packetType(parsed).?);
     try testing.expectEqualStrings("split-window -v", parsed.data);
 }
 

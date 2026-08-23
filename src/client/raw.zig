@@ -30,7 +30,9 @@ pub const RawTerminal = struct {
     }
 
     pub fn deinit(self: *RawTerminal) void {
-        _ = c.tcsetattr(self.fd, c.TCSA.FLUSH, &self.original);
+        // TCSANOW, not FLUSH: discarding pending output on restore could eat
+        // the tail of whatever was on screen when szn exits (bug #389).
+        _ = c.tcsetattr(self.fd, c.TCSA.NOW, &self.original);
     }
 
     pub fn setRaw(self: *RawTerminal) Error!void {
@@ -38,9 +40,14 @@ pub const RawTerminal = struct {
         raw.iflag = .{ .BRKINT = false };
         raw.lflag = .{};
         raw.oflag = .{};
+        // cfmakeraw parity rules: 8-bit chars, no parity checking. Without
+        // this, a terminal configured for 7-bit/parity mangles UTF-8 input
+        // in raw mode (bug #389).
+        raw.cflag.CS8 = true;
+        raw.cflag.PARENB = false;
         raw.cc[VMIN] = 1;
         raw.cc[VTIME] = 0;
-        if (c.tcsetattr(self.fd, c.TCSA.FLUSH, &raw) < 0) return error.SetRawFailed;
+        if (c.tcsetattr(self.fd, c.TCSA.NOW, &raw) < 0) return error.SetRawFailed;
     }
 };
 

@@ -99,17 +99,20 @@ pub const Packet = struct {
     }
 
     pub fn make(msg_type: MessageType, data: []const u8) Packet {
-        const length: u32 = if (data.len > std.math.maxInt(u32) - 5)
-            std.math.maxInt(u32)
-        else
-            @intCast(5 + data.len);
+        // Keep header and body consistent: instead of clamping the declared
+        // length while keeping the full slice (serialize would copy more body
+        // than the header declares), truncate the body to what a u32 length
+        // can describe. Unreachable with real payloads (bug #389).
+        const max_body = std.math.maxInt(u32) - 5;
+        const body = if (data.len > max_body) data[0..max_body] else data;
+        const length: u32 = @intCast(5 + body.len);
 
         return Packet{
             .header = .{
                 .length = length,
                 .msg_type = @intFromEnum(msg_type),
             },
-            .data = data,
+            .data = body,
         };
     }
 };
