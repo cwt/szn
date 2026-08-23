@@ -1185,17 +1185,41 @@ pub const Server = struct {
                     pane.writeInput("\t") catch |err| std.log.warn("writeInput failed: {any}", .{err});
                     return;
                 }
-                // Kitty private-use arrow codepoints (57344-57347)
-                if (ch.code >= 57344 and ch.code <= 57347) {
-                    const seq: []const u8 = switch (ch.code) {
-                        57344 => "\x1bOA",
-                        57345 => "\x1bOB",
-                        57347 => "\x1bOC",
-                        57346 => "\x1bOD",
-                        else => unreachable,
-                    };
-                    pane.writeInput(seq) catch |err| std.log.warn("writeInput failed: {any}", .{err});
-                    return;
+                // Kitty keyboard protocol functional-key codepoints (spec
+                // "Functional" table): ESCAPE=57344 ENTER=57345 TAB=57346
+                // BACKSPACE=57347 INSERT=57348 DELETE=57349 LEFT=57350
+                // RIGHT=57351 UP=57352 DOWN=57353. The old table mapped
+                // 57344-57347 to arrows — those are Escape/Enter/Tab/
+                // Backspace (bug #352).
+                switch (ch.code) {
+                    57344 => {
+                        pane.writeInput("\x1b") catch |err| std.log.warn("writeInput failed: {any}", .{err});
+                        return;
+                    },
+                    57345 => {
+                        pane.writeInput("\r") catch |err| std.log.warn("writeInput failed: {any}", .{err});
+                        return;
+                    },
+                    57346 => {
+                        pane.writeInput("\t") catch |err| std.log.warn("writeInput failed: {any}", .{err});
+                        return;
+                    },
+                    57347 => {
+                        pane.writeInput("\x7f") catch |err| std.log.warn("writeInput failed: {any}", .{err});
+                        return;
+                    },
+                    57350, 57351, 57352, 57353 => {
+                        const seq: []const u8 = switch (ch.code) {
+                            57352 => "\x1bOA", // Up
+                            57353 => "\x1bOB", // Down
+                            57351 => "\x1bOC", // Right
+                            57350 => "\x1bOD", // Left
+                            else => unreachable,
+                        };
+                        pane.writeInput(seq) catch |err| std.log.warn("writeInput failed: {any}", .{err});
+                        return;
+                    },
+                    else => {},
                 }
                 if (ch.mod.ctrl) {
                     const ctrl_byte: u8 = @intCast(ch.code & 0x1F);
@@ -4024,6 +4048,41 @@ test "bare click in copy-mode stays in mode, drag still yanks — bug #379" {
     try server.processInput("\x1b[<3;15;7m");
     try testing.expect(pane.screen.copy_mode == null);
     try testing.expect(server.buffers.items.items.len == buffers_before + 1);
+}
+
+fn makeFakePtyPane(server: *Server) !struct { pane: *Pane, read_fd: c_int } {
+    const s = try server.newSession("kitty", 80, 24);
+    const pane = s.active_window.?.active_pane.?;
+    var fds: [2]c_int = undefined;
+    if (std.c.pipe(&fds) != 0) return error.PipeFailed;
+    pane.pty = .{ .master = fds[1], .slave = fds[0], .pid = -1 };
+    return .{ .pane = pane, .read_fd = fds[0] };
+}
+
+test "writeKeyToPty maps kitty functional codepoints per spec — bug #352" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+    const fp = try makeFakePtyPane(&server);
+    defer _ = std.c.close(fp.read_fd);
+    const Key = @import("../key.zig").Key;
+
+    const cases = [_]struct { code: u21, expect: []const u8 }{
+        .{ .code = 57344, .expect = "\x1b" }, // Escape
+        .{ .code = 57345, .expect = "\r" }, // Enter
+        .{ .code = 57346, .expect = "\t" }, // Tab
+        .{ .code = 57347, .expect = "\x7f" }, // Backspace
+        .{ .code = 57352, .expect = "\x1bOA" }, // Up
+        .{ .code = 57353, .expect = "\x1bOB" }, // Down
+        .{ .code = 57351, .expect = "\x1bOC" }, // Right
+        .{ .code = 57350, .expect = "\x1bOD" }, // Left
+    };
+    for (cases) |case| {
+        Server.writeKeyToPty(fp.pane, Key{ .char = .{ .code = case.code } });
+        var buf: [8]u8 = undefined;
+        const n = std.c.read(fp.read_fd, &buf, buf.len);
+        try testing.expect(n > 0);
+        try testing.expectEqualStrings(case.expect, buf[0..@intCast(n)]);
+    }
 }
 
 test "processInput forwards Ctrl+J as LF byte, Enter as CR — bug #349" {
