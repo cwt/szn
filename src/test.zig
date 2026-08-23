@@ -1,11 +1,17 @@
 const std = @import("std");
 
-// Keep `zig build test` output clean: several regression tests deliberately
-// exercise error paths whose production warnings (POLLNVAL registration drop,
-// pty feed failures, ...) would otherwise spam every run. Applies to the test
-// binary only; server/client executables keep their normal log level.
-// Genuine errors still print.
-pub const std_options: std.Options = .{ .log_level = .err };
+// Silence warn/info noise from regression tests that deliberately exercise
+// error paths (POLLNVAL drop-registration, pty feed failures, ...). Declared
+// FIRST so it runs before any other test: the default test-runner logger
+// gates on std.testing.log_level (default .warn). Errors still print.
+// Test-binary only; executables are unaffected.
+fn quietLogs() void {
+    std.testing.log_level = .err;
+}
+
+test "quiet logs" {
+    quietLogs();
+}
 
 comptime {
     // Run the status-click hit-test tests early: they allocate a Server and
