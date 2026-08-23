@@ -876,6 +876,14 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
                     running = false;
                     break;
                 }
+                // Same cap the server-side parsers enforce; a corrupted or
+                // hostile length must not pin the client buffering forever
+                // (bug #375).
+                if (!protocol.validPacketLength(pkt_len)) {
+                    std.log.err("client oversized packet length {d}, exiting", .{pkt_len});
+                    running = false;
+                    break;
+                }
                 if (read_buf.items.len - read_pos < pkt_len) break;
 
                 const msg_type = protocol.MessageType.fromByte(read_buf.items[read_pos + 4]) orelse {

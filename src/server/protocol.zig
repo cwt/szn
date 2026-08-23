@@ -114,6 +114,22 @@ pub const Packet = struct {
     }
 };
 
+/// Validate a wire-declared packet length before waiting for its body.
+/// Shared by the client's stream parser so a corrupted/hostile length can
+/// never pin the client buffering forever (bug #375).
+pub fn validPacketLength(pkt_len: u32) bool {
+    return pkt_len >= 5 and pkt_len <= MAX_PACKET_SIZE;
+}
+
+test "validPacketLength bounds — bug #375" {
+    try testing.expect(validPacketLength(5));
+    try testing.expect(validPacketLength(MAX_PACKET_SIZE));
+    try testing.expect(!validPacketLength(4));
+    try testing.expect(!validPacketLength(0));
+    try testing.expect(!validPacketLength(MAX_PACKET_SIZE + 1));
+    try testing.expect(!validPacketLength(std.math.maxInt(u32)));
+}
+
 test "header encode" {
     var buf: [5]u8 = undefined;
     const hdr = Header{ .length = 0x01020304, .msg_type = 0xAA };
