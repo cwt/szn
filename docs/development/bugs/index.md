@@ -421,7 +421,7 @@ Sorted by number. See individual bug files for details.
 | [377](377.md) | Stray ESC inside OSC swallows next byte, corrupting following sequence | MEDIUM | Open |
 | [378](378.md) | Listener socket: unconditional unlink steals endpoint; /tmp fallback lacks chmod | MEDIUM | Open |
 | [379](379.md) | Single click in copy-mode yanks empty selection and exits copy-mode | MEDIUM | Open |
-| [380](380.md) | Six call sites bypass the historyLen() guard (regression surface of #293) | MEDIUM | Open |
+| [380](380.md) | Six call sites bypass the historyLen() guard (regression surface of #293) | MEDIUM | Fixed |
 | [381](381.md) | Copy-mode g/G asymmetric: g only reaches top of current viewport | MEDIUM | Open |
 | [382](382.md) | load-buffer lacks MAX_PASTE_SIZE cap while paste-buffer enforces one | MEDIUM | Fixed |
 | [383](383.md) | Bright colour names encode index+90 as palette index — renders cube colours | MEDIUM | Open |

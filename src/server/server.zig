@@ -1631,7 +1631,7 @@ pub const Server = struct {
                                     } else {
                                         if (target_pane.screen.copy_mode) |*target_cm| {
                                             if (m.button == .scroll_up) {
-                                                target_cm.scroll_offset = @min(target_cm.scroll_offset + 3, @as(u32, @intCast(target_pane.screen.grid.history.items.len - target_pane.screen.grid.history_start)));
+                                                target_cm.scroll_offset = @min(target_cm.scroll_offset + 3, @as(u32, @intCast(target_pane.screen.grid.historyLen())));
                                             } else {
                                                 if (target_cm.scroll_offset == 0) {
                                                     target_pane.screen.copy_mode = null;
@@ -1645,7 +1645,7 @@ pub const Server = struct {
                                             if (m.button == .scroll_up) {
                                                 target_pane.enterCopyMode() catch |err| std.log.warn("enterCopyMode failed: {any}", .{err});
                                                 if (target_pane.screen.copy_mode) |*target_cm| {
-                                                    target_cm.scroll_offset = @min(3, @as(u32, @intCast(target_pane.screen.grid.history.items.len - target_pane.screen.grid.history_start)));
+                                                    target_cm.scroll_offset = @min(3, @as(u32, @intCast(target_pane.screen.grid.historyLen())));
                                                 }
                                                 target_pane.dirty = true;
                                                 self.dirty = true;
@@ -1672,7 +1672,7 @@ pub const Server = struct {
                                                     cm.updateSelection();
                                                 }
                                             }
-                                            const hist_len: u32 = @intCast(current_active_pane.screen.grid.history.items.len - current_active_pane.screen.grid.history_start);
+                                            const hist_len: u32 = @intCast(current_active_pane.screen.grid.historyLen());
                                             const at_top_edge = (local_y == 0 and inside) or m.y < pb.y;
                                             const at_bottom_edge = (local_y >= grid_h -| 1 and grid_h > 0 and inside) or m.y >= pb.y + pb.h;
                                             if (at_top_edge and cm.scroll_offset < hist_len) {
@@ -1771,11 +1771,11 @@ pub const Server = struct {
                                         handled = true;
                                         if (m.button == .scroll_up) {
                                             if (active_pane.screen.copy_mode) |*target_cm| {
-                                                target_cm.scroll_offset = @min(target_cm.scroll_offset + 3, @as(u32, @intCast(active_pane.screen.grid.history.items.len - active_pane.screen.grid.history_start)));
+                                                target_cm.scroll_offset = @min(target_cm.scroll_offset + 3, @as(u32, @intCast(active_pane.screen.grid.historyLen())));
                                             } else {
                                                 active_pane.enterCopyMode() catch |err| std.log.warn("enterCopyMode failed: {any}", .{err});
                                                 if (active_pane.screen.copy_mode) |*target_cm| {
-                                                    target_cm.scroll_offset = @min(3, @as(u32, @intCast(active_pane.screen.grid.history.items.len - active_pane.screen.grid.history_start)));
+                                                    target_cm.scroll_offset = @min(3, @as(u32, @intCast(active_pane.screen.grid.historyLen())));
                                                 }
                                                 self.dirty = true;
                                             }
@@ -1820,7 +1820,7 @@ pub const Server = struct {
                                                             cm.cursor_y = @min(local_y, grid_h -| 1);
                                                             cm.updateSelection();
                                                         }
-                                                        const hist_len: u32 = @intCast(press_pane.screen.grid.history.items.len - press_pane.screen.grid.history_start);
+                                                        const hist_len: u32 = @intCast(press_pane.screen.grid.historyLen());
                                                         const at_top_edge = (local_y == 0 and inside) or m.y < pb.y;
                                                         const at_bottom_edge = (local_y >= grid_h -| 1 and grid_h > 0 and inside) or m.y >= pb.y + pb.h;
                                                         if (at_top_edge and cm.scroll_offset < hist_len) {
@@ -3903,6 +3903,35 @@ test "kill-window removes pane ptys from the poll set — bug #365" {
     // stayed registered and reported POLLNVAL forever).
     try testing.expect(!server.loop.hasFd(fds2[1]));
     try testing.expect(server.loop.hasFd(fds1[1]));
+}
+
+test "mouse scroll uses guarded historyLen even with corrupt history_start — bug #380" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    const s = try server.newSession("test", 80, 24);
+    const win = s.active_window.?;
+    const pane = win.active_pane.?;
+
+    // Enable mouse so wheel events take the copy-mode path that used to do
+    // the raw `history.items.len - history_start` subtraction.
+    try s.options.set("mouse", .{ .flag = true });
+
+    var fds: [2]c_int = undefined;
+    if (std.c.pipe(&fds) != 0) return error.PipeFailed;
+    defer _ = std.c.close(fds[0]);
+    defer _ = std.c.close(fds[1]);
+    pane.pty = .{ .master = fds[1], .slave = fds[0], .pid = -1 };
+
+    // Enter copy mode first (its reflow path legitimately assumes the
+    // history_start invariant); then corrupt it. With the bug, the six raw
+    // subtractions in the wheel handlers panicked on usize underflow.
+    pane.enterCopyMode() catch return error.CopyModeFailed;
+    pane.screen.grid.history_start = pane.screen.grid.history.items.len + 5;
+
+    try server.processInput("\x1b[<64;10;10M"); // wheel up
+
+    try testing.expect(pane.screen.copy_mode != null);
 }
 
 test "processInput forwards Ctrl+J as LF byte, Enter as CR — bug #349" {
