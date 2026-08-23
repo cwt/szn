@@ -704,9 +704,15 @@ pub const Server = struct {
         }
     }
 
-    fn isPaneValid(_self: *Server, pane: *Pane) bool {
-        _ = _self;
-        return pane.valid;
+    fn isPaneValid(self: *Server, pane: *Pane) bool {
+        for (self.sessions.items) |session| {
+            for (session.windows.items) |win| {
+                for (win.panes.items) |p| {
+                    if (p == pane) return p.valid;
+                }
+            }
+        }
+        return false;
     }
 
     /// Drop cached mouse pointers (`mouse_press_pane`, `mouse_autoscroll_pane`)
@@ -3716,6 +3722,23 @@ test "saturating arithmetic in resize actions — bug #94" {
     const max: u32 = std.math.maxInt(u32);
     try testing.expectEqual(max, max +| 1);
     try testing.expectEqual(@as(u32, 42), @as(u32, 41) +| 1);
+}
+
+test "isPaneValid rejects stale pane pointer after killSession — bug #362" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    const s = try server.newSession("test", 80, 24);
+    const win = s.active_window.?;
+    const pane = win.active_pane.?;
+
+    try testing.expect(server.isPaneValid(pane));
+
+    // Kill the session.
+    try server.killSession("test");
+
+    // isPaneValid must return false without dereferencing freed memory.
+    try testing.expect(!server.isPaneValid(pane));
 }
 
 test "resolve shell option and env and database" {
