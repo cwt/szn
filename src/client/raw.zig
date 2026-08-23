@@ -42,8 +42,8 @@ pub const RawTerminal = struct {
         raw.oflag = .{};
         // cfmakeraw parity rules: 8-bit chars, no parity checking. Without
         // this, a terminal configured for 7-bit/parity mangles UTF-8 input
-        // in raw mode (bug #389).
-        raw.cflag.CS8 = true;
+        // in raw mode (bug #389). CSIZE is an enum on every platform.
+        raw.cflag.CSIZE = .CS8;
         raw.cflag.PARENB = false;
         raw.cc[VMIN] = 1;
         raw.cc[VTIME] = 0;
