@@ -1750,7 +1750,7 @@ pub const Server = struct {
                                             if (inside) {
                                                 cm.cursor_x = @min(local_x, grid_w -| 1);
                                                 cm.cursor_y = @min(local_y, grid_h -| 1);
-                                                if (!cm.selection.active) {
+                                                if (!cm.selection.active or !m.drag) {
                                                     cm.startSelection();
                                                     // Record the anchor press
                                                     // for bare-click detection.
@@ -1799,6 +1799,9 @@ pub const Server = struct {
                                             try self.buffers.pushOwned(name, d);
                                         }
                                         pane.screen.copy_mode = null;
+                                        pane.dirty = true;
+                                    } else if (!moved) {
+                                        cm.clearSelection();
                                         pane.dirty = true;
                                     }
                                 }
@@ -4147,6 +4150,14 @@ test "bare click in copy-mode stays in mode, drag still yanks — bug #379" {
     try server.processInput("\x1b[<0;10;10M"); // left press
     try server.processInput("\x1b[<3;10;10m"); // release, same spot
     try testing.expect(pane.screen.copy_mode != null); // stayed in copy-mode
+    try testing.expect(!pane.screen.copy_mode.?.selection.active); // selection cleared
+    try testing.expectEqual(buffers_before, server.buffers.items.items.len);
+
+    // Second bare click at a different spot: must also stay in copy-mode without yanking.
+    try server.processInput("\x1b[<0;20;20M"); // left press elsewhere
+    try server.processInput("\x1b[<3;20;20m"); // release, same spot
+    try testing.expect(pane.screen.copy_mode != null);
+    try testing.expect(!pane.screen.copy_mode.?.selection.active);
     try testing.expectEqual(buffers_before, server.buffers.items.items.len);
 
     // Drag: press, release elsewhere — must yank and exit.
