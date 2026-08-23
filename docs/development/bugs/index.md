@@ -432,7 +432,7 @@ Sorted by number. See individual bug files for details.
 | [388](388.md) | Parser fidelity cluster: 8-bit C1 misroutes, ESC ESC \ in sixel, CSI param cap 16, XTSMGRAPHICS over-claim | LOW | Open |
 | [389](389.md) | IPC/tty hygiene cluster: client socket not cloexec, packetType enumFromInt panic, Packet.make desync, setRaw parity | LOW | Fixed |
 | [390](390.md) | Non-global `set prefix` changes display but not dispatcher behaviour | MEDIUM | Fixed |
-| [391](391.md) | Command robustness cluster: break-pane err-after-relocate, split proportion coercion, resize veto, save-buffer EINTR | LOW | Open |
+| [391](391.md) | Command robustness cluster: break-pane err-after-relocate, split proportion validation, resize veto, save-buffer EINTR, bind-key feedback | LOW | Fixed |
 | [392](392.md) | Dead code inventory: getCellAt, search_active, adjustSelectionForAutoScroll removed; inline-for/#335 and identify_term kept deliberately | LOW | Fixed (partial) |
 | [393](393.md) | Performance cluster: O(n·m) backward search, per-match rescan, linear lookups vs comptime tables, per-frame allocator churn | LOW | Open |
 | [394](394.md) | char_width/thai/clock robustness cluster: partial table application, negative-index cast, pre-epoch panic (globals rule deferred) | LOW | Fixed (partial) |

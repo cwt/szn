@@ -3272,7 +3272,16 @@ pub const Server = struct {
                     }
                 },
                 .bind_key => |b| {
-                    const action = key_binding.mapCommandToAction(b.command) orelse continue;
+                    const action = key_binding.mapCommandToAction(b.command) orelse {
+                        // Same divergence feedback as interactive bind-key,
+                        // but a config typo shouldn't abort the whole file
+                        // load — surface it in show-messages instead of
+                        // silently dropping it (bug #391).
+                        var msg_buf: [256]u8 = undefined;
+                        const msg = std.fmt.bufPrint(&msg_buf, "bind-key: unknown command \"{s}\"", .{b.command}) catch "bind-key: unknown command";
+                        self.addLogMessage(msg) catch {};
+                        continue;
+                    };
                     const table = if (b.flags.key_table) |kt| blk: {
                         if (std.mem.eql(u8, kt, "root")) {
                             break :blk &self.dispatcher.root_table;

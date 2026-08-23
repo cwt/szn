@@ -154,7 +154,17 @@ fn cmdSplitWindow(server: *Server, args: []const []const u8) CmdResult {
         }
     }
 
-    const proportion: f64 = if (prop_arg) |p| std.fmt.parseFloat(f64, p) catch 0.5 else 0.5;
+    var proportion: f64 = 0.5;
+    if (prop_arg) |p| {
+        // A typo'd proportion is a user error, not a silent 50% split
+        // (bug #391). Bare integers are percentages ("-v 50" == 50%), the
+        // established CLI usage; anything outside (0,1) after normalisation
+        // is rejected.
+        var v = std.fmt.parseFloat(f64, p) catch return .err;
+        if (v > 1.0) v /= 100.0;
+        if (!(v > 0.0 and v < 1.0)) return .err;
+        proportion = v;
+    }
 
     const new_pane = window.splitPane(server.allocator, pane, direction == .vertical, proportion) catch return .err;
     if (pane.pty != null) {
@@ -238,7 +248,9 @@ fn cmdMoveWindow(server: *Server, args: []const []const u8) CmdResult {
     const indices = resolveWindowIndices(session, args) orelse return .err;
 
     const arena_alloc = session.arenaAllocator();
-    session.windows.ensureTotalCapacity(arena_alloc, session.windows.items.len) catch return .err;
+    // The subsequent insert needs len+1 slots; reserving only len left the
+    // rollback path unable to re-insert on OOM (bug #391).
+    session.windows.ensureTotalCapacity(arena_alloc, session.windows.items.len + 1) catch return .err;
 
     const w = session.windows.orderedRemove(indices.src);
     session.windows.insert(arena_alloc, indices.dst, w) catch {
@@ -452,7 +464,12 @@ fn cmdBreakPane(server: *Server, args: []const []const u8) CmdResult {
         new_win.registerPane(pane);
         new_win.layout.root.leaf = pane;
         new_win.setActivePane(pane);
-        pane.resizeTerminal(new_win.width, new_win.height) catch return .err;
+        // The pane is already relocated at this point — a resize failure
+        // cannot be rolled back, so log it and succeed rather than reporting
+        // an error that contradicts the visible state (bug #391).
+        pane.resizeTerminal(new_win.width, new_win.height) catch |err| {
+            std.log.warn("break-pane post-relocation resize failed: {any}", .{err});
+        };
     }
 
     return .ok;
@@ -512,7 +529,12 @@ fn cmdSaveBuffer(server: *Server, args: []const []const u8) CmdResult {
     var off: usize = 0;
     while (off < data.len) {
         const n = std.c.write(fd, data.ptr + off, data.len - off);
-        if (n < 0) break;
+        if (n < 0) {
+            // A signal mid-write must not turn a successful save into an
+            // error (bug #391); retry like every other write path.
+            if (std.c.errno(n) == .INTR) continue;
+            break;
+        }
         off += @as(usize, @intCast(n));
     }
     return if (off == data.len) .ok else .err;
@@ -1080,12 +1102,22 @@ fn cmdResizePane(server: *Server, args: []const []const u8) CmdResult {
     // cannot overflow i32 (panic in Debug, silent wrap in ReleaseFast), and
     // clamp the relative result to a sane ceiling so a saturated value can't
     // attempt an absurd grid allocation.
+    // Explicit -x/-y sizes win outright; the relative adjustment is only
+    // validated when it actually determines the target (bug #391).
     const new_w = @as(i32, @intCast(current_w)) +| adjust_w;
-    if (new_w < 1) return .err;
-    const target_w = exact_w orelse @min(@as(u32, @intCast(new_w)), MAX_PANE_DIM);
+    const target_w: u32 = if (exact_w) |ew|
+        ew
+    else blk: {
+        if (new_w < 1) return .err;
+        break :blk @min(@as(u32, @intCast(new_w)), MAX_PANE_DIM);
+    };
     const new_h = @as(i32, @intCast(current_h)) +| adjust_h;
-    if (new_h < 1) return .err;
-    const target_h = exact_h orelse @min(@as(u32, @intCast(new_h)), MAX_PANE_DIM);
+    const target_h: u32 = if (exact_h) |eh|
+        eh
+    else blk: {
+        if (new_h < 1) return .err;
+        break :blk @min(@as(u32, @intCast(new_h)), MAX_PANE_DIM);
+    };
 
     pane.resizeTerminal(target_w, target_h) catch return .err;
     return .ok;
@@ -2793,4 +2825,45 @@ test "session-scoped set prefix updates the dispatcher — bug #390" {
     // -g path updated the dispatcher).
     try testing.expect(server.dispatcher.prefix.char.mod.ctrl);
     try testing.expectEqual(@as(u21, 'a'), server.dispatcher.prefix.char.code);
+}
+
+test "split-window proportion: percentage ints ok, garbage rejected — bug #391" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+    const session = try server.newSession("test", 80, 24);
+    _ = session;
+
+    // Established usage: bare integer = percentage.
+    {
+        var c = try parse("split-window -v 50", testing.allocator);
+        defer c.deinit(testing.allocator);
+        try testing.expectEqual(CmdResult.ok, c.exec(&server));
+    }
+    // Fractional form still works.
+    {
+        var c = try parse("split-window -h 0.25", testing.allocator);
+        defer c.deinit(testing.allocator);
+        try testing.expectEqual(CmdResult.ok, c.exec(&server));
+    }
+    // Out-of-range and garbage now error instead of silently splitting 50/50.
+    inline for (.{ "split-window -v abc", "split-window -v -1", "split-window -v 150" }) |line| {
+        var c = try parse(line, testing.allocator);
+        defer c.deinit(testing.allocator);
+        try testing.expectEqual(CmdResult.err, c.exec(&server));
+    }
+}
+
+test "resize-pane explicit -x/-y wins over invalid relative adjust — bug #391" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+    const session = try server.newSession("test", 80, 24);
+    const win = session.active_window.?;
+    const pane = win.active_pane.?;
+
+    // With the bug, the huge -L adjustment errored out before the explicit
+    // size was honoured; the user's exact request must win.
+    var c = try parse("resize-pane -L 99999 -x 100", testing.allocator);
+    defer c.deinit(testing.allocator);
+    try testing.expectEqual(CmdResult.ok, c.exec(&server));
+    try testing.expectEqual(@as(u32, 100), pane.screen.grid.width);
 }
