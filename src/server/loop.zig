@@ -59,6 +59,14 @@ pub const Loop = struct {
         }
     }
 
+    /// True when fd is currently registered in the loop.
+    pub fn hasFd(self: *Loop, fd: i32) bool {
+        for (self.fds.items) |f| {
+            if (f.fd == fd) return true;
+        }
+        return false;
+    }
+
     /// Add event bits to an already-watched fd without touching udata.
     pub fn addFdEvents(self: *Loop, fd: i32, events: i16) void {
         for (self.fds.items) |*f| {
@@ -185,4 +193,21 @@ test "addFdEvents / removeFdEvents toggle bits without dropping others — bug #
 
     loop.removeFdEvents(7, std.posix.POLL.OUT);
     try testing.expectEqual(@as(i16, @intCast(std.posix.POLL.IN)), loop.fds.items[0].events);
+}
+
+test "pollOnce reports POLLNVAL for a closed registered fd — bug #364" {
+    var pipes: [2]i32 = undefined;
+    if (std.c.pipe(&pipes) != 0) return error.Unexpected;
+    defer _ = std.c.close(pipes[0]);
+
+    var loop = Loop.init();
+    defer loop.deinit(testing.allocator);
+    try loop.addFd(testing.allocator, pipes[0], @as(i16, @intCast(std.posix.POLL.IN)), null);
+
+    // Close the watched end without removing it from the loop.
+    _ = std.c.close(pipes[0]);
+
+    const events = try loop.pollOnce(testing.allocator, 0);
+    try testing.expect(events.len == 1);
+    try testing.expect((events[0].revents & @as(i16, @intCast(std.posix.POLL.NVAL))) != 0);
 }

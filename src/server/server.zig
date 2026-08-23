@@ -670,6 +670,21 @@ pub const Server = struct {
             self.loop.removeFd(ev.fd);
             return .handled;
         }
+        // POLLNVAL: the fd is already closed (e.g. closed without removeFd).
+        // Drop the registration without closing anything — the fd number may
+        // already be recycled (bug #364 defence in depth).
+        if ((ev.revents & @as(i16, @intCast(std.posix.POLL.NVAL))) != 0) {
+            std.log.warn("handlePtyEvent: POLLNVAL on fd {d}, dropping registration", .{ev.fd});
+            self.loop.removeFd(ev.fd);
+            if (pane.pty) |*pty| {
+                if (pty.master == ev.fd) {
+                    pty.master = -1; // already closed; deinit must not close again
+                    pty.deinit(); // frees input_buf, kills + reaps child
+                    pane.pty = null;
+                }
+            }
+            return .handled;
+        }
         const has_in = (ev.revents & @as(i16, @intCast(std.posix.POLL.IN))) != 0;
         const has_hup = (ev.revents & @as(i16, @intCast(std.posix.POLL.HUP))) != 0;
         const has_err = (ev.revents & @as(i16, @intCast(std.posix.POLL.ERR))) != 0;
@@ -789,6 +804,11 @@ pub const Server = struct {
             if (remain and has_other_panes) {
                 std.log.info("pane exited, remain-on-exit set — keeping pane", .{});
                 if (pane.pty) |*pty| {
+                    // Unregister before closing: a dead fd left in the poll
+                    // set reports level-triggered POLLNVAL every iteration
+                    // (100% CPU spin), and its number can be recycled while
+                    // still registered (bug #364).
+                    self.loop.removeFd(pty.master);
                     pty.deinit();
                     pane.pty = null;
                 }
@@ -3751,6 +3771,70 @@ test "processInput esc_buf capacity limit" {
 
     // It should reset input reader state to .ground due to limit trigger.
     try testing.expectEqual(.ground, server.input_reader.state);
+}
+
+test "handlePtyEvent drops registration on POLLNVAL — bug #364" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    const s = try server.newSession("test", 80, 24);
+    const win = s.active_window.?;
+    const pane = win.active_pane.?;
+
+    // Register a fake master, then close it out from under the loop — the
+    // remain-on-exit path used to leave dead fds registered this way.
+    var fds: [2]c_int = undefined;
+    if (std.c.pipe(&fds) != 0) return error.PipeFailed;
+    defer _ = std.c.close(fds[0]);
+    pane.pty = .{ .master = fds[1], .slave = fds[0], .pid = -1 };
+    pane.pty.?.allocator = testing.allocator;
+    try server.watchPanePty(pane);
+    try testing.expect(server.loop.hasFd(fds[1]));
+
+    _ = std.c.close(fds[1]);
+    pane.pty = null; // simulate what closed it without unregistering
+
+    const ev = loop_mod.PollEvent{ .fd = fds[1], .revents = @intCast(std.posix.POLL.NVAL), .udata = @ptrCast(pane) };
+    const result = server.handlePtyEvent(ev);
+    try testing.expectEqual(Server.PtyResult.handled, result);
+    try testing.expect(!server.loop.hasFd(fds[1]));
+}
+
+test "remain-on-exit unregisters pty before closing master — bug #364" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    const s = try server.newSession("test", 80, 24);
+    const win = s.active_window.?;
+
+    // Two panes so has_other_panes holds; enable remain-on-exit.
+    const pane1 = win.active_pane.?;
+    _ = try win.splitPane(testing.allocator, pane1, false, 0.5);
+    try win.options.set("remain-on-exit", .{ .flag = true });
+
+    var fds: [2]c_int = undefined;
+    if (std.c.pipe(&fds) != 0) return error.PipeFailed;
+    defer _ = std.c.close(fds[0]);
+
+    pane1.pty = .{ .master = fds[1], .slave = fds[0], .pid = -1 };
+    pane1.pty.?.allocator = testing.allocator;
+    try server.watchPanePty(pane1);
+
+    // Drive the exited path: NVAL-free HUP-style handling is complex; call
+    // handlePtyEvent with IN+HUP on a pipe whose writer we close first.
+    _ = std.c.close(fds[1]); // child side gone → read returns 0 → ProcessExited
+    const ev = loop_mod.PollEvent{
+        .fd = fds[1],
+        .revents = @intCast(std.posix.POLL.IN),
+        .udata = @ptrCast(pane1),
+    };
+    const result = server.handlePtyEvent(ev);
+    try testing.expectEqual(Server.PtyResult.handled, result);
+
+    // Pane survives (remain-on-exit) with no live pty and NO stale
+    // registration in the poll set.
+    try testing.expect(pane1.pty == null);
+    try testing.expect(!server.loop.hasFd(fds[1]));
 }
 
 test "command buffer is capped to prevent unbounded growth — bug #297" {
