@@ -1313,13 +1313,15 @@ pub const Screen = struct {
                             if (i < params.len) {
                                 const idx = params[i];
                                 i += 1;
-                                self.cur_cell.fg = Colour.fromIndexed(@intCast(idx));
+                                // Out-of-range palette indices are ignored
+                                // (xterm behaviour) — never truncate (bug #354).
+                                if (idx <= 255) self.cur_cell.fg = Colour.fromIndexed(@intCast(idx));
                             }
                         } else if (next == 2) {
                             if (i + 2 < params.len) {
-                                const r = params[i];
-                                const g = params[i + 1];
-                                const b = params[i + 2];
+                                const r = params[i] % 256;
+                                const g = params[i + 1] % 256;
+                                const b = params[i + 2] % 256;
                                 i += 3;
                                 self.cur_cell.fg = Colour.fromRgb(@intCast(r), @intCast(g), @intCast(b));
                             }
@@ -1339,13 +1341,15 @@ pub const Screen = struct {
                             if (i < params.len) {
                                 const idx = params[i];
                                 i += 1;
-                                self.cur_cell.bg = Colour.fromIndexed(@intCast(idx));
+                                // Out-of-range palette indices are ignored
+                                // (xterm behaviour) — never truncate (bug #354).
+                                if (idx <= 255) self.cur_cell.bg = Colour.fromIndexed(@intCast(idx));
                             }
                         } else if (next == 2) {
                             if (i + 2 < params.len) {
-                                const r = params[i];
-                                const g = params[i + 1];
-                                const b = params[i + 2];
+                                const r = params[i] % 256;
+                                const g = params[i + 1] % 256;
+                                const b = params[i + 2] % 256;
                                 i += 3;
                                 self.cur_cell.bg = Colour.fromRgb(@intCast(r), @intCast(g), @intCast(b));
                             }
@@ -1901,6 +1905,30 @@ test "setSgr empty resets" {
     screen.setSgr(&[_]u32{1}, &[_]bool{false});
     screen.setSgr(&.{}, &.{});
     try testing.expect(!screen.cur_cell.attr.bold);
+}
+
+test "setSgr out-of-range colour params do not panic — bug #354" {
+    var screen = try Screen.init(testing.allocator, 10, 3);
+    defer screen.deinit();
+
+    // Saturated-parser worst cases: huge palette index and RGB channels.
+    // With the bug these hit @intCast truncation panics in safe builds.
+    screen.setSgr(&[_]u32{ 38, 5, std.math.maxInt(u32) }, &[_]bool{ false, false, false });
+    screen.setSgr(&[_]u32{ 48, 5, 300 }, &[_]bool{ false, false, false });
+    screen.setSgr(&[_]u32{ 38, 2, 999, 999, 999 }, &[_]bool{ false, false, false, false, false });
+    screen.setSgr(&[_]u32{ 48, 2, 300, 256, 513 }, &[_]bool{ false, false, false, false, false });
+
+    // In-range values still apply: 38;5;196 → red-ish palette slot.
+    screen.setSgr(&[_]u32{ 38, 5, 196 }, &[_]bool{ false, false, false });
+    try testing.expect(screen.cur_cell.fg == Colour.fromIndexed(196));
+
+    // RGB wraps mod 256: 300 % 256 == 44.
+    screen.setSgr(&[_]u32{ 38, 2, 300, 0, 0 }, &[_]bool{ false, false, false, false, false });
+    try testing.expectEqual(Colour.fromRgb(44, 0, 0), screen.cur_cell.fg);
+
+    // Out-of-range palette index leaves the previous colour untouched.
+    screen.setSgr(&[_]u32{ 38, 5, 99999 }, &[_]bool{ false, false, false });
+    try testing.expectEqual(Colour.fromRgb(44, 0, 0), screen.cur_cell.fg);
 }
 
 test "origin mode clamps cursor" {
@@ -2827,8 +2855,3 @@ test "cursorForward steps forward across soft-wrapped line boundaries" {
     try testing.expectEqual(@as(u32, 0), screen.cursor.x);
     try testing.expectEqual(@as(u32, 1), screen.cursor.y);
 }
-
-
-
-
-

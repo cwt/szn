@@ -395,7 +395,7 @@ Sorted by number. See individual bug files for details.
 | [351](351.md) | Modified tilde keys (`\x1b[3;5~`) silently dropped by client-side pre-parse | HIGH | Fixed |
 | [352](352.md) | Kitty functional-key codepoints wrong; kitty Enter forwarded as LF not CR | MEDIUM | Open |
 | [353](353.md) | Root key table (`bind-key -n`) never consulted; prefix machine duplicated 3× with drift | HIGH | Open |
-| [354](354.md) | Remote panic: SGR indexed-colour `@intCast(u32→u8)` ×6 sites | CRITICAL | Open |
+| [354](354.md) | Remote panic: SGR indexed-colour `@intCast(u32→u8)` ×6 sites | CRITICAL | Fixed |
 | [355](355.md) | Remote panic: modifyOtherKeys extkeys `@intCast(u32→u8)` | CRITICAL | Open |
 | [356](356.md) | Remote panic: sixel raster attribute parse overflows u32 | CRITICAL | Open |
 | [357](357.md) | `cmdLoadBuffer` invalid free of static pointer with stale capacity | CRITICAL | Open |
