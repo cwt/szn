@@ -535,6 +535,28 @@ pub const Screen = struct {
         }
         self.cursor.x = @min(cx, width -| 1);
         self.cursor.y = @min(cy, height -| 1);
+
+        // Invariants after a size change: the scroll region must sit inside
+        // the new bounds (drop it when degenerate) and the saved cursor
+        // (DECSC) must be clamped like the live one. Stale values here made
+        // later LF/RI/DECRC index outside the grid (bug #372).
+        if (self.scroll_region) |r| {
+            const top = @min(r[0], height -| 1);
+            const bottom = @min(r[1], height -| 1);
+            if (top >= bottom) {
+                self.scroll_region = null;
+            } else {
+                self.scroll_region = .{ top, bottom };
+            }
+        }
+        if (self.saved_cursor) |*sc| {
+            sc.x = @min(sc.x, width -| 1);
+            sc.y = @min(sc.y, height -| 1);
+        }
+        if (self.alt_saved_cursor) |*sc| {
+            sc.x = @min(sc.x, width -| 1);
+            sc.y = @min(sc.y, height -| 1);
+        }
     }
 
     pub fn forceReflow(self: *Screen) Error!void {
@@ -1996,6 +2018,29 @@ test "LF at region bottom scrolls only the region — bug #368" {
     // Region scrolled (rows 1..3), no scrollback push, cursor stays at r[1].
     try testing.expectEqual(history_before, screen.grid.historyLen());
     try testing.expectEqual(@as(u32, 3), screen.cursor.y);
+}
+
+test "resize clamps scroll region and saved cursor — bug #372" {
+    var screen = try Screen.init(testing.allocator, 20, 20);
+    defer screen.deinit();
+
+    // Region rows 5..15 and a saved cursor near the bottom-right.
+    screen.setScrollRegion(5, 15);
+    screen.cursor.x = 18;
+    screen.cursor.y = 16;
+    screen.saveCursor();
+
+    try screen.resize(10, 8);
+
+    // Region must be inside the new height or dropped when degenerate.
+    if (screen.scroll_region) |r| {
+        try testing.expect(r[1] < 8);
+        try testing.expect(r[0] < r[1]);
+    }
+    // Saved cursor must be within bounds for later DECSC restores.
+    const sc = screen.saved_cursor.?;
+    try testing.expect(sc.x < 10);
+    try testing.expect(sc.y < 8);
 }
 
 test "scroll region with cursor up (origin mode)" {

@@ -413,7 +413,7 @@ Sorted by number. See individual bug files for details.
 | [369](369.md) | Region-cleared lines keep stale `wrapped` flag, corrupting later rewrap | HIGH | Fixed |
 | [370](370.md) | CUF/CUB/back-tab wrap across edges incorrectly, breaking third-party TUIs | HIGH | False Positive |
 | [371](371.md) | Reflow result ignores history_limit → unbounded scrollback on narrow resizes | HIGH | Fixed |
-| [372](372.md) | Resize leaves scroll region and saved cursor out of bounds | MEDIUM | Open |
+| [372](372.md) | Resize leaves scroll region and saved cursor out of bounds | MEDIUM | Fixed |
 | [373](373.md) | Benign EAGAIN on non-blocking display sockets disconnects clients | MEDIUM | Fixed |
 | [374](374.md) | Detach reply blocking-style write on non-blocking fd: truncated/dropped | MEDIUM | Fixed |
 | [375](375.md) | Client trusts packet length with no upper bound → unbounded buffering stall | MEDIUM | Fixed |
