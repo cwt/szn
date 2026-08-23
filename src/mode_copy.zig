@@ -142,7 +142,12 @@ pub const CopyMode = struct {
         self.cursor_x = grid.width -| 1;
     }
 
-    pub fn moveToTop(self: *CopyMode) void {
+    /// Jump to the absolute top of the buffer (`g` key / emacs `<`),
+    /// mirroring moveToBottom's jump to the live bottom. With the bug this
+    /// only moved within the current viewport, stranding the user
+    /// mid-scrollback (bug #381).
+    pub fn moveToTop(self: *CopyMode, grid: *const Grid) void {
+        self.scroll_offset = @intCast(grid.historyLen());
         self.cursor_y = 0;
         self.cursor_x = 0;
     }
@@ -723,7 +728,7 @@ pub const CopyMode = struct {
                     return .consumed;
                 },
                 'g' => {
-                    self.moveToTop();
+                    self.moveToTop(grid);
                     self.updateSelection();
                     return .consumed;
                 },
@@ -861,7 +866,7 @@ pub const CopyMode = struct {
                         return .consumed;
                     },
                     '<' => {
-                        self.moveToTop();
+                        self.moveToTop(grid);
                         self.updateSelection();
                         return .consumed;
                     },
@@ -1041,11 +1046,37 @@ test "move to line end" {
 
 test "move to top" {
     var cm = CopyMode.init(.vi);
+    var g = try Grid.init(testing.allocator, 80, 24);
+    defer g.deinit();
     cm.cursor_x = 42;
     cm.cursor_y = 10;
-    cm.moveToTop();
+    cm.moveToTop(&g);
     try testing.expectEqual(@as(u32, 0), cm.cursor_x);
     try testing.expectEqual(@as(u32, 0), cm.cursor_y);
+}
+
+test "g jumps to absolute top of history — bug #381" {
+    var cm = CopyMode.init(.vi);
+    var g = try Grid.init(testing.allocator, 80, 24);
+    defer g.deinit();
+
+    // Build scrollback so historyLen() > 0.
+    var i: usize = 0;
+    while (i < 30) : (i += 1) {
+        try g.scrollUp();
+    }
+    try testing.expect(g.historyLen() > 0);
+
+    // Start mid-scrollback like a user who scrolled a while, then press g.
+    cm.enter(&g);
+    cm.scroll_offset = 2;
+    cm.cursor_y = 5;
+    cm.cursor_x = 17;
+
+    cm.moveToTop(&g);
+    try testing.expectEqual(@as(u32, @intCast(g.historyLen())), cm.scroll_offset);
+    try testing.expectEqual(@as(u32, 0), cm.cursor_y);
+    try testing.expectEqual(@as(u32, 0), cm.cursor_x);
 }
 
 test "move to bottom" {
