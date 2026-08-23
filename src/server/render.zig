@@ -819,8 +819,13 @@ pub const Display = struct {
         // produced 12 MiB frames that blew past the client buffer cap and were
         // dropped) — pegging CPU and freezing the display (bug #298). Only
         // re-emit images that actually changed, comparing both anchor and id.
-        const state_count = @min(bounds.len, 8);
-        var states: [8]PerPaneSixelState = undefined;
+        // Upper bound for the per-pane sixel diff states. Splits beyond this
+        // are degenerate layouts (each pane would be a couple of cells); the
+        // old hard cap was 8, which silently stopped drawing images in panes
+        // 9+ while their stale anchors forced per-frame erases (bug #387).
+        const MAX_RENDER_PANES = 32;
+        const state_count = @min(bounds.len, MAX_RENDER_PANES);
+        var states: [MAX_RENDER_PANES]PerPaneSixelState = undefined;
         // Full redraw (erase-all + redraw every visible image) is only needed
         // when an image was removed or moved, since the old overlay must be
         // cleared. Pure additions / same-anchor replacements just draw over.

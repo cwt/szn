@@ -1209,7 +1209,9 @@ pub const Screen = struct {
             }
             // Sixel images anchored within the scroll region must follow the
             // content shift so their anchors stay in sync with their cells.
-            self.shiftSixelAnchors(-1);
+            // Shift by the FULL amount: scrolling n>1 lines used to move
+            // anchors by only one row (bug #387).
+            self.shiftSixelAnchors(-@as(i32, @intCast(count)));
             self.dirty = true;
         } else {
             const count = @min(n, self.grid.height);
@@ -1246,6 +1248,10 @@ pub const Screen = struct {
                 @memset(first.cells.items, fill);
                 first.dirty = true;
             }
+            // Mirror the non-region branch: region SD moves content down, so
+            // sixel anchors must follow too. The shift was missing entirely,
+            // desyncing images after any region SD (bug #387).
+            self.shiftSixelAnchors(@as(i32, @intCast(count)));
             self.dirty = true;
         } else {
             const count = @min(n, self.grid.height);
@@ -2977,4 +2983,27 @@ test "cursorForward steps forward across soft-wrapped line boundaries" {
     screen.cursorForward(1);
     try testing.expectEqual(@as(u32, 0), screen.cursor.x);
     try testing.expectEqual(@as(u32, 1), screen.cursor.y);
+}
+
+test "region scroll shifts sixel anchors by full amount — bug #387" {
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+    screen.cell_size_known = true;
+
+    screen.cursor.y = 3;
+    screen.cursor.x = 0;
+    const dcs = try testing.allocator.dupe(u8, "\x1bPqIMG\x1b\\");
+    try screen.addSixelImage(dcs, 10, 20);
+    const start_row = screen.sixel_images[0].?.anchor_row;
+
+    // Region rows 1..10; scroll the region up 4 lines at once.
+    screen.setScrollRegion(1, 10);
+    try screen.scrollUp(4);
+
+    // With the bug the anchor moved by only 1 row for a 4-line scroll.
+    try testing.expectEqual(start_row - 4, screen.sixel_images[0].?.anchor_row);
+
+    // Region SD must shift anchors down too (previously missing entirely).
+    try screen.scrollDown(2);
+    try testing.expectEqual(start_row - 4 + 2, screen.sixel_images[0].?.anchor_row);
 }

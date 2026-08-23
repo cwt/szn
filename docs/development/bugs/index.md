@@ -428,7 +428,7 @@ Sorted by number. See individual bug files for details.
 | [384](384.md) | mode-keys option ignored: emacs copy-mode unreachable, default disagrees with behaviour | MEDIUM | Fixed |
 | [385](385.md) | Small unbounded arena accumulators: Pane.cwd was write-only (deleted), Session.rename uses inline buffer | LOW | Fixed |
 | [386](386.md) | Grid/screen hygiene cluster: shiftDown contract, :720 subtraction, padding half-cell cursor, dead dirty machinery, zero-width drops, RIS incomplete | LOW | Open |
-| [387](387.md) | Sixel overlay tracking: 8-pane render cap; SU shifts anchors once for n lines; SD never shifts | LOW | Open |
+| [387](387.md) | Sixel overlay tracking: render cap raised to 32; SU shifts anchors by n; SD shifts too | LOW | Fixed |
 | [388](388.md) | Parser fidelity cluster: 8-bit C1 misroutes, ESC ESC \ in sixel, CSI param cap 16, XTSMGRAPHICS over-claim | LOW | Open |
 | [389](389.md) | IPC/tty hygiene cluster: client socket not cloexec, packetType enumFromInt panic, Packet.make desync, setRaw parity | LOW | Fixed |
 | [390](390.md) | Non-global `set prefix` changes display but not dispatcher behaviour | MEDIUM | Fixed |
