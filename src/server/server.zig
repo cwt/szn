@@ -184,6 +184,11 @@ pub const Server = struct {
     esc_buf: std.ArrayList(u8) = .empty,
     mouse_press_x: u32 = 0,
     mouse_press_y: u32 = 0,
+    /// Screen coords of the last copy-mode selection *start* press. Used to
+    /// distinguish a bare click from a drag so a click no longer yanks an
+    /// empty selection and exits copy-mode (bug #379).
+    copy_click_x: ?u32 = null,
+    copy_click_y: ?u32 = null,
     mouse_press_pane: ?*Pane = null,
     mouse_autoscroll_dir: ?enum { up, down } = null,
     mouse_autoscroll_pane: ?*Pane = null,
@@ -1668,6 +1673,10 @@ pub const Server = struct {
                                                 cm.cursor_y = @min(local_y, grid_h -| 1);
                                                 if (!cm.selection.active) {
                                                     cm.startSelection();
+                                                    // Record the anchor press
+                                                    // for bare-click detection.
+                                                    self.copy_click_x = m.x;
+                                                    self.copy_click_y = m.y;
                                                 } else {
                                                     cm.updateSelection();
                                                 }
@@ -1691,7 +1700,19 @@ pub const Server = struct {
                                 } else if (m.button == .release) {
                                     self.mouse_autoscroll_dir = null;
                                     self.mouse_autoscroll_pane = null;
-                                    if (cm.selection.active) {
+                                    // A release at the same coords as the
+                                    // anchor press is a bare click: drop the
+                                    // zero-extent selection and stay in
+                                    // copy-mode instead of yanking and exiting
+                                    // (bug #379). No recorded press (keyboard
+                                    // selection) keeps the old behaviour.
+                                    const moved = if (self.copy_click_x) |cx|
+                                        (cx != m.x or self.copy_click_y.? != m.y)
+                                    else
+                                        true;
+                                    self.copy_click_x = null;
+                                    self.copy_click_y = null;
+                                    if (cm.selection.active and moved) {
                                         const data = cm.yankSelection(self.allocator, &pane.screen.grid) catch null;
                                         if (data) |d| {
                                             const name = try self.buffers.generateName();
@@ -3967,6 +3988,40 @@ test "mouse scroll uses guarded historyLen even with corrupt history_start — b
     try server.processInput("\x1b[<64;10;10M"); // wheel up
 
     try testing.expect(pane.screen.copy_mode != null);
+}
+
+test "bare click in copy-mode stays in mode, drag still yanks — bug #379" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    const s = try server.newSession("test", 80, 24);
+    const win = s.active_window.?;
+    const pane = win.active_pane.?;
+    try s.options.set("mouse", .{ .flag = true });
+
+    var fds: [2]c_int = undefined;
+    if (std.c.pipe(&fds) != 0) return error.PipeFailed;
+    defer _ = std.c.close(fds[0]);
+    defer _ = std.c.close(fds[1]);
+    pane.pty = .{ .master = fds[1], .slave = fds[0], .pid = -1 };
+
+    // Produce some scrollback and enter copy mode via wheel-up.
+    try pane.screen.grid.scrollUp();
+    try server.processInput("\x1b[<64;10;10M");
+    try testing.expect(pane.screen.copy_mode != null);
+    const buffers_before = server.buffers.items.items.len;
+
+    // Bare click: press then release at identical coords.
+    try server.processInput("\x1b[<0;10;10M"); // left press
+    try server.processInput("\x1b[<3;10;10m"); // release, same spot
+    try testing.expect(pane.screen.copy_mode != null); // stayed in copy-mode
+    try testing.expectEqual(buffers_before, server.buffers.items.items.len);
+
+    // Drag: press, release elsewhere — must yank and exit.
+    try server.processInput("\x1b[<0;5;5M");
+    try server.processInput("\x1b[<3;15;7m");
+    try testing.expect(pane.screen.copy_mode == null);
+    try testing.expect(server.buffers.items.items.len == buffers_before + 1);
 }
 
 test "processInput forwards Ctrl+J as LF byte, Enter as CR — bug #349" {
