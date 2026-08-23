@@ -2882,15 +2882,11 @@ pub const Server = struct {
             const now = @as(u64, @intCast(@max(time(null), 0)));
             if (now != pane.clock_time) {
                 if (pane.saved_grid) |*sg| {
-                    const grid_alloc = pane.screen.grid.allocator;
-                    if (sg.clone(grid_alloc)) |cloned| {
-                        pane.screen.grid.deinit();
-                        pane.screen.grid = cloned;
-                        pane.clock_time = now;
-                        const clock = @import("../clock.zig");
-                        clock.renderClock(&pane.screen.grid, pane.screen.grid.width, pane.screen.grid.height, pane.screen.clock_utc);
-                        pane.dirty = true;
-                    } else |_| {}
+                    pane.screen.grid.copyVisibleFrom(sg);
+                    pane.clock_time = now;
+                    const clock = @import("../clock.zig");
+                    clock.renderClock(&pane.screen.grid, pane.screen.grid.width, pane.screen.grid.height, pane.screen.clock_utc);
+                    pane.dirty = true;
                 }
             }
         }

@@ -177,6 +177,19 @@ pub const Grid = struct {
         return copy;
     }
 
+    /// Copy visible lines and cells from `source` into `self` in-place without allocating (bug #359).
+    pub fn copyVisibleFrom(self: *Grid, source: *const Grid) void {
+        const rows = @min(self.lines.items.len, source.lines.items.len);
+        for (0..rows) |r| {
+            const dest_line = &self.lines.items[r];
+            const src_line = &source.lines.items[r];
+            const copy_cells = @min(dest_line.cells.items.len, src_line.cells.items.len);
+            @memcpy(dest_line.cells.items[0..copy_cells], src_line.cells.items[0..copy_cells]);
+            dest_line.dirty = true;
+            dest_line.wrapped = src_line.wrapped;
+        }
+    }
+
     pub fn resize(self: *Grid, new_height: u32) Error!void {
         if (new_height == 0) return;
         try self.normalize();
@@ -1955,4 +1968,24 @@ test "Grid.clone with history_start offset — bug #231" {
 
     try testing.expectEqual(@as(usize, 0), cloned.history_start);
     try testing.expectEqual(@as(usize, 5), cloned.historyLen());
+}
+
+test "Grid.copyVisibleFrom updates visible cells in-place without allocations — bug #359" {
+    var src = try Grid.init(testing.allocator, 10, 2);
+    defer src.deinit();
+    src.writeChar(0, 0, 'A');
+    src.writeChar(1, 0, 'B');
+    src.writeChar(0, 1, 'C');
+
+    var dst = try Grid.init(testing.allocator, 10, 2);
+    defer dst.deinit();
+    dst.writeChar(0, 0, 'X');
+
+    dst.copyVisibleFrom(&src);
+
+    try testing.expectEqual(@as(u21, 'A'), dst.lines.items[0].cells.items[0].char);
+    try testing.expectEqual(@as(u21, 'B'), dst.lines.items[0].cells.items[1].char);
+    try testing.expectEqual(@as(u21, 'C'), dst.lines.items[1].cells.items[0].char);
+    try testing.expect(dst.lines.items[0].dirty);
+    try testing.expect(dst.lines.items[1].dirty);
 }
