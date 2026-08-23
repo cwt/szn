@@ -408,7 +408,7 @@ Sorted by number. See individual bug files for details.
 | [364](364.md) | remain-on-exit closes pty master without removeFd → POLLNVAL busy-loop | HIGH | Fixed |
 | [365](365.md) | kill-window leaks pty poll registrations | MEDIUM | Fixed |
 | [366](366.md) | Layout destroys pane, then caller writes `pane.valid` and deinits again | MEDIUM | Open |
-| [367](367.md) | merged_screen dangling-non-null when Screen.init fails after deinit | MEDIUM | Open |
+| [367](367.md) | merged_screen dangling-non-null when Screen.init fails after deinit | MEDIUM | Fixed |
 | [368](368.md) | LF/IND inside scroll region bypasses region scrolling, corrupting scrollback | HIGH | Open |
 | [369](369.md) | Region-cleared lines keep stale `wrapped` flag, corrupting later rewrap | HIGH | Open |
 | [370](370.md) | CUF/CUB/back-tab wrap across edges incorrectly, breaking third-party TUIs | HIGH | Open |

@@ -167,6 +167,10 @@ pub const Display = struct {
                 if (ms_ptr.*) |*ms| {
                     ms.deinit();
                 }
+                // Null the slot before re-init: if Screen.init fails the
+                // optional must not keep pointing at the torn-down screen
+                // (bug #367).
+                ms_ptr.* = null;
                 ms_ptr.* = try Screen.init(allocator, merged_w, merged_h);
             }
             merged_screen = &(ms_ptr.*.?);
