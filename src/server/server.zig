@@ -28,6 +28,8 @@ const protocol = @import("protocol.zig");
 const render = @import("render.zig");
 const Display = render.Display;
 const key_binding_mod = @import("../key_binding.zig");
+const key_mod = @import("../key.zig");
+const Key = key_mod.Key;
 const pty_mod = @import("pty.zig");
 const cfg = @import("../cfg.zig");
 const options = @import("../options.zig");
@@ -259,7 +261,6 @@ pub const Server = struct {
 
     pub fn init(allocator: std.mem.Allocator) ServerError!Server {
         const key_binding = @import("../key_binding.zig");
-        const key_mod = @import("../key.zig");
         const options_mod = @import("../options.zig");
         var global_options = try options_mod.Options.init(allocator, options_mod.SESSION_OPTIONS);
         errdefer global_options.deinit();
@@ -1223,7 +1224,20 @@ pub const Server = struct {
         }
         try self.processInput(buf[0..@as(usize, @intCast(n))]);
     }
-    fn writeKeyToPty(pane_opt: ?*Pane, k: @import("../key.zig").Key) void {
+
+    fn handleServerKey(self: *Server, k: Key) bool {
+        const was_prefix_seen = self.dispatcher.prefix_state == .prefix_seen;
+        if (self.dispatcher.dispatch(k)) |action| {
+            self.executeAction(action) catch |err| std.log.warn("executeAction failed: {any}", .{err});
+            return true;
+        }
+        if (self.dispatcher.prefix_state == .prefix_seen or was_prefix_seen) {
+            return true;
+        }
+        return false;
+    }
+
+    fn writeKeyToPty(pane_opt: ?*Pane, k: Key) void {
         const pane = pane_opt orelse return;
         switch (k) {
             .char => |ch| {
@@ -1406,11 +1420,13 @@ pub const Server = struct {
             const pane = window.active_pane orelse break;
             const byte = buf[i];
 
-            if (self.input_reader.state == .ground and byte >= 0x20 and byte != 0x7f and !self.command_mode and !pane.choose_mode.active and !pane.screen.clock_mode and pane.screen.copy_mode == null and self.dispatcher.prefix_state == .normal) {
+            const root_matches = self.dispatcher.root_table.count() > 0 and self.dispatcher.root_table.lookup(Key{ .char = .{ .code = byte } }) != null;
+            if (self.input_reader.state == .ground and byte >= 0x20 and byte != 0x7f and !self.command_mode and !pane.choose_mode.active and !pane.screen.clock_mode and pane.screen.copy_mode == null and self.dispatcher.prefix_state == .normal and !root_matches) {
                 var run_len: usize = 1;
                 while (i + run_len < buf.len) : (run_len += 1) {
                     const next_byte = buf[i + run_len];
                     if (next_byte < 0x20 or next_byte == 0x7f) break;
+                    if (self.dispatcher.root_table.count() > 0 and self.dispatcher.root_table.lookup(Key{ .char = .{ .code = next_byte } }) != null) break;
                 }
                 pane.writeInput(buf[i .. i + run_len]) catch |err| std.log.warn("writeInput failed: {any}", .{err});
                 i += run_len - 1;
@@ -1635,9 +1651,18 @@ pub const Server = struct {
                 if (self.input_reader.feed(byte)) |event| {
                     switch (event) {
                         .key => |k| {
-                            if (self.dispatcher.prefix_state == .normal) {
+                            if (self.dispatcher.prefix_state == .prefix_seen) {
+                                self.dispatcher.prefix_state = .normal;
+                                if (self.dispatcher.prefix_table.lookup(k)) |action| {
+                                    self.executeAction(action) catch |err| std.log.warn("executeAction failed: {any}", .{err});
+                                }
+                            } else if (self.dispatcher.root_table.lookup(k)) |action| {
+                                self.executeAction(action) catch |err| std.log.warn("executeAction failed: {any}", .{err});
+                            } else if (key_binding_mod.keysEqual(k, self.dispatcher.prefix)) {
+                                self.dispatcher.prefix_state = .prefix_seen;
+                            } else {
                                 // Copy-mode search entry / repeat, handled
-                                // here (before the prefix check) so they work
+                                // here (before general copy-mode keys) so they work
                                 // while in copy mode without the prefix.
                                 if (k == .char) {
                                     const kc = k.char;
@@ -1659,45 +1684,37 @@ pub const Server = struct {
                                         break;
                                     }
                                 }
-                                if (@import("../key_binding.zig").keysEqual(k, self.dispatcher.prefix)) {
-                                    self.dispatcher.prefix_state = .prefix_seen;
-                                } else {
-                                    var is_yank = false;
-                                    if (k == .char and k.char.code == 'y' and !k.char.mod.ctrl and !k.char.mod.alt) {
-                                        is_yank = true;
-                                    } else if (k == .special and k.special.key == .enter) {
-                                        is_yank = true;
-                                    }
 
-                                    if (is_yank and cm.selection.active) {
-                                        const data = cm.yankSelection(self.allocator, &pane.screen.grid) catch null;
-                                        if (data) |d| {
-                                            const name = try self.buffers.generateName();
-                                            errdefer self.allocator.free(name);
-                                            try self.buffers.pushOwned(name, d);
-                                        }
-                                        pane.screen.copy_mode = null;
-                                        pane.dirty = true;
-                                        self.dirty = true;
-                                    } else {
-                                        const res = cm.handleKey(k, &pane.screen.grid);
-                                        switch (res) {
-                                            .consumed => {
-                                                pane.dirty = true;
-                                            },
-                                            .exit_mode => {
-                                                pane.screen.copy_mode = null;
-                                                pane.dirty = true;
-                                                self.dirty = true;
-                                            },
-                                            .ignored => {},
-                                        }
-                                    }
+                                var is_yank = false;
+                                if (k == .char and k.char.code == 'y' and !k.char.mod.ctrl and !k.char.mod.alt) {
+                                    is_yank = true;
+                                } else if (k == .special and k.special.key == .enter) {
+                                    is_yank = true;
                                 }
-                            } else {
-                                self.dispatcher.prefix_state = .normal;
-                                if (self.dispatcher.prefix_table.lookup(k)) |action| {
-                                    self.executeAction(action) catch |err| std.log.warn("executeAction failed: {any}", .{err});
+
+                                if (is_yank and cm.selection.active) {
+                                    const data = cm.yankSelection(self.allocator, &pane.screen.grid) catch null;
+                                    if (data) |d| {
+                                        const name = try self.buffers.generateName();
+                                        errdefer self.allocator.free(name);
+                                        try self.buffers.pushOwned(name, d);
+                                    }
+                                    pane.screen.copy_mode = null;
+                                    pane.dirty = true;
+                                    self.dirty = true;
+                                } else {
+                                    const res = cm.handleKey(k, &pane.screen.grid);
+                                    switch (res) {
+                                        .consumed => {
+                                            pane.dirty = true;
+                                        },
+                                        .exit_mode => {
+                                            pane.screen.copy_mode = null;
+                                            pane.dirty = true;
+                                            self.dirty = true;
+                                        },
+                                        .ignored => {},
+                                    }
                                 }
                             }
                         },
@@ -1836,21 +1853,12 @@ pub const Server = struct {
                                     self.addLogMessage(log_msg) catch |err| std.log.warn("addLogMessage failed: {any}", .{err});
                                 }
 
-                                if (self.dispatcher.prefix_state == .normal) {
-                                    if (@import("../key_binding.zig").keysEqual(k, self.dispatcher.prefix)) {
-                                        self.dispatcher.prefix_state = .prefix_seen;
-                                        handled = true;
-                                    }
-                                } else {
-                                    self.dispatcher.prefix_state = .normal;
-                                    if (self.dispatcher.prefix_table.lookup(k)) |action| {
-                                        self.executeAction(action) catch |err| std.log.warn("executeAction failed: {any}", .{err});
-                                        if (!self.isPaneValid(pane)) {
-                                            self.esc_buf.clearRetainingCapacity();
-                                            break;
-                                        }
-                                    }
+                                if (self.handleServerKey(k)) {
                                     handled = true;
+                                    if (!self.isPaneValid(pane)) {
+                                        self.esc_buf.clearRetainingCapacity();
+                                        break;
+                                    }
                                 }
                             },
                             .mouse => |m| {
@@ -1994,13 +2002,13 @@ pub const Server = struct {
                         self.esc_buf.clearRetainingCapacity();
                     }
                 } else {
-                    if (self.dispatcher.prefix_state == .normal) {
+                    if (self.dispatcher.prefix_state == .normal and (self.dispatcher.root_table.count() == 0 or self.dispatcher.root_table.lookup(Key{ .char = .{ .code = byte } }) == null)) {
                         if (self.isPaneValid(pane)) {
                             pane.writeInput(&[_]u8{byte}) catch |err| std.log.warn("writeInput failed: {any}", .{err});
                         }
                     } else {
                         if (self.input_reader.feed(byte)) |event| {
-                            self.dispatcher.prefix_state = .normal;
+                            var handled = false;
                             switch (event) {
                                 .key => |k| {
                                     // Diagnostic logging of parsed keys
@@ -2008,21 +2016,28 @@ pub const Server = struct {
                                         var key_name_buf: [64]u8 = undefined;
                                         const key_str = @import("../key.zig").format(k, &key_name_buf);
                                         var log_msg_buf: [128]u8 = undefined;
-                                        const log_msg = std.fmt.bufPrint(&log_msg_buf, "key (ground): {s} [prefix: prefix_seen]", .{key_str}) catch "log err";
+                                        const log_msg = std.fmt.bufPrint(&log_msg_buf, "key (ground): {s} [prefix: {s}]", .{ key_str, @tagName(self.dispatcher.prefix_state) }) catch "log err";
                                         self.addLogMessage(log_msg) catch |err| std.log.warn("addLogMessage failed: {any}", .{err});
                                     }
 
-                                    if (self.dispatcher.prefix_table.lookup(k)) |action| {
-                                        self.executeAction(action) catch |err| std.log.warn("executeAction failed: {any}", .{err});
+                                    if (self.handleServerKey(k)) {
+                                        handled = true;
                                     }
                                 },
                                 .mouse => |m| {
                                     const mouse_opt = session.options.asFlag("mouse") orelse false;
                                     if (mouse_opt and m.button == .left) {
                                         self.handleMouseFocus(m.x, m.y) catch |err| std.log.warn("handleMouseFocus failed: {any}", .{err});
+                                        handled = true;
                                     }
                                 },
                                 else => {},
+                            }
+                            if (!handled and self.isPaneValid(pane)) {
+                                switch (event) {
+                                    .key => |k| writeKeyToPty(pane, k),
+                                    else => pane.writeInput(&[_]u8{byte}) catch |err| std.log.warn("writeInput failed: {any}", .{err}),
+                                }
                             }
                         }
                     }
@@ -3661,6 +3676,45 @@ test "send-prefix forwards C-b to inner process" {
     try testing.expectEqual(@as(u8, 0x02), buf[0]);
 }
 
+test "root key table bind-key -n dispatching — bug #353" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    const s = try server.newSession("test", 80, 24);
+    const window = s.active_window.?;
+    const pane = window.active_pane.?;
+    pane.pty = try @import("pty.zig").Pty.open();
+
+    // 1) Bind F1 to new-window in root table (bind-key -n F1 new-window).
+    try server.dispatcher.root_table.bind(Key{ .function = .{ .key = .f1 } }, .new_window);
+
+    // Feed F1 sequence (\x1bOP) - should dispatch new_window immediately without prefix.
+    try server.processInput("\x1bOP");
+    try testing.expectEqual(@as(usize, 2), s.windows.items.len);
+
+    const win2 = s.active_window.?;
+    const pane2 = win2.active_pane.?;
+    pane2.pty = try @import("pty.zig").Pty.open();
+
+    // 2) Bind Ctrl-N to new-window in root table.
+    try server.dispatcher.root_table.bind(Key{ .char = .{ .code = 'N', .mod = .{ .ctrl = true } } }, .new_window);
+
+    // Feed Ctrl-N (0x0E) - should dispatch new_window immediately.
+    try server.processInput(&[_]u8{0x0e});
+    try testing.expectEqual(@as(usize, 3), s.windows.items.len);
+
+    const win3 = s.active_window.?;
+    const pane3 = win3.active_pane.?;
+    pane3.pty = try @import("pty.zig").Pty.open();
+
+    // 3) Root key works from copy-mode.
+    try server.processInput(&[_]u8{ 0x02, '[' }); // Enter copy mode
+    try testing.expect(pane3.screen.copy_mode != null);
+
+    try server.processInput("\x1bOP"); // Press F1 root key
+    try testing.expectEqual(@as(usize, 4), s.windows.items.len);
+}
+
 test "saturating arithmetic in resize actions — bug #94" {
     // Verify +| saturates instead of panicking on overflow
     const max: u32 = std.math.maxInt(u32);
@@ -4181,7 +4235,6 @@ test "writeKeyToPty maps kitty functional codepoints per spec — bug #352" {
     defer server.deinit();
     const fp = try makeFakePtyPane(&server);
     defer _ = std.c.close(fp.read_fd);
-    const Key = @import("../key.zig").Key;
 
     const cases = [_]struct { code: u21, expect: []const u8 }{
         .{ .code = 57344, .expect = "\x1b" }, // Escape
