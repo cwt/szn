@@ -1126,8 +1126,19 @@ pub const Screen = struct {
         if (self.scroll_region) |r| {
             if (self.cursor.y == r[1]) {
                 try self.scrollUpInRegion();
+                self.dirty = true;
                 return;
             }
+            // With a region active the cursor can sit BELOW the region
+            // (apps often park it there). Moving down is fine, but reaching
+            // the screen bottom here must NOT fall through to the whole-grid
+            // scroll below — that pushed out-of-region lines into scrollback
+            // and corrupted content above the region (bug #368).
+            if (self.cursor.y + 1 < self.grid.height) {
+                self.cursor.y += 1;
+            }
+            self.dirty = true;
+            return;
         }
         if (self.cursor.y + 1 >= self.grid.height) {
             try self.grid.scrollUp();
@@ -1942,6 +1953,49 @@ test "origin mode clamps cursor" {
     screen.setScrollRegion(1, 3);
     screen.setOriginMode(true);
     try testing.expectEqual(@as(u32, 1), screen.cursor.y);
+}
+
+test "LF below scroll region clamps without whole-grid scroll — bug #368" {
+    var screen = try Screen.init(testing.allocator, 10, 5);
+    defer screen.deinit();
+
+    // Region rows 1..3; park the cursor below it on the last screen row.
+    screen.setScrollRegion(1, 3);
+    screen.cursor.x = 0;
+    screen.cursor.y = 4;
+    try screen.writeStr("KEEP"); // row 4 content must survive untouched
+
+    const history_before = screen.grid.historyLen();
+    try screen.index();
+
+    // With the bug, LF fell through to grid.scrollUp: row 4 scrolled into
+    // history (and everything shifted up). Now nothing moves.
+    try testing.expectEqual(history_before, screen.grid.historyLen());
+    try testing.expectEqual(@as(u32, 4), screen.cursor.y);
+    const row = screen.grid.getLine(4);
+    try testing.expectEqual(@as(u21, 'K'), row.cells.items[0].char);
+    try testing.expectEqual(@as(u21, 'E'), row.cells.items[1].char);
+
+    // Cursor below the region but not at screen bottom moves down one.
+    screen.cursor.y = 2;
+    try screen.index();
+    try testing.expectEqual(@as(u32, 3), screen.cursor.y);
+}
+
+test "LF at region bottom scrolls only the region — bug #368" {
+    var screen = try Screen.init(testing.allocator, 10, 5);
+    defer screen.deinit();
+    screen.setScrollRegion(1, 3);
+    screen.cursor.x = 0;
+    screen.cursor.y = 3;
+    try screen.writeStr("R");
+
+    const history_before = screen.grid.historyLen();
+    try screen.index();
+
+    // Region scrolled (rows 1..3), no scrollback push, cursor stays at r[1].
+    try testing.expectEqual(history_before, screen.grid.historyLen());
+    try testing.expectEqual(@as(u32, 3), screen.cursor.y);
 }
 
 test "scroll region with cursor up (origin mode)" {
