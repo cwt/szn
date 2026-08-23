@@ -916,6 +916,21 @@ pub const Grid = struct {
             var hist_list: std.ArrayList(GridLine) = .empty;
             try hist_list.ensureTotalCapacity(allocator, h_count);
             hist_list.appendSliceAssumeCapacity(new_lines.items[0..h_count]);
+            // Enforce the scrollback cap after rewrap: shrinking width grows
+            // physical line counts, so without this trim, repeated narrow
+            // resizes unbound history past `history_limit` (bug #371).
+            // Evicted lines release their cells and fire the sixel-evict
+            // callback exactly like scrollUp.
+            const excess = hist_list.items.len -| self.history_limit;
+            if (excess > 0) {
+                var evicted: usize = 0;
+                while (evicted < excess) : (evicted += 1) {
+                    self.notifyEvict(hist_list.items[evicted].cells.items);
+                    hist_list.items[evicted].deinit(allocator);
+                }
+                std.mem.copyForwards(GridLine, hist_list.items[0 .. hist_list.items.len - excess], hist_list.items[excess..]);
+                hist_list.items.len -= excess;
+            }
             self.history = hist_list;
 
             // Free new_lines backing array
@@ -1219,10 +1234,32 @@ test "write string across grid" {
     }
 }
 
+test "setSize enforces history_limit after rewrap — bug #371" {
+    var grid = try Grid.initWithLimit(testing.allocator, 40, 4, 5);
+    defer grid.deinit();
+
+    // Five soft-wrapped history lines: narrowing to 20 columns rewraps them
+    // into roughly double the physical line count. Without the post-reflow
+    // trim the history list blew past history_limit=5 on every narrow
+    // resize.
+    var i: usize = 0;
+    while (i < 5) : (i += 1) {
+        try grid.scrollUp();
+        const idx = grid.history.items.len - 1;
+        for (0..40) |x| {
+            grid.history.items[idx].cells.items[x] = Cell.withChar('a' + @as(u8, @intCast(i)));
+        }
+        grid.history.items[idx].wrapped = true;
+    }
+    try testing.expectEqual(@as(usize, 5), grid.historyLen());
+
+    try grid.setSize(20, 4);
+    try testing.expect(grid.historyLen() <= 5);
+}
+
 test "setSize reflows content" {
     var grid = try Grid.init(testing.allocator, 80, 5);
     defer grid.deinit();
-
     for (0..5) |i| {
         grid.writeChar(0, @intCast(i), @intCast('A' + i));
     }
