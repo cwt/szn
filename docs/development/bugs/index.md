@@ -426,7 +426,7 @@ Sorted by number. See individual bug files for details.
 | [382](382.md) | load-buffer lacks MAX_PASTE_SIZE cap while paste-buffer enforces one | MEDIUM | Fixed |
 | [383](383.md) | Bright colour names encode index+90 as palette index — renders cube colours | MEDIUM | Fixed |
 | [384](384.md) | mode-keys option ignored: emacs copy-mode unreachable, default disagrees with behaviour | MEDIUM | Fixed |
-| [385](385.md) | Small unbounded arena accumulators: Session.rename, Pane.cwd dupe-over | LOW | Open |
+| [385](385.md) | Small unbounded arena accumulators: Pane.cwd was write-only (deleted), Session.rename uses inline buffer | LOW | Fixed |
 | [386](386.md) | Grid/screen hygiene cluster: shiftDown contract, :720 subtraction, padding half-cell cursor, dead dirty machinery, zero-width drops, RIS incomplete | LOW | Open |
 | [387](387.md) | Sixel overlay tracking: 8-pane render cap; SU shifts anchors once for n lines; SD never shifts | LOW | Open |
 | [388](388.md) | Parser fidelity cluster: 8-bit C1 misroutes, ESC ESC \ in sixel, CSI param cap 16, XTSMGRAPHICS over-claim | LOW | Open |

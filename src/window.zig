@@ -25,7 +25,6 @@ pub const Pane = struct {
     window: ?*Window = null,
     title_cb: ?*const fn (ctx: ?*anyopaque, title: []const u8) void = null,
     title_ctx: ?*anyopaque = null,
-    cwd: ?[]const u8 = null,
     deinited: bool = false,
     /// Track whether this pane is still registered in a live window. Set to
     /// false in destroyPane so isPaneValid becomes an O(1) pointer check
@@ -107,7 +106,9 @@ pub const Pane = struct {
 
         try pty.spawn(allocator, argv, szn_env, szn_pane, cwd, min_nofile_soft);
         self.pty = pty;
-        self.cwd = if (cwd) |cwd_val| try self.screen.grid.allocator.dupe(u8, cwd_val) else null;
+        // Note: no pane.cwd field — it was write-only storage that dupe-over
+        // accumulated in the session arena every respawn (bug #385). Callers
+        // that need the cwd re-derive it via pty.getCwd().
     }
 
     pub fn getParser(self: *Pane) *InputParser {

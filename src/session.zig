@@ -10,6 +10,10 @@ pub const Session = struct {
     arena: std.heap.ArenaAllocator,
     id: u32,
     name: []const u8,
+    /// Inline storage backing `name` after the first rename. Mirrors
+    /// Window.setName: renaming previously duped into the session arena on
+    /// every call with no way to release the old slice (bug #385).
+    name_buf: [256]u8 = undefined,
     windows: std.ArrayList(*Window) = .empty,
     active_window: ?*Window = null,
     last_window: ?*Window = null,
@@ -127,8 +131,9 @@ pub const Session = struct {
 
     pub fn rename(self: *Session, allocator: std.mem.Allocator, new_name: []const u8) void {
         _ = allocator;
-        const a = self.arenaAllocator();
-        self.name = a.dupe(u8, new_name) catch return;
+        const len = @min(new_name.len, self.name_buf.len);
+        @memcpy(self.name_buf[0..len], new_name[0..len]);
+        self.name = self.name_buf[0..len];
     }
 };
 
