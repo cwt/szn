@@ -44,7 +44,7 @@ pub fn clearOverrides() void {
     override_count = 0;
 }
 
-pub const OverrideError = error{ OverrideTableFull };
+pub const OverrideError = error{OverrideTableFull};
 
 fn overrideWidth(cp: u21) ?u2 {
     var i: usize = 0;
@@ -66,8 +66,12 @@ fn overrideWidth(cp: u21) ?u2 {
 /// (restoring szn's built-in defaults). Returns `OverrideTableFull` if
 /// more than MAX_OVERRIDES distinct entries are supplied.
 pub fn applyCodepointWidths(allocator: std.mem.Allocator, value: []const u8) ParseOverrideError!void {
-    _ = allocator;
-    clearOverrides();
+    const Entry = struct { lo: u21, hi: u21, width: u2 };
+    var entries: std.ArrayList(Entry) = .empty;
+    defer entries.deinit(allocator);
+
+    // Validate everything first (bug #394): a bad entry leaves the previous
+    // override table intact instead of half-applying it.
     var it = std.mem.tokenizeScalar(u8, std.mem.trim(u8, value, " \t"), ' ');
     while (it.next()) |entry| {
         const eq = std.mem.indexOfScalar(u8, entry, '=') orelse return error.InvalidEntry;
@@ -78,14 +82,26 @@ pub fn applyCodepointWidths(allocator: std.mem.Allocator, value: []const u8) Par
             if (std.mem.eql(u8, w_part, "2")) break :blk 2;
             return error.InvalidWidth;
         };
+        var lo: u21 = undefined;
+        var hi: u21 = undefined;
         if (std.mem.indexOf(u8, cp_part, "-")) |dash| {
-            const lo = parseCp(cp_part[0..dash]) orelse return error.InvalidCodepoint;
-            const hi = parseCp(cp_part[dash + 1 ..]) orelse return error.InvalidCodepoint;
-            try setOverride(lo, hi, width);
+            lo = parseCp(cp_part[0..dash]) orelse return error.InvalidCodepoint;
+            hi = parseCp(cp_part[dash + 1 ..]) orelse return error.InvalidCodepoint;
+            if (lo > hi) return error.InvalidEntry;
         } else {
-            const cp = parseCp(cp_part) orelse return error.InvalidCodepoint;
-            try setOverride(cp, cp, width);
+            lo = parseCp(cp_part) orelse return error.InvalidCodepoint;
+            hi = lo;
         }
+        entries.append(allocator, .{ .lo = lo, .hi = hi, .width = width }) catch return error.OutOfMemory;
+    }
+
+    // Conservative capacity pre-check so application cannot fail halfway
+    // (duplicate ranges collapse in the table; this is an upper bound).
+    if (entries.items.len > MAX_OVERRIDES) return error.OverrideTableFull;
+
+    clearOverrides();
+    for (entries.items) |e| {
+        try setOverride(e.lo, e.hi, e.width);
     }
 }
 
@@ -105,6 +121,7 @@ pub const ParseOverrideError = error{
     InvalidEntry,
     InvalidCodepoint,
     InvalidWidth,
+    OutOfMemory,
 };
 
 fn searchTable(key: u21, ranges: []const WidthRange) bool {
@@ -795,4 +812,24 @@ test "charWidth: codepoint-widths override (bug #206)" {
     try applyCodepointWidths(std.testing.allocator, "");
     try std.testing.expectEqual(@as(u2, 2), charWidth(0x2705));
     try std.testing.expectEqual(@as(u2, 2), charWidth(0x2E80));
+}
+
+test "applyCodepointWidths: inverted range rejected, previous table preserved — bug #394" {
+    // Establish one valid override.
+    try applyCodepointWidths(std.testing.allocator, "U+2705=1");
+    try std.testing.expectEqual(@as(u2, 1), charWidth(0x2705));
+
+    // An entry list containing an inverted range must fail WITHOUT touching
+    // the existing table (the old code cleared first and half-applied).
+    try std.testing.expectError(error.InvalidEntry, applyCodepointWidths(std.testing.allocator, "U+0041=2 U+10-U+5=1"));
+    try std.testing.expectEqual(@as(u2, 1), charWidth(0x2705));
+
+    // A well-formed list still replaces the table wholesale.
+    try applyCodepointWidths(std.testing.allocator, "U+0041-U+0043=2");
+    try std.testing.expectEqual(@as(u2, 2), charWidth(0x41));
+    try std.testing.expectEqual(@as(u2, 2), charWidth('C'));
+    try std.testing.expectEqual(@as(u2, 2), charWidth(0x2705)); // prior override gone
+
+    // Clean up for other tests.
+    try applyCodepointWidths(std.testing.allocator, "");
 }

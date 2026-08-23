@@ -51,6 +51,18 @@ const colon_rows = [5]u6{
     0b000000,
 };
 
+/// UTC wall-clock parts for the given epoch seconds. Clamps pre-epoch
+/// (negative) inputs to 0 instead of panicking on the i64→u64 cast —
+/// dead RTCs and skewed VMs happen (bug #394). Exposed for tests.
+pub fn utcHms(secs: i64) [3]u32 {
+    const u: u64 = @intCast(@max(secs, 0));
+    return .{
+        @intCast(@mod(@divFloor(u, 3600), 24)),
+        @intCast(@mod(@divFloor(u, 60), 60)),
+        @intCast(@mod(u, 60)),
+    };
+}
+
 pub fn renderClock(grid: *Grid, sx: u32, sy: u32, utc: bool) void {
     _ = sx;
 
@@ -60,10 +72,10 @@ pub fn renderClock(grid: *Grid, sx: u32, sy: u32, utc: bool) void {
     var sec: u32 = undefined;
 
     if (utc) {
-        const u = @as(u64, @intCast(now_secs));
-        hour = @as(u32, @intCast(@mod(@divFloor(u, 3600), 24)));
-        min = @as(u32, @intCast(@mod(@divFloor(u, 60), 60)));
-        sec = @as(u32, @intCast(@mod(u, 60)));
+        const parts = utcHms(now_secs);
+        hour = parts[0];
+        min = parts[1];
+        sec = parts[2];
     } else {
         var tm: Tm = undefined;
         if (localtime_r(&now_secs, &tm)) |ltm| {
@@ -150,4 +162,12 @@ test "renderClock fills grid cells (local time)" {
         }
     }
     try testing.expect(found_non_empty);
+}
+
+test "utcHms clamps pre-epoch time instead of panicking — bug #394" {
+    const parts = utcHms(-100);
+    try testing.expectEqual([3]u32{ 0, 0, 0 }, parts);
+
+    const known = utcHms(3600 + 120 + 5); // 01:02:05 after epoch
+    try testing.expectEqual([3]u32{ 1, 2, 5 }, known);
 }

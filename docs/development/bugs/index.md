@@ -435,4 +435,4 @@ Sorted by number. See individual bug files for details.
 | [391](391.md) | Command robustness cluster: break-pane err-after-relocate, split proportion coercion, resize veto, save-buffer EINTR | LOW | Open |
 | [392](392.md) | Dead code inventory: getCellAt, search_active, adjustSelectionForAutoScroll, inline-for no-op, identify_term payload | LOW | Open |
 | [393](393.md) | Performance cluster: O(n·m) backward search, per-match rescan, linear lookups vs comptime tables, per-frame allocator churn | LOW | Open |
-| [394](394.md) | char_width/thai/clock robustness cluster: mutable globals, partial table application, negative-index cast, pre-epoch panic | LOW | Open |
+| [394](394.md) | char_width/thai/clock robustness cluster: partial table application, negative-index cast, pre-epoch panic (globals rule deferred) | LOW | Fixed (partial) |

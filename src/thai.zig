@@ -551,7 +551,11 @@ pub fn findWordBreaks(allocator: std.mem.Allocator, cells: []const Cell) ![]usiz
 
     var i: usize = 0;
     while (i < @as(usize, @intCast(num_breaks))) : (i += 1) {
-        const p = @as(usize, @intCast(breaks_buf[i]));
+        const raw = breaks_buf[i];
+        // A hostile/broken libthai must not panic on a negative position
+        // (bug #394); skip it like an out-of-range one.
+        if (raw < 0) continue;
+        const p: usize = @intCast(raw);
         if (p < cell_indices.items.len) {
             try result.append(allocator, cell_indices.items[p]);
         }
