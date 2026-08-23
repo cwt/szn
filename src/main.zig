@@ -548,6 +548,18 @@ fn cellSizeResponseLen(data: []const u8) ?usize {
     return i + 1;
 }
 
+/// True if `data` cannot possibly be the prefix of a CSI 14 t response
+/// (`\x1b[4;<h>;<w>t`). A single character (like '/') or non-matching escape
+/// sequence must be forwarded immediately so keystrokes are never delayed.
+fn isNotCellSizeReply(data: []const u8) bool {
+    if (data.len >= 32) return true;
+    if (data.len >= 1 and data[0] != 0x1b) return true;
+    if (data.len >= 2 and data[1] != '[') return true;
+    if (data.len >= 3 and data[2] != '4') return true;
+    if (data.len >= 4 and data[3] != ';') return true;
+    return false;
+}
+
 /// Parse a CSI 14 t response into pixel-per-cell dimensions.
 fn parseCellSizeResponse(data: []const u8, sx: u32, sy: u32) ?CellSize {
     const rl = cellSizeResponseLen(data) orelse return null;
@@ -678,6 +690,7 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
     // would have given up (mosh latency); it must be consumed here rather than
     // forwarded to the pane as a keystroke, which leaked it to the screen.
     var awaiting_cell_size = false;
+    var awaiting_cell_size_since_ms: i64 = 0;
     var cell_resp_buf: [32]u8 = undefined;
     var cell_resp_len: usize = 0;
     var last_diag_ms: i64 = 0;
@@ -696,6 +709,24 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
             // pty alive and will resume it, so do NOT exit — just log and keep
             // the session running.
             std.log.warn("client SIGHUP, staying attached", .{});
+        }
+
+        // If the terminal never replies to CSI 14 t, time out the cell-size
+        // wait so subsequent typed characters aren't delayed.
+        if (awaiting_cell_size and currentMillis() - awaiting_cell_size_since_ms > 200) {
+            awaiting_cell_size = false;
+            if (cell_resp_len > 0) {
+                var fwd_scratch: [64]u8 = undefined;
+                const buffered = cell_resp_buf[0..cell_resp_len];
+                const forward = assembleCellSizeForward(buffered, "", &fwd_scratch);
+                if (forward.len > 0) {
+                    const sd_pkt = protocol.Packet.make(.stdin_data, forward);
+                    var sd_buf: [128]u8 = undefined;
+                    const sd_ser = sd_pkt.serialize(&sd_buf);
+                    writeServer(server_fd, sd_ser);
+                }
+                cell_resp_len = 0;
+            }
         }
 
         var pollfds: [3]std.posix.pollfd = undefined;
@@ -784,12 +815,10 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
                     // the rest of this read) must still be forwarded.
                     const rl = cellSizeResponseLen(cell_resp_buf[0..cell_resp_len]);
                     const is_reply = rl != null;
-                    // Definitely NOT a reply (e.g. an arrow key / other escape
-                    // sequence) — forward everything immediately so keyboard
-                    // input isn't swallowed (bug #298).
-                    const is_not_reply = cell_resp_len >= cell_resp_buf.len or
-                        (cell_resp_len >= 2 and (cell_resp_buf[0] != 0x1b or cell_resp_buf[1] != '[')) or
-                        (cell_resp_len >= 3 and cell_resp_buf[2] != '4');
+                    // Definitely NOT a reply (e.g. any single key like '/', an arrow
+                    // key, or other non-CSI-14t sequence) — forward everything
+                    // immediately so keyboard input isn't swallowed (bug #298).
+                    const is_not_reply = isNotCellSizeReply(cell_resp_buf[0..cell_resp_len]);
                     if (is_reply) {
                         if (parseCellSizeResponse(cell_resp_buf[0..rl.?], sx, sy)) |cell| {
                             sendCellSize(server_fd, cell);
@@ -931,6 +960,7 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
                         // leak to the pane as a keystroke (bug #298).
                         _ = c.write(stdout_fd, "\x1b[14t", 5);
                         awaiting_cell_size = true;
+                        awaiting_cell_size_since_ms = currentMillis();
                         cell_resp_len = 0;
                     },
                     .client_log => {
@@ -1133,4 +1163,24 @@ test "assembleCellSizeForward forwards all interleaved input — bug #299" {
     @memcpy(expect2[esc.len..][0..big.len], &big);
     try testing.expectEqualSlices(u8, expect2[0 .. esc.len + big.len], fwd2);
     try testing.expectEqual(@as(usize, esc.len + big.len), fwd2.len);
+}
+
+test "isNotCellSizeReply distinguishes valid prefix from non-matching keys" {
+    // Single normal keys like '/' or 'a' must immediately be flagged as non-replies.
+    try testing.expect(isNotCellSizeReply("/"));
+    try testing.expect(isNotCellSizeReply("a"));
+    try testing.expect(isNotCellSizeReply("1"));
+
+    // Lone ESC or valid CSI 14 t prefixes are not yet rejected.
+    try testing.expect(!isNotCellSizeReply("\x1b"));
+    try testing.expect(!isNotCellSizeReply("\x1b["));
+    try testing.expect(!isNotCellSizeReply("\x1b[4"));
+    try testing.expect(!isNotCellSizeReply("\x1b[4;"));
+    try testing.expect(!isNotCellSizeReply("\x1b[4;100;200t"));
+
+    // Other escape sequences are immediately rejected on mismatch.
+    try testing.expect(isNotCellSizeReply("\x1ba")); // Alt+a
+    try testing.expect(isNotCellSizeReply("\x1b[A")); // Up arrow
+    try testing.expect(isNotCellSizeReply("\x1b[H")); // Home
+    try testing.expect(isNotCellSizeReply("\x1b[49m")); // Non-matching CSI
 }
