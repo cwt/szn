@@ -751,7 +751,9 @@ pub const InputParser = struct {
                     const sub_mode = self.param(0);
                     if (sub_mode == 4) {
                         if (self.param_count >= 2) {
-                            self.screen.extkeys = @intCast(self.params[1]);
+                            // modifyOtherKeys level is a small mode number;
+                            // never truncate wire data into it (bug #355).
+                            self.screen.extkeys = @truncate(self.params[1]);
                         } else {
                             self.screen.extkeys = 0;
                         }
@@ -2270,6 +2272,26 @@ test "kitty keyboard protocol and extkeys" {
     try parser.feed("\x1b[=1;3u"); // pop 1
     try testing.expectEqual(@as(u32, 1), screen.kitty_kbd_flags);
     try testing.expectEqual(@as(u8, 0), screen.kitty_kbd_stack_len);
+}
+
+test "modifyOtherKeys huge level does not panic — bug #355" {
+    var p = try makePipePty();
+    defer _ = c_sys.close(p.read_fd);
+    defer p.pty.deinit();
+
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+    var parser = InputParser.init(&screen);
+    defer parser.deinit(testing.allocator);
+    parser.pty = &p.pty;
+
+    // With the bug, @intCast(u32 → u8) panicked on wire-controlled values.
+    try parser.feed("\x1b[>4;999999m");
+    try testing.expectEqual(@as(u8, @truncate(@as(u32, 999999))), screen.extkeys);
+
+    // Normal levels still work.
+    try parser.feed("\x1b[>4;2m");
+    try testing.expectEqual(@as(u8, 2), screen.extkeys);
 }
 
 test "XTSMGRAPHICS (CSI ? 2 ; 1 S) reports sixel supported" {
