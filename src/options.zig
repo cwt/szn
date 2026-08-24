@@ -265,7 +265,7 @@ pub const WINDOW_OPTIONS = &[_]OptionDef{
     .{ .name = "clock-mode-style", .type = .choice, .default = OptionValue{ .choice = "24" }, .choices = &[_][]const u8{ "12", "24" } },
     .{ .name = "main-pane-height", .type = .number, .default = OptionValue{ .number = 24 }, .min = 1, .max = 9999 },
     .{ .name = "main-pane-width", .type = .number, .default = OptionValue{ .number = 80 }, .min = 1, .max = 9999 },
-    .{ .name = "mode-keys", .type = .choice, .default = OptionValue{ .choice = "emacs" }, .choices = &[_][]const u8{ "emacs", "vi" } },
+    .{ .name = "mode-keys", .type = .choice, .default = OptionValue{ .choice = "vi" }, .choices = &[_][]const u8{ "emacs", "vi" } },
     .{ .name = "monitor-activity", .type = .flag, .default = OptionValue{ .flag = false } },
     .{ .name = "monitor-silence", .type = .number, .default = OptionValue{ .number = 0 }, .min = 0, .max = 86400 },
     .{ .name = "remain-on-exit", .type = .flag, .default = OptionValue{ .flag = false } },
@@ -363,9 +363,9 @@ test "window options" {
     defer opts.deinit();
 
     try testing.expect(!opts.asFlag("aggressive-resize").?);
-    try testing.expectEqualStrings("emacs", opts.asString("mode-keys").?);
-    try opts.set("mode-keys", OptionValue{ .choice = "vi" });
     try testing.expectEqualStrings("vi", opts.asString("mode-keys").?);
+    try opts.set("mode-keys", OptionValue{ .choice = "emacs" });
+    try testing.expectEqualStrings("emacs", opts.asString("mode-keys").?);
 }
 
 test "get non-existent typed value" {

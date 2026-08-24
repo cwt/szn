@@ -205,9 +205,9 @@ pub const Pane = struct {
         // hardcoded to vi and the option (default emacs) was display-only
         // (bug #384).
         const mode_keys: @import("mode_copy.zig").ModeKeys = if (self.window) |w| blk: {
-            const choice = w.options.asString("mode-keys") orelse "emacs";
-            break :blk if (std.mem.eql(u8, choice, "vi")) .vi else .emacs;
-        } else .emacs;
+            const choice = w.options.asString("mode-keys") orelse "vi";
+            break :blk if (std.mem.eql(u8, choice, "emacs")) .emacs else .vi;
+        } else .vi;
         self.screen.copy_mode = @import("mode_copy.zig").CopyMode.init(mode_keys);
         self.screen.copy_mode.?.enter(&self.screen.grid);
         self.dirty = true;
@@ -666,16 +666,16 @@ test "enterCopyMode honours mode-keys option — bug #384" {
     const window = session.active_window.?;
     const pane = window.active_pane.?;
 
-    // Default is emacs; with the bug copy-mode was always vi.
+    // Default is vi; emacs can be configured via option.
     try pane.enterCopyMode();
     try testing.expect(pane.screen.copy_mode != null);
-    try testing.expectEqual(@import("mode_copy.zig").ModeKeys.emacs, pane.screen.copy_mode.?.mode_keys);
+    try testing.expectEqual(@import("mode_copy.zig").ModeKeys.vi, pane.screen.copy_mode.?.mode_keys);
     pane.screen.copy_mode = null;
 
-    // Switch to vi and re-enter.
-    try window.options.set("mode-keys", .{ .choice = "vi" });
+    // Switch to emacs and re-enter.
+    try window.options.set("mode-keys", .{ .choice = "emacs" });
     try pane.enterCopyMode();
-    try testing.expectEqual(@import("mode_copy.zig").ModeKeys.vi, pane.screen.copy_mode.?.mode_keys);
+    try testing.expectEqual(@import("mode_copy.zig").ModeKeys.emacs, pane.screen.copy_mode.?.mode_keys);
 }
 
 test "auto-rename: name stays in name_buf, cache never aliases it — bug #358" {

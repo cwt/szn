@@ -1672,7 +1672,7 @@ pub const Server = struct {
                                 // while in copy mode without the prefix.
                                 if (k == .char) {
                                     const kc = k.char;
-                                    const is_search_key = (cm.mode_keys == .vi and (kc.code == '/' or kc.code == '?') and !kc.mod.ctrl and !kc.mod.alt) or
+                                    const is_search_key = ((kc.code == '/' or kc.code == '?') and !kc.mod.ctrl and !kc.mod.alt) or
                                         (cm.mode_keys == .emacs and ((kc.code == 'S' and kc.mod.ctrl) or (kc.code == 'R' and kc.mod.ctrl)));
                                     if (is_search_key and self.search_pending == null) {
                                         const dir: @import("../mode_copy.zig").SearchDir = if (kc.code == '/' or kc.code == 'S') .forward else .backward;
@@ -1681,12 +1681,14 @@ pub const Server = struct {
                                         self.command_mode = true;
                                         self.command_buf.clearRetainingCapacity();
                                         pane.dirty = true;
+                                        self.dirty = true;
                                         break;
                                     }
                                     if ((kc.code == 'n' or kc.code == 'N') and !kc.mod.ctrl and !kc.mod.alt and self.search_pending == null) {
                                         const reverse = kc.code == 'N';
                                         _ = cm.repeatSearch(&pane.screen.grid, self.allocator, self.last_search.items, reverse);
                                         pane.dirty = true;
+                                        self.dirty = true;
                                         break;
                                     }
                                 }
@@ -4238,6 +4240,27 @@ test "bare click in copy-mode stays in mode, drag still yanks — bug #379" {
     try server.processInput("\x1b[<3;15;7m");
     try testing.expect(pane.screen.copy_mode == null);
     try testing.expect(server.buffers.items.items.len == buffers_before + 1);
+}
+
+test "slash '/' activates search prompt and search bar in copy-mode" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    const s = try server.newSession("test", 80, 24);
+    const win = s.active_window.?;
+    const pane = win.active_pane.?;
+
+    try pane.enterCopyMode();
+    try testing.expect(pane.screen.copy_mode != null);
+    try testing.expect(!server.command_mode);
+    try testing.expect(server.search_pending == null);
+
+    // Type '/'
+    try server.processInput("/");
+
+    try testing.expect(server.command_mode);
+    try testing.expectEqual(@import("../mode_copy.zig").SearchDir.forward, server.search_pending.?);
+    try testing.expect(server.dirty);
 }
 
 fn makeFakePtyPane(server: *Server) !struct { pane: *Pane, read_fd: c_int } {
