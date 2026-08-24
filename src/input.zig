@@ -156,6 +156,13 @@ pub const InputParser = struct {
             }
         }
 
+        // Everywhere except ground, 0x18 (CAN) and 0x1A (SUB) immediately abort the
+        // current sequence and return to ground per VT/ECMA-48 parser spec (bug #388).
+        if (self.state != .ground and (byte == 0x18 or byte == 0x1A)) {
+            self.toGround();
+            return;
+        }
+
         switch (self.state) {
             .ground => try self.advanceGround(byte),
             .esc => try self.advanceEsc(byte),
@@ -2583,4 +2590,29 @@ test "XTSMGRAPHICS unknown Ps1 gets no reply — bug #388" {
 
     try parser.feed("\x1b[?2;1S"); // sixel geometry: supported
     try testing.expect(std.mem.indexOf(u8, drainFd(p.read_fd, &buf), "\x1b[?2;") != null);
+}
+
+test "CAN (0x18) and SUB (0x1A) abort pending escape, CSI, and OSC sequences — bug #388" {
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+    var parser = InputParser.init(&screen);
+    defer parser.deinit(testing.allocator);
+
+    // 1) Incomplete OSC aborted by CAN (0x18)
+    try parser.feed("\x1b]0;unfinished title");
+    try testing.expectEqual(InputParser.State.osc_string, parser.state);
+    try parser.feed(&[_]u8{0x18}); // CAN
+    try testing.expectEqual(InputParser.State.ground, parser.state);
+    try testing.expectEqual(@as(usize, 0), parser.osc_buf.items.len);
+
+    // 2) Incomplete CSI aborted by SUB (0x1A)
+    try parser.feed("\x1b[10;20");
+    try testing.expectEqual(InputParser.State.csi_param, parser.state);
+    try parser.feed(&[_]u8{0x1A}); // SUB
+    try testing.expectEqual(InputParser.State.ground, parser.state);
+    try testing.expectEqual(@as(usize, 0), parser.param_count);
+
+    // 3) Normal character following aborted sequence writes to screen as regular text
+    try parser.feed("A");
+    try testing.expectEqual(@as(u21, 'A'), screen.grid.getCell(0, 0).char);
 }
