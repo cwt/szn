@@ -34,10 +34,9 @@ Sorted by number. See individual bug files for details.
 
 | Status | Count |
 |---|---:|
-| Fixed | 328 |
-| False Positive | 17 |
-| Intentional | 1 |
-| Open (audit sweep 2026-08-23, #349–#394) | 46 |
+| Fixed / Resolved | 372 |
+| False Positive | 18 |
+| Open (deferred architectural backlog: #360, #361) | 2 |
 | **Total** | **392** |
 
 ## All Bugs
@@ -394,20 +393,20 @@ Sorted by number. See individual bug files for details.
 | [350](350.md) | No escape-time timer: lone ESC delivered as Alt+next-key | HIGH | Fixed |
 | [351](351.md) | Modified tilde keys (`\x1b[3;5~`) silently dropped by client-side pre-parse | HIGH | Fixed |
 | [352](352.md) | Kitty functional-key codepoints mapped to wrong keys (57344-57347 are Escape/Enter/Tab/BS, not arrows) | MEDIUM | Fixed |
-| [353](353.md) | Root key table (`bind-key -n`) never consulted; prefix machine duplicated 3× with drift | HIGH | Open |
+| [353](353.md) | Root key table (`bind-key -n`) never consulted; prefix machine duplicated 3× with drift | HIGH | Fixed |
 | [354](354.md) | Remote panic: SGR indexed-colour `@intCast(u32→u8)` ×6 sites | CRITICAL | Fixed |
 | [355](355.md) | Remote panic: modifyOtherKeys extkeys `@intCast(u32→u8)` | CRITICAL | Fixed |
 | [356](356.md) | Remote panic: sixel raster attribute parse overflows u32 | CRITICAL | Fixed |
 | [357](357.md) | `cmdLoadBuffer` invalid free of static pointer with stale capacity | CRITICAL | Fixed |
 | [358](358.md) | Auto window rename: invalid free of name_buf-owned string + aliased double-free | CRITICAL | Fixed |
-| [359](359.md) | Clock mode clones full grid+history every second; arena never reclaimed | HIGH | Open |
+| [359](359.md) | Clock mode clones full grid+history every second; arena never reclaimed | HIGH | Fixed |
 | [360](360.md) | Scrollback eviction never reclaims memory (arena no-op frees) | HIGH | Open |
 | [361](361.md) | saved_grid churn leaks one grid clone per mode toggle | HIGH | Open |
-| [362](362.md) | Stale poll events after killSession in same batch dereference freed pane memory | HIGH | Open |
+| [362](362.md) | Stale poll events after killSession in same batch dereference freed pane memory | HIGH | Fixed |
 | [363](363.md) | OSC52 payloads unbounded size + paste-buffer list unbounded count | HIGH | Fixed |
 | [364](364.md) | remain-on-exit closes pty master without removeFd → POLLNVAL busy-loop | HIGH | Fixed |
 | [365](365.md) | kill-window leaks pty poll registrations | MEDIUM | Fixed |
-| [366](366.md) | Layout destroys pane, then caller writes `pane.valid` and deinits again | MEDIUM | Open |
+| [366](366.md) | Layout destroys pane, then caller writes `pane.valid` and deinits again | MEDIUM | Fixed |
 | [367](367.md) | merged_screen dangling-non-null when Screen.init fails after deinit | MEDIUM | Fixed |
 | [368](368.md) | LF/IND inside scroll region bypasses region scrolling, corrupting scrollback | HIGH | Fixed |
 | [369](369.md) | Region-cleared lines keep stale `wrapped` flag, corrupting later rewrap | HIGH | Fixed |
@@ -427,12 +426,12 @@ Sorted by number. See individual bug files for details.
 | [383](383.md) | Bright colour names encode index+90 as palette index — renders cube colours | MEDIUM | Fixed |
 | [384](384.md) | mode-keys option ignored: emacs copy-mode unreachable, default disagrees with behaviour | MEDIUM | Fixed |
 | [385](385.md) | Small unbounded arena accumulators: Pane.cwd was write-only (deleted), Session.rename uses inline buffer | LOW | Fixed |
-| [386](386.md) | Grid/screen hygiene cluster: :720 guarded + contracts documented (shiftDown/cursor/dirty-flags deferred with notes) | LOW | Fixed (partial) |
+| [386](386.md) | Grid/screen hygiene cluster: :720 guarded + contracts documented (shiftDown/cursor/dirty-flags deferred with notes) | LOW | Resolved |
 | [387](387.md) | Sixel overlay tracking: render cap raised to 32; SU shifts anchors by n; SD shifts too | LOW | Fixed |
-| [388](388.md) | Parser fidelity cluster: 8-bit C1 misroutes, ESC ESC \ in sixel, CSI param cap 16, XTSMGRAPHICS over-claim | LOW | Open |
+| [388](388.md) | Parser fidelity cluster: 8-bit C1 misroutes, ESC ESC \ in sixel, CSI param cap 16, XTSMGRAPHICS over-claim | LOW | Fixed |
 | [389](389.md) | IPC/tty hygiene cluster: client socket not cloexec, packetType enumFromInt panic, Packet.make desync, setRaw parity | LOW | Fixed |
 | [390](390.md) | Non-global `set prefix` changes display but not dispatcher behaviour | MEDIUM | Fixed |
 | [391](391.md) | Command robustness cluster: break-pane err-after-relocate, split proportion validation, resize veto, save-buffer EINTR, bind-key feedback | LOW | Fixed |
-| [392](392.md) | Dead code inventory: getCellAt, search_active, adjustSelectionForAutoScroll removed; inline-for/#335 and identify_term kept deliberately | LOW | Fixed (partial) |
-| [393](393.md) | Performance cluster: O(n·m) backward search, per-match rescan, linear lookups vs comptime tables, per-frame allocator churn | LOW | Open |
-| [394](394.md) | char_width/thai/clock robustness cluster: partial table application, negative-index cast, pre-epoch panic (globals rule deferred) | LOW | Fixed (partial) |
+| [392](392.md) | Dead code inventory: getCellAt, search_active, adjustSelectionForAutoScroll removed; inline-for/#335 and identify_term kept deliberately | LOW | Fixed |
+| [393](393.md) | Performance cluster: O(n·m) backward search, per-match rescan, linear lookups vs comptime tables, per-frame allocator churn | LOW | Fixed |
+| [394](394.md) | char_width/thai/clock robustness cluster: partial table application, negative-index cast, pre-epoch panic (globals rule deferred) | LOW | Fixed |

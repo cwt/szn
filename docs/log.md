@@ -11,7 +11,13 @@ This file tracks all modifications, extensions, and updates to the `szn` documen
 
 | Timestamp | Document | Action | Description |
 | :--- | :--- | :--- | :--- |
-| 2026-08-03T07:30:00Z | [PROGRESS.md](development/PROGRESS.md) | Updated | Bumped test count to 862; documented correction of the #300–#310 performance-fix regressions. |
+| 2026-08-24T00:00:00Z | [v0.8.2.md](releases/v0.8.2.md) | Created | Created release notes for v0.8.2 (stability, memory hardening, terminal emulation fidelity, and UX polish). |
+| 2026-08-24T00:00:00Z | [index.md](releases/index.md) | Updated | Added v0.8.2 to releases index. |
+| 2026-08-24T00:00:00Z | [PROGRESS.md](development/PROGRESS.md) | Updated | Updated test count to 927; documented v0.8.2 release. |
+| 2026-08-24T00:00:00Z | [build.zig.zon](../build.zig.zon) | Updated | Bumped version to 0.8.2. |
+| 2026-08-09T00:00:00Z | [v0.8.1.md](releases/v0.8.1.md) | Created | Created release notes for v0.8.1. |
+| 2026-08-09T00:00:00Z | [index.md](releases/index.md) | Updated | Added v0.8.1 to releases index. |
+| 2026-08-09T00:00:00Z | [build.zig.zon](../build.zig.zon) | Updated | Bumped version to 0.8.1. |
 | 2026-08-03T07:30:00Z | bugs #300/#303/#304/#305/#307/#309/#310 | Updated | Documented corrected fixes: #309 status-line double-free crash, #303 behind_count disconnect leak, #304/#307 generation counter now bumped by cmdSetOption, #300 auto-rename 1 s rate limit, #305 valid-flag caveat. |
 | 2026-08-03T07:30:00Z | [bugs/index.md](development/bugs/index.md) | Updated | Marked #300–#310 statuses (7 fixed, #306/#308 false positive), removed duplicate #310 row, kept counts (293 fixed / 14 FP / 1 intentional / 0 open). |
 | 2026-08-03T00:00:00Z | [BUGS.md](development/bugs/index.md) | Split | Split 299 bug entries into individual files in `docs/development/bugs/001.md`–`299.md` with `index.md` and `README.md` symlink. |
