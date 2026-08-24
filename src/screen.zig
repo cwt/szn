@@ -606,6 +606,30 @@ pub const Screen = struct {
         first.dirty = true;
     }
 
+    /// Advance cursor down one line, respecting DECSTBM scroll regions.
+    pub fn advanceLine(self: *Screen) Error!void {
+        if (self.scroll_region) |r| {
+            if (self.cursor.y == r[1]) {
+                try self.scrollUpInRegion();
+            } else if (self.cursor.y + 1 < self.grid.height) {
+                self.cursor.y += 1;
+            }
+            return;
+        }
+        if (self.cursor.y + 1 >= self.grid.height) {
+            try self.grid.scrollUp();
+            self.shiftSixelAnchors(-1);
+            const bottom_line = self.grid.getLineMut(self.grid.height - 1);
+            // bug #225: decrement refcounts for fill cells.
+            self.decrementLineRefs(bottom_line.cells.items);
+            @memset(bottom_line.cells.items, self.eraseCell());
+            bottom_line.wrapped = false;
+            bottom_line.dirty = true;
+        } else {
+            self.cursor.y += 1;
+        }
+    }
+
     pub fn writeChar(self: *Screen, char: u21) Error!void {
         if (char < 0x20) {
             self.last_char = null;
@@ -614,20 +638,7 @@ pub const Screen = struct {
             if (self.cursor.x >= self.grid.width) {
                 self.grid.getLineMut(self.cursor.y).wrapped = true;
             }
-            if (self.cursor.y + 1 >= self.grid.height) {
-                try self.grid.scrollUp();
-                self.shiftSixelAnchors(-1);
-                const bottom_line = self.grid.getLineMut(self.grid.height - 1);
-                // bug #225: decrement refcounts for fill cells.
-                self.decrementLineRefs(bottom_line.cells.items);
-                @memset(bottom_line.cells.items, self.eraseCell());
-                bottom_line.wrapped = false;
-                bottom_line.dirty = true;
-            } else if (self.scroll_region != null and self.cursor.y == self.scroll_region.?[1]) {
-                try self.scrollUpInRegion();
-            } else {
-                self.cursor.y += 1;
-            }
+            try self.advanceLine();
             // A newline starts a fresh (non-wrapped) line
             self.grid.getLineMut(self.cursor.y).wrapped = false;
             self.dirty = true;
@@ -727,20 +738,7 @@ pub const Screen = struct {
                 }
                 self.grid.getLineMut(self.cursor.y).wrapped = true;
                 self.cursor.x = 0;
-                if (self.cursor.y + 1 >= self.grid.height) {
-                    try self.grid.scrollUp();
-                    self.shiftSixelAnchors(-1);
-                    const bottom_line = self.grid.getLineMut(self.grid.height - 1);
-                    // bug #225: decrement refcounts for fill cells.
-                    self.decrementLineRefs(bottom_line.cells.items);
-                    @memset(bottom_line.cells.items, self.eraseCell());
-                    bottom_line.wrapped = false;
-                    bottom_line.dirty = true;
-                } else if (self.scroll_region != null and self.cursor.y == self.scroll_region.?[1]) {
-                    try self.scrollUpInRegion();
-                } else {
-                    self.cursor.y += 1;
-                }
+                try self.advanceLine();
             }
             if (self.cursor.x + 1 >= self.grid.width and !self.mode.line_wrap) return;
             if (self.cursor.x >= self.grid.width) return;
@@ -775,20 +773,7 @@ pub const Screen = struct {
             if (self.cursor.x >= self.grid.width) {
                 self.grid.getLineMut(self.cursor.y).wrapped = true;
                 self.cursor.x = 0;
-                if (self.cursor.y + 1 >= self.grid.height) {
-                    try self.grid.scrollUp();
-                    self.shiftSixelAnchors(-1);
-                    const bottom_line = self.grid.getLineMut(self.grid.height - 1);
-                    // bug #225: decrement refcounts for fill cells.
-                    self.decrementLineRefs(bottom_line.cells.items);
-                    @memset(bottom_line.cells.items, self.eraseCell());
-                    bottom_line.wrapped = false;
-                    bottom_line.dirty = true;
-                } else if (self.scroll_region != null and self.cursor.y == self.scroll_region.?[1]) {
-                    try self.scrollUpInRegion();
-                } else {
-                    self.cursor.y += 1;
-                }
+                try self.advanceLine();
             }
         }
 
@@ -1145,35 +1130,7 @@ pub const Screen = struct {
     }
 
     pub fn index(self: *Screen) Error!void {
-        if (self.scroll_region) |r| {
-            if (self.cursor.y == r[1]) {
-                try self.scrollUpInRegion();
-                self.dirty = true;
-                return;
-            }
-            // With a region active the cursor can sit BELOW the region
-            // (apps often park it there). Moving down is fine, but reaching
-            // the screen bottom here must NOT fall through to the whole-grid
-            // scroll below — that pushed out-of-region lines into scrollback
-            // and corrupted content above the region (bug #368).
-            if (self.cursor.y + 1 < self.grid.height) {
-                self.cursor.y += 1;
-            }
-            self.dirty = true;
-            return;
-        }
-        if (self.cursor.y + 1 >= self.grid.height) {
-            try self.grid.scrollUp();
-            self.shiftSixelAnchors(-1);
-            const bottom_line = self.grid.getLineMut(self.grid.height - 1);
-            // bug #225: decrement refcounts for fill cells.
-            self.decrementLineRefs(bottom_line.cells.items);
-            @memset(bottom_line.cells.items, self.eraseCell());
-            bottom_line.wrapped = false;
-            bottom_line.dirty = true;
-        } else {
-            self.cursor.y += 1;
-        }
+        try self.advanceLine();
         self.dirty = true;
     }
 
