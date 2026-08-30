@@ -64,7 +64,7 @@ pub const BufferList = struct {
     pub fn delete(self: *BufferList, name: []const u8) bool {
         for (self.items.items, 0..) |b, i| {
             if (std.mem.eql(u8, b.name, name)) {
-                var entry = self.items.swapRemove(i);
+                var entry = self.items.orderedRemove(i);
                 entry.deinit(self.allocator);
                 return true;
             }
@@ -90,7 +90,7 @@ pub const BufferList = struct {
                 return try self.allocator.dupe(u8, n);
             }
         }
-        return try self.allocator.dupe(u8, name_buf[0..0]);
+        return error.OutOfMemory;
     }
 
     pub fn appendToList(self: *const BufferList, allocator: std.mem.Allocator, buf: *std.ArrayList(u8)) !void {
@@ -184,4 +184,26 @@ test "buffer list evicts oldest past max_buffers — bug #363" {
     try testing.expect(bl.get("buf2") != null);
     try testing.expect(bl.get("buf1") == null);
     try testing.expect(bl.get("buf0") == null);
+}
+
+test "BufferList.delete preserves recency order — bug #410" {
+    var bl = BufferList.init(testing.allocator);
+    defer bl.deinit();
+
+    try bl.push("b0", "oldest");
+    try bl.push("b1", "middle");
+    try bl.push("b2", "newest");
+
+    // Delete middle buffer "b1"
+    try testing.expect(bl.delete("b1"));
+
+    // Latest must still be "b2", oldest must still be "b0"
+    try testing.expectEqualStrings("newest", bl.get(null).?);
+    try testing.expectEqualStrings("oldest", bl.items.items[bl.items.items.len - 1].data);
+
+    // Delete newest buffer "b2"
+    try testing.expect(bl.delete("b2"));
+
+    // Latest must now be "b0"
+    try testing.expectEqualStrings("oldest", bl.get(null).?);
 }
