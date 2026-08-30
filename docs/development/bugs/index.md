@@ -34,10 +34,10 @@ Sorted by number. See individual bug files for details.
 
 | Status | Count |
 |---|---:|
-| Fixed / Resolved | 374 |
+| Fixed / Resolved | 375 |
 | False Positive | 18 |
 | Open (deferred architectural backlog: #360, #361) | 2 |
-| Open (filed by the 2026-08-30 audit sweep: #395–#427) | 31 |
+| Open (filed by the 2026-08-30 audit sweep: #395–#427) | 30 |
 | **Total** | **425** |
 
 ## All Bugs
@@ -438,7 +438,7 @@ Sorted by number. See individual bug files for details.
 | [394](394.md) | char_width/thai/clock robustness cluster: partial table application, negative-index cast, pre-epoch panic (globals rule deferred) | LOW | Fixed |
 | [395](395.md) | Pty.spawn: #267's errdefer and defer both free szn_env_z/szn_pane_z/cwd_z — double-free on fork() failure | CRITICAL | Fixed |
 | [396](396.md) | border_format_cached expanded with the session arena but freed with the server GPA on cache invalidation | CRITICAL | Fixed |
-| [397](397.md) | Format substitute with an empty pattern aborts the server (replaceOwned panics on a zero-length needle; config/prompt DoS) | CRITICAL | Open |
+| [397](397.md) | Format substitute with an empty pattern aborts the server (replaceOwned panics on a zero-length needle; config/prompt DoS) | CRITICAL | Fixed |
 | [398](398.md) | Window.init/addPane double-destroy the Pane when Pane.init fails (#239 incomplete fix) | HIGH | Open |
 | [399](399.md) | addSixelImage errdefer frees dcs_bytes after placeSixelImage stored it in the slot (#269 ownership inversion) | HIGH | Open |
 | [400](400.md) | Stale PTY poll event removeFd(ev.fd) unregisters a recycled fd's NEW owner (frozen pane; POLLNVAL guard missing) | HIGH | Open |

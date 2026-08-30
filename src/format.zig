@@ -694,6 +694,10 @@ fn expandSubstituteInto(allocator: std.mem.Allocator, out: *std.ArrayList(u8), c
     defer allocator.free(expanded_name);
 
     const value_src = if (ctx.get(expanded_name)) |v| v else expanded_name;
+    if (pattern.len == 0) {
+        try out.appendSlice(allocator, value_src);
+        return;
+    }
     const replaced = try std.mem.replaceOwned(u8, allocator, value_src, pattern, replacement);
     defer allocator.free(replaced);
     try out.appendSlice(allocator, replaced);
@@ -1099,6 +1103,16 @@ test "substitute no match" {
     const result = try expand(testing.allocator, "#{s/x/y/:path}", &ctx);
     defer testing.allocator.free(result);
     try testing.expectEqualStrings("hello", result);
+}
+
+test "substitute empty pattern does not panic — bug #397" {
+    var ctx = Context.init(testing.allocator);
+    defer ctx.deinit();
+    try ctx.set("session_name", "my_session");
+
+    const result = try expand(testing.allocator, "#{s//x/:session_name}", &ctx);
+    defer testing.allocator.free(result);
+    try testing.expectEqualStrings("my_session", result);
 }
 
 test "truncate positive" {
