@@ -1479,6 +1479,10 @@ pub const Server = struct {
                                         if (result.response_type == .ready or result.response_type == .err) {
                                             if (result.data.len > 0) self.setMessage(result.data) catch |err| std.log.warn("setMessage failed: {any}", .{err});
                                         }
+                                        if (self.sessions.items.len == 0) {
+                                            std.log.info("no sessions left, stopping server loop", .{});
+                                            self.loop.running = false;
+                                        }
                                     }
                                     self.command_mode = false;
                                     self.command_buf.clearRetainingCapacity();

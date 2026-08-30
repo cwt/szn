@@ -34,10 +34,10 @@ Sorted by number. See individual bug files for details.
 
 | Status | Count |
 |---|---:|
-| Fixed / Resolved | 385 |
+| Fixed / Resolved | 387 |
 | False Positive | 18 |
 | Open (deferred architectural backlog: #360, #361) | 2 |
-| Open (filed by the 2026-08-30 audit sweep: #395–#427) | 20 |
+| Open (filed by the 2026-08-30 audit sweep: #395–#427) | 18 |
 | **Total** | **425** |
 
 ## All Bugs
@@ -448,8 +448,8 @@ Sorted by number. See individual bug files for details.
 | [404](404.md) | isPaneValid regression: #362 fix reintroduced the O(N·M·P) walk #305 removed, run per PTY event with extra scans | MEDIUM | Fixed |
 | [405](405.md) | Resize reflow clones grid+history+scratch per width change from the session arena — nothing reclaimed (#360/#361 class) | MEDIUM | Fixed |
 | [406](406.md) | Sixel accounting cluster: ref_inc counts unplaced markers, overwrite without decrement, lost eviction hooks, stale eraseDisplay geometry, id-masking refcheck | MEDIUM | Fixed |
-| [407](407.md) | Zero-window sessions permanently bricked (no recovery command); bare kill-session kills all sessions vs its description | MEDIUM | Open |
-| [408](408.md) | Prompt-path kill-session never stops the server with zero sessions (IPC path does) | MEDIUM | Open |
+| [407](407.md) | Zero-window sessions permanently bricked (no recovery command); bare kill-session kills all sessions vs its description | MEDIUM | Fixed |
+| [408](408.md) | Prompt-path kill-session never stops the server with zero sessions (IPC path does) | MEDIUM | Fixed |
 | [409](409.md) | Keystrokes dropped: search-mode break discards packet remainder; client sd_buf too small → serialize sends nothing (#299 follow-up) | MEDIUM | Open |
 | [410](410.md) | BufferList.delete swapRemove breaks the newest-at-0/oldest-at-last contract of get/evict; generateName empty-name wrap | MEDIUM | Open |
 | [411](411.md) | reapZombies leaves stale Pty.pid → deinit SIGKILLs a recycled pid; Pty.deinit double-close (master not nulled) | MEDIUM | Open |

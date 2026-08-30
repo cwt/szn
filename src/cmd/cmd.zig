@@ -58,7 +58,14 @@ fn cmdKillSession(server: *Server, args: []const []const u8) CmdResult {
     if (name) |n| {
         server.killSession(n) catch return .err;
     } else {
-        server.killAllSessions();
+        if (server.activeSession()) |s| {
+            server.killSession(s.name) catch return .err;
+        } else {
+            return .err;
+        }
+    }
+    if (server.sessions.items.len == 0) {
+        server.loop.running = false;
     }
     return .ok;
 }
@@ -89,13 +96,11 @@ fn cmdSwitchClient(server: *Server, args: []const []const u8) CmdResult {
 
 fn cmdNewWindow(server: *Server, args: []const []const u8) CmdResult {
     const session = server.activeSession() orelse return .err;
-    const window = session.active_window orelse return .err;
-    const pane = window.active_pane orelse return .err;
+    const current_cwd = if (session.active_window) |w| if (w.active_pane) |p| server.paneCwd(p) else null else null;
+    defer if (current_cwd) |cwd_ptr| server.allocator.free(cwd_ptr);
     const name = if (args.len > 1) args[1] else "window";
     const new_win = session.newWindow(server.allocator, name) catch return .err;
     if (new_win.active_pane) |p| {
-        const current_cwd = server.paneCwd(pane);
-        defer if (current_cwd) |cwd_ptr| server.allocator.free(cwd_ptr);
         server.setupPane(session, p, current_cwd) catch {
             server.unregisterWindowFds(new_win);
             session.killWindow(server.allocator, new_win);
@@ -108,18 +113,19 @@ fn cmdNewWindow(server: *Server, args: []const []const u8) CmdResult {
 fn cmdKillWindow(server: *Server, args: []const []const u8) CmdResult {
     const session = server.activeSession() orelse return .err;
     const idx = if (args.len > 1) std.fmt.parseInt(u32, args[1], 10) catch return .err else null;
-    if (idx) |i| {
-        if (i < session.windows.items.len) {
-            const w = session.windows.items[i];
-            server.unregisterWindowFds(w);
-            session.killWindow(server.allocator, w);
+    const target_win = if (idx) |i| (if (i < session.windows.items.len) session.windows.items[i] else return .err) else (session.active_window orelse return .err);
+
+    // If this is the last window in the session, destroy the entire session (matches tmux & destroyPane behavior — bug #407)
+    if (session.windows.items.len <= 1) {
+        server.killSession(session.name) catch return .err;
+        if (server.sessions.items.len == 0) {
+            server.loop.running = false;
         }
-    } else {
-        if (session.active_window) |w| {
-            server.unregisterWindowFds(w);
-            session.killWindow(server.allocator, w);
-        }
+        return .ok;
     }
+
+    server.unregisterWindowFds(target_win);
+    session.killWindow(server.allocator, target_win);
     return .ok;
 }
 
@@ -2852,4 +2858,29 @@ test "resize-pane explicit -x/-y wins over invalid relative adjust — bug #391"
     defer c.deinit(testing.allocator);
     try testing.expectEqual(CmdResult.ok, c.exec(&server));
     try testing.expectEqual(@as(u32, 100), pane.screen.grid.width);
+}
+
+test "kill-window on last window destroys the session — bug #407" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+    _ = try server.newSession("test", 80, 24);
+
+    var c = try parse("kill-window", testing.allocator);
+    defer c.deinit(testing.allocator);
+    try testing.expectEqual(CmdResult.ok, c.exec(&server));
+    try testing.expectEqual(@as(usize, 0), server.sessions.items.len);
+    try testing.expect(!server.loop.running);
+}
+
+test "bare kill-session kills active session only — bug #407" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+    _ = try server.newSession("s1", 80, 24);
+    _ = try server.newSession("s2", 80, 24);
+
+    var c = try parse("kill-session", testing.allocator);
+    defer c.deinit(testing.allocator);
+    try testing.expectEqual(CmdResult.ok, c.exec(&server));
+    try testing.expectEqual(@as(usize, 1), server.sessions.items.len);
+    try testing.expectEqualStrings("s2", server.sessions.items[0].name);
 }
