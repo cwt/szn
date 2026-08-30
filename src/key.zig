@@ -85,10 +85,10 @@ pub fn parseCsi(seq: []const u8) ParseError!Key {
         if (pos >= seq.len - 1) return error.InvalidCsi;
     }
     const final = seq[seq.len - 1];
-    const mod_param: ?u8 = if (semicolon) |pos| blk: {
+    const mod_param: ?u32 = if (semicolon) |pos| blk: {
         const param_str = seq[pos + 1 .. seq.len - 1];
         if (param_str.len == 0) break :blk null;
-        break :blk std.fmt.parseInt(u8, param_str, 10) catch null;
+        break :blk std.fmt.parseInt(u32, param_str, 10) catch null;
     } else null;
 
     // Xterm uses 1-based modifiers (1=none, 2=shift, 3=alt, ...).

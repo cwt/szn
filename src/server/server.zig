@@ -1699,6 +1699,7 @@ pub const Server = struct {
                                 if (is_yank and cm.selection.active) {
                                     const data = cm.yankSelection(self.allocator, &pane.screen.grid) catch null;
                                     if (data) |d| {
+                                        errdefer self.allocator.free(d);
                                         const name = try self.buffers.generateName();
                                         errdefer self.allocator.free(name);
                                         try self.buffers.pushOwned(name, d);
@@ -1816,6 +1817,7 @@ pub const Server = struct {
                                     if (cm.selection.active and moved) {
                                         const data = cm.yankSelection(self.allocator, &pane.screen.grid) catch null;
                                         if (data) |d| {
+                                            errdefer self.allocator.free(d);
                                             const name = try self.buffers.generateName();
                                             errdefer self.allocator.free(name);
                                             try self.buffers.pushOwned(name, d);
@@ -1973,6 +1975,7 @@ pub const Server = struct {
                                                         if (cm.selection.active) {
                                                             const data = cm.yankSelection(self.allocator, &press_pane.screen.grid) catch null;
                                                             if (data) |d| {
+                                                                errdefer self.allocator.free(d);
                                                                 const name = try self.buffers.generateName();
                                                                 errdefer self.allocator.free(name);
                                                                 try self.buffers.pushOwned(name, d);

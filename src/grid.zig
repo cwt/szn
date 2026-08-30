@@ -135,6 +135,16 @@ pub const Grid = struct {
         self.start_index = 0;
     }
 
+    pub fn clearHistory(self: *Grid) void {
+        const start = @min(self.history_start, self.history.items.len);
+        for (self.history.items[start..]) |*line| {
+            self.notifyEvict(line.cells.items);
+            line.deinit(self.allocator);
+        }
+        self.history.clearRetainingCapacity();
+        self.history_start = 0;
+    }
+
     pub fn deinit(self: *Grid) void {
         for (self.lines.items) |*line| line.deinit(self.allocator);
         self.lines.deinit(self.allocator);
@@ -154,11 +164,8 @@ pub const Grid = struct {
             .on_line_evict = self.on_line_evict,
             .on_line_evict_ctx = self.on_line_evict_ctx,
         };
+        errdefer copy.deinit();
         try copy.lines.ensureTotalCapacity(allocator, self.lines.items.len);
-        errdefer {
-            for (copy.lines.items) |*l| l.deinit(allocator);
-            copy.lines.deinit(allocator);
-        }
         for (self.lines.items) |line| {
             var new_line = GridLine{ .dirty = line.dirty, .wrapped = line.wrapped };
             try new_line.cells.appendSlice(allocator, line.cells.items);
@@ -166,10 +173,6 @@ pub const Grid = struct {
         }
         const h_len = self.historyLen();
         try copy.history.ensureTotalCapacity(allocator, h_len);
-        errdefer {
-            for (copy.history.items) |*l| l.deinit(allocator);
-            copy.history.deinit(allocator);
-        }
         const start = @min(self.history_start, self.history.items.len);
         for (self.history.items[start..]) |line| {
             var new_line = GridLine{ .dirty = line.dirty, .wrapped = line.wrapped };
@@ -907,32 +910,35 @@ pub const Grid = struct {
         const total_len = new_lines.items.len;
         const height = self.height;
         if (total_len <= height) {
-            self.lines = new_lines;
-            new_lines = .empty;
-            // Pad self.lines with empty lines to match self.height
-            while (self.lines.items.len < height) {
+            // Pad new_lines with empty lines to match self.height before assigning
+            while (new_lines.items.len < height) {
                 var line_cells: std.ArrayList(Cell) = .empty;
                 try line_cells.resize(allocator, new_width);
                 @memset(line_cells.items, Cell.empty());
-                try self.lines.append(allocator, GridLine{
+                try new_lines.append(allocator, GridLine{
                     .cells = line_cells,
                     .dirty = true,
                     .wrapped = false,
                 });
             }
+            self.lines = new_lines;
+            new_lines = .empty;
         } else {
             const h_count = total_len - height;
 
             // Allocate visible portion (last `height` lines)
             var vis_list: std.ArrayList(GridLine) = .empty;
             try vis_list.ensureTotalCapacity(allocator, height);
-            vis_list.appendSliceAssumeCapacity(new_lines.items[h_count..]);
-            self.lines = vis_list;
+            errdefer vis_list.deinit(allocator);
 
             // Allocate history portion (first `h_count` lines)
             var hist_list: std.ArrayList(GridLine) = .empty;
             try hist_list.ensureTotalCapacity(allocator, h_count);
+            errdefer hist_list.deinit(allocator);
+
+            vis_list.appendSliceAssumeCapacity(new_lines.items[h_count..]);
             hist_list.appendSliceAssumeCapacity(new_lines.items[0..h_count]);
+
             // Enforce the scrollback cap after rewrap: shrinking width grows
             // physical line counts, so without this trim, repeated narrow
             // resizes unbound history past `history_limit` (bug #371).
@@ -948,6 +954,7 @@ pub const Grid = struct {
                 std.mem.copyForwards(GridLine, hist_list.items[0 .. hist_list.items.len - excess], hist_list.items[excess..]);
                 hist_list.items.len -= excess;
             }
+            self.lines = vis_list;
             self.history = hist_list;
 
             // Free new_lines backing array

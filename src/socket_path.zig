@@ -18,13 +18,15 @@ pub fn resolve(buf: []u8) Error![:0]const u8 {
     if (buf.len < MAX_PATH) return error.BufferTooSmall;
 
     if (std.c.getenv("XDG_RUNTIME_DIR")) |xdg| {
-        const path = try std.fmt.bufPrintZ(buf[0..MAX_PATH], "{s}/szn.sock", .{std.mem.span(xdg)});
-        return path;
+        if (std.fmt.bufPrintZ(buf[0..MAX_PATH], "{s}/szn.sock", .{std.mem.span(xdg)})) |path| {
+            return path;
+        } else |_| {}
     }
 
     if (std.c.getenv("TMPDIR")) |tmp| {
-        const path = try std.fmt.bufPrintZ(buf[0..MAX_PATH], "{s}/szn.sock", .{std.mem.span(tmp)});
-        return path;
+        if (std.fmt.bufPrintZ(buf[0..MAX_PATH], "{s}/szn.sock", .{std.mem.span(tmp)})) |path| {
+            return path;
+        } else |_| {}
     }
 
     if (std.c.getenv("HOME")) |home| {

@@ -567,12 +567,22 @@ fn parseCellSizeResponse(data: []const u8, sx: u32, sy: u32) ?CellSize {
     var i: usize = 4;
     var px_h: u32 = 0;
     while (i < rl and data[i] >= '0' and data[i] <= '9') : (i += 1) {
-        px_h = px_h * 10 + @as(u32, data[i] - '0');
+        const digit: u32 = data[i] - '0';
+        if (px_h > (std.math.maxInt(u32) - digit) / 10) {
+            px_h = std.math.maxInt(u32);
+        } else {
+            px_h = px_h * 10 + digit;
+        }
     }
     i += 1; // skip ';'
     var px_w: u32 = 0;
     while (i < rl and data[i] >= '0' and data[i] <= '9') : (i += 1) {
-        px_w = px_w * 10 + @as(u32, data[i] - '0');
+        const digit: u32 = data[i] - '0';
+        if (px_w > (std.math.maxInt(u32) - digit) / 10) {
+            px_w = std.math.maxInt(u32);
+        } else {
+            px_w = px_w * 10 + digit;
+        }
     }
     return .{ .h = @max(px_h / sy, 1), .w = @max(px_w / sx, 1) };
 }
@@ -604,16 +614,6 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
     const server_fd = try connect.connectToServer();
     defer _ = c.close(server_fd);
 
-    // bug #298: a downstream pty that applies backpressure (e.g. mosh on a slow
-    // link) must not stall the whole client. stdout is made non-blocking and
-    // rendered frames are queued + drained on POLL.OUT instead of blocking in
-    // write(2). The server socket is also made non-blocking: a wedged server
-    // (busy rendering or logging) that stops reading its backlog must not block
-    // the client's small writes (keystrokes / redraws) — writeServer() drops
-    // the remainder on EAGAIN instead of freezing the client.
-    setNonBlocking(stdout_fd);
-    setNonBlocking(server_fd);
-
     var ws: c.winsize = undefined;
     var sx: u32 = 80;
     var sy: u32 = 24;
@@ -637,6 +637,16 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
     var r_buf: [128]u8 = undefined;
     const r_ser = resize_pkt.serialize(&r_buf);
     try writeAll(server_fd, r_ser);
+
+    // bug #298: a downstream pty that applies backpressure (e.g. mosh on a slow
+    // link) must not stall the whole client. stdout is made non-blocking and
+    // rendered frames are queued + drained on POLL.OUT instead of blocking in
+    // write(2). The server socket is also made non-blocking: a wedged server
+    // (busy rendering or logging) that stops reading its backlog must not block
+    // the client's small writes (keystrokes / redraws) — writeServer() drops
+    // the remainder on EAGAIN instead of freezing the client.
+    setNonBlocking(stdout_fd);
+    setNonBlocking(server_fd);
 
     var act: std.posix.Sigaction = .{
         .handler = .{ .handler = sigwinch_handler },

@@ -99,6 +99,7 @@ pub fn parseConfig(allocator: std.mem.Allocator, input: []const u8) Error!ParseR
         .directives = .empty,
         .errors = .empty,
     };
+    errdefer result.deinit(allocator);
 
     var lines = std.mem.tokenizeScalar(u8, input, '\n');
     while (lines.next()) |raw_line| {
@@ -213,6 +214,10 @@ fn parseSet(allocator: std.mem.Allocator, args: []const u8, result: *ParseResult
         flags.option = try allocator.dupe(u8, remaining);
         errdefer allocator.free(flags.option);
         flags.value = .{ .string = try allocator.dupe(u8, "") };
+    }
+    errdefer {
+        allocator.free(flags.option);
+        if (flags.value == .string) allocator.free(flags.value.string);
     }
 
     try result.directives.append(allocator, Directive{ .set = flags });

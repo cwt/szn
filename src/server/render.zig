@@ -94,20 +94,11 @@ pub const Display = struct {
     }
 
     pub fn enterAltScreen(self: Display) Error!void {
-        try self.writeBytes("\x1b[?1049h");
-        try self.writeBytes("\x1b[>1u");
-        try self.writeBytes("\x1b[?1000h\x1b[?1002h\x1b[?1006h");
-        try self.writeBytes("\x1b[?25l");
-        try self.writeBytes("\x1b[?7l");
+        try self.writeBytes("\x1b[?1049h\x1b[>1u\x1b[?1000h\x1b[?1002h\x1b[?1006h\x1b[?25l\x1b[?7l");
     }
 
     pub fn exitAltScreen(self: Display) Error!void {
-        try self.writeBytes("\x1b[?7h");
-        try self.writeBytes("\x1b[<1u");
-        try self.writeBytes("\x1b[?1000l\x1b[?1002l\x1b[?1006l");
-        try self.writeBytes("\x1b[?2004l");
-        try self.writeBytes("\x1b[?25h");
-        try self.writeBytes("\x1b[?1049l");
+        try self.writeBytes("\x1b[?7h\x1b[<1u\x1b[?1000l\x1b[?1002l\x1b[?1006l\x1b[?2004l\x1b[?25h\x1b[?1049l");
     }
 
     pub fn renderAll(
@@ -205,7 +196,7 @@ pub const Display = struct {
             for (0..pb.h) |y| {
                 if (pb.y + y >= merged_h) break;
 
-                const hist_len = pane_grid.history.items.len - pane_grid.history_start;
+                const hist_len = pane_grid.historyLen();
                 const combined_idx = (@as(isize, @intCast(hist_len)) - @as(isize, @intCast(if (pb.pane.screen.copy_mode) |cm| cm.scroll_offset else 0))) + @as(isize, @intCast(y));
                 const cells = if (combined_idx < 0)
                     @as(?*const std.ArrayList(Cell), null)
@@ -478,7 +469,7 @@ pub const Display = struct {
         try self.writeBytes("\x1b[m");
 
         for (0..h) |y| {
-            const hist_len = screen.grid.history.items.len - screen.grid.history_start;
+            const hist_len = screen.grid.historyLen();
             const combined_idx = (@as(isize, @intCast(hist_len)) - @as(isize, @intCast(if (screen.copy_mode) |cm| cm.scroll_offset else 0))) + @as(isize, @intCast(y));
             const cells = if (combined_idx < 0)
                 @as(?*const std.ArrayList(Cell), null)

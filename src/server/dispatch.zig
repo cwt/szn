@@ -26,7 +26,12 @@ pub const DispatchResult = struct {
 pub fn dispatchCommand(allocator: std.mem.Allocator, server: *Server, cmd_line: []const u8) DispatchResult {
     // Log command line
     var cmd_log_buf: [256]u8 = undefined;
-    const log_msg = std.fmt.bufPrint(&cmd_log_buf, "command: {s}", .{cmd_line}) catch "command: unknown";
+    const prefix = "command: ";
+    @memcpy(cmd_log_buf[0..prefix.len], prefix);
+    const max_payload = cmd_log_buf.len - prefix.len;
+    const copy_len = @min(cmd_line.len, max_payload);
+    @memcpy(cmd_log_buf[prefix.len .. prefix.len + copy_len], cmd_line[0..copy_len]);
+    const log_msg = cmd_log_buf[0 .. prefix.len + copy_len];
     server.addLogMessage(log_msg) catch |err| std.log.warn("addLogMessage failed: {any}", .{err});
 
     server.response_buf.clearRetainingCapacity();

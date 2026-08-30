@@ -195,9 +195,7 @@ pub const InputParser = struct {
         switch (byte) {
             0x00...0x06, 0x0B, 0x0C, 0x0E...0x1A, 0x1C...0x1F => {},
             0x07 => {},
-            0x08 => {
-                if (self.screen.cursor.x > 0) self.screen.cursor.x -= 1;
-            },
+            0x08 => try self.screen.writeChar(0x08),
             0x09 => try self.screen.writeChar('\t'),
             0x0A => try self.screen.writeChar('\n'),
             0x0D => try self.screen.writeChar('\r'),
@@ -577,7 +575,7 @@ pub const InputParser = struct {
         // Bug #298 diagnostic: log what triggered the sixel path so a false
         // positive from a non-sixel DCS (e.g. opencode) can be identified.
         const preview_len = @min(self.dcs_buf.items.len, 40);
-        std.log.info("sixel DCS captured: len={d} bytes, preview={s}", .{ self.dcs_buf.items.len, self.dcs_buf.items[0..preview_len] });
+        std.log.debug("sixel DCS captured: len={d} bytes, preview={s}", .{ self.dcs_buf.items.len, self.dcs_buf.items[0..preview_len] });
 
         var px_width: u32 = 0;
         var px_height: u32 = 0;

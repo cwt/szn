@@ -86,14 +86,24 @@ pub const ChooseMode = struct {
             const item = self.items.items[item_idx];
             const prefix = if (item_idx == self.cursor) "> " else "  ";
             var col: u32 = 0;
-            for (prefix, 0..) |ch, ci| {
+            for (prefix) |ch| {
                 const a: grid_mod.Attr = if (item_idx == self.cursor) .{ .bold = true, .reverse = true } else .{};
-                grid.setCell(col + @as(u32, @intCast(ci)), start_y + i, .{ .char = ch, .attr = a, .fg = .default_(), .bg = .default_() });
+                grid.setCell(col, start_y + i, .{ .char = ch, .attr = a, .fg = .default_(), .bg = .default_() });
+                col += 1;
             }
-            col += @intCast(prefix.len);
-            for (item.name, 0..) |ch, ci| {
-                const a: grid_mod.Attr = if (item_idx == self.cursor) .{ .reverse = true } else .{};
-                grid.setCell(col + @as(u32, @intCast(ci)), start_y + i, .{ .char = ch, .attr = a, .fg = .default_(), .bg = .default_() });
+            if (std.unicode.Utf8View.init(item.name)) |u8v| {
+                var it = u8v.iterator();
+                while (it.nextCodepoint()) |cp| {
+                    const a: grid_mod.Attr = if (item_idx == self.cursor) .{ .reverse = true } else .{};
+                    grid.setCell(col, start_y + i, .{ .char = cp, .attr = a, .fg = .default_(), .bg = .default_() });
+                    col += 1;
+                }
+            } else |_| {
+                for (item.name) |ch| {
+                    const a: grid_mod.Attr = if (item_idx == self.cursor) .{ .reverse = true } else .{};
+                    grid.setCell(col, start_y + i, .{ .char = ch, .attr = a, .fg = .default_(), .bg = .default_() });
+                    col += 1;
+                }
             }
         }
     }
@@ -109,6 +119,7 @@ pub const ChooseMode = struct {
                 if (self.cursor < self.items.items.len) {
                     return .selected;
                 }
+                self.active = false;
                 return .cancelled;
             }
         }
@@ -131,6 +142,7 @@ pub const ChooseMode = struct {
                 if (self.cursor < self.items.items.len) {
                     return .selected;
                 }
+                self.active = false;
                 return .cancelled;
             }
         }

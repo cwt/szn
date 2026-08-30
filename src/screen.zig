@@ -1006,6 +1006,10 @@ pub const Screen = struct {
                     line.dirty = true;
                 }
             },
+            3 => {
+                // CSI 3J: Clear scrollback / saved lines (xterm extension)
+                self.grid.clearHistory();
+            },
             else => {},
         }
 
@@ -1412,6 +1416,17 @@ pub const Screen = struct {
         self.extkeys = 0;
         self.kitty_kbd_flags = 0;
         self.kitty_kbd_stack_len = 0;
+        if (self.pending_sixel) |p| {
+            p.deinit(self.allocator);
+            self.pending_sixel = null;
+        }
+        if (self.alt_grid) |*g| {
+            g.deinit();
+            self.alt_grid = null;
+        }
+        self.alt_cursor = .{};
+        self.alt_saved_cursor = null;
+        self.copy_mode = null;
         self.grid.clear();
         // bug #225: zero all refcounts before clearing images.
         @memset(&self.sixel_refcounts, 0);
@@ -3041,4 +3056,31 @@ test "forceReflow and resize preserve and clamp alt_cursor — bug #420" {
     try screen.forceReflow();
     try testing.expect(screen.alt_cursor.x < 40);
     try testing.expect(screen.alt_cursor.y < 15);
+}
+
+test "eraseDisplay(3) clears scrollback history — bug #426" {
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+
+    // Scroll up to create history
+    try screen.scrollUp(5);
+    try testing.expect(screen.grid.historyLen() > 0);
+
+    // CSI 3J clears history
+    screen.eraseDisplay(3);
+    try testing.expectEqual(@as(usize, 0), screen.grid.historyLen());
+}
+
+test "resetHard cleans up alt_grid and copy_mode — bug #426" {
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+
+    try screen.useAltScreen(true);
+    screen.copy_mode = @import("mode_copy.zig").CopyMode.init(.vi);
+    try testing.expect(screen.alt_grid != null);
+    try testing.expect(screen.copy_mode != null);
+
+    try screen.resetHard();
+    try testing.expect(screen.alt_grid == null);
+    try testing.expect(screen.copy_mode == null);
 }
