@@ -179,12 +179,12 @@ pub const Grid = struct {
         return copy;
     }
 
-    /// Copy visible lines and cells from `source` into `self` in-place without allocating (bug #359).
+    /// Copy visible lines and cells from `source` into `self` in-place without allocating (bug #359, #421).
     pub fn copyVisibleFrom(self: *Grid, source: *const Grid) void {
-        const rows = @min(self.lines.items.len, source.lines.items.len);
+        const rows = @min(self.height, source.height);
         for (0..rows) |r| {
-            const dest_line = &self.lines.items[r];
-            const src_line = &source.lines.items[r];
+            const dest_line = self.getLineMut(@intCast(r));
+            const src_line = source.getLine(@intCast(r));
             const copy_cells = @min(dest_line.cells.items.len, src_line.cells.items.len);
             @memcpy(dest_line.cells.items[0..copy_cells], src_line.cells.items[0..copy_cells]);
             dest_line.dirty = true;
@@ -1987,4 +1987,23 @@ test "Grid.copyVisibleFrom updates visible cells in-place without allocations â€
     try testing.expectEqual(@as(u21, 'C'), dst.lines.items[1].cells.items[0].char);
     try testing.expect(dst.lines.items[0].dirty);
     try testing.expect(dst.lines.items[1].dirty);
+}
+
+test "Grid.copyVisibleFrom copies logical rows when start_index differs â€” bug #421" {
+    var src = try Grid.init(testing.allocator, 10, 2);
+    defer src.deinit();
+    src.writeChar(0, 0, '1');
+    src.writeChar(0, 1, '2');
+
+    // Scroll up so start_index rotates (logical row 0 is '2', logical row 1 is empty)
+    _ = try src.scrollUp();
+    src.writeChar(0, 1, '3'); // logical row 1 is '3'
+
+    var dst = try Grid.init(testing.allocator, 10, 2);
+    defer dst.deinit();
+
+    dst.copyVisibleFrom(&src);
+
+    try testing.expectEqual(@as(u21, '2'), dst.getLine(0).cells.items[0].char);
+    try testing.expectEqual(@as(u21, '3'), dst.getLine(1).cells.items[0].char);
 }
