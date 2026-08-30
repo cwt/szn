@@ -243,7 +243,7 @@ pub const Pty = struct {
         if (self.pid > 0) {
             var status: c_int = 0;
             const rc = waitpid(self.pid, &status, WNOHANG);
-            if (rc > 0) self.pid = -1;
+            if (rc > 0 or (rc == -1 and std.c.errno(rc) == .CHILD)) self.pid = -1;
         }
     }
 
@@ -254,9 +254,13 @@ pub const Pty = struct {
         if (self.pid > 0) {
             _ = std.c.kill(self.pid, std.c.SIG.KILL);
         }
-        _ = close(self.master);
+        if (self.master >= 0) {
+            _ = close(self.master);
+            self.master = -1;
+        }
         if (self.slave >= 0) {
             _ = close(self.slave);
+            self.slave = -1;
         }
         self.reap();
     }

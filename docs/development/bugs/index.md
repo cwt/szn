@@ -34,10 +34,10 @@ Sorted by number. See individual bug files for details.
 
 | Status | Count |
 |---|---:|
-| Fixed / Resolved | 389 |
+| Fixed / Resolved | 390 |
 | False Positive | 18 |
 | Open (deferred architectural backlog: #360, #361) | 2 |
-| Open (filed by the 2026-08-30 audit sweep: #395–#427) | 16 |
+| Open (filed by the 2026-08-30 audit sweep: #395–#427) | 15 |
 | **Total** | **425** |
 
 ## All Bugs
@@ -452,7 +452,7 @@ Sorted by number. See individual bug files for details.
 | [408](408.md) | Prompt-path kill-session never stops the server with zero sessions (IPC path does) | MEDIUM | Fixed |
 | [409](409.md) | Keystrokes dropped: search-mode break discards packet remainder; client sd_buf too small → serialize sends nothing (#299 follow-up) | MEDIUM | Fixed |
 | [410](410.md) | BufferList.delete swapRemove breaks the newest-at-0/oldest-at-last contract of get/evict; generateName empty-name wrap | MEDIUM | Fixed |
-| [411](411.md) | reapZombies leaves stale Pty.pid → deinit SIGKILLs a recycled pid; Pty.deinit double-close (master not nulled) | MEDIUM | Open |
+| [411](411.md) | reapZombies leaves stale Pty.pid → deinit SIGKILLs a recycled pid; Pty.deinit double-close (master not nulled) | MEDIUM | Fixed |
 | [412](412.md) | Peer resize: unbounded u32 dims, partial-failure geometry desync, status row subtracted when status off | MEDIUM | Open |
 | [413](413.md) | cmdJoinPane error path strands panes after ownership moved (violates the #287 invariant) | MEDIUM | Open |
 | [414](414.md) | TemplateCache (ptr,len) identity aliases reused arena blocks → stale compiled ops, silently wrong expansions | MEDIUM | Open |

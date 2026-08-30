@@ -409,7 +409,7 @@ pub const Server = struct {
         try self.loop.addFd(self.allocator, fd, @as(i16, @intCast(std.posix.POLL.IN)), @ptrCast(self));
     }
 
-    pub fn reapZombies() void {
+    pub fn reapZombies(self: *Server) void {
         if (sigchldFlag.load(.seq_cst)) {
             sigchldFlag.store(false, .seq_cst);
             var status: c_int = 0;
@@ -420,6 +420,17 @@ pub const Server = struct {
                     break;
                 }
                 std.log.info("reapZombies reaped pid {d} with status {d}", .{ pid, status });
+                for (self.sessions.items) |s| {
+                    for (s.windows.items) |w| {
+                        for (w.panes.items) |p| {
+                            if (p.pty) |*pty| {
+                                if (pty.pid == pid) {
+                                    pty.pid = -1;
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -594,7 +605,7 @@ pub const Server = struct {
     }
 
     pub fn run(self: *Server, timeout_ms: i32) ServerError!void {
-        reapZombies();
+        self.reapZombies();
         self.tickAutoscroll();
         self.tickStatusInterval();
         var poll_timeout: i32 = if (self.mouse_autoscroll_pane != null) @min(timeout_ms, 50) else timeout_ms;
@@ -839,9 +850,14 @@ pub const Server = struct {
             // shell still holds the slave open.  Check whether the shell
             // process is actually dead before declaring exit.
             var status: c_int = 0;
-            const shell_alive = if (pane.pty) |pty| blk: {
+            const shell_alive = if (pane.pty) |*pty| blk: {
+                if (pty.pid <= 0) break :blk false;
                 const rc = c.waitpid(pty.pid, &status, WNOHANG);
                 std.log.info("HUP waitpid(pid={d}) returned {d}, status={d}", .{ pty.pid, rc, status });
+                if (rc > 0 or (rc == -1 and std.c.errno(rc) == .CHILD)) {
+                    pty.pid = -1;
+                    break :blk false;
+                }
                 break :blk rc == 0;
             } else false;
             if (!shell_alive) {
