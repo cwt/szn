@@ -34,10 +34,10 @@ Sorted by number. See individual bug files for details.
 
 | Status | Count |
 |---|---:|
-| Fixed / Resolved | 400 |
+| Fixed / Resolved | 401 |
 | False Positive | 18 |
 | Open (deferred architectural backlog: #360, #361) | 2 |
-| Open (filed by the 2026-08-30 audit sweep: #395–#427) | 5 |
+| Open (filed by the 2026-08-30 audit sweep: #395–#427) | 4 |
 | **Total** | **425** |
 
 ## All Bugs
@@ -464,7 +464,7 @@ Sorted by number. See individual bug files for details.
 | [420](420.md) | forceReflow feeds the main cursor into the alt-grid reflow and discards the clamped result | LOW | Fixed |
 | [421](421.md) | Grid.copyVisibleFrom indexes both rings physically — clock-mode background output desyncs the overlay | LOW | Fixed |
 | [422](422.md) | DECSET 1003 aliased onto the 1000 flag; mode.mouse_utf8 dead field | LOW | Fixed |
-| [423](423.md) | Resource-bound cluster: config source recursion, no client cap, 16 MiB parser vs 8 MiB screen sixel cap | LOW | Open |
+| [423](423.md) | Resource-bound cluster: config source recursion, no client cap, 16 MiB parser vs 8 MiB screen sixel cap | LOW | Fixed |
 | [424](424.md) | Dead code inventory round 2: stale Term/FdWriter, never-entered parser states, write-only fields, serializer suite, server.zig.orig | LOW | Open |
 | [425](425.md) | Performance cluster 2: defeated status cache, per-frame recompiles, per-keystroke scrollback rebuild, runtime binding scans vs comptime mandate | LOW | Open |
 | [426](426.md) | Robustness residuals cluster: 2 unguarded history subtractions, OOM errdefer ordering, socket/TMP, misc input/parse hardening | LOW | Open |

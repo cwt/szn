@@ -198,6 +198,7 @@ pub const Server = struct {
     /// empty selection and exits copy-mode (bug #379).
     copy_click_x: ?u32 = null,
     copy_click_y: ?u32 = null,
+    config_load_depth: u32 = 0,
     mouse_press_pane: ?*Pane = null,
     mouse_autoscroll_dir: ?enum { up, down } = null,
     mouse_autoscroll_pane: ?*Pane = null,
@@ -2362,6 +2363,12 @@ pub const Server = struct {
     }
 
     fn handleAccept(self: *Server) ServerError!void {
+        const MAX_CLIENTS: usize = 64;
+        if (self.client_fds.items.len >= MAX_CLIENTS) {
+            const fd = socket_mod.acceptClient(self.listener_fd.?) catch return;
+            _ = c.close(fd);
+            return;
+        }
         const fd = try socket_mod.acceptClient(self.listener_fd.?);
         try self.client_fds.append(self.allocator, fd);
         errdefer {
@@ -3395,6 +3402,13 @@ pub const Server = struct {
     }
 
     pub fn loadConfigFile(self: *Server, path: []const u8) ServerError!void {
+        if (self.config_load_depth >= 16) {
+            std.log.warn("loadConfigFile: maximum recursion depth exceeded for {s}", .{path});
+            return;
+        }
+        self.config_load_depth += 1;
+        defer self.config_load_depth -= 1;
+
         var resolved_path: []const u8 = path;
         var free_path = false;
         if (std.mem.startsWith(u8, path, "~/")) {
@@ -5427,4 +5441,13 @@ test "processInput does not drop keystrokes trailing search mode entry — bug #
     // Command mode should be active and command_buf should contain "foo".
     try testing.expect(server.command_mode);
     try testing.expectEqualStrings("foo", server.command_buf.items);
+}
+
+test "loadConfigFile stops recursion when depth cap is reached — bug #423" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    server.config_load_depth = 16;
+    try server.loadConfigFile("/nonexistent/file.conf");
+    try testing.expectEqual(@as(u32, 16), server.config_load_depth);
 }

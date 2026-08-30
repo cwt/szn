@@ -504,13 +504,15 @@ pub const InputParser = struct {
             try self.dispatchDcsSixel();
             return;
         }
-        // Cap raw sixel data at 16 MiB to prevent runaway memory use.
-        if (self.dcs_buf.items.len < 16 * 1024 * 1024) {
+        // Cap raw sixel data at MAX_SIXEL_DATA to prevent runaway memory use.
+        const max_sixel = @import("screen.zig").MAX_SIXEL_DATA;
+        if (self.dcs_buf.items.len < max_sixel) {
             try self.dcs_buf.append(self.screen.allocator, byte);
         } else {
-            // Buffer full: discard the rest of the payload until ST.
+            // Buffer full: discard the rest of the payload until ST and reclaim memory.
             self.dcs_is_sixel = false;
-            self.dcs_buf.clearRetainingCapacity();
+            self.dcs_buf.deinit(self.screen.allocator);
+            self.dcs_buf = .empty;
             self.state = .dcs_discard;
         }
     }
@@ -523,15 +525,16 @@ pub const InputParser = struct {
             // ESC ESC: the first ESC was data, this one is the new ST
             // candidate — stay pending so the following '\' terminates
             // instead of being swallowed as payload (bug #388).
-        } else if (self.dcs_buf.items.len < 16 * 1024 * 1024) {
+        } else if (self.dcs_buf.items.len < @import("screen.zig").MAX_SIXEL_DATA) {
             // Not a ST; the ESC was part of data. Append ESC and this byte.
             try self.dcs_buf.append(self.screen.allocator, 0x1B);
             try self.dcs_buf.append(self.screen.allocator, byte);
             self.state = .dcs_sixel;
         } else {
-            // Buffer full: discard the rest of the payload until ST.
+            // Buffer full: discard the rest of the payload until ST and reclaim memory.
             self.dcs_is_sixel = false;
-            self.dcs_buf.clearRetainingCapacity();
+            self.dcs_buf.deinit(self.screen.allocator);
+            self.dcs_buf = .empty;
             self.state = .dcs_discard;
         }
     }
@@ -619,7 +622,12 @@ pub const InputParser = struct {
 
         // Transfer buffer ownership to Screen.
         const owned = try self.screen.allocator.dupe(u8, self.dcs_buf.items);
-        self.dcs_buf.clearRetainingCapacity();
+        if (self.dcs_buf.capacity > 64 * 1024) {
+            self.dcs_buf.deinit(self.screen.allocator);
+            self.dcs_buf = .empty;
+        } else {
+            self.dcs_buf.clearRetainingCapacity();
+        }
         try self.screen.addSixelImage(owned, px_width, px_height);
     }
 
@@ -973,7 +981,12 @@ pub const InputParser = struct {
 
     fn dispatchOsc(self: *InputParser) Error!void {
         defer {
-            self.osc_buf.clearRetainingCapacity();
+            if (self.osc_buf.capacity > 64 * 1024) {
+                self.osc_buf.deinit(self.screen.allocator);
+                self.osc_buf = .empty;
+            } else {
+                self.osc_buf.clearRetainingCapacity();
+            }
         }
         const osc_len = self.osc_buf.items.len;
         // Find first semicolon to separate command
@@ -2148,7 +2161,7 @@ test "non-sixel DCS sequence is silently discarded" {
     try testing.expectEqual(@as(usize, 0), count);
 }
 
-test "sixel 16 MiB cap transitions to discard and recovers on ST" {
+test "sixel MAX_SIXEL_DATA cap transitions to discard and frees memory — bug #423" {
     var screen = try Screen.init(testing.allocator, 80, 24);
     defer screen.deinit();
     var parser = InputParser.init(&screen);
@@ -2157,23 +2170,22 @@ test "sixel 16 MiB cap transitions to discard and recovers on ST" {
     // Enter sixel state
     try parser.feed("\x1bPq");
 
-    // Fill buffer past the 16 MiB cap.  The cap check is
-    // `items.len < 16 * 1024 * 1024`, so we need exactly that many
-    // bytes before the next one triggers the transition.
+    // Fill buffer past the MAX_SIXEL_DATA (8 MiB) cap.
     const chunk_size = 64 * 1024;
     const chunk = try testing.allocator.alloc(u8, chunk_size);
     defer testing.allocator.free(chunk);
     @memset(chunk, '#');
 
-    const num_chunks = (16 * 1024 * 1024) / chunk_size; // 256
+    const num_chunks = (8 * 1024 * 1024) / chunk_size; // 128
     for (0..num_chunks) |_| {
         try parser.feed(chunk);
     }
 
-    // Buffer is now at exactly 16 MiB. One more byte triggers the cap.
-    // The parser should transition to .dcs_discard.
+    // Buffer is now at exactly 8 MiB. One more byte triggers the cap.
+    // The parser should transition to .dcs_discard and free dcs_buf capacity.
     try parser.feed(&[_]u8{'#'});
     try testing.expectEqual(InputParser.State.dcs_discard, parser.state);
+    try testing.expectEqual(@as(usize, 0), parser.dcs_buf.capacity);
 
     // Send ST — should return to ground.
     try parser.feed("\x1b\\");
