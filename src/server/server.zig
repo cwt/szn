@@ -19,6 +19,7 @@ const Session = session_mod.Session;
 const window_mod = @import("../window.zig");
 const Window = window_mod.Window;
 const Pane = window_mod.Pane;
+const Cell = @import("../grid.zig").Cell;
 const loop_mod = @import("loop.zig");
 const Loop = loop_mod.Loop;
 const socket_mod = @import("socket.zig");
@@ -3111,6 +3112,10 @@ pub const Server = struct {
                 status_enabled,
             ) catch |err| {
                 std.log.warn("render error: {any}", .{err});
+                all_flushed = false;
+                if (dc.last_cells.items.len > 0) {
+                    @memset(dc.last_cells.items, Cell.empty());
+                }
                 continue;
             };
 
@@ -3123,8 +3128,20 @@ pub const Server = struct {
             var hdr: [5]u8 = undefined;
             pkt.header.encode(&hdr);
             dc.out_buf.clearRetainingCapacity();
-            dc.out_buf.appendSlice(self.allocator, hdr[0..]) catch continue;
-            dc.out_buf.appendSlice(self.allocator, self.render_buf.items) catch continue;
+            dc.out_buf.appendSlice(self.allocator, hdr[0..]) catch {
+                all_flushed = false;
+                if (dc.last_cells.items.len > 0) {
+                    @memset(dc.last_cells.items, Cell.empty());
+                }
+                continue;
+            };
+            dc.out_buf.appendSlice(self.allocator, self.render_buf.items) catch {
+                all_flushed = false;
+                if (dc.last_cells.items.len > 0) {
+                    @memset(dc.last_cells.items, Cell.empty());
+                }
+                continue;
+            };
 
             if (!self.flushDisplayClient(dc)) all_flushed = false;
         }
