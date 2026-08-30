@@ -34,10 +34,10 @@ Sorted by number. See individual bug files for details.
 
 | Status | Count |
 |---|---:|
-| Fixed / Resolved | 376 |
+| Fixed / Resolved | 377 |
 | False Positive | 18 |
 | Open (deferred architectural backlog: #360, #361) | 2 |
-| Open (filed by the 2026-08-30 audit sweep: #395–#427) | 29 |
+| Open (filed by the 2026-08-30 audit sweep: #395–#427) | 28 |
 | **Total** | **425** |
 
 ## All Bugs
@@ -440,7 +440,7 @@ Sorted by number. See individual bug files for details.
 | [396](396.md) | border_format_cached expanded with the session arena but freed with the server GPA on cache invalidation | CRITICAL | Fixed |
 | [397](397.md) | Format substitute with an empty pattern aborts the server (replaceOwned panics on a zero-length needle; config/prompt DoS) | CRITICAL | Fixed |
 | [398](398.md) | Window.init/addPane double-destroy the Pane when Pane.init fails (#239 incomplete fix) | HIGH | Fixed |
-| [399](399.md) | addSixelImage errdefer frees dcs_bytes after placeSixelImage stored it in the slot (#269 ownership inversion) | HIGH | Open |
+| [399](399.md) | addSixelImage errdefer frees dcs_bytes after placeSixelImage stored it in the slot (#269 ownership inversion) | HIGH | Fixed |
 | [400](400.md) | Stale PTY poll event removeFd(ev.fd) unregisters a recycled fd's NEW owner (frozen pane; POLLNVAL guard missing) | HIGH | Open |
 | [401](401.md) | Render errors permanently lose updates: last_cells committed pre-emit, dirty cleared despite the error | HIGH | Open |
 | [402](402.md) | Display out-queue atomicity: split header/body enqueue, frame build clears queued replies, detach packet freed pre-flush | HIGH | Open |

@@ -203,9 +203,7 @@ pub const Screen = struct {
         self.pending_sixel = null;
         if (!self.cell_size_known) return;
         self.placeSixelImage(pending.data, pending.px_width, pending.px_height) catch |e| {
-            // Ownership of `data` stays with the slot if placement assigned it
-            // before failing; otherwise it is lost here. Either way nothing is
-            // double-freed.
+            self.allocator.free(pending.data);
             std.log.warn("failed to replay buffered sixel: {any}", .{e});
         };
     }
@@ -348,6 +346,10 @@ pub const Screen = struct {
             .anchor_row = @intCast(self.cursor.y),
             .alt_screen = self.mode.alt_screen, // bug #219: tag so shiftSixelAnchors filters correctly
         };
+        errdefer {
+            self.sixel_images[slot] = null;
+            self.sixel_refcounts[slot] = 0;
+        }
 
         const cell_rows = if (px_height > 0) (px_height + self.cell_px_height - 1) / self.cell_px_height else 1;
         const cell_cols = if (px_width > 0) (px_width + self.cell_px_width - 1) / self.cell_px_width else 1;
