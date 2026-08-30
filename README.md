@@ -156,6 +156,19 @@ set -g client-log-file /path/to/custom/szn-client.log
 `~/.szn/szn-client.log`. (The old `log-file` name is still accepted as an
 alias for `server-log-file`.) Both are independent and disabled unless set.
 
+### Log level
+
+Once logging is enabled, the default level is **`info`** (warnings, errors, and
+key lifecycle events only). To change it, set the `SZN_LOG` environment variable
+before starting szn:
+
+```
+SZN_LOG=debug szn      # verbose — all debug lines
+SZN_LOG=info  szn      # default
+SZN_LOG=warn  szn      # warnings and errors only
+SZN_LOG=err   szn      # errors only
+```
+
 ## License
 
 [MIT](LICENSE)
