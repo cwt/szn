@@ -88,32 +88,50 @@ pub fn dispatchCommand(allocator: std.mem.Allocator, server: *Server, cmd_line: 
     };
 }
 
+const c_usleep = struct {
+    extern "c" fn usleep(usec: c_uint) c_int;
+}.usleep;
+
 pub fn sendResponse(fd: i32, result: *const DispatchResult) Error!void {
     const pkt = Packet.make(result.response_type, result.data);
     var hdr_buf: [5]u8 = undefined;
     pkt.header.encode(&hdr_buf);
 
-    // Write header — retry partial writes
+    // Write header — retry partial writes up to bounded attempts
     var hdr_remaining: []const u8 = hdr_buf[0..];
+    var retries: usize = 0;
     while (hdr_remaining.len > 0) {
         const n = std.c.write(fd, hdr_remaining.ptr, hdr_remaining.len);
         if (n < 0) {
             const err = std.c.errno(n);
-            if (err == .INTR or err == .AGAIN) continue;
+            if (err == .INTR) continue;
+            if (err == .AGAIN) {
+                retries += 1;
+                if (retries > 50) return error.WriteFailed;
+                _ = c_usleep(100);
+                continue;
+            }
             return error.WriteFailed;
         }
         if (n == 0) return error.ConnectionClosed;
         hdr_remaining = hdr_remaining[@intCast(n)..];
     }
 
-    // Write data body — retry partial writes
+    // Write data body — retry partial writes up to bounded attempts
     if (result.data.len > 0) {
         var body_remaining: []const u8 = result.data;
+        retries = 0;
         while (body_remaining.len > 0) {
             const n = std.c.write(fd, body_remaining.ptr, body_remaining.len);
             if (n < 0) {
                 const err = std.c.errno(n);
-                if (err == .INTR or err == .AGAIN) continue;
+                if (err == .INTR) continue;
+                if (err == .AGAIN) {
+                    retries += 1;
+                    if (retries > 50) return error.WriteFailed;
+                    _ = c_usleep(100);
+                    continue;
+                }
                 return error.WriteFailed;
             }
             if (n == 0) return error.ConnectionClosed;

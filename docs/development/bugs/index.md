@@ -34,10 +34,10 @@ Sorted by number. See individual bug files for details.
 
 | Status | Count |
 |---|---:|
-| Fixed / Resolved | 381 |
+| Fixed / Resolved | 382 |
 | False Positive | 18 |
 | Open (deferred architectural backlog: #360, #361) | 2 |
-| Open (filed by the 2026-08-30 audit sweep: #395–#427) | 24 |
+| Open (filed by the 2026-08-30 audit sweep: #395–#427) | 23 |
 | **Total** | **425** |
 
 ## All Bugs
@@ -444,7 +444,7 @@ Sorted by number. See individual bug files for details.
 | [400](400.md) | Stale PTY poll event removeFd(ev.fd) unregisters a recycled fd's NEW owner (frozen pane; POLLNVAL guard missing) | HIGH | Fixed |
 | [401](401.md) | Render errors permanently lose updates: last_cells committed pre-emit, dirty cleared despite the error | HIGH | Fixed |
 | [402](402.md) | Display out-queue atomicity: split header/body enqueue, frame build clears queued replies, detach packet freed pre-flush | HIGH | Fixed |
-| [403](403.md) | sendResponse busy-spins forever on EAGAIN from an O_NONBLOCK display fd — one stalled client freezes the server (#322 regression) | HIGH | Open |
+| [403](403.md) | sendResponse busy-spins forever on EAGAIN from an O_NONBLOCK display fd — one stalled client freezes the server (#322 regression) | HIGH | Fixed |
 | [404](404.md) | isPaneValid regression: #362 fix reintroduced the O(N·M·P) walk #305 removed, run per PTY event with extra scans | MEDIUM | Open |
 | [405](405.md) | Resize reflow clones grid+history+scratch per width change from the session arena — nothing reclaimed (#360/#361 class) | MEDIUM | Open |
 | [406](406.md) | Sixel accounting cluster: ref_inc counts unplaced markers, overwrite without decrement, lost eviction hooks, stale eraseDisplay geometry, id-masking refcheck | MEDIUM | Open |
