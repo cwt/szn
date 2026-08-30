@@ -18,7 +18,7 @@ pub const Error = server_mod.ServerError || client_mod.Error || connect.Error ||
 
 pub const std_options: std.Options = .{
     .logFn = log_mod.logFn,
-    .log_level = .debug,
+    .log_level = .info,
 };
 
 extern "c" fn tcflush(fd: c_int, queue_selector: c_int) c_int;
@@ -756,7 +756,7 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
         const diag_now = currentMillis();
         if (diag_now - last_diag_ms > 2000) {
             last_diag_ms = diag_now;
-            std.log.info("client: out_buf={d} backpressure={any} awaiting_cell_size={any}", .{ out_buf.items.len, congested, awaiting_cell_size });
+            std.log.debug("client: out_buf={d} backpressure={any} awaiting_cell_size={any}", .{ out_buf.items.len, congested, awaiting_cell_size });
         }
         if (congested) {
             pollfds[0] = .{ .fd = -1, .events = 0, .revents = 0 };
@@ -942,7 +942,7 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
                         recv_frames += 1;
                         recv_bytes += @as(u64, @intCast(data.len));
                         if (recv_frames % 200 == 0) {
-                            std.log.info("client received {d} frames / {d} bytes from server", .{ recv_frames, recv_bytes });
+                            std.log.debug("client received {d} frames / {d} bytes from server", .{ recv_frames, recv_bytes });
                         }
                         // Never block on a full downstream pty. Queue the frame
                         // and flush; the poll loop drains on POLL.OUT. If the
@@ -988,7 +988,7 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
                     },
                 }
                 if (pkt_total % 200 == 0) {
-                    std.log.info("client processed {d} pkts (output={d} cell_size={d} detach={d} other={d})", .{ pkt_total, pkt_output, pkt_cellsize, pkt_detach, pkt_other });
+                    std.log.debug("client processed {d} pkts (output={d} cell_size={d} detach={d} other={d})", .{ pkt_total, pkt_output, pkt_cellsize, pkt_detach, pkt_other });
                 }
 
                 read_pos += pkt_len;

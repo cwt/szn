@@ -2773,7 +2773,7 @@ pub const Server = struct {
         self.rendered_frames += 1;
         self.rendered_bytes += @as(u64, @intCast(data.len));
         if (self.rendered_frames % 200 == 0) {
-            std.log.info("server queued {d} frames / {d} bytes to clients", .{ self.rendered_frames, self.rendered_bytes });
+            std.log.debug("server queued {d} frames / {d} bytes to clients", .{ self.rendered_frames, self.rendered_bytes });
         }
         return true;
     }
@@ -2894,7 +2894,7 @@ pub const Server = struct {
         const iter_now = currentMillis();
         if (iter_now - self.last_iter_log_ms > 2000) {
             self.last_iter_log_ms = iter_now;
-            std.log.info("server loop: {d} iters/2s, behind={any}", .{ self.loop_iters, self.anyDisplayClientBehind() });
+            std.log.debug("server loop: {d} iters/2s, behind={any}", .{ self.loop_iters, self.anyDisplayClientBehind() });
             self.loop_iters = 0;
         }
         self.sendRequestCellSize();
@@ -3135,7 +3135,7 @@ pub const Server = struct {
 
             if (self.render_buf.items.len == 0) continue;
             if (self.render_buf.items.len >= 10) {
-                std.log.info("renderToDisplayClient: {d}-byte content frame", .{self.render_buf.items.len});
+                std.log.debug("renderToDisplayClient: {d}-byte content frame", .{self.render_buf.items.len});
             }
 
             const pkt = protocol.Packet.make(.output, self.render_buf.items);
