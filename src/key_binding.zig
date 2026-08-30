@@ -479,15 +479,15 @@ pub fn mapCommandToAction(cmd: []const u8) ?Action {
     if (std.mem.eql(u8, name, "new-window") or std.mem.eql(u8, name, "neww")) return .new_window;
 
     if (std.mem.eql(u8, name, "split-window") or std.mem.eql(u8, name, "splitw")) {
-        var is_h = false;
+        var is_v = false;
         while (it.next()) |token| {
             if (token.len > 1 and token[0] == '-') {
-                if (std.mem.indexOfScalar(u8, token[1..], 'h') != null) {
-                    is_h = true;
+                if (std.mem.indexOfScalar(u8, token[1..], 'v') != null) {
+                    is_v = true;
                 }
             }
         }
-        return if (is_h) .split_horizontal else .split_vertical;
+        return if (is_v) .split_vertical else .split_horizontal;
     }
 
     if (std.mem.eql(u8, name, "select-pane") or std.mem.eql(u8, name, "selectp")) {
@@ -540,7 +540,7 @@ test "mapCommandToAction with arguments" {
     try testing.expectEqual(Action.split_horizontal, mapCommandToAction("split-window -h"));
     try testing.expectEqual(Action.split_horizontal, mapCommandToAction("splitw -h -p 50"));
     try testing.expectEqual(Action.split_vertical, mapCommandToAction("splitw -v"));
-    try testing.expectEqual(Action.split_vertical, mapCommandToAction("split-window"));
+    try testing.expectEqual(Action.split_horizontal, mapCommandToAction("split-window"));
 
     // select-pane direction
     try testing.expectEqual(Action.select_pane_up, mapCommandToAction("select-pane -U"));

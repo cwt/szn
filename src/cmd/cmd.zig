@@ -2216,7 +2216,7 @@ test "config commands exec" {
 
         const k = try @import("../key.zig").parseKeyName("Escape");
         const act = server.dispatcher.root_table.lookup(k);
-        try testing.expectEqual(@import("../key_binding.zig").Action.split_vertical, act.?);
+        try testing.expectEqual(@import("../key_binding.zig").Action.split_horizontal, act.?);
     }
 }
 
