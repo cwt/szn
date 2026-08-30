@@ -105,6 +105,7 @@ pub const DisplayClient = struct {
     status_line: ?[]const u8 = null,
     status_line_width: u32 = 0,
     status_line_copy_mode: bool = false,
+    status_line_time: i64 = 0,
 
     pub fn deinit(self: *DisplayClient, allocator: std.mem.Allocator) void {
         self.last_cells.deinit(allocator);
@@ -149,6 +150,7 @@ pub const Server = struct {
     display_sx: u32 = 80,
     display_sy: u32 = 24,
     dirty: bool = true,
+    status_dirty: bool = true,
     message: ?[]const u8 = null,
     message_time: i64 = 0,
     /// Last wall-clock second the status bar was force-refreshed (clock).
@@ -439,6 +441,7 @@ pub const Server = struct {
         if (now - self.last_status_tick >= interval) {
             self.last_status_tick = now;
             self.dirty = true;
+            self.status_dirty = true;
         }
     }
 
@@ -655,32 +658,27 @@ pub const Server = struct {
                 }
             }
 
-            var is_client = false;
-            for (self.client_fds.items) |cfd| {
-                if (ev.fd == cfd) {
-                    is_client = true;
-                    if (ev.revents & @as(i16, @intCast(std.posix.POLL.OUT)) != 0) {
-                        // Socket became writable again — drain any queued
-                        // render backlog so a slow link can't stall the loop.
-                        for (self.display_clients.items) |*dc| {
-                            if (dc.fd == cfd) {
-                                _ = self.flushDisplayClient(dc);
-                                break;
-                            }
+            if (self.client_readers.contains(ev.fd)) {
+                if (ev.revents & @as(i16, @intCast(std.posix.POLL.OUT)) != 0) {
+                    // Socket became writable again — drain any queued
+                    // render backlog so a slow link can't stall the loop.
+                    for (self.display_clients.items) |*dc| {
+                        if (dc.fd == ev.fd) {
+                            _ = self.flushDisplayClient(dc);
+                            break;
                         }
                     }
-                    if (has_in) {
-                        self.handleClient(cfd) catch |err| {
-                            std.log.err("client {d} error: {any}", .{ cfd, err });
-                            self.removeClient(cfd);
-                        };
-                    } else if (has_hup or has_err) {
-                        self.removeClient(cfd);
-                    }
-                    break;
                 }
+                if (has_in) {
+                    self.handleClient(ev.fd) catch |err| {
+                        std.log.err("client {d} error: {any}", .{ ev.fd, err });
+                        self.removeClient(ev.fd);
+                    };
+                } else if (has_hup or has_err) {
+                    self.removeClient(ev.fd);
+                }
+                continue;
             }
-            if (is_client) continue;
         }
 
         // Keep POLLOUT armed for any pane whose keystroke queue is waiting on a
@@ -3067,9 +3065,10 @@ pub const Server = struct {
             defer if (status_line_new) |sl| self.allocator.free(sl);
             var status_line_slice: ?[]const u8 = null;
 
+            const current_sec = time(null);
             if (status_enabled and self.message == null and !self.command_mode) {
-                // Use cached status line when valid (bug #309).
-                const use_cache = !self.dirty and dc.status_line_width == dc.sx and dc.status_line != null and dc.status_line_copy_mode == pane_in_copy_mode;
+                // Use cached status line when valid (bug #309, #425).
+                const use_cache = !self.status_dirty and dc.status_line_width == dc.sx and dc.status_line != null and dc.status_line_copy_mode == pane_in_copy_mode and dc.status_line_time == current_sec;
                 if (use_cache) {
                     status_line_slice = dc.status_line;
                 } else {
@@ -3079,9 +3078,11 @@ pub const Server = struct {
                     };
                     if (status_line_new) |sl| {
                         if (dc.status_line) |prev| self.allocator.free(prev);
-                        dc.status_line = self.allocator.dupe(u8, sl) catch null;
+                        dc.status_line = sl;
+                        status_line_new = null;
                         dc.status_line_width = dc.sx;
                         dc.status_line_copy_mode = pane_in_copy_mode;
+                        dc.status_line_time = current_sec;
                         status_line_slice = sl;
                     }
                 }
@@ -3150,6 +3151,7 @@ pub const Server = struct {
 
         if (all_flushed) {
             self.dirty = false;
+            self.status_dirty = false;
             for (window.panes.items) |p| {
                 p.dirty = false;
             }
@@ -5443,4 +5445,28 @@ test "loadConfigFile stops recursion when depth cap is reached — bug #423" {
     server.config_load_depth = 16;
     try server.loadConfigFile("/nonexistent/file.conf");
     try testing.expectEqual(@as(u32, 16), server.config_load_depth);
+}
+
+test "render caches status line across frames without reallocation — bug #425" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    _ = try server.newSession("test-status-cache", 80, 24);
+
+    const dc = DisplayClient{ .fd = 100, .sx = 80, .sy = 24 };
+    try server.display_clients.append(server.allocator, dc);
+
+    server.renderToDisplayClient();
+
+    const cached_line = server.display_clients.items[0].status_line;
+    try testing.expect(cached_line != null);
+    const ptr1 = cached_line.?.ptr;
+
+    // Second render with status_dirty == false should reuse the same pointer without reallocating
+    server.dirty = true;
+    server.status_dirty = false;
+    server.renderToDisplayClient();
+
+    const ptr2 = server.display_clients.items[0].status_line.?.ptr;
+    try testing.expectEqual(ptr1, ptr2);
 }
