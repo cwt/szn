@@ -78,7 +78,9 @@ pub const Session = struct {
         var i: usize = 0;
         errdefer {
             for (self.windows.items[0..i]) |win| {
-                win.resize(old_width, old_height) catch {};
+                win.resize(old_width, old_height) catch |err| {
+                    std.log.err("rollback of window resize failed: {t}", .{err});
+                };
             }
             self.width = old_width;
             self.height = old_height;
