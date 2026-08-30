@@ -404,7 +404,7 @@ pub const Server = struct {
     pub fn listen(self: *Server) ServerError!void {
         const fd = try socket_mod.createListener();
         self.listener_fd = fd;
-        try self.loop.addFd(self.allocator, fd, @as(i16, @intCast(std.posix.POLL.IN)), @ptrCast(self));
+        try self.loop.addFd(self.allocator, fd, @as(i16, @intCast(std.posix.POLL.IN)), null);
     }
 
     pub fn reapZombies(self: *Server) void {
@@ -733,10 +733,10 @@ pub const Server = struct {
 
     fn handlePtyEvent(self: *Server, ev: loop_mod.PollEvent) PtyResult {
         const udata = ev.udata orelse return .not_ours;
-        if (ev.fd == self.listener_fd or ev.fd == self.stdin_fd) return .not_ours;
+        if (ev.fd == self.listener_fd or ev.fd == self.stdin_fd or self.client_readers.contains(ev.fd)) return .not_ours;
         var pane: *Pane = @ptrCast(@alignCast(udata));
         if (!self.isPaneValid(pane)) {
-            std.log.debug("handlePtyEvent: received event for invalid/stale pane pointer", .{});
+            self.loop.removeFd(ev.fd);
             return .handled;
         }
         // POLLNVAL: the fd is already closed (e.g. closed without removeFd).
@@ -2394,7 +2394,7 @@ pub const Server = struct {
         reader.* = .{};
         try self.client_readers.put(fd, reader);
         errdefer _ = self.client_readers.remove(fd);
-        try self.loop.addFd(self.allocator, fd, @as(i16, @intCast(std.posix.POLL.IN)), @ptrCast(self));
+        try self.loop.addFd(self.allocator, fd, @as(i16, @intCast(std.posix.POLL.IN)), null);
     }
 
     /// Register a client fd as a display client. The socket is switched to
