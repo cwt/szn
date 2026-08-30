@@ -9,7 +9,7 @@ timestamp: 2026-08-30T00:00:00Z
 
 Sorted by number. See individual bug files for details.
 
-> **Note:** Bugs **#301** and **#302** were never filed (MIA). The #300–#310 performance sweep skipped straight from #300 to #303. Bugs **#349–#394** were filed by the 2026-08-23 deep-audit sweep (full-codebase review; 46 open bugs). Bugs **#395–#426** were filed by the 2026-08-30 deep-audit sweep (memory safety, IPC integrity, sixel accounting, config/command surface, dead code, perf; 32 new bugs, all OPEN). The tracker covers #1–#300, #303–#426.
+> **Note:** Bugs **#301** and **#302** were never filed (MIA). The #300–#310 performance sweep skipped straight from #300 to #303. Bugs **#349–#394** were filed by the 2026-08-23 deep-audit sweep (full-codebase review; 46 open bugs). Bugs **#395–#427** were filed by the 2026-08-30 deep-audit sweep (memory safety, IPC integrity, sixel accounting, config/command surface, dead code, perf, alt-screen mouse wheel; 33 new bugs, all OPEN). The tracker covers #1–#300, #303–#427.
 
 ## Summary by Severity
 
@@ -17,7 +17,7 @@ Sorted by number. See individual bug files for details.
 |---|---:|
 | CRITICAL | 51 |
 | HIGH | 103 |
-| MEDIUM | 148 |
+| MEDIUM | 149 |
 | LOW | 100 |
 | LOW (architecture) | 3 |
 | LOW (code quality) | 5 |
@@ -28,7 +28,7 @@ Sorted by number. See individual bug files for details.
 | LOW (safety) | 1 |
 | MEDIUM (dead code / refcount drift) | 1 |
 | MEDIUM (performance) | 4 |
-| **Total** | **425** |
+| **Total** | **426** |
 
 ## Summary by Status
 
@@ -37,8 +37,8 @@ Sorted by number. See individual bug files for details.
 | Fixed / Resolved | 372 |
 | False Positive | 18 |
 | Open (deferred architectural backlog: #360, #361) | 2 |
-| Open (filed by the 2026-08-30 audit sweep: #395–#426) | 32 |
-| **Total** | **424** |
+| Open (filed by the 2026-08-30 audit sweep: #395–#427) | 33 |
+| **Total** | **425** |
 
 ## All Bugs
 
@@ -468,3 +468,4 @@ Sorted by number. See individual bug files for details.
 | [424](424.md) | Dead code inventory round 2: stale Term/FdWriter, never-entered parser states, write-only fields, serializer suite, server.zig.orig | LOW | Open |
 | [425](425.md) | Performance cluster 2: defeated status cache, per-frame recompiles, per-keystroke scrollback rebuild, runtime binding scans vs comptime mandate | LOW | Open |
 | [426](426.md) | Robustness residuals cluster: 2 unguarded history subtractions, OOM errdefer ordering, socket/TMP, misc input/parse hardening | LOW | Open |
+| [427](427.md) | Mouse wheel in Alternate Screen forces copy-mode on empty/stale scrollback instead of forwarding arrow keys | MEDIUM | Open |
