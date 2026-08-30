@@ -3275,23 +3275,39 @@ pub const Server = struct {
                         continue;
                     }
                     if (s.flags.unset) {
-                        self.global_options.unset(s.option) catch {
-                            self.global_window_options.unset(s.option) catch |err| std.log.warn("unset failed: {any}", .{err});
-                        };
+                        if (s.flags.window) {
+                            self.global_window_options.unset(s.option) catch |err| std.log.warn("unset window option failed: {any}", .{err});
+                        } else if (s.flags.session or s.flags.server or s.flags.global) {
+                            self.global_options.unset(s.option) catch |err| std.log.warn("unset option failed: {any}", .{err});
+                        } else {
+                            self.global_options.unset(s.option) catch {
+                                self.global_window_options.unset(s.option) catch |err| std.log.warn("unset failed: {any}", .{err});
+                            };
+                        }
                     } else {
-                        self.global_options.set(s.option, s.value) catch |err| {
-                            if (err == error.UnknownOption) {
-                                self.global_window_options.set(s.option, s.value) catch |err2| {
-                                    if (err2 == error.UnknownOption) {
-                                        std.log.warn("unknown option: {s}", .{s.option});
-                                    } else {
-                                        return err2;
-                                    }
-                                };
-                            } else {
-                                return err;
-                            }
-                        };
+                        if (s.flags.window) {
+                            self.global_window_options.set(s.option, s.value) catch |err| {
+                                std.log.warn("set window option {s} failed: {any}", .{ s.option, err });
+                            };
+                        } else if (s.flags.session or s.flags.server or s.flags.global) {
+                            self.global_options.set(s.option, s.value) catch |err| {
+                                std.log.warn("set session/global option {s} failed: {any}", .{ s.option, err });
+                            };
+                        } else {
+                            self.global_options.set(s.option, s.value) catch |err| {
+                                if (err == error.UnknownOption) {
+                                    self.global_window_options.set(s.option, s.value) catch |err2| {
+                                        if (err2 == error.UnknownOption) {
+                                            std.log.warn("unknown option: {s}", .{s.option});
+                                        } else {
+                                            return err2;
+                                        }
+                                    };
+                                } else {
+                                    return err;
+                                }
+                            };
+                        }
                     }
                     if (std.mem.eql(u8, s.option, "prefix")) {
                         if (s.value == .key) {
@@ -3334,14 +3350,42 @@ pub const Server = struct {
                     } else &self.dispatcher.prefix_table;
                     table.unbind(u.key);
                 },
-                .set_environment => {
-                    std.log.debug("set_environment: TODO", .{});
+                .set_environment => |e| {
+                    const c_env = struct {
+                        extern "c" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
+                        extern "c" fn unsetenv(name: [*:0]const u8) c_int;
+                    };
+                    const name_z = self.allocator.dupeZ(u8, e.name) catch return;
+                    defer self.allocator.free(name_z);
+                    if (e.value) |val| {
+                        const val_z = self.allocator.dupeZ(u8, val) catch return;
+                        defer self.allocator.free(val_z);
+                        _ = c_env.setenv(name_z, val_z, 1);
+                    } else {
+                        _ = c_env.unsetenv(name_z);
+                    }
                 },
                 .source_file => |path| {
                     try self.loadConfigFile(path);
                 },
-                .if_shell => {
-                    std.log.debug("if_shell: TODO", .{});
+                .if_shell => |i| {
+                    const c_sys = struct {
+                        extern "c" fn system(command: [*:0]const u8) c_int;
+                    };
+                    const cmd_c = self.allocator.dupeZ(u8, i.condition) catch continue;
+                    defer self.allocator.free(cmd_c);
+                    const rc = c_sys.system(cmd_c);
+                    if (rc == 0) {
+                        const parsed_sub = @import("../cfg.zig").parseConfig(self.allocator, i.command) catch |err| {
+                            std.log.warn("if-shell parse failed: {any}", .{err});
+                            continue;
+                        };
+                        var p = parsed_sub;
+                        defer p.deinit(self.allocator);
+                        self.applyDirectives(&p) catch |err| {
+                            std.log.warn("if-shell apply failed: {any}", .{err});
+                        };
+                    }
                 },
             }
         }

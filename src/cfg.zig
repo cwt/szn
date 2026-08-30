@@ -180,17 +180,26 @@ fn parseSet(allocator: std.mem.Allocator, args: []const u8, result: *ParseResult
     var flags = SetOpt{ .flags = .{}, .option = undefined, .value = undefined };
     var remaining = trimmed;
 
-    // Parse flags: -g, -s, -w, -u
+    // Parse flags: -g, -s, -w, -u, or combined like -gu, -gw, -sgu
     while (remaining.len > 0 and remaining[0] == '-') {
-        if (remaining.len < 2) break;
-        switch (remaining[1]) {
-            'g' => flags.flags.global = true,
-            's' => flags.flags.session = true,
-            'w' => flags.flags.window = true,
-            'u' => flags.flags.unset = true,
-            else => break,
+        if (remaining.len < 2 or remaining[1] == ' ' or remaining[1] == '\t') break;
+        const flag_end = std.mem.indexOfAny(u8, remaining, " \t") orelse remaining.len;
+        const flag_str = remaining[1..flag_end];
+        var is_flag = true;
+        for (flag_str) |ch| {
+            switch (ch) {
+                'g' => flags.flags.global = true,
+                's' => flags.flags.session = true,
+                'w' => flags.flags.window = true,
+                'u' => flags.flags.unset = true,
+                else => {
+                    is_flag = false;
+                    break;
+                },
+            }
         }
-        remaining = std.mem.trim(u8, if (remaining.len > 2) remaining[2..] else "", " \t");
+        if (!is_flag) break;
+        remaining = std.mem.trim(u8, remaining[flag_end..], " \t");
     }
 
     if (remaining.len == 0) return error.MissingValue;
@@ -455,6 +464,18 @@ test "parse set with tab separator" {
     try testing.expectEqualStrings("history-limit", d.set.option);
     try testing.expect(d.set.value == .number);
     try testing.expectEqual(@as(i64, 5000), d.set.value.number);
+}
+
+test "parse set with combined short flags — bug #415" {
+    var result = try parseConfig(testing.allocator, "set -gu history-limit");
+    defer result.deinit(testing.allocator);
+
+    try testing.expectEqual(@as(usize, 1), result.directives.items.len);
+    const d = result.directives.items[0];
+    try testing.expect(d == .set);
+    try testing.expect(d.set.flags.global);
+    try testing.expect(d.set.flags.unset);
+    try testing.expectEqualStrings("history-limit", d.set.option);
 }
 
 test "parse set string option" {
