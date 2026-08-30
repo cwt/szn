@@ -1890,6 +1890,17 @@ pub const Server = struct {
                                     if (wants_mouse) {
                                         handled = true;
                                         self.forwardMouseToPane(active_pane, m, window);
+                                    } else if (active_pane.screen.mode.alt_screen) {
+                                        handled = true;
+                                        // In the Alternate Screen, forward arrow keys to the pane
+                                        // so full-screen TUIs and CLIs scroll internally (bug #427).
+                                        if (m.button == .scroll_up) {
+                                            const seq = if (active_pane.screen.mode.keypad) "\x1bOA\x1bOA\x1bOA" else "\x1b[A\x1b[A\x1b[A";
+                                            active_pane.writeInput(seq) catch |err| std.log.warn("writeInput failed: {any}", .{err});
+                                        } else if (m.button == .scroll_down) {
+                                            const seq = if (active_pane.screen.mode.keypad) "\x1bOB\x1bOB\x1bOB" else "\x1b[B\x1b[B\x1b[B";
+                                            active_pane.writeInput(seq) catch |err| std.log.warn("writeInput failed: {any}", .{err});
+                                        }
                                     } else {
                                         handled = true;
                                         if (m.button == .scroll_up) {
@@ -5472,4 +5483,37 @@ test "render caches status line across frames without reallocation — bug #425"
 
     const ptr2 = server.display_clients.items[0].status_line.?.ptr;
     try testing.expectEqual(ptr1, ptr2);
+}
+
+test "mouse wheel in alternate screen forwards arrow keys instead of entering copy-mode — bug #427" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    const s = try server.newSession("test", 80, 24);
+    const win = s.active_window.?;
+    const pane = win.active_pane.?;
+
+    try s.options.set("mouse", .{ .flag = true });
+
+    var fds: [2]c_int = undefined;
+    if (std.c.pipe(&fds) != 0) return error.PipeFailed;
+    defer _ = std.c.close(fds[0]);
+    defer _ = std.c.close(fds[1]);
+    pane.pty = .{ .master = fds[1], .slave = fds[0], .pid = -1 };
+
+    // Enter alternate screen
+    try pane.screen.useAltScreen(true);
+    try testing.expect(pane.screen.mode.alt_screen);
+
+    // Scroll up
+    try server.processInput("\x1b[<64;10;10M");
+
+    // Copy mode should NOT be entered
+    try testing.expect(pane.screen.copy_mode == null);
+
+    // Verify arrow key sequence was written to pty master (read from fds[0])
+    var buf: [32]u8 = undefined;
+    const n = std.c.read(fds[0], &buf, buf.len);
+    try testing.expect(n > 0);
+    try testing.expectEqualStrings("\x1b[A\x1b[A\x1b[A", buf[0..@intCast(n)]);
 }
