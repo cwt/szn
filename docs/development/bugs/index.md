@@ -2,23 +2,23 @@
 type: index
 title: "Bug Tracker — szn"
 description: "Individual bug entries for szn, one file per bug."
-timestamp: 2026-08-09T23:00:00Z
+timestamp: 2026-08-30T00:00:00Z
 ---
 
 # Bugs — szn
 
 Sorted by number. See individual bug files for details.
 
-> **Note:** Bugs **#301** and **#302** were never filed (MIA). The #300–#310 performance sweep skipped straight from #300 to #303. Bugs **#349–#394** were filed by the 2026-08-23 deep-audit sweep (full-codebase review; 46 open bugs). The tracker covers #1–#300, #303–#394.
+> **Note:** Bugs **#301** and **#302** were never filed (MIA). The #300–#310 performance sweep skipped straight from #300 to #303. Bugs **#349–#394** were filed by the 2026-08-23 deep-audit sweep (full-codebase review; 46 open bugs). Bugs **#395–#426** were filed by the 2026-08-30 deep-audit sweep (memory safety, IPC integrity, sixel accounting, config/command surface, dead code, perf; 32 new bugs, all OPEN). The tracker covers #1–#300, #303–#426.
 
 ## Summary by Severity
 
 | Severity | Count |
 |---|---:|
-| CRITICAL | 48 |
-| HIGH | 97 |
-| MEDIUM | 134 |
-| LOW | 91 |
+| CRITICAL | 51 |
+| HIGH | 103 |
+| MEDIUM | 148 |
+| LOW | 100 |
 | LOW (architecture) | 3 |
 | LOW (code quality) | 5 |
 | LOW (correctness) | 1 |
@@ -28,7 +28,7 @@ Sorted by number. See individual bug files for details.
 | LOW (safety) | 1 |
 | MEDIUM (dead code / refcount drift) | 1 |
 | MEDIUM (performance) | 4 |
-| **Total** | **393** |
+| **Total** | **425** |
 
 ## Summary by Status
 
@@ -37,7 +37,8 @@ Sorted by number. See individual bug files for details.
 | Fixed / Resolved | 372 |
 | False Positive | 18 |
 | Open (deferred architectural backlog: #360, #361) | 2 |
-| **Total** | **392** |
+| Open (filed by the 2026-08-30 audit sweep: #395–#426) | 32 |
+| **Total** | **424** |
 
 ## All Bugs
 
@@ -435,3 +436,35 @@ Sorted by number. See individual bug files for details.
 | [392](392.md) | Dead code inventory: getCellAt, search_active, adjustSelectionForAutoScroll removed; inline-for/#335 and identify_term kept deliberately | LOW | Fixed |
 | [393](393.md) | Performance cluster: O(n·m) backward search, per-match rescan, linear lookups vs comptime tables, per-frame allocator churn | LOW | Fixed |
 | [394](394.md) | char_width/thai/clock robustness cluster: partial table application, negative-index cast, pre-epoch panic (globals rule deferred) | LOW | Fixed |
+| [395](395.md) | Pty.spawn: #267's errdefer and defer both free szn_env_z/szn_pane_z/cwd_z — double-free on fork() failure | CRITICAL | Open |
+| [396](396.md) | border_format_cached expanded with the session arena but freed with the server GPA on cache invalidation | CRITICAL | Open |
+| [397](397.md) | Format substitute with an empty pattern aborts the server (replaceOwned panics on a zero-length needle; config/prompt DoS) | CRITICAL | Open |
+| [398](398.md) | Window.init/addPane double-destroy the Pane when Pane.init fails (#239 incomplete fix) | HIGH | Open |
+| [399](399.md) | addSixelImage errdefer frees dcs_bytes after placeSixelImage stored it in the slot (#269 ownership inversion) | HIGH | Open |
+| [400](400.md) | Stale PTY poll event removeFd(ev.fd) unregisters a recycled fd's NEW owner (frozen pane; POLLNVAL guard missing) | HIGH | Open |
+| [401](401.md) | Render errors permanently lose updates: last_cells committed pre-emit, dirty cleared despite the error | HIGH | Open |
+| [402](402.md) | Display out-queue atomicity: split header/body enqueue, frame build clears queued replies, detach packet freed pre-flush | HIGH | Open |
+| [403](403.md) | sendResponse busy-spins forever on EAGAIN from an O_NONBLOCK display fd — one stalled client freezes the server (#322 regression) | HIGH | Open |
+| [404](404.md) | isPaneValid regression: #362 fix reintroduced the O(N·M·P) walk #305 removed, run per PTY event with extra scans | MEDIUM | Open |
+| [405](405.md) | Resize reflow clones grid+history+scratch per width change from the session arena — nothing reclaimed (#360/#361 class) | MEDIUM | Open |
+| [406](406.md) | Sixel accounting cluster: ref_inc counts unplaced markers, overwrite without decrement, lost eviction hooks, stale eraseDisplay geometry, id-masking refcheck | MEDIUM | Open |
+| [407](407.md) | Zero-window sessions permanently bricked (no recovery command); bare kill-session kills all sessions vs its description | MEDIUM | Open |
+| [408](408.md) | Prompt-path kill-session never stops the server with zero sessions (IPC path does) | MEDIUM | Open |
+| [409](409.md) | Keystrokes dropped: search-mode break discards packet remainder; client sd_buf too small → serialize sends nothing (#299 follow-up) | MEDIUM | Open |
+| [410](410.md) | BufferList.delete swapRemove breaks the newest-at-0/oldest-at-last contract of get/evict; generateName empty-name wrap | MEDIUM | Open |
+| [411](411.md) | reapZombies leaves stale Pty.pid → deinit SIGKILLs a recycled pid; Pty.deinit double-close (master not nulled) | MEDIUM | Open |
+| [412](412.md) | Peer resize: unbounded u32 dims, partial-failure geometry desync, status row subtracted when status off | MEDIUM | Open |
+| [413](413.md) | cmdJoinPane error path strands panes after ownership moved (violates the #287 invariant) | MEDIUM | Open |
+| [414](414.md) | TemplateCache (ptr,len) identity aliases reused arena blocks → stale compiled ops, silently wrong expansions | MEDIUM | Open |
+| [415](415.md) | Config scope/flag surface parsed but discarded (set -s/-w, bind -r, set-environment, if-shell); combined short options misparse | MEDIUM | Open |
+| [416](416.md) | Copy-mode selection end anchor not scroll-compensated while start is — selection slides off content on wheel scroll | MEDIUM | Open |
+| [417](417.md) | Bare split-window default direction differs by dispatch path (bind-key vertical vs CLI horizontal) | MEDIUM | Open |
+| [418](418.md) | Detached clients keep a live control channel (fd stays in client_fds after .detach) | LOW | Open |
+| [419](419.md) | Region scroll paths leave stale wrapped=true on the blanked line (#369 follow-up: swap-chain sites) | LOW | Open |
+| [420](420.md) | forceReflow feeds the main cursor into the alt-grid reflow and discards the clamped result | LOW | Open |
+| [421](421.md) | Grid.copyVisibleFrom indexes both rings physically — clock-mode background output desyncs the overlay | LOW | Open |
+| [422](422.md) | DECSET 1003 aliased onto the 1000 flag; mode.mouse_utf8 dead field | LOW | Open |
+| [423](423.md) | Resource-bound cluster: config source recursion, no client cap, 16 MiB parser vs 8 MiB screen sixel cap | LOW | Open |
+| [424](424.md) | Dead code inventory round 2: stale Term/FdWriter, never-entered parser states, write-only fields, serializer suite, server.zig.orig | LOW | Open |
+| [425](425.md) | Performance cluster 2: defeated status cache, per-frame recompiles, per-keystroke scrollback rebuild, runtime binding scans vs comptime mandate | LOW | Open |
+| [426](426.md) | Robustness residuals cluster: 2 unguarded history subtractions, OOM errdefer ordering, socket/TMP, misc input/parse hardening | LOW | Open |

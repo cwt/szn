@@ -2,7 +2,7 @@
 type: log
 title: "szn Docs Update Log"
 description: "Chronological log of modifications to the szn OKF documentation bundle."
-timestamp: 2026-08-03T00:00:00Z
+timestamp: 2026-08-30T00:00:00Z
 ---
 
 # Documentation Bundle Log
@@ -11,6 +11,8 @@ This file tracks all modifications, extensions, and updates to the `szn` documen
 
 | Timestamp | Document | Action | Description |
 | :--- | :--- | :--- | :--- |
+| 2026-08-30T00:00:00Z | [bugs 395-426](development/bugs/) | Created | Filed 32 new bug entries (#395-#426) from the 2026-08-30 deep-audit sweep: 3 CRITICAL (Pty.spawn double-free, border-cache cross-allocator free, format empty-pattern server abort), 6 HIGH, 14 MEDIUM, 9 LOW. |
+| 2026-08-30T00:00:00Z | [BUGS.md](development/bugs/index.md) | Updated | Added #395-#426 rows, bumped severity/status totals (425 entries). |
 | 2026-08-24T00:00:00Z | [v0.8.2.md](releases/v0.8.2.md) | Created | Created release notes for v0.8.2 (stability, memory hardening, terminal emulation fidelity, and UX polish). |
 | 2026-08-24T00:00:00Z | [index.md](releases/index.md) | Updated | Added v0.8.2 to releases index. |
 | 2026-08-24T00:00:00Z | [PROGRESS.md](development/PROGRESS.md) | Updated | Updated test count to 927; documented v0.8.2 release. |
