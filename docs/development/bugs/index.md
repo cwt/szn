@@ -34,10 +34,10 @@ Sorted by number. See individual bug files for details.
 
 | Status | Count |
 |---|---:|
-| Fixed / Resolved | 391 |
+| Fixed / Resolved | 392 |
 | False Positive | 18 |
 | Open (deferred architectural backlog: #360, #361) | 2 |
-| Open (filed by the 2026-08-30 audit sweep: #395–#427) | 14 |
+| Open (filed by the 2026-08-30 audit sweep: #395–#427) | 13 |
 | **Total** | **425** |
 
 ## All Bugs
@@ -454,7 +454,7 @@ Sorted by number. See individual bug files for details.
 | [410](410.md) | BufferList.delete swapRemove breaks the newest-at-0/oldest-at-last contract of get/evict; generateName empty-name wrap | MEDIUM | Fixed |
 | [411](411.md) | reapZombies leaves stale Pty.pid → deinit SIGKILLs a recycled pid; Pty.deinit double-close (master not nulled) | MEDIUM | Fixed |
 | [412](412.md) | Peer resize: unbounded u32 dims, partial-failure geometry desync, status row subtracted when status off | MEDIUM | Fixed |
-| [413](413.md) | cmdJoinPane error path strands panes after ownership moved (violates the #287 invariant) | MEDIUM | Open |
+| [413](413.md) | cmdJoinPane error path strands panes after ownership moved (violates the #287 invariant) | MEDIUM | Fixed |
 | [414](414.md) | TemplateCache (ptr,len) identity aliases reused arena blocks → stale compiled ops, silently wrong expansions | MEDIUM | Open |
 | [415](415.md) | Config scope/flag surface parsed but discarded (set -s/-w, bind -r, set-environment, if-shell); combined short options misparse | MEDIUM | Open |
 | [416](416.md) | Copy-mode selection end anchor not scroll-compensated while start is — selection slides off content on wheel scroll | MEDIUM | Open |

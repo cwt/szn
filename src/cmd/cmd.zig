@@ -394,6 +394,11 @@ fn cmdJoinPane(server: *Server, args: []const []const u8) CmdResult {
     const dummy_width = dummy_pane.screen.grid.width;
     const dummy_height = dummy_pane.screen.grid.height;
 
+    const dummy_node = dst_win.layout.findLeafParent(dst_win.layout.root, dummy_pane) orelse {
+        undoSplit(dst_win, server.allocator, dummy_pane);
+        return .err;
+    };
+
     // When sp is src_win's only pane, src_win is torn down below and
     // killWindow needs a placeholder leaf in its layout root. Allocate it now
     // so that nothing can fail once sp has been extracted.
@@ -419,10 +424,6 @@ fn cmdJoinPane(server: *Server, args: []const []const u8) CmdResult {
         }
     }
 
-    const dummy_node = dst_win.layout.findLeafParent(dst_win.layout.root, dummy_pane) orelse {
-        dummy_pane.deinit();
-        return .err;
-    };
     dummy_node.leaf = sp;
 
     for (dst_win.panes.items) |*p| {
