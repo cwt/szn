@@ -162,11 +162,13 @@ pub const Screen = struct {
     kitty_kbd_stack_len: u8 = 0,
 
     pub fn init(allocator: std.mem.Allocator, width: u32, height: u32) Error!Screen {
-        return Screen{
+        var screen = Screen{
             .allocator = allocator,
             .grid = try Grid.init(allocator, width, height),
             .copy_mode = null,
         };
+        screen.setupGridEviction();
+        return screen;
     }
 
     pub fn deinit(self: *Screen) void {
@@ -362,6 +364,7 @@ pub const Screen = struct {
         // `grid_y >= height` check `break`ed before the others), which desynced
         // the sixel overlay from its cells and produced trailing artifacts
         // (bug: first image with cursor on the last line).
+        var placed_markers: usize = 0;
         const anchor_col = self.cursor.x;
         var y: u32 = 0;
         while (y < cell_rows) : (y += 1) {
@@ -378,10 +381,19 @@ pub const Screen = struct {
                 if (grid_x >= self.grid.width) break;
                 if (grid_x < line.cells.items.len) {
                     var cell = &line.cells.items[grid_x];
+                    if (cell.attr.sixel) {
+                        const old_id = @as(u32, cell.char & 0x1FFFFF);
+                        if (self.findSixelImageSlot(old_id)) |old_slot| {
+                            if (self.sixel_refcounts[old_slot] > 0) {
+                                self.sixel_refcounts[old_slot] -= 1;
+                            }
+                        }
+                    }
                     cell.attr.sixel = true;
                     cell.char = @intCast(id & 0x1FFFFF);
                     cell.comb1 = @intCast(x & 0x1FFF);
                     cell.comb2 = @intCast(y & 0x1FFF);
+                    placed_markers += 1;
                 }
             }
             self.cursor.y += 1;
@@ -401,9 +413,8 @@ pub const Screen = struct {
 
         self.cursor.x = 0;
 
-        // bug #225: increment refcount for each marker cell placed.
-        const ref_inc = @as(usize, cell_rows) * @as(usize, cell_cols);
-        self.sixel_refcounts[slot] += ref_inc;
+        // bug #225: increment refcount for each marker cell placed (bug #406).
+        self.sixel_refcounts[slot] += placed_markers;
 
         self.dirty = true;
     }
@@ -430,7 +441,7 @@ pub const Screen = struct {
     pub fn isImageReferenced(self: *const Screen, id: u32) bool {
         for (self.sixel_images, 0..) |opt_img, idx| {
             if (opt_img) |img| {
-                if ((img.id & 0x1FFFFF) == id) {
+                if ((img.id & 0x1FFFFF) == (id & 0x1FFFFF)) {
                     return self.sixel_refcounts[idx] > 0;
                 }
             }
@@ -451,7 +462,7 @@ pub const Screen = struct {
     pub fn findSixelImage(self: *const Screen, image_id: u32) ?SixelImage {
         for (self.sixel_images) |opt_img| {
             if (opt_img) |img| {
-                if ((img.id & 0x1FFFFF) == image_id) {
+                if ((img.id & 0x1FFFFF) == (image_id & 0x1FFFFF)) {
                     return img;
                 }
             }
@@ -463,7 +474,7 @@ pub const Screen = struct {
     pub fn findSixelImageSlot(self: *const Screen, image_id: u32) ?usize {
         for (self.sixel_images, 0..) |opt_img, idx| {
             if (opt_img) |img| {
-                if ((img.id & 0x1FFFFF) == image_id) {
+                if ((img.id & 0x1FFFFF) == (image_id & 0x1FFFFF)) {
                     return idx;
                 }
             }
@@ -995,10 +1006,11 @@ pub const Screen = struct {
         var removed_sixel = false;
         for (self.sixel_images, 0..) |opt_img, idx| {
             if (opt_img) |img| {
-                const cell_rows = if (img.px_height > 0) (img.px_height + 19) / 20 else 1;
+                const cell_h = if (self.cell_px_height > 0) self.cell_px_height else 20;
+                const cell_rows = if (img.px_height > 0) (img.px_height + (cell_h - 1)) / cell_h else 1;
                 const remove = switch (mode) {
-                    0 => (img.row + @as(i32, @intCast(cell_rows))) > @as(i32, @intCast(self.cursor.y)),
-                    1 => img.row <= @as(i32, @intCast(self.cursor.y)),
+                    0 => (img.anchor_row + @as(i32, @intCast(cell_rows))) > @as(i32, @intCast(self.cursor.y)),
+                    1 => img.anchor_row <= @as(i32, @intCast(self.cursor.y)),
                     2, 3 => true,
                     else => false,
                 };
@@ -1433,6 +1445,7 @@ pub const Screen = struct {
             var new_alt = try Grid.init(self.allocator, self.grid.width, self.grid.height);
             std.mem.swap(Grid, &self.grid, &new_alt);
             self.alt_grid = new_alt;
+            self.setupGridEviction();
 
             std.mem.swap(Cursor, &self.cursor, &self.alt_cursor);
             var opt_saved = self.alt_saved_cursor;
@@ -1449,6 +1462,7 @@ pub const Screen = struct {
             }
             saved.deinit();
             self.alt_grid = null;
+            self.setupGridEviction();
 
             std.mem.swap(Cursor, &self.cursor, &self.alt_cursor);
             var opt_saved = self.alt_saved_cursor;

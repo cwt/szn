@@ -151,6 +151,8 @@ pub const Grid = struct {
             .history_limit = self.history_limit,
             .history_start = 0,
             .start_index = self.start_index,
+            .on_line_evict = self.on_line_evict,
+            .on_line_evict_ctx = self.on_line_evict_ctx,
         };
         try copy.lines.ensureTotalCapacity(allocator, self.lines.items.len);
         errdefer {
