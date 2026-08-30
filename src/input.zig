@@ -40,7 +40,6 @@ pub const InputParser = struct {
         esc_intermediate,
         csi_param,
         csi_intermediate,
-        csi_final,
         osc_string,
         osc_esc,
         osc_discard,
@@ -48,7 +47,6 @@ pub const InputParser = struct {
         dcs_entry,
         dcs_param,
         dcs_intermediate,
-        dcs_final,
         dcs_sixel, // accumulating sixel payload bytes
         dcs_sixel_esc, // saw ESC inside sixel — waiting for \\ (ST)
         dcs_discard, // consuming non-sixel DCS body until ST
@@ -169,7 +167,6 @@ pub const InputParser = struct {
             .esc_intermediate => try self.advanceEscIntermediate(byte),
             .csi_param => try self.advanceCsiParam(byte),
             .csi_intermediate => try self.advanceCsiIntermediate(byte),
-            .csi_final => self.advanceCsiFinal(byte),
             .osc_string => try self.advanceOsc(byte),
             .osc_esc => try self.advanceOscEsc(byte),
             .osc_discard => self.advanceOscDiscard(byte),
@@ -177,7 +174,6 @@ pub const InputParser = struct {
             .dcs_entry => try self.advanceDcsEntry(byte),
             .dcs_param => try self.advanceDcsParam(byte),
             .dcs_intermediate => try self.advanceDcsIntermediate(byte),
-            .dcs_final => self.advanceDcsFinal(byte),
             .dcs_sixel => try self.advanceDcsSixel(byte),
             .dcs_sixel_esc => try self.advanceDcsSixelEsc(byte),
             .dcs_discard => self.advanceDcsDiscard(byte),
@@ -347,10 +343,6 @@ pub const InputParser = struct {
         }
     }
 
-    fn advanceCsiFinal(self: *InputParser, _: u8) void {
-        self.toGround();
-    }
-
     fn advanceOsc(self: *InputParser, byte: u8) Error!void {
         switch (byte) {
             0x07 => {
@@ -483,10 +475,6 @@ pub const InputParser = struct {
                 self.state = .dcs_discard;
             },
         }
-    }
-
-    fn advanceDcsFinal(self: *InputParser, _: u8) void {
-        self.toGround();
     }
 
     /// Accumulate raw sixel payload bytes.

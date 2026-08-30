@@ -93,15 +93,6 @@ pub const Display = struct {
         }
     }
 
-    fn writeString(self: Display, str: []const u8) Error!void {
-        try self.writeBytes(str);
-    }
-
-    fn writeStr(self2: Display, str: [*:0]const u8) Error!void {
-        const len = std.mem.len(str);
-        try self2.writeBytes(str[0..len]);
-    }
-
     pub fn enterAltScreen(self: Display) Error!void {
         try self.writeBytes("\x1b[?1049h");
         try self.writeBytes("\x1b[>1u");

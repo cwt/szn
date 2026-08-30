@@ -131,8 +131,6 @@ pub const Server = struct {
     allocator: std.mem.Allocator,
     sessions: std.ArrayList(*Session) = .empty,
     next_session_id: u32 = 1,
-    next_window_id: u32 = 1,
-    next_pane_id: u32 = 1,
     listener_fd: ?i32 = null,
     client_fds: std.ArrayList(i32) = .empty,
     client_readers: std.AutoHashMap(i32, *MessageReader),
@@ -159,7 +157,6 @@ pub const Server = struct {
     status_right_cache: TemplateCache = .{},
     window_status_fmt_cache: TemplateCache = .{},
     window_status_cur_cache: TemplateCache = .{},
-    pane_border_fmt_cache: TemplateCache = .{},
     status_win_infos: std.ArrayList(status_mod.WindowInfo) = .empty,
     /// Visible-column ranges of each window entry in the last-rendered status
     /// line, filled by `buildStatusLine` and consumed by `handleMouseFocus` so
@@ -169,7 +166,6 @@ pub const Server = struct {
     /// client width it was packed for. Lets a status click be identified
     /// unambiguously regardless of which client reported the mouse event.
     status_click_row: u32 = 0,
-    status_click_width: u32 = 0,
     host_name: []const u8 = "",
     host_short: []const u8 = "",
     command_mode: bool = false,
@@ -345,7 +341,6 @@ pub const Server = struct {
         self.status_right_cache.deinit(self.allocator);
         self.window_status_fmt_cache.deinit(self.allocator);
         self.window_status_cur_cache.deinit(self.allocator);
-        self.pane_border_fmt_cache.deinit(self.allocator);
         self.status_win_infos.deinit(self.allocator);
         self.status_click_ranges.deinit(self.allocator);
         if (self.host_name.len > 0) self.allocator.free(self.host_name);
@@ -511,10 +506,9 @@ pub const Server = struct {
             .win_fmt_cache = &self.window_status_fmt_cache,
             .win_cur_cache = &self.window_status_cur_cache,
         }, &self.status_click_ranges);
-        // Cache the status row + rendered width so handleMouseFocus can
+        // Cache the status row so handleMouseFocus can
         // hit-test clicks against exactly this layout (bug #290).
         self.status_click_row = session.height;
-        self.status_click_width = width;
         return rendered.line;
     }
 
@@ -609,15 +603,14 @@ pub const Server = struct {
         self.reapZombies();
         self.tickAutoscroll();
         self.tickStatusInterval();
+        self.tickEscapeTime();
         var poll_timeout: i32 = if (self.mouse_autoscroll_pane != null) @min(timeout_ms, 50) else timeout_ms;
         // Wake up exactly when a pending escape sequence would expire so the
         // flush is not delayed by a long poll timeout (bug #350).
         if (self.esc_pending_since_ms != 0 and self.input_reader.state != .ground) {
             const elapsed = currentMillis() - self.esc_pending_since_ms;
             const remaining = self.escapeTimeMs() - elapsed;
-            if (remaining <= 0) {
-                self.flushPendingEscape();
-            } else {
+            if (remaining > 0) {
                 poll_timeout = @min(poll_timeout, @as(i32, @intCast(remaining)));
             }
         } else if (self.esc_pending_since_ms != 0) {
