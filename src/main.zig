@@ -845,7 +845,7 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
 
                 if (forward.len > 0) {
                     const sd_pkt = protocol.Packet.make(.stdin_data, forward);
-                    var sd_buf: [4096 + 5]u8 = undefined;
+                    var sd_buf: [4096 + 64 + 5]u8 = undefined;
                     const sd_ser = sd_pkt.serialize(&sd_buf);
                     writeServer(server_fd, sd_ser);
                 }

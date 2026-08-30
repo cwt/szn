@@ -1670,14 +1670,14 @@ pub const Server = struct {
                                         self.command_buf.clearRetainingCapacity();
                                         pane.dirty = true;
                                         self.dirty = true;
-                                        break;
+                                        continue;
                                     }
                                     if ((kc.code == 'n' or kc.code == 'N') and !kc.mod.ctrl and !kc.mod.alt and self.search_pending == null) {
                                         const reverse = kc.code == 'N';
                                         _ = cm.repeatSearch(&pane.screen.grid, self.allocator, self.last_search.items, reverse);
                                         pane.dirty = true;
                                         self.dirty = true;
-                                        break;
+                                        continue;
                                     }
                                 }
 
@@ -5342,4 +5342,23 @@ test "setMessage preserves old message on allocation failure — bug #285" {
     server.allocator = saved_allocator;
     server.clearMessage();
     try testing.expect(server.message == null);
+}
+
+test "processInput does not drop keystrokes trailing search mode entry — bug #409" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    const s = try server.newSession("test-search-burst", 80, 24);
+    const win = s.active_window.?;
+    const pane = win.active_pane.?;
+
+    try pane.enterCopyMode();
+    try testing.expect(pane.screen.copy_mode != null);
+
+    // Send '?foo' in a single packet/burst.
+    try server.processInput("?foo");
+
+    // Command mode should be active and command_buf should contain "foo".
+    try testing.expect(server.command_mode);
+    try testing.expectEqualStrings("foo", server.command_buf.items);
 }
