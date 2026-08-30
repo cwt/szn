@@ -545,6 +545,8 @@ pub const Screen = struct {
             var alt_cx = self.alt_cursor.x;
             var alt_cy = self.alt_cursor.y;
             try g.setSizeCursor(width, height, self.alt_cursor.x, self.alt_cursor.y, &alt_cx, &alt_cy);
+            self.alt_cursor.x = @min(alt_cx, width -| 1);
+            self.alt_cursor.y = @min(alt_cy, height -| 1);
         }
         self.cursor.x = @min(cx, width -| 1);
         self.cursor.y = @min(cy, height -| 1);
@@ -577,9 +579,11 @@ pub const Screen = struct {
         var cy = self.cursor.y;
         try self.grid.forceReflowCursor(self.cursor.x, self.cursor.y, &cx, &cy);
         if (self.alt_grid) |*g| {
-            var alt_cx = self.cursor.x;
-            var alt_cy = self.cursor.y;
-            try g.forceReflowCursor(self.cursor.x, self.cursor.y, &alt_cx, &alt_cy);
+            var alt_cx = self.alt_cursor.x;
+            var alt_cy = self.alt_cursor.y;
+            try g.forceReflowCursor(self.alt_cursor.x, self.alt_cursor.y, &alt_cx, &alt_cy);
+            self.alt_cursor.x = @min(alt_cx, g.width -| 1);
+            self.alt_cursor.y = @min(alt_cy, g.height -| 1);
         }
         self.cursor.x = @min(cx, self.grid.width -| 1);
         self.cursor.y = @min(cy, self.grid.height -| 1);
@@ -3016,4 +3020,25 @@ test "region scroll shifts sixel anchors by full amount — bug #387" {
     // Region SD must shift anchors down too (previously missing entirely).
     try screen.scrollDown(2);
     try testing.expectEqual(start_row - 4 + 2, screen.sixel_images[0].?.anchor_row);
+}
+
+test "forceReflow and resize preserve and clamp alt_cursor — bug #420" {
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+
+    try screen.useAltScreen(true);
+    screen.alt_cursor = .{ .x = 50, .y = 20 };
+    screen.cursor = .{ .x = 10, .y = 5 };
+
+    // Resize screen smaller than alt_cursor position
+    try screen.resize(40, 15);
+    try testing.expectEqual(@as(u32, 39), screen.alt_cursor.x);
+    try testing.expectEqual(@as(u32, 14), screen.alt_cursor.y);
+    try testing.expectEqual(@as(u32, 10), screen.cursor.x);
+    try testing.expectEqual(@as(u32, 5), screen.cursor.y);
+
+    // forceReflow maintains alt_cursor clamping
+    try screen.forceReflow();
+    try testing.expect(screen.alt_cursor.x < 40);
+    try testing.expect(screen.alt_cursor.y < 15);
 }

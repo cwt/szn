@@ -34,10 +34,10 @@ Sorted by number. See individual bug files for details.
 
 | Status | Count |
 |---|---:|
-| Fixed / Resolved | 397 |
+| Fixed / Resolved | 398 |
 | False Positive | 18 |
 | Open (deferred architectural backlog: #360, #361) | 2 |
-| Open (filed by the 2026-08-30 audit sweep: #395–#427) | 8 |
+| Open (filed by the 2026-08-30 audit sweep: #395–#427) | 7 |
 | **Total** | **425** |
 
 ## All Bugs
@@ -461,7 +461,7 @@ Sorted by number. See individual bug files for details.
 | [417](417.md) | Bare split-window default direction differs by dispatch path (bind-key vertical vs CLI horizontal) | MEDIUM | Fixed |
 | [418](418.md) | Detached clients keep a live control channel (fd stays in client_fds after .detach) | LOW | Fixed |
 | [419](419.md) | Region scroll paths leave stale wrapped=true on the blanked line (#369 follow-up: swap-chain sites) | LOW | Fixed |
-| [420](420.md) | forceReflow feeds the main cursor into the alt-grid reflow and discards the clamped result | LOW | Open |
+| [420](420.md) | forceReflow feeds the main cursor into the alt-grid reflow and discards the clamped result | LOW | Fixed |
 | [421](421.md) | Grid.copyVisibleFrom indexes both rings physically — clock-mode background output desyncs the overlay | LOW | Open |
 | [422](422.md) | DECSET 1003 aliased onto the 1000 flag; mode.mouse_utf8 dead field | LOW | Open |
 | [423](423.md) | Resource-bound cluster: config source recursion, no client cap, 16 MiB parser vs 8 MiB screen sixel cap | LOW | Open |
