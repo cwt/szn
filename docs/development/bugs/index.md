@@ -34,10 +34,10 @@ Sorted by number. See individual bug files for details.
 
 | Status | Count |
 |---|---:|
-| Fixed / Resolved | 379 |
+| Fixed / Resolved | 381 |
 | False Positive | 18 |
 | Open (deferred architectural backlog: #360, #361) | 2 |
-| Open (filed by the 2026-08-30 audit sweep: #395–#427) | 26 |
+| Open (filed by the 2026-08-30 audit sweep: #395–#427) | 24 |
 | **Total** | **425** |
 
 ## All Bugs
@@ -443,7 +443,7 @@ Sorted by number. See individual bug files for details.
 | [399](399.md) | addSixelImage errdefer frees dcs_bytes after placeSixelImage stored it in the slot (#269 ownership inversion) | HIGH | Fixed |
 | [400](400.md) | Stale PTY poll event removeFd(ev.fd) unregisters a recycled fd's NEW owner (frozen pane; POLLNVAL guard missing) | HIGH | Fixed |
 | [401](401.md) | Render errors permanently lose updates: last_cells committed pre-emit, dirty cleared despite the error | HIGH | Fixed |
-| [402](402.md) | Display out-queue atomicity: split header/body enqueue, frame build clears queued replies, detach packet freed pre-flush | HIGH | Open |
+| [402](402.md) | Display out-queue atomicity: split header/body enqueue, frame build clears queued replies, detach packet freed pre-flush | HIGH | Fixed |
 | [403](403.md) | sendResponse busy-spins forever on EAGAIN from an O_NONBLOCK display fd — one stalled client freezes the server (#322 regression) | HIGH | Open |
 | [404](404.md) | isPaneValid regression: #362 fix reintroduced the O(N·M·P) walk #305 removed, run per PTY event with extra scans | MEDIUM | Open |
 | [405](405.md) | Resize reflow clones grid+history+scratch per width change from the session arena — nothing reclaimed (#360/#361 class) | MEDIUM | Open |
@@ -459,7 +459,7 @@ Sorted by number. See individual bug files for details.
 | [415](415.md) | Config scope/flag surface parsed but discarded (set -s/-w, bind -r, set-environment, if-shell); combined short options misparse | MEDIUM | Open |
 | [416](416.md) | Copy-mode selection end anchor not scroll-compensated while start is — selection slides off content on wheel scroll | MEDIUM | Open |
 | [417](417.md) | Bare split-window default direction differs by dispatch path (bind-key vertical vs CLI horizontal) | MEDIUM | Open |
-| [418](418.md) | Detached clients keep a live control channel (fd stays in client_fds after .detach) | LOW | Open |
+| [418](418.md) | Detached clients keep a live control channel (fd stays in client_fds after .detach) | LOW | Fixed |
 | [419](419.md) | Region scroll paths leave stale wrapped=true on the blanked line (#369 follow-up: swap-chain sites) | LOW | Open |
 | [420](420.md) | forceReflow feeds the main cursor into the alt-grid reflow and discards the clamped result | LOW | Open |
 | [421](421.md) | Grid.copyVisibleFrom indexes both rings physically — clock-mode background output desyncs the overlay | LOW | Open |

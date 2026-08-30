@@ -1103,25 +1103,11 @@ pub const Server = struct {
             .detach => {
                 const target_fd = self.current_client_fd orelse (if (self.display_clients.items.len > 0) self.display_clients.items[0].fd else null);
                 if (target_fd) |cfd| {
-                    // Route the detach notification through the POLLOUT queue:
-                    // display fds are O_NONBLOCK and the old raw retry loop
-                    // silently truncated/dropped the packet on EAGAIN, leaving
-                    // the client attached forever (bug #374).
                     const detach_pkt = protocol.Packet.make(.detach, "");
                     var detach_buf: [128]u8 = undefined;
                     const ser = detach_pkt.serialize(&detach_buf);
-                    self.queueToClient(cfd, ser);
-                    for (self.display_clients.items, 0..) |*dc, idx| {
-                        if (dc.fd == cfd) {
-                            if (dc.behind) {
-                                dc.behind = false;
-                                self.behind_count -|= 1;
-                            }
-                            dc.deinit(self.allocator);
-                            _ = self.display_clients.swapRemove(idx);
-                            break;
-                        }
-                    }
+                    _ = c.write(cfd, ser.ptr, ser.len);
+                    self.removeClient(cfd);
                     if (self.current_client_fd == cfd) {
                         self.current_client_fd = null;
                     }
@@ -2310,9 +2296,13 @@ pub const Server = struct {
         var hdr: [5]u8 = undefined;
         pkt.header.encode(&hdr);
 
+        const full_pkt = self.allocator.alloc(u8, 5 + raw_buf.len) catch return;
+        defer self.allocator.free(full_pkt);
+        @memcpy(full_pkt[0..5], hdr[0..5]);
+        @memcpy(full_pkt[5..], raw_buf);
+
         for (self.display_clients.items) |*dc| {
-            self.queueToClient(dc.fd, hdr[0..]);
-            self.queueToClient(dc.fd, raw_buf);
+            self.queueToClient(dc.fd, full_pkt);
         }
 
         // 2. Decode base64 and push to self.buffers. Enforce MAX_PASTE_SIZE:
@@ -2528,17 +2518,7 @@ pub const Server = struct {
                     }
                 },
                 .detach => {
-                    for (self.display_clients.items, 0..) |*dc, idx| {
-                        if (dc.fd == fd) {
-                            if (dc.behind) {
-                                dc.behind = false;
-                                self.behind_count -|= 1;
-                            }
-                            dc.deinit(self.allocator);
-                            _ = self.display_clients.swapRemove(idx);
-                            break;
-                        }
-                    }
+                    self.removeClient(fd);
                     if (self.current_client_fd == fd) {
                         self.current_client_fd = null;
                     }
@@ -3127,21 +3107,24 @@ pub const Server = struct {
             const pkt = protocol.Packet.make(.output, self.render_buf.items);
             var hdr: [5]u8 = undefined;
             pkt.header.encode(&hdr);
-            dc.out_buf.clearRetainingCapacity();
+            const prev_len = dc.out_buf.items.len;
+            var append_ok = true;
             dc.out_buf.appendSlice(self.allocator, hdr[0..]) catch {
+                append_ok = false;
+            };
+            if (append_ok) {
+                dc.out_buf.appendSlice(self.allocator, self.render_buf.items) catch {
+                    dc.out_buf.shrinkRetainingCapacity(prev_len);
+                    append_ok = false;
+                };
+            }
+            if (!append_ok) {
                 all_flushed = false;
                 if (dc.last_cells.items.len > 0) {
                     @memset(dc.last_cells.items, Cell.empty());
                 }
                 continue;
-            };
-            dc.out_buf.appendSlice(self.allocator, self.render_buf.items) catch {
-                all_flushed = false;
-                if (dc.last_cells.items.len > 0) {
-                    @memset(dc.last_cells.items, Cell.empty());
-                }
-                continue;
-            };
+            }
 
             if (!self.flushDisplayClient(dc)) all_flushed = false;
         }
