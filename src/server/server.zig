@@ -2513,8 +2513,8 @@ pub const Server = struct {
                         const new_h = std.mem.readInt(u32, pkt.data[4..8], .little);
                         for (self.display_clients.items) |*dc| {
                             if (dc.fd == fd) {
-                                dc.sx = @max(new_w, 2);
-                                dc.sy = @max(new_h, 2);
+                                dc.sx = std.math.clamp(new_w, 2, 4096);
+                                dc.sy = std.math.clamp(new_h, 2, 4096);
                                 break;
                             }
                         }
@@ -2602,10 +2602,13 @@ pub const Server = struct {
             if (dc.sx < min_sx) min_sx = dc.sx;
             if (dc.sy < min_sy) min_sy = dc.sy;
         }
-        self.display_sx = @max(min_sx, 2);
-        self.display_sy = @max(min_sy, 2);
+        self.display_sx = std.math.clamp(min_sx, 2, 4096);
+        self.display_sy = std.math.clamp(min_sy, 2, 4096);
         if (self.activeSession()) |s| {
-            s.resize(self.display_sx, self.display_sy - 1) catch |err| std.log.warn("session resize failed: {any}", .{err});
+            const status_choice = s.options.asString("status") orelse "on";
+            const status_enabled = !std.mem.eql(u8, status_choice, "off");
+            const content_h = if (status_enabled) self.display_sy -| 1 else self.display_sy;
+            s.resize(self.display_sx, @max(content_h, 1)) catch |err| std.log.warn("session resize failed: {any}", .{err});
         }
     }
 

@@ -73,11 +73,22 @@ pub const Session = struct {
     }
 
     pub fn resize(self: *Session, new_width: u32, new_height: u32) Error!void {
-        self.width = new_width;
-        self.height = new_height;
+        const old_width = self.width;
+        const old_height = self.height;
+        var i: usize = 0;
+        errdefer {
+            for (self.windows.items[0..i]) |win| {
+                win.resize(old_width, old_height) catch {};
+            }
+            self.width = old_width;
+            self.height = old_height;
+        }
         for (self.windows.items) |win| {
             try win.resize(new_width, new_height);
+            i += 1;
         }
+        self.width = new_width;
+        self.height = new_height;
     }
 
     pub fn newWindow(self: *Session, allocator: std.mem.Allocator, name: []const u8) Error!*Window {
@@ -236,4 +247,19 @@ test "session arena allocator manages window and pane memory — bug #245" {
 
     try testing.expectEqual(2, session.windows.items.len);
     try testing.expectEqual(2, win.panes.items.len);
+}
+
+test "session resize updates all windows — bug #412" {
+    var session: Session = undefined;
+    try session.init(testing.allocator, 1, "test-resize", 80, 24, null, null);
+    defer session.deinit(testing.allocator);
+
+    _ = try session.newWindow(testing.allocator, "win2");
+    try session.resize(100, 30);
+    try testing.expectEqual(@as(u32, 100), session.width);
+    try testing.expectEqual(@as(u32, 30), session.height);
+    for (session.windows.items) |w| {
+        try testing.expectEqual(@as(u32, 100), w.width);
+        try testing.expectEqual(@as(u32, 30), w.height);
+    }
 }
