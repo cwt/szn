@@ -292,7 +292,6 @@ pub const Window = struct {
         };
         window.setName(name);
         var pane = try allocator.create(Pane);
-        errdefer allocator.destroy(pane);
         pane.* = Pane.init(allocator, 0, width, height) catch |err| {
             allocator.destroy(pane);
             return err;
@@ -392,7 +391,6 @@ pub const Window = struct {
             return self.splitPane(self.allocator, pane, false, 0.5);
         }
         const new_pane = try self.allocator.create(Pane);
-        errdefer self.allocator.destroy(new_pane);
         const pane_id = self.next_pane_id;
         new_pane.* = Pane.init(self.allocator, pane_id, self.width, self.height) catch |err| {
             self.allocator.destroy(new_pane);
