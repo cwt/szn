@@ -2,21 +2,24 @@
 type: architecture_guideline
 title: "szn Concepts Glossary"
 description: "Definitions of core szn concepts: session, window, pane, grid, cell, screen, layout, sixel, copy/choose mode, display client, options, and buffers."
-timestamp: 2026-07-07T18:56:29Z
+timestamp: 2026-08-30T16:20:00Z
 ---
 
 # Concepts Glossary
 
 A reference for the domain vocabulary used throughout szn's code and docs.
 
+> **Referencing convention:** symbols are cited by **name and file**, never by
+> line number — line numbers rot on every edit.
+
 ## Structural concepts
 
 - **Session** (`session.zig`) — top-level unit, owns an arena allocator and a
   list of windows. Has an `active_window`, `last_window`, size, and per-session
   `Options`. The server serves one active session at a time.
-- **Window** (`window.zig:219`) — a tab within a session; owns a list of panes
+- **Window** (`window.zig`) — a tab within a session; owns a list of panes
   and a binary-split `Layout` tree for pane geometry.
-- **Pane** (`window.zig:18`) — a rectangle showing one PTY/shell. Holds a
+- **Pane** (`window.zig`) — a rectangle showing one PTY/shell. Holds a
   `Screen`, an optional `pty` (the forked shell child), an optional
   `InputParser`, and a `dirty` flag. A `saved_grid` snapshots content for
   overlays (clock/choose mode).
@@ -28,22 +31,22 @@ A reference for the domain vocabulary used throughout szn's code and docs.
 
 ## Terminal model
 
-- **Grid** (`grid.zig:68`) — the scrollable content: a ring-buffer of
+- **Grid** (`grid.zig`) — the scrollable content: a ring-buffer of
   `GridLine`s plus a `history` scrollback buffer (limit 2000). `GridLine` =
   `cells` + `dirty` + `wrapped` (soft-wrap continuation, used by reflow).
-- **Cell** (`grid.zig:25`) — one screen position: `packed struct(u128)` with
+- **Cell** (`grid.zig`) — one screen position: `packed struct(u128)` with
   `char`, up to two combining codepoints, `attr`, `fg`, `bg`, and an
   `is_padding` flag for the trailing half of a wide character.
-- **Attr** (`grid.zig:10`) — `packed struct(u16)` of boolean style flags
+- **Attr** (`grid.zig`) — `packed struct(u16)` of boolean style flags
   (bold, dim, italic, underline, blink, reverse, strikethrough, overline,
   double/curly underline).
-- **Colour** (`colour.zig:11`) — `packed struct(u32)`: `tag` (indexed/rgb/
+- **Colour** (`colour.zig`) — `packed struct(u32)`: `tag` (indexed/rgb/
   default/terminal) + `u24` value.
-- **Screen** (`screen.zig:67`) — wraps a `Grid` plus an optional `alt_grid`
+- **Screen** (`screen.zig`) — wraps a `Grid` plus an optional `alt_grid`
   (alternate screen), cursor + saved cursor, `Mode` (`packed struct(u32)`:
   line-wrap, alt-screen, cursor, paste, mouse-sgr, sync, …), `copy_mode`, and
   `sixel_images`.
-- **SixelImage** (`screen.zig:13`) — a stored sixel graphic: the raw DCS bytes
+- **SixelImage** (`screen.zig`) — a stored sixel graphic: the raw DCS bytes
   plus anchor `col`/`row` and parsed pixel dimensions (`px_width`/`px_height`
   from the raster attributes). Rendered verbatim at its absolute position.
   If a sixel arrives before the terminal's cell size is *measured*, it is

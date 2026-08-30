@@ -2,7 +2,7 @@
 type: project_priority
 title: "szn Functional Clone Progress"
 description: "Progress tracker toward a fully functional tmux clone."
-timestamp: 2026-08-03T00:00:00Z
+timestamp: 2026-08-30T16:20:00Z
 ---
 
 # szn — Functional Clone Progress
@@ -10,7 +10,7 @@ timestamp: 2026-08-03T00:00:00Z
 Track progress toward a fully functional tmux clone.
 Based on code audit as of 2026-06-21.
 
-## Current State: 927 tests passing, v0.8.2 stability and terminal emulation fidelity release. Resolved 46 deep audit items (#349–#394) including DECSTBM scroll region unification, zero-allocation in-place clock rendering, UAF and double-free lifecycle hardening, vi copy-mode defaults with immediate search feedback, CAN/SUB sequence cancellation, and fast-forward keystroke forwarding.
+## Current State: 944 tests passing, v0.8.2 stability and terminal emulation fidelity release. Resolved 46 deep audit items (#349–#394) including DECSTBM scroll region unification, zero-allocation in-place clock rendering, UAF and double-free lifecycle hardening, vi copy-mode defaults with immediate search feedback, CAN/SUB sequence cancellation, and fast-forward keystroke forwarding — plus the 33 items (#395–#427) from the 2026-08-30 memory-safety and IPC-integrity sweep.
 
 ---
 
@@ -18,7 +18,7 @@ Based on code audit as of 2026-06-21.
 
 | Phase | Description | Status | Tests | Notes |
 |-------|-------------|--------|-------|-------|
-| 0 | Scaffolding + Test Harness | ✅ Done | — | build.zig, test.zig, err.zig, log.zig |
+| 0 | Scaffolding + Test Harness | ✅ Done | — | build.zig, test.zig, log.zig (`err.zig` was removed — see bug #36) |
 | 1 | Grid + Colour + Screen | ✅ Done | ~90 | Cell, Grid, Screen, Colour all complete |
 | 2 | Key + Session + Window + Layout | ✅ Done | ~40 | Key parse/format, Session, Window, Pane, Layout tree |
 | 3 | Options + Config | ✅ Done | ~25 | Options store, config parser (set, bind, source, if-shell) |
@@ -28,10 +28,14 @@ Based on code audit as of 2026-06-21.
 | 7 | Format + Status | ✅ Done | ~30 | format.zig and status.zig complete |
 | 8 | Mode + Key Bindings | ✅ Done | ~40 | copy mode and key bindings structure complete |
 | 9 | Client-Server IPC | ✅ Done | ~30 | IPC protocols, unix sockets, and live client-server communication complete |
-| 10 | Commands | ✅ Done | ~73 | All 33+ MVP commands functional (including copy-mode, paste-buffer, find-window, show-messages, and list-keys) |
+| 10 | Commands | ✅ Done | ~73 | All 48 commands registered in `CMD_TABLE` (including copy-mode, paste-buffer, find-window, show-messages, and list-keys) |
 | 11 | Full Integration | ✅ Done | ~30 | integration.zig integration test suite complete |
 
-**Total: 927 / 927 tests passing. All Phases 0–11 fully complete.**
+**Total: 944 / 944 tests passing (verified 2026-08-30). All Phases 0–11 fully complete.**
+
+> The per-phase **Tests** column above is a snapshot taken when each phase
+> landed, not a partition of the current total — later phases and audit sweeps
+> added tests to earlier modules, so those figures no longer sum to 944.
 
 ---
 

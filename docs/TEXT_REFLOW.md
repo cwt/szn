@@ -2,7 +2,7 @@
 type: architecture_guideline
 title: "Text Reflow in szn"
 description: "Design, algorithms, and implementation of the text reflow system."
-timestamp: 2026-06-30T16:01:01Z
+timestamp: 2026-08-03T00:00:00Z
 ---
 
 # Text Reflow in szn

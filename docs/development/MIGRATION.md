@@ -2,7 +2,7 @@
 type: architecture_guideline
 title: "Migration Plan: tmux (C) to szn (Zig)"
 description: "Rationale and plan for rewriting tmux in Zig."
-timestamp: 2026-06-30T04:57:33Z
+timestamp: 2026-07-08T00:00:00Z
 ---
 
 # Migration Plan: tmux (C) → szn (Zig)
@@ -85,9 +85,14 @@ build.zig              — build target + test target
 build.zig.zon          — package manifest
 src/main.zig           — stub entry point
 src/test.zig           — test runner (imports all module tests)
-src/err.zig            — shared error sets
+src/err.zig            — shared error sets (later removed; see bug #36)
 src/log.zig            — logging wrapper
 ```
+
+> **Historical note:** this is the plan as written, not the current tree.
+> `src/err.zig` no longer exists — its `SznError` set turned out to be dead
+> code and was deleted (bug #36). Per-subsystem error sets are now declared
+> locally in each module instead.
 
 ### Test structure
 ```zig

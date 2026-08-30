@@ -2,42 +2,43 @@
 type: index
 title: "Bug Tracker — szn"
 description: "Individual bug entries for szn, one file per bug."
-timestamp: 2026-08-30T00:00:00Z
+timestamp: 2026-08-30T16:20:00Z
 ---
 
 # Bugs — szn
 
 Sorted by number. See individual bug files for details.
 
-> **Note:** Bugs **#301** and **#302** were never filed (MIA). The #300–#310 performance sweep skipped straight from #300 to #303. Bugs **#349–#394** were filed by the 2026-08-23 deep-audit sweep (full-codebase review; 46 open bugs). Bugs **#395–#427** were filed by the 2026-08-30 deep-audit sweep (memory safety, IPC integrity, sixel accounting, config/command surface, dead code, perf, alt-screen mouse wheel; 33 new bugs, all OPEN). The tracker covers #1–#300, #303–#427.
+> **Note:** Bugs **#301** and **#302** were never filed (MIA). The #300–#310 performance sweep skipped straight from #300 to #303. Bugs **#349–#394** were filed by the 2026-08-23 deep-audit sweep (full-codebase review; 46 bugs, all since resolved). Bugs **#395–#427** were filed by the 2026-08-30 deep-audit sweep (memory safety, IPC integrity, sixel accounting, config/command surface, dead code, perf, alt-screen mouse wheel; 33 bugs, all since resolved). The tracker covers #1–#300, #303–#427 — **425 entries** in total.
+
+Both summary tables below are generated from the `severity` and `status` fields in each bug's frontmatter. Regenerate them rather than editing by hand.
 
 ## Summary by Severity
 
 | Severity | Count |
 |---|---:|
 | CRITICAL | 51 |
-| HIGH | 103 |
+| HIGH | 105 |
 | MEDIUM | 149 |
-| LOW | 100 |
+| LOW | 102 |
 | LOW (architecture) | 3 |
 | LOW (code quality) | 5 |
 | LOW (correctness) | 1 |
 | LOW (cosmetic) | 1 |
-| LOW (performance) | 2 |
+| LOW (performance) | 1 |
 | LOW (performance) → MEDIUM (correctness regression in original fix) | 1 |
 | LOW (safety) | 1 |
 | MEDIUM (dead code / refcount drift) | 1 |
 | MEDIUM (performance) | 4 |
-| **Total** | **426** |
+| **Total** | **425** |
 
 ## Summary by Status
 
 | Status | Count |
 |---|---:|
-| Fixed / Resolved | 405 |
-| False Positive | 18 |
+| Fixed / Resolved | 404 |
+| False Positive | 19 |
 | Open (deferred architectural backlog: #360, #361) | 2 |
-| Open (filed by the 2026-08-30 audit sweep: #395–#427) | 0 |
 | **Total** | **425** |
 
 ## All Bugs
@@ -290,7 +291,7 @@ Sorted by number. See individual bug files for details.
 | [244](244.md) | Duplicated pane swapping logic between up/down actions | LOW (code quality) | Fixed |
 | [245](245.md) | Non-compliance with AGENTS.md arena allocator lifecycle rule | LOW (architecture) | Fixed |
 | [246](246.md) | Non-compliance with AGENTS.md comptime command table dispatch rule | LOW (architecture) | Fixed |
-| [247](247.md) | Non-compliance with AGENTS.md mouse protocol scope rule | LOW (architecture) | Intentional |
+| [247](247.md) | Non-compliance with AGENTS.md mouse protocol scope rule | LOW (architecture) | False Positive |
 | [248](248.md) | pane-border-format defaults to window index (#I) instead of pane index (#P) | LOW (cosmetic) | Fixed |
 | [249](249.md) | History restoration order inversion in `Grid.scrollDown` | CRITICAL | Fixed |
 | [250](250.md) | Inverted dimension assignment in `swapPaneRelative` | HIGH | Fixed |

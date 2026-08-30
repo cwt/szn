@@ -76,11 +76,16 @@ set -g codepoint-widths ""
 All core development phases (Phases 0 to 11) are fully implemented and complete. We have a robust, functional Zig terminal multiplexer featuring:
 - High-performance grid engine with arena-allocated session/pane lifecycles.
 - Client-server IPC over Unix sockets.
-- 47 commands matching standard tmux behavior (including pane resizing, layout splits, paste buffers, clock-mode, and command-prompt).
+- 48 commands matching standard tmux behavior (including pane resizing, layout splits, paste buffers, clock-mode, and command-prompt).
 - Standard VT100 wrap-pending and Background Color Erase (BCE) support for accurate rendering.
 - Full multi-pane layouts, interactive copy mode, status bars, and config parsing (`.szn.conf`).
 - **Advanced Text Reflow** — automatically rewraps text on pane resizing, respecting CJK characters, combining marks, and Thai cluster integrity (including an $O(1)$ syllable backtracking algorithm). See [docs/TEXT_REFLOW.md](docs/TEXT_REFLOW.md) for full design details.
-- **927 unit and integration tests passing.**
+- **944 unit and integration tests passing.**
+
+> **Running the suite:** `zig build test` leaves a stale `$TMPDIR/szn.sock`
+> behind, which makes 3 socket tests fail on every *subsequent* run. Delete it
+> first for a clean pass: `rm -f "$TMPDIR/szn.sock" && zig build test`. See
+> [docs/build-run.md](docs/build-run.md#test).
 
 ### Performance
 

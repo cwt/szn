@@ -2,7 +2,7 @@
 type: index
 title: "Releases"
 description: "szn release notes."
-timestamp: 2026-08-03T00:00:00Z
+timestamp: 2026-08-25T00:00:00Z
 ---
 
 # Releases
