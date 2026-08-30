@@ -729,11 +729,9 @@ pub const Server = struct {
     const PtyResult = enum { not_ours, handled, destroyed };
 
     fn handlePtyEvent(self: *Server, ev: loop_mod.PollEvent) PtyResult {
+        const udata = ev.udata orelse return .not_ours;
         if (ev.fd == self.listener_fd or ev.fd == self.stdin_fd) return .not_ours;
-        for (self.client_fds.items) |cfd| {
-            if (ev.fd == cfd) return .not_ours;
-        }
-        var pane: *Pane = @ptrCast(@alignCast(ev.udata orelse return .not_ours));
+        var pane: *Pane = @ptrCast(@alignCast(udata));
         if (!self.isPaneValid(pane)) {
             std.log.debug("handlePtyEvent: received event for invalid/stale pane pointer", .{});
             return .handled;
@@ -3152,10 +3150,6 @@ pub const Server = struct {
         // existed (it is sent at startup).
         for (session.windows.items) |w| {
             for (w.panes.items) |p| {
-                // Set `cell_size_known` BEFORE `updateCellSize`: the latter
-                // flushes any buffered sixel, and that flush must see the
-                // measured flag as true or it bails and the first image is
-                // never placed (bug #204 regression).
                 p.screen.cell_size_known = self.cell_size_known;
                 p.screen.updateCellSize(self.cell_px_height, self.cell_px_width);
             }

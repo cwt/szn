@@ -27,8 +27,8 @@ pub const Pane = struct {
     title_ctx: ?*anyopaque = null,
     deinited: bool = false,
     /// Track whether this pane is still registered in a live window. Set to
-    /// false in destroyPane so isPaneValid becomes an O(1) pointer check
-    /// instead of an O(N*M*P) tree walk (bug #305).
+    /// false in destroyPane and Session.killWindow so stale references can be
+    /// detected and handled safely (bug #305, #362, #404).
     valid: bool = true,
     /// Cached expanded pane-border-format. Valid when border_format_gen matches
     /// the session's current gen. Only re-expand on cache miss (bug #304/#307).
