@@ -2895,21 +2895,16 @@ pub const Server = struct {
                             var proc_buf: [128]u8 = undefined;
                             if (pty.getForegroundProcessName(&proc_buf)) |proc_name_val| {
                                 if (proc_name_val.len > 0 and !std.mem.eql(u8, win.name, proc_name_val)) {
-                                    // Window.name lives in the inline name_buf
-                                    // (setName copies); it is never freed. Keep
-                                    // the syscall cache as its own owned copy so
-                                    // the two never alias (bug #358).
+                                    // Window.name and last_foreground_name live in
+                                    // inline fixed buffers; no heap allocation or aliasing (bug #358/#405).
                                     win.setName(proc_name_val);
-                                    const cached = win.allocator.dupe(u8, proc_name_val) catch break;
-                                    if (win.last_foreground_name.len > 0) win.allocator.free(win.last_foreground_name);
-                                    win.last_foreground_name = cached;
+                                    win.setLastForegroundName(proc_name_val);
                                     ap.dirty = true;
                                     self.dirty = true;
                                 } else {
                                     // Name unchanged — cache it to skip future syscalls.
                                     if (win.last_foreground_name.len == 0) {
-                                        const cached = win.allocator.dupe(u8, proc_name_val) catch break;
-                                        win.last_foreground_name = cached;
+                                        win.setLastForegroundName(proc_name_val);
                                     }
                                 }
                             } else |_| {}

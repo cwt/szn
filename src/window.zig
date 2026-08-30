@@ -262,6 +262,7 @@ pub const Window = struct {
     options: options_mod.Options,
     automatic_rename: bool = true,
     name_buf: [256]u8 = undefined,
+    last_foreground_name_buf: [256]u8 = undefined,
     /// Cached foreground process name from the last getForegroundProcessName
     /// call. Only call the syscall when this differs from win.name (bug #300).
     last_foreground_name: []const u8 = "",
@@ -274,6 +275,12 @@ pub const Window = struct {
         const len = @min(new_name.len, self.name_buf.len);
         @memcpy(self.name_buf[0..len], new_name[0..len]);
         self.name = self.name_buf[0..len];
+    }
+
+    pub fn setLastForegroundName(self: *Window, fg_name: []const u8) void {
+        const len = @min(fg_name.len, self.last_foreground_name_buf.len);
+        @memcpy(self.last_foreground_name_buf[0..len], fg_name[0..len]);
+        self.last_foreground_name = self.last_foreground_name_buf[0..len];
     }
 
     pub fn init(allocator: std.mem.Allocator, id: u32, name: []const u8, width: u32, height: u32, global_window_options: ?*const options_mod.Options, parent_screen: ?*const Screen) Error!Window {
@@ -321,7 +328,6 @@ pub const Window = struct {
     }
 
     pub fn deinit(self: *Window, allocator: std.mem.Allocator) void {
-        if (self.last_foreground_name.len > 0) allocator.free(self.last_foreground_name);
         self.layout.deinit();
         self.panes.deinit(allocator);
         self.options.deinit();
@@ -676,32 +682,28 @@ test "enterCopyMode honours mode-keys option — bug #384" {
     try testing.expectEqual(@import("mode_copy.zig").ModeKeys.emacs, pane.screen.copy_mode.?.mode_keys);
 }
 
-test "auto-rename: name stays in name_buf, cache never aliases it — bug #358" {
+test "auto-rename avoids freeing name_buf and avoids aliased double-free — bug #358" {
     var window = try Window.init(testing.allocator, 1, "initial", 80, 24, null, null);
     defer window.deinit(testing.allocator);
 
     // Mirror exactly what renderToDisplayClient's auto-rename does now.
     window.setName("vim");
-    const cached = try window.allocator.dupe(u8, "vim");
-    if (window.last_foreground_name.len > 0) window.allocator.free(window.last_foreground_name);
-    window.last_foreground_name = cached;
+    window.setLastForegroundName("vim");
 
     // The title lives in inline storage (freeing it was always invalid).
     try testing.expect(window.name.ptr == @as([*]const u8, &window.name_buf));
+    try testing.expect(window.last_foreground_name.ptr == @as([*]const u8, &window.last_foreground_name_buf));
     try testing.expect(window.last_foreground_name.ptr != window.name.ptr);
 
-    // Second rename frees only the cache; both fields update without
-    // aliasing (the old code double-freed here).
+    // Second rename updates without heap allocation or aliasing.
     window.setName("htop");
-    const cached2 = try window.allocator.dupe(u8, "htop");
-    window.allocator.free(window.last_foreground_name);
-    window.last_foreground_name = cached2;
+    window.setLastForegroundName("htop");
     try testing.expectEqualStrings("htop", window.name);
     try testing.expectEqualStrings("htop", window.last_foreground_name);
     try testing.expect(window.last_foreground_name.ptr != window.name.ptr);
 
-    // A later OSC title repoints name into name_buf while the heap-owned
-    // cache stays valid and independently freeable (deinit frees it once).
+    // A later OSC title repoints name into name_buf while the
+    // last_foreground_name buffer stays valid and independent.
     windowTitleCallback(&window, "user@host: ~");
     try testing.expectEqualStrings("user@host: ~", window.name);
     try testing.expectEqualStrings("htop", window.last_foreground_name);
