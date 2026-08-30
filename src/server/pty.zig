@@ -163,24 +163,13 @@ pub const Pty = struct {
         argv_z[args.len] = null;
 
         const szn_env_z = try allocator.dupeZ(u8, szn_env);
+        defer allocator.free(szn_env_z);
+
         const szn_pane_z = try allocator.dupeZ(u8, szn_pane);
+        defer allocator.free(szn_pane_z);
 
-        var cwd_z: ?[:0]const u8 = null;
-        errdefer {
-            if (cwd_z) |c| allocator.free(c);
-            allocator.free(szn_pane_z);
-            allocator.free(szn_env_z);
-        }
-
-        if (cwd) |c| {
-            cwd_z = try allocator.dupeZ(u8, c);
-        }
-
-        defer {
-            if (cwd_z) |c| allocator.free(c);
-            allocator.free(szn_pane_z);
-            allocator.free(szn_env_z);
-        }
+        const cwd_z: ?[:0]const u8 = if (cwd) |c| try allocator.dupeZ(u8, c) else null;
+        defer if (cwd_z) |c| allocator.free(c);
 
         const pid = fork();
         if (pid < 0) return error.ForkFailed;
