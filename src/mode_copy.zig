@@ -29,6 +29,8 @@ pub const Selection = struct {
     /// Used to map screen-space coordinates back to grid content
     /// even if the user scrolls after starting the selection.
     start_scroll_offset: u32 = 0,
+    /// Scroll offset at the time the selection end was last updated.
+    end_scroll_offset: u32 = 0,
 };
 
 pub const KeyResult = enum { consumed, exit_mode, ignored };
@@ -205,6 +207,7 @@ pub const CopyMode = struct {
             .end_y = self.cursor_y,
             .active = true,
             .start_scroll_offset = self.scroll_offset,
+            .end_scroll_offset = self.scroll_offset,
         };
     }
 
@@ -212,6 +215,7 @@ pub const CopyMode = struct {
         if (self.selection.active) {
             self.selection.end_x = self.cursor_x;
             self.selection.end_y = self.cursor_y;
+            self.selection.end_scroll_offset = self.scroll_offset;
         }
     }
 
@@ -229,9 +233,10 @@ pub const CopyMode = struct {
         if (!self.selection.active) return false;
 
         const diff_start = @as(i64, @intCast(self.scroll_offset)) - @as(i64, @intCast(self.selection.start_scroll_offset));
+        const diff_end = @as(i64, @intCast(self.scroll_offset)) - @as(i64, @intCast(self.selection.end_scroll_offset));
 
         const sy_i64 = @as(i64, @intCast(self.selection.start_y)) + diff_start;
-        const ey_i64 = @as(i64, @intCast(self.selection.end_y));
+        const ey_i64 = @as(i64, @intCast(self.selection.end_y)) + diff_end;
 
         const y_i64 = @as(i64, @intCast(y));
 
@@ -313,9 +318,10 @@ pub const CopyMode = struct {
         if (!self.selection.active) return try allocator.dupe(u8, "");
 
         const diff_start = @as(i64, @intCast(self.scroll_offset)) - @as(i64, @intCast(self.selection.start_scroll_offset));
+        const diff_end = @as(i64, @intCast(self.scroll_offset)) - @as(i64, @intCast(self.selection.end_scroll_offset));
 
         const sy_i64 = @as(i64, @intCast(self.selection.start_y)) + diff_start;
-        const ey_i64 = @as(i64, @intCast(self.selection.end_y));
+        const ey_i64 = @as(i64, @intCast(self.selection.end_y)) + diff_end;
 
         const sy = @min(sy_i64, ey_i64);
         const ey = @max(sy_i64, ey_i64);
@@ -1129,6 +1135,32 @@ test "selection clear" {
     try testing.expect(!cm.selection.active);
 }
 
+test "selection remains anchored to content on scroll — bug #416" {
+    var cm = CopyMode.init(.vi);
+    var g = try Grid.init(testing.allocator, 80, 24);
+    defer g.deinit();
+
+    cm.enter(&g);
+    cm.cursor_x = 0;
+    cm.cursor_y = 5;
+    cm.startSelection();
+    cm.cursor_x = 10;
+    cm.cursor_y = 7;
+    cm.updateSelection();
+
+    // At current scroll_offset = 0: row 5 to 7 is selected.
+    try testing.expect(cm.isSelected(5, 5));
+    try testing.expect(cm.isSelected(5, 6));
+    try testing.expect(cm.isSelected(5, 7));
+
+    // Scroll up by 2 lines: selected buffer content moves down 2 screen rows (to 7..9)
+    cm.scroll_offset = 2;
+    try testing.expect(!cm.isSelected(5, 5));
+    try testing.expect(cm.isSelected(5, 7));
+    try testing.expect(cm.isSelected(5, 8));
+    try testing.expect(cm.isSelected(5, 9));
+}
+
 test "yank selection single line" {
     var cm = CopyMode.init(.vi);
     var g = try Grid.init(testing.allocator, 10, 3);
@@ -1535,6 +1567,7 @@ test "yank selection from scrolled-back history" {
         .end_y = 0,
         .active = true,
         .start_scroll_offset = 3,
+        .end_scroll_offset = 3,
     };
 
     const result = try cm.yankSelection(testing.allocator, &g);
