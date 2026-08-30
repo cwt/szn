@@ -109,6 +109,25 @@ fn writeAllRaw(fd: std.posix.fd_t, bytes: []const u8) void {
     }
 }
 
+var runtime_log_level: Level = .info;
+
+/// Called once from enable() / enableClientLog() after log_fd is set.
+/// Reads SZN_LOG env var (values: "debug", "info", "warn", "err") and sets
+/// runtime_log_level accordingly so callers can override without recompiling.
+fn applyEnvLogLevel() void {
+    const val = std.c.getenv("SZN_LOG") orelse return;
+    const s = std.mem.span(val);
+    if (std.mem.eql(u8, s, "debug")) {
+        runtime_log_level = .debug;
+    } else if (std.mem.eql(u8, s, "info")) {
+        runtime_log_level = .info;
+    } else if (std.mem.eql(u8, s, "warn")) {
+        runtime_log_level = .warn;
+    } else if (std.mem.eql(u8, s, "err")) {
+        runtime_log_level = .err;
+    }
+}
+
 pub fn logFn(
     comptime level: std.log.Level,
     comptime scope: @EnumLiteral(),
@@ -117,6 +136,16 @@ pub fn logFn(
 ) void {
     _ = scope;
     if (!log_enabled.load(.seq_cst)) return;
+    // Runtime level filter: suppresses noisy debug/info lines unless SZN_LOG
+    // overrides it.  The comptime log_level in std_options is .debug so that
+    // Zig doesn't eliminate any call sites at compile time.
+    const my_level: Level = switch (level) {
+        .debug => .debug,
+        .info => .info,
+        .warn => .warn,
+        .err => .err,
+    };
+    if (@intFromEnum(my_level) < @intFromEnum(runtime_log_level)) return;
     if (log_fd == null) {
         if (log_fd_failed.load(.seq_cst)) return;
         var path_buf: [256]u8 = undefined;
@@ -166,6 +195,7 @@ pub fn enable(path_or_default: []const u8) void {
     log_fd = fd;
     log_fd_failed.store(false, .seq_cst);
     log_enabled.store(true, .seq_cst);
+    applyEnvLogLevel();
 }
 
 pub fn disable() void {
@@ -200,6 +230,7 @@ pub fn enableClientLog(path_or_default: []const u8) void {
     log_fd = fd;
     log_fd_failed.store(false, .seq_cst);
     log_enabled.store(true, .seq_cst);
+    applyEnvLogLevel();
 }
 
 pub fn isEnabled() bool {

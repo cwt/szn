@@ -18,7 +18,7 @@ pub const Error = server_mod.ServerError || client_mod.Error || connect.Error ||
 
 pub const std_options: std.Options = .{
     .logFn = log_mod.logFn,
-    .log_level = .info,
+    .log_level = .debug,
 };
 
 extern "c" fn tcflush(fd: c_int, queue_selector: c_int) c_int;
