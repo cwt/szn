@@ -599,6 +599,7 @@ pub const Screen = struct {
         // bug #225: decrement refcounts for the fill cells.
         self.decrementLineRefs(last.cells.items);
         @memset(last.cells.items, self.eraseCell());
+        last.wrapped = false;
         last.dirty = true;
     }
 
@@ -616,6 +617,7 @@ pub const Screen = struct {
         // bug #225: decrement refcounts for the fill cells.
         self.decrementLineRefs(first.cells.items);
         @memset(first.cells.items, self.eraseCell());
+        first.wrapped = false;
         first.dirty = true;
     }
 
@@ -1176,6 +1178,7 @@ pub const Screen = struct {
                 // bug #225: decrement refcounts for the fill cells.
                 self.decrementLineRefs(last.cells.items);
                 @memset(last.cells.items, fill);
+                last.wrapped = false;
                 last.dirty = true;
             }
             // Sixel images anchored within the scroll region must follow the
@@ -1195,6 +1198,7 @@ pub const Screen = struct {
                 // bug #225: decrement refcounts for the fill cells.
                 self.decrementLineRefs(bottom_line.cells.items);
                 @memset(bottom_line.cells.items, fill);
+                bottom_line.wrapped = false;
                 bottom_line.dirty = true;
             }
         }
@@ -1217,6 +1221,7 @@ pub const Screen = struct {
                 const first = self.grid.getLineMut(top);
                 self.decrementLineRefs(first.cells.items);
                 @memset(first.cells.items, fill);
+                first.wrapped = false;
                 first.dirty = true;
             }
             // Mirror the non-region branch: region SD moves content down, so
@@ -1234,6 +1239,7 @@ pub const Screen = struct {
                 const top_line = self.grid.getLineMut(0);
                 self.decrementLineRefs(top_line.cells.items);
                 @memset(top_line.cells.items, fill);
+                top_line.wrapped = false;
                 top_line.dirty = true;
             }
             self.dirty = true;
@@ -2219,6 +2225,37 @@ test "scrollUp and scrollDown respect scroll region" {
     try testing.expectEqual(@as(u21, 0), screen.grid.getCell(0, 1).char);
     try testing.expectEqual(@as(u21, '2'), screen.grid.getCell(0, 2).char);
     try testing.expectEqual(@as(u21, '3'), screen.grid.getCell(0, 3).char);
+}
+
+test "scroll operations clear wrapped flag on blanked lines — bug #419" {
+    var screen = try Screen.init(testing.allocator, 10, 4);
+    defer screen.deinit();
+
+    // Mark all lines wrapped
+    for (0..4) |y| {
+        screen.grid.getLineMut(@intCast(y)).wrapped = true;
+    }
+
+    // Scroll up whole screen
+    try screen.scrollUp(1);
+    try testing.expect(!screen.grid.getLine(3).wrapped);
+
+    // Mark bottom wrapped again and scroll up in region 1..3
+    screen.grid.getLineMut(3).wrapped = true;
+    screen.setScrollRegion(1, 3);
+    try screen.scrollUp(1);
+    try testing.expect(!screen.grid.getLine(3).wrapped);
+
+    // Mark top wrapped again and scroll down in region 1..3
+    screen.grid.getLineMut(1).wrapped = true;
+    try screen.scrollDown(1);
+    try testing.expect(!screen.grid.getLine(1).wrapped);
+
+    // Scroll down whole screen
+    screen.scroll_region = null;
+    screen.grid.getLineMut(0).wrapped = true;
+    try screen.scrollDown(1);
+    try testing.expect(!screen.grid.getLine(0).wrapped);
 }
 
 test "writeChar: combining character attaches to previous cell" {
