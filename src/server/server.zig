@@ -735,7 +735,6 @@ pub const Server = struct {
         var pane: *Pane = @ptrCast(@alignCast(ev.udata orelse return .not_ours));
         if (!self.isPaneValid(pane)) {
             std.log.debug("handlePtyEvent: received event for invalid/stale pane pointer", .{});
-            self.loop.removeFd(ev.fd);
             return .handled;
         }
         // POLLNVAL: the fd is already closed (e.g. closed without removeFd).
