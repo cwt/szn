@@ -1738,6 +1738,7 @@ pub const Server = struct {
                                     const target_pane = window.active_pane orelse return;
                                     const target_wants_mouse = target_pane.screen.mode.mouse_standard or
                                         target_pane.screen.mode.mouse_button or
+                                        target_pane.screen.mode.mouse_any or
                                         target_pane.screen.mode.mouse_sgr;
                                     if (target_wants_mouse) {
                                         self.forwardMouseToPane(target_pane, m, window);
@@ -1886,6 +1887,7 @@ pub const Server = struct {
                                     if (!self.isPaneValid(active_pane)) return;
                                     const wants_mouse = active_pane.screen.mode.mouse_standard or
                                         active_pane.screen.mode.mouse_button or
+                                        active_pane.screen.mode.mouse_any or
                                         active_pane.screen.mode.mouse_sgr;
                                     std.log.debug("MOUSE EVENT: button={any}, x={d}, y={d}, wants_mouse={}, standard={}, button_mode={}, sgr={}", .{
                                         m.button,                               m.x,                                  m.y,                               wants_mouse,
@@ -2110,6 +2112,7 @@ pub const Server = struct {
     pub fn forwardMouseToPane(self: *Server, pane: *Pane, m: anytype, window: *Window) void {
         const wants_mouse = pane.screen.mode.mouse_standard or
             pane.screen.mode.mouse_button or
+            pane.screen.mode.mouse_any or
             pane.screen.mode.mouse_sgr;
         if (!wants_mouse) return;
         if (self.findPaneBounds(window, pane)) |pb| {

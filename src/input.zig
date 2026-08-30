@@ -903,6 +903,7 @@ pub const InputParser = struct {
                             25 => if (self.screen.mode.cursor) @as(u8, 1) else @as(u8, 2),
                             1000 => if (self.screen.mode.mouse_standard) @as(u8, 1) else @as(u8, 2),
                             1002 => if (self.screen.mode.mouse_button) @as(u8, 1) else @as(u8, 2),
+                            1003 => if (self.screen.mode.mouse_any) @as(u8, 1) else @as(u8, 2),
                             1004 => if (self.screen.mode.focus) @as(u8, 1) else @as(u8, 2),
                             1006 => if (self.screen.mode.mouse_sgr) @as(u8, 1) else @as(u8, 2),
                             1049 => if (self.screen.mode.alt_screen) @as(u8, 1) else @as(u8, 2),
@@ -947,7 +948,7 @@ pub const InputParser = struct {
                 25 => self.screen.mode.cursor = enable,
                 1000 => self.screen.mode.mouse_standard = enable,
                 1002 => self.screen.mode.mouse_button = enable,
-                1003 => self.screen.mode.mouse_standard = enable,
+                1003 => self.screen.mode.mouse_any = enable,
                 1004 => self.screen.mode.focus = enable,
                 1006 => self.screen.mode.mouse_sgr = enable,
                 1049 => {
@@ -2486,6 +2487,15 @@ test "DECSM 1000/1002/1003/1006 mouse modes set screen flags for inner app compa
     // DECSM 1006 (SGR mouse tracking)
     try parser.feed("\x1b[?1006h");
     try testing.expect(screen.mode.mouse_sgr);
+
+    // DECSM 1003 (any-motion mouse tracking) — bug #422
+    try parser.feed("\x1b[?1003h");
+    try testing.expect(screen.mode.mouse_any);
+
+    // DECRST 1000 turns off mouse_standard but leaves mouse_any active — bug #422
+    try parser.feed("\x1b[?1000l");
+    try testing.expect(!screen.mode.mouse_standard);
+    try testing.expect(screen.mode.mouse_any);
 }
 
 test "OSC buffer capped at 1 MiB to prevent OOM — bug #261" {
