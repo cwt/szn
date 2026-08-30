@@ -3053,7 +3053,7 @@ pub const Server = struct {
                 ctx.deinit();
                 if (expanded) |exp| {
                     if (pb.pane.border_format_cached) |old_exp| {
-                        self.allocator.free(old_exp);
+                        pb.pane.screen.grid.allocator.free(old_exp);
                     }
                     pb.pane.border_format_cached = exp;
                     pb.pane.border_format_gen = border_gen;
