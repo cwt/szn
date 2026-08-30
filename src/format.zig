@@ -77,9 +77,11 @@ pub const Op = union(enum) {
 pub const TemplateCache = struct {
     source_ptr: ?[*]const u8 = null,
     source_len: usize = 0,
+    cached_template: std.ArrayList(u8) = .empty,
     ops: std.ArrayList(Op) = .empty,
 
     pub fn deinit(self: *TemplateCache, allocator: std.mem.Allocator) void {
+        self.cached_template.deinit(allocator);
         self.ops.deinit(allocator);
         self.* = .{};
     }
@@ -87,11 +89,15 @@ pub const TemplateCache = struct {
     pub fn getOrCompile(self: *TemplateCache, allocator: std.mem.Allocator, template: []const u8) FormatError![]const Op {
         if (self.source_ptr) |ptr| {
             if (self.source_len == template.len and ptr == template.ptr and self.ops.items.len > 0) {
-                return self.ops.items;
+                if (std.mem.eql(u8, self.cached_template.items, template)) {
+                    return self.ops.items;
+                }
             }
         }
+        self.cached_template.clearRetainingCapacity();
+        self.cached_template.appendSlice(allocator, template) catch return error.OutOfMemory;
         self.ops.clearRetainingCapacity();
-        try compileInto(allocator, template, &self.ops);
+        try compileInto(allocator, self.cached_template.items, &self.ops);
         self.source_ptr = template.ptr;
         self.source_len = template.len;
         return self.ops.items;
@@ -1303,6 +1309,30 @@ test "template cache reuses ops" {
     const r = try expandOps(testing.allocator, ops1, &ctx);
     defer testing.allocator.free(r);
     try testing.expectEqualStrings("[a]", r);
+}
+
+test "template cache detects aliased buffer change — bug #414" {
+    var ctx = Context.init(testing.allocator);
+    defer ctx.deinit();
+    try ctx.set("session_name", "alpha");
+    try ctx.set("window_name", "beta");
+
+    var buf = [_]u8{ '[', '#', 'S', ']' };
+    var cache: TemplateCache = .{};
+    defer cache.deinit(testing.allocator);
+
+    const ops1 = try cache.getOrCompile(testing.allocator, &buf);
+    const r1 = try expandOps(testing.allocator, ops1, &ctx);
+    defer testing.allocator.free(r1);
+    try testing.expectEqualStrings("[alpha]", r1);
+
+    // Mutate the same buffer in-place (simulating recycled memory at same address/length)
+    buf[2] = 'W';
+
+    const ops2 = try cache.getOrCompile(testing.allocator, &buf);
+    const r2 = try expandOps(testing.allocator, ops2, &ctx);
+    defer testing.allocator.free(r2);
+    try testing.expectEqualStrings("[beta]", r2);
 }
 
 test "strftime hour minute present" {
