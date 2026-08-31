@@ -2,14 +2,14 @@
 type: index
 title: "Bug Tracker — szn"
 description: "Individual bug entries for szn, one file per bug."
-timestamp: 2026-08-30T16:20:00Z
+timestamp: 2026-08-31T04:05:00Z
 ---
 
 # Bugs — szn
 
 Sorted by number. See individual bug files for details.
 
-> **Note:** Bugs **#301** and **#302** were never filed (MIA). The #300–#310 performance sweep skipped straight from #300 to #303. Bugs **#349–#394** were filed by the 2026-08-23 deep-audit sweep (full-codebase review; 46 bugs, all since resolved). Bugs **#395–#427** were filed by the 2026-08-30 deep-audit sweep (memory safety, IPC integrity, sixel accounting, config/command surface, dead code, perf, alt-screen mouse wheel; 33 bugs, all since resolved). The tracker covers #1–#300, #303–#427 — **425 entries** in total.
+> **Note:** Bugs **#301** and **#302** were never filed (MIA). The #300–#310 performance sweep skipped straight from #300 to #303. Bugs **#349–#394** were filed by the 2026-08-23 deep-audit sweep (full-codebase review; 46 bugs, all since resolved). Bugs **#395–#427** were filed by the 2026-08-30 deep-audit sweep (memory safety, IPC integrity, sixel accounting, config/command surface, dead code, perf, alt-screen mouse wheel; 33 bugs, all since resolved). Bugs **#428–#439** were filed by the 2026-08-31 re-validation sweep (12 confirmed findings from the audit report, re-checked line-by-line against live source; pending fix). The tracker covers #1–#300, #303–#439 — **437 entries** in total.
 
 Both summary tables below are generated from the `severity` and `status` fields in each bug's frontmatter. Regenerate them rather than editing by hand.
 
@@ -18,9 +18,10 @@ Both summary tables below are generated from the `severity` and `status` fields 
 | Severity | Count |
 |---|---:|
 | CRITICAL | 51 |
-| HIGH | 105 |
-| MEDIUM | 149 |
-| LOW | 102 |
+| HIGH | 107 |
+| MEDIUM | 155 |
+| MEDIUM-HIGH | 3 |
+| LOW | 103 |
 | LOW (architecture) | 3 |
 | LOW (code quality) | 5 |
 | LOW (correctness) | 1 |
@@ -30,7 +31,7 @@ Both summary tables below are generated from the `severity` and `status` fields 
 | LOW (safety) | 1 |
 | MEDIUM (dead code / refcount drift) | 1 |
 | MEDIUM (performance) | 4 |
-| **Total** | **425** |
+| **Total** | **437** |
 
 ## Summary by Status
 
@@ -38,8 +39,8 @@ Both summary tables below are generated from the `severity` and `status` fields 
 |---|---:|
 | Fixed / Resolved | 404 |
 | False Positive | 19 |
-| Open (deferred architectural backlog: #360, #361) | 2 |
-| **Total** | **425** |
+| Open (deferred architectural backlog: #360, #361; +12 confirmed 2026-08-31 re-validation: #428–#439) | 14 |
+| **Total** | **437** |
 
 ## All Bugs
 
@@ -470,3 +471,15 @@ Both summary tables below are generated from the `severity` and `status` fields 
 | [425](425.md) | Performance cluster 2: defeated status cache, per-frame recompiles, per-keystroke scrollback rebuild, runtime binding scans vs comptime mandate | LOW | Fixed |
 | [426](426.md) | Robustness residuals cluster: 2 unguarded history subtractions, OOM errdefer ordering, socket/TMP, misc input/parse hardening | LOW | Fixed |
 | [427](427.md) | Mouse wheel in Alternate Screen forces copy-mode on empty/stale scrollback instead of forwarding arrow keys | MEDIUM | Fixed |
+| [428](428.md) | Use-after-free of MessageReader in handleClient packet loop | HIGH | Open |
+| [429](429.md) | DCS '$ q' (DECRQSS) misrouted to the sixel parser | HIGH | Open |
+| [430](430.md) | kitty 'u' protocol returns .char, never matches .special/.arrow/.function bindings | MEDIUM-HIGH | Open |
+| [431](431.md) | Render output bypasses appendClientOut, defeating display flow control | MEDIUM-HIGH | Open |
+| [432](432.md) | Status-bar visibleLen counts codepoints, not cells; wide-char window names mis-hit | MEDIUM | Open |
+| [433](433.md) | Pane-border-format cache invalidated only on option change, not resize/split | MEDIUM-HIGH | Open |
+| [434](434.md) | Region scroll paths skip shiftSixelAnchors, desyncing sixel anchors | MEDIUM | Open |
+| [435](435.md) | Screen.resize leaves sixel anchor_row stale for images below new height | MEDIUM | Open |
+| [436](436.md) | Command parser has no quote/escape handling; quoted multi-word args mis-tokenize | MEDIUM | Open |
+| [437](437.md) | load-buffer fails on EINTR instead of retrying read() | MEDIUM | Open |
+| [438](438.md) | new-session leaves a half-created session attached on setupPane failure | MEDIUM | Open |
+| [439](439.md) | Pty.allocator is 'undefined' until spawn(); deinit non-idempotent | LOW | Open |
