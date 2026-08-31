@@ -2732,21 +2732,26 @@ pub const Server = struct {
     const RENDER_HIGH_WATERMARK = (1 << 20) * 3 / 4; // 768 KiB
 
     fn appendClientOut(self: *Server, dc: *DisplayClient, data: []const u8) bool {
-        if (data.len == 0) return true;
+        return self.appendClientOutFrame(dc, data, &[_]u8{});
+    }
+
+    fn appendClientOutFrame(self: *Server, dc: *DisplayClient, hdr: []const u8, body: []const u8) bool {
+        const total_len = hdr.len + body.len;
+        if (total_len == 0) return true;
         // Overflow safety (bug #297): if even after a drain the buffered bytes
         // plus this frame exceed the hard cap, drop the backlog and resync the
         // diff state so the next full render repaints a coherent screen rather
         // than feeding the client a corrupt slice.
-        if (dc.out_buf.items.len + data.len > MAX_OUT_BUF) {
+        if (dc.out_buf.items.len + total_len > MAX_OUT_BUF) {
             // A transient EAGAIN may have cleared by now — drain before giving up.
             _ = self.flushDisplayClient(dc);
-            if (dc.out_buf.items.len + data.len > MAX_OUT_BUF) {
+            if (dc.out_buf.items.len + total_len > MAX_OUT_BUF) {
                 dc.out_buf.clearRetainingCapacity();
                 dc.last_cells.clearRetainingCapacity();
                 return false;
             }
         }
-        // Flow control (bug #298 follow-up): once this client is behind, stop
+        // Flow control (bug #298 follow-up, bug #431): once this client is behind, stop
         // queueing new frames — the already-buffered frame is enough, and
         // piling on duplicates would only grow out_buf. The server also stops
         // reading the pane pty (see handlePtyEvent), throttling the child to
@@ -2761,7 +2766,16 @@ pub const Server = struct {
             }
             return true;
         }
-        dc.out_buf.appendSlice(self.allocator, data) catch return false;
+        const prev_len = dc.out_buf.items.len;
+        if (hdr.len > 0) {
+            dc.out_buf.appendSlice(self.allocator, hdr) catch return false;
+        }
+        if (body.len > 0) {
+            dc.out_buf.appendSlice(self.allocator, body) catch {
+                dc.out_buf.shrinkRetainingCapacity(prev_len);
+                return false;
+            };
+        }
         if (dc.out_buf.items.len > RENDER_HIGH_WATERMARK) {
             if (!dc.behind) {
                 dc.behind = true;
@@ -2770,7 +2784,7 @@ pub const Server = struct {
         }
         // Frame-flow diagnostics (bug #298): count what is queued for clients.
         self.rendered_frames += 1;
-        self.rendered_bytes += @as(u64, @intCast(data.len));
+        self.rendered_bytes += @as(u64, @intCast(total_len));
         if (self.rendered_frames % 200 == 0) {
             std.log.debug("server queued {d} frames / {d} bytes to clients", .{ self.rendered_frames, self.rendered_bytes });
         }
@@ -3140,18 +3154,7 @@ pub const Server = struct {
             const pkt = protocol.Packet.make(.output, self.render_buf.items);
             var hdr: [5]u8 = undefined;
             pkt.header.encode(&hdr);
-            const prev_len = dc.out_buf.items.len;
-            var append_ok = true;
-            dc.out_buf.appendSlice(self.allocator, hdr[0..]) catch {
-                append_ok = false;
-            };
-            if (append_ok) {
-                dc.out_buf.appendSlice(self.allocator, self.render_buf.items) catch {
-                    dc.out_buf.shrinkRetainingCapacity(prev_len);
-                    append_ok = false;
-                };
-            }
-            if (!append_ok) {
+            if (!self.appendClientOutFrame(dc, &hdr, self.render_buf.items)) {
                 all_flushed = false;
                 if (dc.last_cells.items.len > 0) {
                     @memset(dc.last_cells.items, Cell.empty());
@@ -3159,7 +3162,7 @@ pub const Server = struct {
                 continue;
             }
 
-            if (!self.flushDisplayClient(dc)) all_flushed = false;
+            if (dc.behind or !self.flushDisplayClient(dc)) all_flushed = false;
         }
 
         if (all_flushed) {
@@ -5543,4 +5546,38 @@ test "handleClient detach does not use-after-free MessageReader — bug #428" {
 
     try server.handleClient(server_fd);
     try testing.expect(!server.client_readers.contains(server_fd));
+}
+
+test "appendClientOutFrame and renderToDisplayClient obey RENDER_HIGH_WATERMARK — bug #431" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    var fds: [2]c_int = undefined;
+    if (std.c.pipe(&fds) != 0) return error.Unexpected;
+    defer _ = std.c.close(fds[0]);
+    defer _ = std.c.close(fds[1]);
+
+    try server.display_clients.append(server.allocator, DisplayClient{ .fd = fds[1] });
+    const dc = &server.display_clients.items[0];
+
+    // Pre-fill just below watermark
+    const filler_len = Server.RENDER_HIGH_WATERMARK - 2;
+    const filler = try testing.allocator.alloc(u8, filler_len);
+    defer testing.allocator.free(filler);
+    @memset(filler, 'x');
+    try dc.out_buf.appendSlice(testing.allocator, filler);
+    try testing.expect(!dc.behind);
+
+    // Appending a frame that crosses watermark should succeed and set behind = true
+    var hdr: [5]u8 = undefined;
+    const pkt = protocol.Packet.make(.output, "hello world");
+    pkt.header.encode(&hdr);
+    try testing.expect(server.appendClientOutFrame(dc, &hdr, "hello world"));
+    try testing.expect(dc.behind);
+
+    const len_after_first = dc.out_buf.items.len;
+
+    // Subsequent frame while behind is skipped
+    try testing.expect(server.appendClientOutFrame(dc, &hdr, "another frame"));
+    try testing.expectEqual(len_after_first, dc.out_buf.items.len);
 }
