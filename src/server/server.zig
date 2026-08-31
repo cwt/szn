@@ -369,12 +369,9 @@ pub const Server = struct {
     }
 
     fn currentMillis() i64 {
-        var tv: extern struct {
-            tv_sec: i64,
-            tv_usec: i64,
-        } = undefined;
-        _ = gettimeofday(@ptrCast(&tv), null);
-        return tv.tv_sec * 1000 + @divFloor(tv.tv_usec, 1000);
+        var tv: std.c.timeval = undefined;
+        _ = gettimeofday(&tv, null);
+        return @as(i64, @intCast(tv.sec)) * 1000 + @divFloor(@as(i64, @intCast(tv.usec)), 1000);
     }
 
     pub fn setMessage(self: *Server, msg: []const u8) !void {
@@ -2435,11 +2432,11 @@ pub const Server = struct {
         try reader.feed(buf[0..n]);
 
         while (try reader.tryParse()) |pkt| {
-            defer reader.consume(pkt);
             const msg_type = protocol.MessageType.fromByte(pkt.header.msg_type) orelse {
                 if (!self.ignore_unknown_msg_warn) {
                     std.log.warn("server received unknown message type byte: {}", .{pkt.header.msg_type});
                 }
+                reader.consume(pkt);
                 continue;
             };
             switch (msg_type) {
@@ -2556,6 +2553,7 @@ pub const Server = struct {
                         self.current_client_fd = null;
                     }
                     self.recalculateMinimumSize();
+                    return;
                 },
                 .redraw => {
                     // The client dropped queued output while its downstream pty
@@ -2575,6 +2573,7 @@ pub const Server = struct {
                     std.log.warn("server ignored unhandled message type: {any}", .{msg_type});
                 },
             }
+            reader.consume(pkt);
         }
     }
 
@@ -5518,4 +5517,30 @@ test "mouse wheel in alternate screen forwards arrow keys instead of entering co
     const n = std.c.read(fds[0], &buf, buf.len);
     try testing.expect(n > 0);
     try testing.expectEqualStrings("\x1b[A\x1b[A\x1b[A", buf[0..@intCast(n)]);
+}
+
+test "handleClient detach does not use-after-free MessageReader — bug #428" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    var fds: [2]i32 = undefined;
+    if (std.c.socketpair(std.c.AF.UNIX, std.c.SOCK.STREAM, 0, &fds) != 0) return error.Unexpected;
+    const server_fd = fds[0];
+    const client_fd = fds[1];
+    defer _ = std.c.close(client_fd);
+
+    const reader = try server.allocator.create(MessageReader);
+    reader.* = .{};
+    try server.client_readers.put(server_fd, reader);
+    try server.client_fds.append(server.allocator, server_fd);
+    try server.loop.addFd(server.allocator, server_fd, @as(i16, @intCast(std.posix.POLL.IN)), null);
+    try server.display_clients.append(server.allocator, .{ .fd = server_fd });
+
+    const detach_pkt = protocol.Packet.make(.detach, "");
+    var detach_buf: [32]u8 = undefined;
+    const ser = detach_pkt.serialize(&detach_buf);
+    _ = std.c.write(client_fd, ser.ptr, ser.len);
+
+    try server.handleClient(server_fd);
+    try testing.expect(!server.client_readers.contains(server_fd));
 }

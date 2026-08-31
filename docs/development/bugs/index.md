@@ -37,9 +37,9 @@ Both summary tables below are generated from the `severity` and `status` fields 
 
 | Status | Count |
 |---|---:|
-| Fixed / Resolved | 404 |
+| Fixed / Resolved | 405 |
 | False Positive | 19 |
-| Open (deferred architectural backlog: #360, #361; +12 confirmed 2026-08-31 re-validation: #428–#439) | 14 |
+| Open (deferred architectural backlog: #360, #361; +11 confirmed 2026-08-31 re-validation: #429–#439) | 13 |
 | **Total** | **437** |
 
 ## All Bugs
@@ -471,7 +471,7 @@ Both summary tables below are generated from the `severity` and `status` fields 
 | [425](425.md) | Performance cluster 2: defeated status cache, per-frame recompiles, per-keystroke scrollback rebuild, runtime binding scans vs comptime mandate | LOW | Fixed |
 | [426](426.md) | Robustness residuals cluster: 2 unguarded history subtractions, OOM errdefer ordering, socket/TMP, misc input/parse hardening | LOW | Fixed |
 | [427](427.md) | Mouse wheel in Alternate Screen forces copy-mode on empty/stale scrollback instead of forwarding arrow keys | MEDIUM | Fixed |
-| [428](428.md) | Use-after-free of MessageReader in handleClient packet loop | HIGH | Open |
+| [428](428.md) | Use-after-free of MessageReader in handleClient packet loop | HIGH | Fixed |
 | [429](429.md) | DCS '$ q' (DECRQSS) misrouted to the sixel parser | HIGH | Open |
 | [430](430.md) | kitty 'u' protocol returns .char, never matches .special/.arrow/.function bindings | MEDIUM-HIGH | Open |
 | [431](431.md) | Render output bypasses appendClientOut, defeating display flow control | MEDIUM-HIGH | Open |
