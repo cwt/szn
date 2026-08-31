@@ -9,7 +9,7 @@ timestamp: 2026-08-31T04:05:00Z
 
 Sorted by number. See individual bug files for details.
 
-> **Note:** Bugs **#301** and **#302** were never filed (MIA). The #300–#310 performance sweep skipped straight from #300 to #303. Bugs **#349–#394** were filed by the 2026-08-23 deep-audit sweep (full-codebase review; 46 bugs, all since resolved). Bugs **#395–#427** were filed by the 2026-08-30 deep-audit sweep (memory safety, IPC integrity, sixel accounting, config/command surface, dead code, perf, alt-screen mouse wheel; 33 bugs, all since resolved). Bugs **#428–#439** were filed by the 2026-08-31 re-validation sweep (12 confirmed findings from the audit report, re-checked line-by-line against live source; pending fix). The tracker covers #1–#300, #303–#439 — **437 entries** in total.
+> **Note:** Bugs **#301** and **#302** were never filed (MIA). The #300–#310 performance sweep skipped straight from #300 to #303. Bugs **#349–#394** were filed by the 2026-08-23 deep-audit sweep (full-codebase review; 46 bugs, all since resolved). Bugs **#395–#427** were filed by the 2026-08-30 deep-audit sweep (memory safety, IPC integrity, sixel accounting, config/command surface, dead code, perf, alt-screen mouse wheel; 33 bugs, all since resolved). Bugs **#428–#439** were filed by the 2026-08-31 re-validation sweep (12 confirmed findings from the audit report, re-checked line-by-line against live source; pending fix). The tracker covers #1–#300, #303–#440 — **438 entries** in total.
 
 Both summary tables below are generated from the `severity` and `status` fields in each bug's frontmatter. Regenerate them rather than editing by hand.
 
@@ -18,7 +18,7 @@ Both summary tables below are generated from the `severity` and `status` fields 
 | Severity | Count |
 |---|---:|
 | CRITICAL | 51 |
-| HIGH | 107 |
+| HIGH | 108 |
 | MEDIUM | 155 |
 | MEDIUM-HIGH | 3 |
 | LOW | 103 |
@@ -31,7 +31,7 @@ Both summary tables below are generated from the `severity` and `status` fields 
 | LOW (safety) | 1 |
 | MEDIUM (dead code / refcount drift) | 1 |
 | MEDIUM (performance) | 4 |
-| **Total** | **437** |
+| **Total** | **438** |
 
 ## Summary by Status
 
@@ -39,8 +39,8 @@ Both summary tables below are generated from the `severity` and `status` fields 
 |---|---:|
 | Fixed / Resolved | 418 |
 | False Positive | 19 |
-| Open | 0 |
-| **Total** | **437** |
+| Open | 1 |
+| **Total** | **438** |
 
 ## All Bugs
 
@@ -483,3 +483,4 @@ Both summary tables below are generated from the `severity` and `status` fields 
 | [437](437.md) | load-buffer fails on EINTR instead of retrying read() | MEDIUM | Fixed |
 | [438](438.md) | new-session leaves a half-created session attached on setupPane failure | MEDIUM | Fixed |
 | [439](439.md) | Pty.allocator is 'undefined' until spawn(); deinit non-idempotent | LOW | Fixed |
+| [440](440.md) | Global window status options rejected by scope routing and status cache freeze on active window switch | HIGH | Open |
