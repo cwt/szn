@@ -117,6 +117,8 @@ fn cmdNewWindow(server: *Server, args: []const []const u8) CmdResult {
             return .err;
         };
     }
+    server.dirty = true;
+    server.status_dirty = true;
     return .ok;
 }
 
@@ -136,6 +138,8 @@ fn cmdKillWindow(server: *Server, args: []const []const u8) CmdResult {
 
     server.unregisterWindowFds(target_win);
     session.killWindow(server.allocator, target_win);
+    server.dirty = true;
+    server.status_dirty = true;
     return .ok;
 }
 
@@ -209,6 +213,8 @@ fn cmdRenameSession(server: *Server, args: []const []const u8) CmdResult {
     if (args.len < 2) return .err;
     const session = server.activeSession() orelse return .err;
     session.rename(server.allocator, args[1]);
+    server.dirty = true;
+    server.status_dirty = true;
     return .ok;
 }
 
@@ -218,6 +224,8 @@ fn cmdRenameWindow(server: *Server, args: []const []const u8) CmdResult {
     const window = session.active_window orelse return .err;
     window.setName(args[1]);
     window.automatic_rename = false;
+    server.dirty = true;
+    server.status_dirty = true;
     return .ok;
 }
 
@@ -227,6 +235,8 @@ fn cmdSelectWindow(server: *Server, args: []const []const u8) CmdResult {
     const idx = std.fmt.parseInt(u32, args[1], 10) catch return .err;
     if (idx >= session.windows.items.len) return .err;
     session.setActiveWindow(session.windows.items[idx]);
+    server.dirty = true;
+    server.status_dirty = true;
     return .ok;
 }
 
@@ -862,12 +872,16 @@ fn cmdLastWindow(server: *Server, _: []const []const u8) CmdResult {
     if (session.windows.items.len <= 1) return .ok;
     if (session.last_window) |lw| {
         session.setActiveWindow(lw);
+        server.dirty = true;
+        server.status_dirty = true;
         return .ok;
     }
     const current = session.active_window orelse return .err;
     for (session.windows.items) |w| {
         if (w != current) {
             session.setActiveWindow(w);
+            server.dirty = true;
+            server.status_dirty = true;
             return .ok;
         }
     }
@@ -881,6 +895,8 @@ fn cmdNextWindow(server: *Server, _: []const []const u8) CmdResult {
         if (w == current) {
             const next = (i + 1) % session.windows.items.len;
             session.setActiveWindow(session.windows.items[next]);
+            server.dirty = true;
+            server.status_dirty = true;
             return .ok;
         }
     }
@@ -894,22 +910,26 @@ fn cmdPrevWindow(server: *Server, _: []const []const u8) CmdResult {
         if (w == current) {
             const prev = if (i == 0) session.windows.items.len - 1 else i - 1;
             session.setActiveWindow(session.windows.items[prev]);
+            server.dirty = true;
+            server.status_dirty = true;
             return .ok;
         }
     }
     return .err;
 }
 
-fn cmdSetOption(server: *Server, args: []const []const u8) CmdResult {
+fn setOptionInternal(server: *Server, args: []const []const u8, default_window: bool) CmdResult {
     if (args.len < 3) return .err;
     var is_global = false;
-    var is_window = false;
+    var is_window = default_window;
     var opt_idx: usize = 1;
     while (opt_idx < args.len and std.mem.startsWith(u8, args[opt_idx], "-")) {
         if (std.mem.eql(u8, args[opt_idx], "-g")) {
             is_global = true;
         } else if (std.mem.eql(u8, args[opt_idx], "-w")) {
             is_window = true;
+        } else if (std.mem.eql(u8, args[opt_idx], "-s")) {
+            is_window = false;
         }
         opt_idx += 1;
     }
@@ -928,7 +948,14 @@ fn cmdSetOption(server: *Server, args: []const []const u8) CmdResult {
         if (is_window) {
             server.global_window_options.set(option_name, parsed_val) catch return .err;
         } else {
-            server.global_options.set(option_name, parsed_val) catch return .err;
+            server.global_options.set(option_name, parsed_val) catch |err| {
+                if (err == error.UnknownOption) {
+                    server.global_window_options.set(option_name, parsed_val) catch return .err;
+                    is_window = true;
+                } else {
+                    return .err;
+                }
+            };
             if (std.mem.eql(u8, option_name, "prefix")) {
                 if (parsed_val == .key) {
                     server.dispatcher.prefix = parsed_val.key;
@@ -941,11 +968,18 @@ fn cmdSetOption(server: *Server, args: []const []const u8) CmdResult {
             const window = session.active_window orelse return .err;
             window.options.set(option_name, parsed_val) catch return .err;
         } else {
-            session.options.set(option_name, parsed_val) catch return .err;
-            // A session-scoped prefix change on the active session must take
-            // effect immediately, like the config loader does — otherwise the
-            // option displays one key while dispatch still uses the old one
-            // (bug #390). cmdSetOption always targets the active session.
+            session.options.set(option_name, parsed_val) catch |err| {
+                if (err == error.UnknownOption) {
+                    if (session.active_window) |window| {
+                        window.options.set(option_name, parsed_val) catch return .err;
+                        is_window = true;
+                    } else {
+                        return .err;
+                    }
+                } else {
+                    return .err;
+                }
+            };
             if (std.mem.eql(u8, option_name, "prefix") and parsed_val == .key) {
                 server.dispatcher.prefix = parsed_val.key;
             }
@@ -972,16 +1006,31 @@ fn cmdSetOption(server: *Server, args: []const []const u8) CmdResult {
             }
         }
     }
-    // Status-related options need a redraw.
+    // Status-related options need a redraw and status cache invalidation.
     if (std.mem.startsWith(u8, option_name, "status") or
         std.mem.startsWith(u8, option_name, "window-status"))
     {
         server.dirty = true;
+        server.status_dirty = true;
     }
-    // -g updates should also land on the active session so live config works.
-    if (is_global and !is_window) {
+    // -g updates should also land on the active session/window so live config works.
+    if (is_global) {
         if (server.activeSession()) |session| {
-            session.options.set(option_name, parsed_val) catch |err| std.log.warn("options.set failed: {any}", .{err});
+            if (is_window) {
+                if (session.active_window) |window| {
+                    window.options.set(option_name, parsed_val) catch |err| std.log.warn("options.set failed: {any}", .{err});
+                }
+            } else {
+                session.options.set(option_name, parsed_val) catch |err| {
+                    if (err == error.UnknownOption) {
+                        if (session.active_window) |window| {
+                            window.options.set(option_name, parsed_val) catch |err2| std.log.warn("window.options.set failed: {any}", .{err2});
+                        }
+                    } else {
+                        std.log.warn("options.set failed: {any}", .{err});
+                    }
+                };
+            }
         }
     }
     // Invalidate the per-pane border format cache: the generation counter must
@@ -993,6 +1042,14 @@ fn cmdSetOption(server: *Server, args: []const []const u8) CmdResult {
         }
     }
     return .ok;
+}
+
+fn cmdSetOption(server: *Server, args: []const []const u8) CmdResult {
+    return setOptionInternal(server, args, false);
+}
+
+fn cmdSetWindowOption(server: *Server, args: []const []const u8) CmdResult {
+    return setOptionInternal(server, args, true);
 }
 
 fn printOptionValue(server: *Server, val: @import("../options.zig").OptionValue) ParseError!void {
@@ -1376,6 +1433,12 @@ pub const commands = struct {
         .description = "Set a session or window option",
         .exec = cmdSetOption,
     };
+    pub const set_window_option = CmdEntry{
+        .name = "set-window-option",
+        .alias = "setw",
+        .description = "Set a window option",
+        .exec = cmdSetWindowOption,
+    };
     pub const show_options = CmdEntry{
         .name = "show-options",
         .alias = "show",
@@ -1601,6 +1664,7 @@ pub const CMD_TABLE = [_]*const CmdEntry{
     &commands.list_commands,
     &commands.detach_client,
     &commands.set_option,
+    &commands.set_window_option,
     &commands.show_options,
     &commands.bind_key,
     &commands.unbind_key,
@@ -2243,12 +2307,14 @@ test "last-window switches to non-active" {
     try testing.expectEqual(session.windows.items[0], session.active_window.?);
 }
 
-test "cmd table has 48 entries" {
+test "cmd table has 49 entries" {
     const table = cmdTable();
-    try testing.expectEqual(@as(usize, 48), table.len);
+    try testing.expectEqual(@as(usize, 49), table.len);
 }
 
 test "lookup all new commands" {
+    try testing.expect(lookup("set-window-option") != null);
+    try testing.expect(lookup("setw") != null);
     try testing.expect(lookup("copy-mode") != null);
     try testing.expect(lookup("list-keys") != null);
     try testing.expect(lookup("show-messages") != null);
@@ -3057,3 +3123,40 @@ test "set-option -g history-limit configures ring buffer size across panes" {
 
     try testing.expectEqual(@as(u32, 5000), pane.screen.grid.history_limit);
 }
+
+test "set-option -g routes window-status-format to window options — bug #440" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+    _ = try server.newSession("test", 80, 24);
+
+    var c1 = try parse("set-option -g window-status-format \"#I:#W\"", testing.allocator);
+    defer c1.deinit(testing.allocator);
+    try testing.expectEqual(CmdResult.ok, c1.exec(&server));
+    try testing.expectEqualStrings("#I:#W", server.global_window_options.asString("window-status-format").?);
+    try testing.expect(server.status_dirty);
+
+    var c2 = try parse("setw -g window-status-current-format \"#I:#W#F\"", testing.allocator);
+    defer c2.deinit(testing.allocator);
+    try testing.expectEqual(CmdResult.ok, c2.exec(&server));
+    try testing.expectEqualStrings("#I:#W#F", server.global_window_options.asString("window-status-current-format").?);
+}
+
+test "window navigation commands invalidate status_dirty cache — bug #440" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+    const session = try server.newSession("test", 80, 24);
+    _ = try session.newWindow(server.allocator, "w2");
+
+    server.status_dirty = false;
+    var c1 = try parse("next-window", testing.allocator);
+    defer c1.deinit(testing.allocator);
+    try testing.expectEqual(CmdResult.ok, c1.exec(&server));
+    try testing.expect(server.status_dirty);
+
+    server.status_dirty = false;
+    var c2 = try parse("select-window 0", testing.allocator);
+    defer c2.deinit(testing.allocator);
+    try testing.expectEqual(CmdResult.ok, c2.exec(&server));
+    try testing.expect(server.status_dirty);
+}
+

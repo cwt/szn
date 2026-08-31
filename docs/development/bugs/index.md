@@ -37,9 +37,9 @@ Both summary tables below are generated from the `severity` and `status` fields 
 
 | Status | Count |
 |---|---:|
-| Fixed / Resolved | 418 |
+| Fixed / Resolved | 419 |
 | False Positive | 19 |
-| Open | 1 |
+| Open | 0 |
 | **Total** | **438** |
 
 ## All Bugs
@@ -483,4 +483,4 @@ Both summary tables below are generated from the `severity` and `status` fields 
 | [437](437.md) | load-buffer fails on EINTR instead of retrying read() | MEDIUM | Fixed |
 | [438](438.md) | new-session leaves a half-created session attached on setupPane failure | MEDIUM | Fixed |
 | [439](439.md) | Pty.allocator is 'undefined' until spawn(); deinit non-idempotent | LOW | Fixed |
-| [440](440.md) | Global window status options rejected by scope routing and status cache freeze on active window switch | HIGH | Open |
+| [440](440.md) | Global window status options rejected by scope routing and status cache freeze on active window switch | HIGH | Fixed |

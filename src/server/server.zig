@@ -448,11 +448,17 @@ pub const Server = struct {
         for (session.windows.items, 0..) |win, i| {
             const is_active = (win == session.active_window);
             const flags: []const u8 = if (is_active) "*" else "";
+            const w_fmt = win.options.asString("window-status-format") orelse
+                self.global_window_options.asString("window-status-format");
+            const w_cur = win.options.asString("window-status-current-format") orelse
+                self.global_window_options.asString("window-status-current-format");
             try self.status_win_infos.append(self.allocator, .{
                 .index = @intCast(base_index + @as(i64, @intCast(i))),
                 .name = win.name,
                 .flags = flags,
                 .is_active = is_active,
+                .format = w_fmt,
+                .current_format = w_cur,
             });
         }
 
@@ -1020,6 +1026,7 @@ pub const Server = struct {
                 if (win.active_pane) |p| {
                     try self.setupPane(session, p, current_cwd);
                 }
+                self.status_dirty = true;
             },
             .split_horizontal => {
                 const current_cwd = self.paneCwd(pane);
@@ -1036,6 +1043,7 @@ pub const Server = struct {
             .kill_pane => {
                 if (window.panes.items.len > 1) {
                     self.destroyPane(pane);
+                    self.status_dirty = true;
                 }
             },
             .next_window => {
@@ -1044,6 +1052,7 @@ pub const Server = struct {
                         if (w == window) {
                             const next = (idx + 1) % session.windows.items.len;
                             session.setActiveWindow(session.windows.items[next]);
+                            self.status_dirty = true;
                             break;
                         }
                     }
@@ -1055,6 +1064,7 @@ pub const Server = struct {
                         if (w == window) {
                             const prev = if (idx == 0) session.windows.items.len - 1 else idx - 1;
                             session.setActiveWindow(session.windows.items[prev]);
+                            self.status_dirty = true;
                             break;
                         }
                     }
@@ -1063,10 +1073,12 @@ pub const Server = struct {
             .last_window => {
                 if (session.last_window) |lw| {
                     session.setActiveWindow(lw);
+                    self.status_dirty = true;
                 } else if (session.windows.items.len > 1) {
                     for (session.windows.items) |w| {
                         if (w != window) {
                             session.setActiveWindow(w);
+                            self.status_dirty = true;
                             break;
                         }
                     }
@@ -1123,6 +1135,7 @@ pub const Server = struct {
                 const idx = @intFromEnum(action) - @intFromEnum(@import("../key_binding.zig").Action.select_window_0);
                 if (idx < session.windows.items.len) {
                     session.setActiveWindow(session.windows.items[idx]);
+                    self.status_dirty = true;
                 }
             },
             .copy_mode => {
@@ -2077,6 +2090,7 @@ pub const Server = struct {
                         pane.dirty = true;
                     }
                     self.dirty = true;
+                    self.status_dirty = true;
                     return;
                 }
             }
@@ -3187,6 +3201,7 @@ pub const Server = struct {
         }
         try self.sessions.append(self.allocator, session);
         self.dirty = true;
+        self.status_dirty = true;
         return session;
     }
 
@@ -3210,6 +3225,7 @@ pub const Server = struct {
         session.deinit(self.allocator);
         self.allocator.destroy(session);
         self.dirty = true;
+        self.status_dirty = true;
     }
 
     pub fn killAllSessions(self: *Server) void {
@@ -3290,11 +3306,21 @@ pub const Server = struct {
                     if (s.flags.unset) {
                         if (s.flags.window) {
                             self.global_window_options.unset(s.option) catch |err| std.log.warn("unset window option failed: {any}", .{err});
-                        } else if (s.flags.session or s.flags.server or s.flags.global) {
+                        } else if (s.flags.session or s.flags.server) {
                             self.global_options.unset(s.option) catch |err| std.log.warn("unset option failed: {any}", .{err});
                         } else {
-                            self.global_options.unset(s.option) catch {
-                                self.global_window_options.unset(s.option) catch |err| std.log.warn("unset failed: {any}", .{err});
+                            self.global_options.unset(s.option) catch |err| {
+                                if (err == error.UnknownOption) {
+                                    self.global_window_options.unset(s.option) catch |err2| {
+                                        if (err2 == error.UnknownOption) {
+                                            std.log.warn("unknown option: {s}", .{s.option});
+                                        } else {
+                                            std.log.warn("unset window option failed: {any}", .{err2});
+                                        }
+                                    };
+                                } else {
+                                    std.log.warn("unset session option failed: {any}", .{err});
+                                }
                             };
                         }
                     } else {
@@ -3302,9 +3328,9 @@ pub const Server = struct {
                             self.global_window_options.set(s.option, s.value) catch |err| {
                                 std.log.warn("set window option {s} failed: {any}", .{ s.option, err });
                             };
-                        } else if (s.flags.session or s.flags.server or s.flags.global) {
+                        } else if (s.flags.session or s.flags.server) {
                             self.global_options.set(s.option, s.value) catch |err| {
-                                std.log.warn("set session/global option {s} failed: {any}", .{ s.option, err });
+                                std.log.warn("set session/server option {s} failed: {any}", .{ s.option, err });
                             };
                         } else {
                             self.global_options.set(s.option, s.value) catch |err| {
@@ -3321,6 +3347,12 @@ pub const Server = struct {
                                 }
                             };
                         }
+                    }
+                    if (std.mem.startsWith(u8, s.option, "status") or
+                        std.mem.startsWith(u8, s.option, "window-status"))
+                    {
+                        self.dirty = true;
+                        self.status_dirty = true;
                     }
                     if (std.mem.eql(u8, s.option, "prefix")) {
                         if (s.value == .key) {

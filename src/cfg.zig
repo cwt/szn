@@ -111,9 +111,16 @@ pub fn parseConfig(allocator: std.mem.Allocator, input: []const u8) Error!ParseR
         // Strip trailing comment (inline #)
         const cmd_line = stripInlineComment(line);
 
-        if (std.mem.startsWith(u8, cmd_line, "set ")) {
-            parseSet(allocator, cmd_line[4..], &result) catch |e| {
+        if (std.mem.startsWith(u8, cmd_line, "set ") or std.mem.startsWith(u8, cmd_line, "set-option ")) {
+            const prefix_len = if (std.mem.startsWith(u8, cmd_line, "set-option ")) @as(usize, 11) else @as(usize, 4);
+            parseSet(allocator, cmd_line[prefix_len..], &result, false) catch |e| {
                 const msg = try std.fmt.allocPrint(allocator, "set error: {}", .{e});
+                try result.errors.append(allocator, msg);
+            };
+        } else if (std.mem.startsWith(u8, cmd_line, "setw ") or std.mem.startsWith(u8, cmd_line, "set-window-option ")) {
+            const prefix_len = if (std.mem.startsWith(u8, cmd_line, "set-window-option ")) @as(usize, 18) else @as(usize, 5);
+            parseSet(allocator, cmd_line[prefix_len..], &result, true) catch |e| {
+                const msg = try std.fmt.allocPrint(allocator, "setw error: {}", .{e});
                 try result.errors.append(allocator, msg);
             };
         } else if (std.mem.startsWith(u8, cmd_line, "bind ")) {
@@ -154,7 +161,8 @@ pub fn parseConfig(allocator: std.mem.Allocator, input: []const u8) Error!ParseR
 }
 
 fn stripInlineComment(line: []const u8) []const u8 {
-    var in_quote = false;
+    var in_double_quote = false;
+    var in_single_quote = false;
     var escaped = false;
     for (line, 0..) |c, i| {
         if (escaped) {
@@ -165,20 +173,24 @@ fn stripInlineComment(line: []const u8) []const u8 {
             escaped = true;
             continue;
         }
-        if (c == '"') {
-            in_quote = !in_quote;
+        if (c == '"' and !in_single_quote) {
+            in_double_quote = !in_double_quote;
             continue;
         }
-        if (c == '#' and !in_quote) {
+        if (c == '\'' and !in_double_quote) {
+            in_single_quote = !in_single_quote;
+            continue;
+        }
+        if (c == '#' and !in_double_quote and !in_single_quote) {
             return std.mem.trim(u8, line[0..i], " \t");
         }
     }
     return line;
 }
 
-fn parseSet(allocator: std.mem.Allocator, args: []const u8, result: *ParseResult) Error!void {
+fn parseSet(allocator: std.mem.Allocator, args: []const u8, result: *ParseResult, default_window: bool) Error!void {
     const trimmed = std.mem.trim(u8, args, " \t");
-    var flags = SetOpt{ .flags = .{}, .option = undefined, .value = undefined };
+    var flags = SetOpt{ .flags = .{ .window = default_window }, .option = undefined, .value = undefined };
     var remaining = trimmed;
 
     // Parse flags: -g, -s, -w, -u, or combined like -gu, -gw, -sgu
@@ -190,8 +202,14 @@ fn parseSet(allocator: std.mem.Allocator, args: []const u8, result: *ParseResult
         for (flag_str) |ch| {
             switch (ch) {
                 'g' => flags.flags.global = true,
-                's' => flags.flags.session = true,
-                'w' => flags.flags.window = true,
+                's' => {
+                    flags.flags.session = true;
+                    flags.flags.window = false;
+                },
+                'w' => {
+                    flags.flags.window = true;
+                    flags.flags.session = false;
+                },
                 'u' => flags.flags.unset = true,
                 else => {
                     is_flag = false;
@@ -228,8 +246,8 @@ pub fn parseValue(allocator: std.mem.Allocator, s: []const u8) Error!OptionValue
     if (std.mem.eql(u8, s, "true") or std.mem.eql(u8, s, "on")) return OptionValue{ .flag = true };
     if (std.mem.eql(u8, s, "false") or std.mem.eql(u8, s, "off")) return OptionValue{ .flag = false };
 
-    // Quoted string
-    if (s.len >= 2 and s[0] == '"' and s[s.len - 1] == '"') {
+    // Quoted string (double or single quotes)
+    if (s.len >= 2 and ((s[0] == '"' and s[s.len - 1] == '"') or (s[0] == '\'' and s[s.len - 1] == '\''))) {
         const inner = s[1 .. s.len - 1];
         return OptionValue{ .string = try allocator.dupe(u8, inner) };
     }
@@ -703,6 +721,30 @@ test "unescapeQuoted handles escaped backslashes correctly — bug #259" {
     const s2 = try unescapeQuoted(allocator, "path\\\\to\\\\file");
     defer allocator.free(s2);
     try testing.expectEqualStrings("path\\to\\file", s2);
+}
+
+test "parseConfig handles setw, set-window-option, and single-quoted format strings — bug #440" {
+    const allocator = testing.allocator;
+
+    var res1 = try parseConfig(allocator, "setw -g window-status-format '#I:#W'");
+    defer res1.deinit(allocator);
+    try testing.expectEqual(@as(usize, 1), res1.directives.items.len);
+    const d1 = res1.directives.items[0];
+    try testing.expect(d1 == .set);
+    try testing.expect(d1.set.flags.global);
+    try testing.expect(d1.set.flags.window);
+    try testing.expectEqualStrings("window-status-format", d1.set.option);
+    try testing.expectEqualStrings("#I:#W", d1.set.value.string);
+
+    var res2 = try parseConfig(allocator, "set-window-option -g window-status-current-format \"#I:#W#F\"");
+    defer res2.deinit(allocator);
+    try testing.expectEqual(@as(usize, 1), res2.directives.items.len);
+    const d2 = res2.directives.items[0];
+    try testing.expect(d2 == .set);
+    try testing.expect(d2.set.flags.global);
+    try testing.expect(d2.set.flags.window);
+    try testing.expectEqualStrings("window-status-current-format", d2.set.option);
+    try testing.expectEqualStrings("#I:#W#F", d2.set.value.string);
 }
 
 test "parseConfig handles set -u directive — bug #325 #336" {

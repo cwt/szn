@@ -168,8 +168,13 @@ pub fn truncateVisible(allocator: std.mem.Allocator, s: []const u8, max_cols: us
         }
         const cp_len = std.unicode.utf8ByteSequenceLength(s[i]) catch 1;
         const end = @min(i + cp_len, s.len);
+        const w: usize = if (i + cp_len <= s.len) blk: {
+            const cp = std.unicode.utf8Decode(s[i .. i + cp_len]) catch ' ';
+            break :blk char_width.charWidth(cp);
+        } else 1;
+        if (cols + w > max_cols) break;
         try out.appendSlice(allocator, s[i..end]);
-        cols += 1;
+        cols += w;
         i = end;
     }
     return try out.toOwnedSlice(allocator);
@@ -260,6 +265,8 @@ pub const WindowInfo = struct {
     name: []const u8,
     flags: []const u8,
     is_active: bool,
+    format: ?[]const u8 = null,
+    current_format: ?[]const u8 = null,
 };
 
 pub const BuildInput = struct {
@@ -324,7 +331,8 @@ pub fn buildLine(
         try ctx.set("window_flags", w.flags);
         try ctx.set("window_active", if (w.is_active) "1" else "0");
 
-        const tmpl = if (w.is_active) input.window_status_current_format else input.window_status_format;
+        const default_tmpl = if (w.is_active) input.window_status_current_format else input.window_status_format;
+        const tmpl = if (w.is_active) (w.current_format orelse default_tmpl) else (w.format orelse default_tmpl);
         const cache = if (w.is_active) input.win_cur_cache else input.win_fmt_cache;
         const piece = try expandCached(allocator, tmpl, &ctx, cache);
         defer allocator.free(piece);
@@ -800,3 +808,45 @@ test "buildLine prevents style leakage when window format omits default reset" {
     // Automatically restored status bar bg after active window piece
     try testing.expect(std.mem.indexOf(u8, res.line, "\x1b[m\x1b[48;2;0;95;175m") != null);
 }
+
+test "truncateVisible measures wide chars and does not split mid-cell — bug #440" {
+    // "日本語" is 6 columns total (3 CJK characters * 2).
+    // Truncating to 4 columns should give exactly 2 CJK characters ("日本", 4 cells).
+    const t1 = try truncateVisible(testing.allocator, "日本語", 4);
+    defer testing.allocator.free(t1);
+    try testing.expectEqualStrings("日本", t1);
+    try testing.expectEqual(@as(usize, 4), visibleLen(t1));
+
+    // Truncating to 5 columns on "日本語" cannot fit the 3rd CJK character (which needs 2 cols),
+    // so it should stop at 4 columns ("日本").
+    const t2 = try truncateVisible(testing.allocator, "日本語", 5);
+    defer testing.allocator.free(t2);
+    try testing.expectEqualStrings("日本", t2);
+    try testing.expectEqual(@as(usize, 4), visibleLen(t2));
+}
+
+test "buildLine respects per-window format overrides — bug #440" {
+    const windows = [_]WindowInfo{
+        .{ .index = 0, .name = "main", .flags = "*", .is_active = true, .current_format = "CURR:#W" },
+        .{ .index = 1, .name = "side", .flags = "", .is_active = false, .format = "CUSTOM:#W " },
+        .{ .index = 2, .name = "extra", .flags = "", .is_active = false }, // uses default window_status_format
+    };
+    var ranges = std.ArrayList(WindowRange).empty;
+    defer ranges.deinit(testing.allocator);
+    const res = try buildLine(testing.allocator, .{
+        .session_name = "s",
+        .windows = &windows,
+        .left = "",
+        .right = "",
+        .left_length = 0,
+        .right_length = 0,
+        .width = 40,
+        .window_status_format = "DEF:#W ",
+    }, &ranges);
+    defer res.deinit(testing.allocator);
+
+    try testing.expect(std.mem.indexOf(u8, res.line, "CURR:main") != null);
+    try testing.expect(std.mem.indexOf(u8, res.line, "CUSTOM:side") != null);
+    try testing.expect(std.mem.indexOf(u8, res.line, "DEF:extra") != null);
+}
+
