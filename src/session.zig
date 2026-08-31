@@ -50,9 +50,11 @@ pub const Session = struct {
         initial_win.setName(name);
         // Window.init sets pane.window to a stack-local pointer; fixup to the
         // heap-allocated window so options lookups (remain-on-exit etc.) work.
+        const hlimit: ?u32 = if (self.options.get("history-limit")) |hl| @intCast(hl.number) else null;
         for (initial_win.panes.items) |p| {
             p.window = initial_win;
             p.title_ctx = @ptrCast(initial_win);
+            if (hlimit) |hl| p.screen.grid.setHistoryLimit(hl);
         }
         try self.windows.append(allocator, initial_win);
         self.active_window = initial_win;

@@ -954,6 +954,24 @@ fn cmdSetOption(server: *Server, args: []const []const u8) CmdResult {
     if (std.mem.eql(u8, option_name, "codepoint-widths") and parsed_val == .string) {
         char_width.applyCodepointWidths(server.allocator, parsed_val.string) catch return .err;
     }
+    if (std.mem.eql(u8, option_name, "history-limit") and parsed_val == .number) {
+        const limit: u32 = @intCast(parsed_val.number);
+        if (is_global) {
+            for (server.sessions.items) |sess| {
+                for (sess.windows.items) |win| {
+                    for (win.panes.items) |p| {
+                        p.screen.grid.setHistoryLimit(limit);
+                    }
+                }
+            }
+        } else if (server.activeSession()) |sess| {
+            for (sess.windows.items) |win| {
+                for (win.panes.items) |p| {
+                    p.screen.grid.setHistoryLimit(limit);
+                }
+            }
+        }
+    }
     // Status-related options need a redraw.
     if (std.mem.startsWith(u8, option_name, "status") or
         std.mem.startsWith(u8, option_name, "window-status"))
@@ -3020,4 +3038,22 @@ test "bare kill-session kills active session only — bug #407" {
     try testing.expectEqual(CmdResult.ok, c.exec(&server));
     try testing.expectEqual(@as(usize, 1), server.sessions.items.len);
     try testing.expectEqualStrings("s2", server.sessions.items[0].name);
+}
+
+test "set-option -g history-limit configures ring buffer size across panes" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+    const session = try server.newSession("test", 80, 24);
+    const win = session.active_window.?;
+    const pane = win.active_pane.?;
+
+    // Default history limit is 2000
+    try testing.expectEqual(@as(u32, 2000), pane.screen.grid.history_limit);
+
+    // Set history limit to 5000
+    var c = try parse("set-option -g history-limit 5000", testing.allocator);
+    defer c.deinit(testing.allocator);
+    try testing.expectEqual(CmdResult.ok, c.exec(&server));
+
+    try testing.expectEqual(@as(u32, 5000), pane.screen.grid.history_limit);
 }

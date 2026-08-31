@@ -153,6 +153,36 @@ pub const Grid = struct {
         self.history_start = 0;
     }
 
+    pub fn setHistoryLimit(self: *Grid, new_limit: u32) void {
+        if (new_limit == self.history_limit) return;
+        if (new_limit < self.history_count) {
+            const excess = self.history_count - new_limit;
+            var i: usize = 0;
+            while (i < excess) : (i += 1) {
+                const ring_idx = (self.history_start + i) % self.history_limit;
+                self.notifyEvict(self.history.items[ring_idx].cells.items);
+                self.history.items[ring_idx].deinit(self.allocator);
+            }
+            self.history_start = if (self.history_limit > 0) (self.history_start + excess) % self.history_limit else 0;
+            self.history_count = new_limit;
+        }
+        if (self.history_start > 0 and self.history.items.len > 0) {
+            const temp = self.allocator.alloc(GridLine, self.history_count) catch null;
+            if (temp) |buf| {
+                defer self.allocator.free(buf);
+                var i: usize = 0;
+                while (i < self.history_count) : (i += 1) {
+                    const ring_idx = (self.history_start + i) % self.history_limit;
+                    buf[i] = self.history.items[ring_idx];
+                }
+                @memcpy(self.history.items[0..self.history_count], buf);
+                self.history.items.len = self.history_count;
+                self.history_start = 0;
+            }
+        }
+        self.history_limit = new_limit;
+    }
+
     pub fn deinit(self: *Grid) void {
         for (self.lines.items) |*line| line.deinit(self.allocator);
         self.lines.deinit(self.allocator);
@@ -2080,4 +2110,32 @@ test "Grid.scrollUp reuses memory in fixed-capacity deque without growth — bug
     // Latest scrolled line must be accessible at newest index
     const newest_char = grid.getHistoryLine(9).cells.items[0].char;
     try testing.expect(newest_char >= 'A' and newest_char <= 'Z');
+}
+
+test "Grid.setHistoryLimit adjusts ring buffer capacity dynamically" {
+    var grid = try Grid.initWithLimit(testing.allocator, 10, 2, 5);
+    defer grid.deinit();
+
+    // Push 5 lines: 0, 1, 2, 3, 4
+    for (0..5) |i| {
+        grid.writeChar(0, 0, @intCast('0' + i));
+        try grid.scrollUp();
+    }
+    try testing.expectEqual(@as(usize, 5), grid.historyLen());
+
+    // Shrink history limit to 3: oldest lines 0 and 1 are evicted, leaving 2, 3, 4
+    grid.setHistoryLimit(3);
+    try testing.expectEqual(@as(usize, 3), grid.historyLen());
+    try testing.expectEqual(@as(u21, '2'), grid.getHistoryLine(0).cells.items[0].char);
+    try testing.expectEqual(@as(u21, '4'), grid.getHistoryLine(2).cells.items[0].char);
+
+    // Expand history limit to 10 and scroll 2 more times (5, 6)
+    grid.setHistoryLimit(10);
+    grid.writeChar(0, 0, '5');
+    try grid.scrollUp();
+    grid.writeChar(0, 0, '6');
+    try grid.scrollUp();
+
+    try testing.expectEqual(@as(usize, 5), grid.historyLen());
+    try testing.expectEqual(@as(u21, '6'), grid.getHistoryLine(4).cells.items[0].char);
 }

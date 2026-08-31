@@ -446,6 +446,7 @@ pub const Window = struct {
         const new_pane = try self.layout.splitPane(self.allocator, pane, dir, proportion);
         new_pane.id = self.next_pane_id;
         self.next_pane_id += 1;
+        new_pane.screen.grid.setHistoryLimit(pane.screen.grid.history_limit);
         try self.panes.append(self.allocator, new_pane);
         self.registerPane(new_pane);
         self.setActivePane(new_pane);
