@@ -2,7 +2,7 @@
 type: project_priority
 title: "szn Functional Clone Progress"
 description: "Progress tracker toward a fully functional tmux clone."
-timestamp: 2026-08-30T16:20:00Z
+timestamp: 2026-08-31T00:00:00Z
 ---
 
 # szn — Functional Clone Progress
@@ -10,7 +10,7 @@ timestamp: 2026-08-30T16:20:00Z
 Track progress toward a fully functional tmux clone.
 Based on code audit as of 2026-06-21.
 
-## Current State: 944 tests passing, v0.8.2 stability and terminal emulation fidelity release. Resolved 46 deep audit items (#349–#394) including DECSTBM scroll region unification, zero-allocation in-place clock rendering, UAF and double-free lifecycle hardening, vi copy-mode defaults with immediate search feedback, CAN/SUB sequence cancellation, and fast-forward keystroke forwarding — plus the 33 items (#395–#427) from the 2026-08-30 memory-safety and IPC-integrity sweep.
+## Current State: 959 tests passing, v0.9.0 feature and reliability release. Configurable per-pane scrollback history (`history-limit`) with zero-allocation ring-buffer deque and line buffer recycling (#360, #361), dynamic runtime logging control (`SZN_LOG`), command parser quoting/escapes (#436), kitty keyboard normalization (#430), alternate-screen mouse wheel arrow forwarding (#427), DECSET 1003 `mouse_any` (#422), render frame flow control (#431), and a 44-bug stability sweep (#395–#439).
 
 ---
 
@@ -31,7 +31,7 @@ Based on code audit as of 2026-06-21.
 | 10 | Commands | ✅ Done | ~73 | All 48 commands registered in `CMD_TABLE` (including copy-mode, paste-buffer, find-window, show-messages, and list-keys) |
 | 11 | Full Integration | ✅ Done | ~30 | integration.zig integration test suite complete |
 
-**Total: 944 / 944 tests passing (verified 2026-08-30). All Phases 0–11 fully complete.**
+**Total: 959 / 959 tests passing (verified 2026-08-31). All Phases 0–11 fully complete.**
 
 > The per-phase **Tests** column above is a snapshot taken when each phase
 > landed, not a partition of the current total — later phases and audit sweeps

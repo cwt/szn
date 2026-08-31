@@ -2,7 +2,7 @@
 type: log
 title: "szn Docs Update Log"
 description: "Chronological log of modifications to the szn OKF documentation bundle."
-timestamp: 2026-08-30T16:20:00Z
+timestamp: 2026-08-31T00:00:00Z
 ---
 
 # Documentation Bundle Log
@@ -11,6 +11,10 @@ This file tracks all modifications, extensions, and updates to the `szn` documen
 
 | Timestamp | Document | Action | Description |
 | :--- | :--- | :--- | :--- |
+| 2026-08-31T00:00:00Z | [v0.9.0.md](releases/v0.9.0.md) | Created | Created release notes for v0.9.0 (configurable scrollback history, zero-allocation ring buffer, runtime log control, command line quoting, and 44-bug stability sweep). |
+| 2026-08-31T00:00:00Z | [index.md](releases/index.md) | Updated | Added v0.9.0 to releases index. |
+| 2026-08-31T00:00:00Z | [PROGRESS.md](development/PROGRESS.md) | Updated | Updated test count to 959; documented v0.9.0 release. |
+| 2026-08-31T00:00:00Z | [build.zig.zon](../build.zig.zon) | Updated | Bumped version to 0.9.0. |
 | 2026-08-30T16:20:00Z | [architecture.md](architecture.md) | Updated | Rewrote to cite symbols instead of line numbers; ~25 line citations had all drifted (e.g. `Server.run` was documented at server.zig:277, actually 605). Added a referencing-convention note. |
 | 2026-08-30T16:20:00Z | [ipc-protocol.md](ipc-protocol.md) | Updated | Corrected `MAX_PACKET_SIZE` from 1 MiB to the actual 16 MiB; added the missing `redraw` (0x0A) and `client_log` (0x85) message types; retired the deleted 0x02/0x03/0x07 slots; documented `validPacketLength` (#375) and `Packet.make` truncation (#389); replaced 21 stale line citations with symbol names. |
 | 2026-08-30T16:20:00Z | [concepts.md](concepts.md) | Updated | Removed 8 stale line citations in favour of file+symbol references. |

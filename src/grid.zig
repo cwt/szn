@@ -123,15 +123,15 @@ pub const Grid = struct {
 
     /// Access a live history line by logical index (0 = oldest, historyLen-1 = newest).
     pub fn getHistoryLine(self: *const Grid, idx: usize) *const GridLine {
-        if (self.history_limit == 0 or self.history.items.len == 0) return &self.history.items[0];
-        const ring_idx = (self.history_start + idx) % self.history_limit;
+        if (self.history.items.len == 0) return &self.history.items[0];
+        const ring_idx = (self.history_start + idx) % self.history.items.len;
         return &self.history.items[ring_idx];
     }
 
     /// Mutable access to a live history line by logical index.
     pub fn getHistoryLineMut(self: *Grid, idx: usize) *GridLine {
-        if (self.history_limit == 0 or self.history.items.len == 0) return &self.history.items[0];
-        const ring_idx = (self.history_start + idx) % self.history_limit;
+        if (self.history.items.len == 0) return &self.history.items[0];
+        const ring_idx = (self.history_start + idx) % self.history.items.len;
         return &self.history.items[ring_idx];
     }
 
