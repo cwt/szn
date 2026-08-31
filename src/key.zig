@@ -172,7 +172,35 @@ pub fn parseCsi(seq: []const u8) ParseError!Key {
             } else Modifier{};
 
             if (codepoint > 0x10FFFF) return error.InvalidCsi;
-            return Key{ .char = .{ .code = @intCast(codepoint), .mod = k_mod } };
+            return switch (codepoint) {
+                9, 57346 => Key{ .special = .{ .key = .tab, .mod = k_mod } },
+                13, 57345 => Key{ .special = .{ .key = .enter, .mod = k_mod } },
+                27, 57344 => Key{ .special = .{ .key = .escape, .mod = k_mod } },
+                8, 127, 57347 => Key{ .special = .{ .key = .backspace, .mod = k_mod } },
+                57348 => Key{ .special = .{ .key = .insert, .mod = k_mod } },
+                57349 => Key{ .special = .{ .key = .delete_, .mod = k_mod } },
+                57350 => Key{ .arrow = .{ .key = .left, .mod = k_mod } },
+                57351 => Key{ .arrow = .{ .key = .right, .mod = k_mod } },
+                57352 => Key{ .arrow = .{ .key = .up, .mod = k_mod } },
+                57353 => Key{ .arrow = .{ .key = .down, .mod = k_mod } },
+                57354 => Key{ .special = .{ .key = .page_up, .mod = k_mod } },
+                57355 => Key{ .special = .{ .key = .page_down, .mod = k_mod } },
+                57356 => Key{ .special = .{ .key = .home, .mod = k_mod } },
+                57357 => Key{ .special = .{ .key = .end, .mod = k_mod } },
+                57376 => Key{ .function = .{ .key = .f1, .mod = k_mod } },
+                57377 => Key{ .function = .{ .key = .f2, .mod = k_mod } },
+                57378 => Key{ .function = .{ .key = .f3, .mod = k_mod } },
+                57379 => Key{ .function = .{ .key = .f4, .mod = k_mod } },
+                57380 => Key{ .function = .{ .key = .f5, .mod = k_mod } },
+                57381 => Key{ .function = .{ .key = .f6, .mod = k_mod } },
+                57382 => Key{ .function = .{ .key = .f7, .mod = k_mod } },
+                57383 => Key{ .function = .{ .key = .f8, .mod = k_mod } },
+                57384 => Key{ .function = .{ .key = .f9, .mod = k_mod } },
+                57385 => Key{ .function = .{ .key = .f10, .mod = k_mod } },
+                57386 => Key{ .function = .{ .key = .f11, .mod = k_mod } },
+                57387 => Key{ .function = .{ .key = .f12, .mod = k_mod } },
+                else => Key{ .char = .{ .code = @intCast(codepoint), .mod = k_mod } },
+            };
         },
         else => return error.UnknownKey,
     }
@@ -700,4 +728,41 @@ test "parse kitty rejects codepoint > Unicode max — bug #115" {
 
 test "parseCsi semicolon panic" {
     try testing.expectError(error.InvalidCsi, parseCsi("1;"));
+}
+
+test "parse kitty normalizes special, arrow, and function keys — bug #430" {
+    // Tab (codepoint 9 and 57346)
+    const tab_key = try parse("\x1b[9u");
+    try testing.expectEqual(std.meta.activeTag(tab_key), .special);
+    try testing.expectEqual(tab_key.special.key, .tab);
+
+    const tab_func = try parse("\x1b[57346u");
+    try testing.expectEqual(std.meta.activeTag(tab_func), .special);
+    try testing.expectEqual(tab_func.special.key, .tab);
+
+    // Enter (codepoint 13 and 57345)
+    const enter_key = try parse("\x1b[13u");
+    try testing.expectEqual(std.meta.activeTag(enter_key), .special);
+    try testing.expectEqual(enter_key.special.key, .enter);
+
+    // Escape (codepoint 27 and 57344)
+    const esc_key = try parse("\x1b[27u");
+    try testing.expectEqual(std.meta.activeTag(esc_key), .special);
+    try testing.expectEqual(esc_key.special.key, .escape);
+
+    // Backspace (codepoint 127, 8, 57347)
+    const bs_key = try parse("\x1b[127u");
+    try testing.expectEqual(std.meta.activeTag(bs_key), .special);
+    try testing.expectEqual(bs_key.special.key, .backspace);
+
+    // Arrow Up (57352)
+    const up_key = try parse("\x1b[57352;5u");
+    try testing.expectEqual(std.meta.activeTag(up_key), .arrow);
+    try testing.expectEqual(up_key.arrow.key, .up);
+    try testing.expect(up_key.arrow.mod.ctrl);
+
+    // Function F1 (57376)
+    const f1_key = try parse("\x1b[57376u");
+    try testing.expectEqual(std.meta.activeTag(f1_key), .function);
+    try testing.expectEqual(f1_key.function.key, .f1);
 }

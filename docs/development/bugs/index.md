@@ -37,9 +37,9 @@ Both summary tables below are generated from the `severity` and `status` fields 
 
 | Status | Count |
 |---|---:|
-| Fixed / Resolved | 406 |
+| Fixed / Resolved | 407 |
 | False Positive | 19 |
-| Open (deferred architectural backlog: #360, #361; +10 confirmed 2026-08-31 re-validation: #430–#439) | 12 |
+| Open (deferred architectural backlog: #360, #361; +9 confirmed 2026-08-31 re-validation: #431–#439) | 11 |
 | **Total** | **437** |
 
 ## All Bugs
@@ -473,7 +473,7 @@ Both summary tables below are generated from the `severity` and `status` fields 
 | [427](427.md) | Mouse wheel in Alternate Screen forces copy-mode on empty/stale scrollback instead of forwarding arrow keys | MEDIUM | Fixed |
 | [428](428.md) | Use-after-free of MessageReader in handleClient packet loop | HIGH | Fixed |
 | [429](429.md) | DCS '$ q' (DECRQSS) misrouted to the sixel parser | HIGH | Fixed |
-| [430](430.md) | kitty 'u' protocol returns .char, never matches .special/.arrow/.function bindings | MEDIUM-HIGH | Open |
+| [430](430.md) | kitty 'u' protocol returns .char, never matches .special/.arrow/.function bindings | MEDIUM-HIGH | Fixed |
 | [431](431.md) | Render output bypasses appendClientOut, defeating display flow control | MEDIUM-HIGH | Open |
 | [432](432.md) | Status-bar visibleLen counts codepoints, not cells; wide-char window names mis-hit | MEDIUM | Open |
 | [433](433.md) | Pane-border-format cache invalidated only on option change, not resize/split | MEDIUM-HIGH | Open |
