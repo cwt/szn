@@ -71,6 +71,31 @@ set -g codepoint-widths "U+2600-U+26FF=1"
 set -g codepoint-widths ""
 ```
 
+## Configuration
+
+szn reads configuration from `~/.config/szn/szn.conf`, `~/.szn.conf`, `~/.config/tmux/tmux.conf`, or `~/.tmux.conf` on startup.
+
+### Scrollback History Limit
+
+szn manages scrollback history per pane using a fixed-capacity circular ring buffer with line recycling, ensuring zero heap/arena allocations during steady-state scrolling.
+
+The history capacity is configurable via the `history-limit` option (default: `2000`, min: `0`, max: `1000000`):
+
+```tmux
+# In ~/.szn.conf or ~/.tmux.conf
+set -g history-limit 10000
+```
+
+You can also change the scrollback capacity dynamically at runtime:
+
+```bash
+# Global (applies to all panes across all sessions)
+szn set-option -g history-limit 50000
+
+# Session-scoped (applies to panes in the active session)
+szn set-option history-limit 5000
+```
+
 ## Status
 
 All core development phases (Phases 0 to 11) are fully implemented and complete. We have a robust, functional Zig terminal multiplexer featuring:
@@ -80,7 +105,7 @@ All core development phases (Phases 0 to 11) are fully implemented and complete.
 - Standard VT100 wrap-pending and Background Color Erase (BCE) support for accurate rendering.
 - Full multi-pane layouts, interactive copy mode, status bars, and config parsing (`.szn.conf`).
 - **Advanced Text Reflow** — automatically rewraps text on pane resizing, respecting CJK characters, combining marks, and Thai cluster integrity (including an $O(1)$ syllable backtracking algorithm). See [docs/TEXT_REFLOW.md](docs/TEXT_REFLOW.md) for full design details.
-- **944 unit and integration tests passing.**
+- **959 unit and integration tests passing.**
 
 > **Running the suite:** `zig build test` leaves a stale `$TMPDIR/szn.sock`
 > behind, which makes 3 socket tests fail on every *subsequent* run. Delete it
