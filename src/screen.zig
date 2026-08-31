@@ -605,6 +605,7 @@ pub const Screen = struct {
         @memset(last.cells.items, self.eraseCell());
         last.wrapped = false;
         last.dirty = true;
+        self.shiftSixelAnchors(-1);
     }
 
     fn scrollDownInRegion(self: *Screen) Error!void {
@@ -623,6 +624,7 @@ pub const Screen = struct {
         @memset(first.cells.items, self.eraseCell());
         first.wrapped = false;
         first.dirty = true;
+        self.shiftSixelAnchors(1);
     }
 
     /// Advance cursor down one line, respecting DECSTBM scroll regions.
@@ -2504,6 +2506,29 @@ test "shiftSixelAnchors only shifts images on the active screen — bug #219" {
     try testing.expectEqual(@as(i32, 4), screen.sixel_images[0].?.anchor_row);
     // Alt image stayed at row 10 (not shifted because alt_screen=true but is_alt=false)
     try testing.expectEqual(@as(i32, 10), screen.sixel_images[1].?.anchor_row);
+}
+
+test "scrollUpInRegion and advanceLine shift sixel image anchor_row — bug #434" {
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+    screen.cell_size_known = true;
+
+    // Set scroll region rows 5..15
+    screen.setScrollRegion(5, 15);
+    screen.cursor.y = 10;
+    screen.cursor.x = 0;
+
+    const dcs = try testing.allocator.dupe(u8, "\x1bPqTEST\x1b\\");
+    try screen.addSixelImage(dcs, 10, 20);
+    try testing.expect(screen.sixel_images[0] != null);
+    try testing.expectEqual(@as(i32, 10), screen.sixel_images[0].?.anchor_row);
+
+    // Advance line at bottom of region triggers scrollUpInRegion
+    screen.cursor.y = 15;
+    try screen.advanceLine();
+
+    // Sixel anchor should have shifted from 10 to 9
+    try testing.expectEqual(@as(i32, 9), screen.sixel_images[0].?.anchor_row);
 }
 
 test "sixel registry wrapping keeps referenced images — bug #198" {

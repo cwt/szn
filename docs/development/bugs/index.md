@@ -37,9 +37,9 @@ Both summary tables below are generated from the `severity` and `status` fields 
 
 | Status | Count |
 |---|---:|
-| Fixed / Resolved | 410 |
+| Fixed / Resolved | 411 |
 | False Positive | 19 |
-| Open (deferred architectural backlog: #360, #361; +6 confirmed 2026-08-31 re-validation: #434–#439) | 8 |
+| Open (deferred architectural backlog: #360, #361; +5 confirmed 2026-08-31 re-validation: #435–#439) | 7 |
 | **Total** | **437** |
 
 ## All Bugs
@@ -477,7 +477,7 @@ Both summary tables below are generated from the `severity` and `status` fields 
 | [431](431.md) | Render output bypasses appendClientOut, defeating display flow control | MEDIUM-HIGH | Fixed |
 | [432](432.md) | Status-bar visibleLen counts codepoints, not cells; wide-char window names mis-hit | MEDIUM | Fixed |
 | [433](433.md) | Pane-border-format cache invalidated only on option change, not resize/split | MEDIUM-HIGH | Fixed |
-| [434](434.md) | Region scroll paths skip shiftSixelAnchors, desyncing sixel anchors | MEDIUM | Open |
+| [434](434.md) | Region scroll paths skip shiftSixelAnchors, desyncing sixel anchors | MEDIUM | Fixed |
 | [435](435.md) | Screen.resize leaves sixel anchor_row stale for images below new height | MEDIUM | Open |
 | [436](436.md) | Command parser has no quote/escape handling; quoted multi-word args mis-tokenize | MEDIUM | Open |
 | [437](437.md) | load-buffer fails on EINTR instead of retrying read() | MEDIUM | Open |
