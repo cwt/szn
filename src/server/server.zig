@@ -417,6 +417,7 @@ pub const Server = struct {
                 std.log.info("reapZombies reaped pid {d} with status {d}", .{ pid, status });
                 for (self.sessions.items) |s| {
                     for (s.windows.items) |w| {
+                        w.last_foreground_check_ms = 0;
                         for (w.panes.items) |p| {
                             if (p.pty) |*pty| {
                                 if (pty.pid == pid) {
@@ -426,6 +427,8 @@ pub const Server = struct {
                         }
                     }
                 }
+                self.dirty = true;
+                self.status_dirty = true;
             }
         }
     }
@@ -963,6 +966,7 @@ pub const Server = struct {
                 }
             }
             self.dirty = true;
+            self.status_dirty = true;
         }
     }
 
@@ -1217,6 +1221,8 @@ pub const Server = struct {
                 ap.dirty = true;
             }
         }
+        self.dirty = true;
+        self.status_dirty = true;
     }
 
     fn handleStdin(self: *Server) ServerError!void {
@@ -1423,6 +1429,9 @@ pub const Server = struct {
             const window = session.active_window orelse break;
             const pane = window.active_pane orelse break;
             const byte = buf[i];
+            if (byte == '\r' or byte == '\n') {
+                window.last_foreground_check_ms = 0;
+            }
 
             const root_matches = self.dispatcher.root_table.count() > 0 and self.dispatcher.root_table.lookup(Key{ .char = .{ .code = byte } }) != null;
             if (self.input_reader.state == .ground and byte >= 0x20 and byte != 0x7f and !self.command_mode and !pane.choose_mode.active and !pane.screen.clock_mode and pane.screen.copy_mode == null and self.dispatcher.prefix_state == .normal and !root_matches) {
@@ -2115,6 +2124,7 @@ pub const Server = struct {
             if (prev_active) |prev| prev.dirty = true;
             found_pane.dirty = true;
             self.dirty = true;
+            self.status_dirty = true;
         }
     }
 
@@ -2921,6 +2931,20 @@ pub const Server = struct {
         const window = session.active_window orelse return;
         const pane = window.active_pane orelse return;
 
+        if (session.active_window_dirty) {
+            session.active_window_dirty = false;
+            self.status_dirty = true;
+            self.dirty = true;
+        }
+        for (session.windows.items) |win| {
+            if (win.name_dirty or win.active_pane_dirty) {
+                win.name_dirty = false;
+                win.active_pane_dirty = false;
+                self.status_dirty = true;
+                self.dirty = true;
+            }
+        }
+
         if (pane.screen.clock_mode) {
             const now = @as(u64, @intCast(@max(time(null), 0)));
             if (now != pane.clock_time) {
@@ -2958,6 +2982,7 @@ pub const Server = struct {
                                     win.setLastForegroundName(proc_name_val);
                                     ap.dirty = true;
                                     self.dirty = true;
+                                    self.status_dirty = true;
                                 } else {
                                     // Name unchanged — cache it to skip future syscalls.
                                     if (win.last_foreground_name.len == 0) {
@@ -5605,3 +5630,60 @@ test "appendClientOutFrame and renderToDisplayClient obey RENDER_HIGH_WATERMARK 
     try testing.expect(server.appendClientOutFrame(dc, &hdr, "another frame"));
     try testing.expectEqual(len_after_first, dc.out_buf.items.len);
 }
+
+test "window setName invalidates status cache and redraws updated name — bug #441" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    const session = try server.newSession("test-rename-inval", 80, 24);
+    const win = session.active_window.?;
+
+    const dc = DisplayClient{ .fd = 100, .sx = 80, .sy = 24 };
+    try server.display_clients.append(server.allocator, dc);
+
+    // Initial render
+    server.renderToDisplayClient();
+    try testing.expect(server.display_clients.items[0].status_line != null);
+    try testing.expect(std.mem.indexOf(u8, server.display_clients.items[0].status_line.?, "test-rename-inval") != null);
+
+    // Rename window (e.g. from OSC title or auto-rename)
+    win.setName("nvim");
+    try testing.expect(win.name_dirty);
+
+    // Next render within the same second should detect name_dirty and rebuild status line
+    server.renderToDisplayClient();
+    try testing.expect(!win.name_dirty);
+    try testing.expect(server.display_clients.items[0].status_line != null);
+    try testing.expect(std.mem.indexOf(u8, server.display_clients.items[0].status_line.?, "nvim") != null);
+}
+
+test "active pane switch invalidates status cache — bug #441" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    const session = try server.newSession("test-pane-inval", 80, 24);
+    const win = session.active_window.?;
+    const pane1 = win.active_pane.?;
+
+    const new_pane = try win.splitPane(server.allocator, pane1, false, 0.5);
+    _ = new_pane;
+
+    const dc = DisplayClient{ .fd = 100, .sx = 80, .sy = 24 };
+    try server.display_clients.append(server.allocator, dc);
+
+    // Initial render
+    server.renderToDisplayClient();
+    const ptr1 = server.display_clients.items[0].status_line.?.ptr;
+
+    // Switch active pane to pane 0 (splitPane made pane 1 active)
+    win.setActivePane(win.panes.items[0]);
+    try testing.expect(win.active_pane_dirty);
+
+    // Next render should invalidate status cache and rebuild
+    server.renderToDisplayClient();
+    try testing.expect(!win.active_pane_dirty);
+    const ptr2 = server.display_clients.items[0].status_line.?.ptr;
+    // Rebuilt status line will have a new allocation pointer
+    try testing.expect(ptr1 != ptr2);
+}
+

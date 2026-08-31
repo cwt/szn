@@ -25,6 +25,7 @@ pub const Session = struct {
     /// Incremented when pane-border-format changes. Used to invalidate
     /// per-pane border format caches (bug #304/#307).
     border_format_gen: u32 = 0,
+    active_window_dirty: bool = false,
 
     pub fn init(self: *Session, backing: std.mem.Allocator, id: u32, name: []const u8, width: u32, height: u32, global_options: ?*const options_mod.Options, global_window_options: ?*const options_mod.Options) Error!void {
         self.arena = std.heap.ArenaAllocator.init(backing);
@@ -112,6 +113,7 @@ pub const Session = struct {
             self.last_window = prev;
         }
         self.active_window = new_win;
+        self.active_window_dirty = true;
         return new_win;
     }
 
@@ -133,22 +135,27 @@ pub const Session = struct {
         if (self.last_window == win) {
             self.last_window = null;
         }
+        self.active_window_dirty = true;
     }
 
     pub fn setActiveWindow(self: *Session, win: *Window) void {
+        if (self.active_window == win) return;
         if (self.active_window) |prev| {
-            if (prev != win) {
-                self.last_window = prev;
-            }
+            self.last_window = prev;
         }
         self.active_window = win;
+        self.active_window_dirty = true;
     }
 
     pub fn rename(self: *Session, allocator: std.mem.Allocator, new_name: []const u8) void {
         _ = allocator;
         const len = @min(new_name.len, self.name_buf.len);
+        const changed = (self.name.len != len or !std.mem.eql(u8, self.name, new_name[0..len]));
         @memcpy(self.name_buf[0..len], new_name[0..len]);
         self.name = self.name_buf[0..len];
+        if (changed) {
+            self.active_window_dirty = true;
+        }
     }
 };
 

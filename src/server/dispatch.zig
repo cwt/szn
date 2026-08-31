@@ -52,6 +52,10 @@ pub fn dispatchCommand(allocator: std.mem.Allocator, server: *Server, cmd_line: 
     defer parsed.deinit(allocator);
 
     const result = parsed.exec(server);
+    if (result == .ok) {
+        server.dirty = true;
+        server.status_dirty = true;
+    }
     return switch (result) {
         .ok => blk: {
             const has_buf = server.response_buf.items.len > 0;

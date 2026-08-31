@@ -18,7 +18,7 @@ Both summary tables below are generated from the `severity` and `status` fields 
 | Severity | Count |
 |---|---:|
 | CRITICAL | 51 |
-| HIGH | 108 |
+| HIGH | 109 |
 | MEDIUM | 155 |
 | MEDIUM-HIGH | 3 |
 | LOW | 103 |
@@ -31,16 +31,16 @@ Both summary tables below are generated from the `severity` and `status` fields 
 | LOW (safety) | 1 |
 | MEDIUM (dead code / refcount drift) | 1 |
 | MEDIUM (performance) | 4 |
-| **Total** | **438** |
+| **Total** | **439** |
 
 ## Summary by Status
 
 | Status | Count |
 |---|---:|
-| Fixed / Resolved | 419 |
+| Fixed / Resolved | 420 |
 | False Positive | 19 |
 | Open | 0 |
-| **Total** | **438** |
+| **Total** | **439** |
 
 ## All Bugs
 
@@ -484,3 +484,4 @@ Both summary tables below are generated from the `severity` and `status` fields 
 | [438](438.md) | new-session leaves a half-created session attached on setupPane failure | MEDIUM | Fixed |
 | [439](439.md) | Pty.allocator is 'undefined' until spawn(); deinit non-idempotent | LOW | Fixed |
 | [440](440.md) | Global window status options rejected by scope routing and status cache freeze on active window switch | HIGH | Fixed |
+| [441](441.md) | Status cache invalidation lag and missing state change triggers causing delayed status bar updates | HIGH | Fixed |

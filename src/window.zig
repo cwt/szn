@@ -286,11 +286,17 @@ pub const Window = struct {
     /// check to 1/sec so process changes are still detected without a syscall
     /// on every render (bug #300 follow-up).
     last_foreground_check_ms: i64 = 0,
+    name_dirty: bool = false,
+    active_pane_dirty: bool = false,
 
     pub fn setName(self: *Window, new_name: []const u8) void {
         const len = @min(new_name.len, self.name_buf.len);
+        const changed = (self.name.len != len or !std.mem.eql(u8, self.name, new_name[0..len]));
         @memcpy(self.name_buf[0..len], new_name[0..len]);
         self.name = self.name_buf[0..len];
+        if (changed) {
+            self.name_dirty = true;
+        }
     }
 
     pub fn setLastForegroundName(self: *Window, fg_name: []const u8) void {
@@ -497,9 +503,11 @@ pub const Window = struct {
     }
 
     pub fn setActivePane(self: *Window, pane: *Pane) void {
+        if (self.active_pane == pane) return;
         if (self.active_pane) |prev| prev.active = false;
         pane.active = true;
         self.active_pane = pane;
+        self.active_pane_dirty = true;
     }
 };
 

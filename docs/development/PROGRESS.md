@@ -10,7 +10,7 @@ timestamp: 2026-08-31T00:00:00Z
 Track progress toward a fully functional tmux clone.
 Based on code audit as of 2026-06-21.
 
-## Current State: 967 tests passing, v0.9.1 hotfix release. Resolved window status option scope routing (`set -g` fallback), status cache freeze on active window switch, single-quoted format strings, and per-window format resolution (#440). Added `set-window-option` / `setw` (49 commands registered). Configurable per-pane scrollback history (`history-limit`) with zero-allocation ring-buffer deque and line buffer recycling (#360, #361), dynamic runtime logging control (`SZN_LOG`), command parser quoting/escapes (#436), kitty keyboard normalization (#430), alternate-screen mouse wheel arrow forwarding (#427), DECSET 1003 `mouse_any` (#422), render frame flow control (#431), and a 45-bug stability sweep (#395–#440).
+## Current State: 969 tests passing, v0.9.1 hotfix release. Resolved window status option scope routing (`set -g` fallback), status cache freeze on active window switch, single-quoted format strings, and per-window format resolution (#440). Fixed real-time status cache invalidation lag and state change triggers on auto-rename, OSC window titles, active pane switches, and command dispatches (#441). Added `set-window-option` / `setw` (49 commands registered). Configurable per-pane scrollback history (`history-limit`) with zero-allocation ring-buffer deque and line buffer recycling (#360, #361), dynamic runtime logging control (`SZN_LOG`), command parser quoting/escapes (#436), kitty keyboard normalization (#430), alternate-screen mouse wheel arrow forwarding (#427), DECSET 1003 `mouse_any` (#422), render frame flow control (#431), and a 46-bug stability sweep (#395–#441).
 
 ---
 
@@ -31,7 +31,7 @@ Based on code audit as of 2026-06-21.
 | 10 | Commands | ✅ Done | ~74 | All 49 commands registered in `CMD_TABLE` (including set-window-option / setw, copy-mode, paste-buffer, find-window, show-messages, and list-keys) |
 | 11 | Full Integration | ✅ Done | ~30 | integration.zig integration test suite complete |
 
-**Total: 967 / 967 tests passing (verified 2026-08-31). All Phases 0–11 fully complete.**
+**Total: 969 / 969 tests passing (verified 2026-08-31). All Phases 0–11 fully complete.**
 
 > The per-phase **Tests** column above is a snapshot taken when each phase
 > landed, not a partition of the current total — later phases and audit sweeps

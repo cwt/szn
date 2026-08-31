@@ -10,10 +10,10 @@ timestamp: 2026-08-31T00:00:00Z
 This file tracks all modifications, extensions, and updates to the `szn` documentation bundle in chronological order.
 
 | Timestamp | Document | Action | Description |
-| :--- | :--- | :--- | :--- |
+| 2026-08-31T07:05:00Z | [441.md](development/bugs/441.md) | Created | Filed and resolved bug #441 for status cache invalidation lag, auto-rename and OSC title triggers, and pane switch invalidation. |
 | 2026-08-31T06:45:00Z | [v0.9.1.md](releases/v0.9.1.md) | Created | Created release notes for v0.9.1 hotfix (global window status format routing, status cache invalidation on active window change, single-quoted format strings, and per-window format resolution). |
 | 2026-08-31T06:45:00Z | [index.md](releases/index.md), [README.md](releases/README.md) | Updated | Added v0.9.1 to releases index and README. |
-| 2026-08-31T06:45:00Z | [PROGRESS.md](development/PROGRESS.md) | Updated | Updated test count to 967; documented v0.9.1 hotfix release and 49 commands. |
+| 2026-08-31T06:45:00Z | [PROGRESS.md](development/PROGRESS.md) | Updated | Updated test count to 969; documented v0.9.1 hotfix release and 49 commands. |
 | 2026-08-31T06:45:00Z | [build.zig.zon](../build.zig.zon) | Updated | Bumped version to 0.9.1. |
 | 2026-08-31T06:35:00Z | [440.md](development/bugs/440.md) | Created | Filed and resolved bug #440 for global window status format option routing and status cache freeze. |
 | 2026-08-31T00:00:00Z | [v0.9.0.md](releases/v0.9.0.md) | Created | Created release notes for v0.9.0 (configurable scrollback history, zero-allocation ring buffer, runtime log control, command line quoting, and 44-bug stability sweep). |
