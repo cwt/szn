@@ -560,7 +560,10 @@ fn cmdLoadBuffer(server: *Server, args: []const []const u8) CmdResult {
     var chunk: [4096]u8 = undefined;
     while (true) {
         const n = std.c.read(fd, &chunk, chunk.len);
-        if (n < 0) return .err;
+        if (n < 0) {
+            if (std.c.errno(n) == .INTR) continue;
+            return .err;
+        }
         if (n == 0) break;
         // Same cap as the paste path; `loadb /dev/zero` must not OOM the
         // server (bug #382).
@@ -2682,6 +2685,30 @@ test "load-buffer enforces MAX_PASTE_SIZE — bug #382" {
 
     // Nothing was pushed onto the buffer stack.
     try testing.expect(server.buffers.get(null) == null);
+}
+
+test "load-buffer loads data and handles read loop — bug #437" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    const path = "/tmp/szn-bug437-loadb.txt";
+    {
+        const fd = std.c.open(path, std.c.O{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true }, @as(std.c.mode_t, 0o644));
+        try testing.expect(fd >= 0);
+        const payload = "eintr safe payload content";
+        _ = std.c.write(fd, payload.ptr, payload.len);
+        _ = std.c.close(fd);
+    }
+    defer _ = std.c.unlink(path);
+
+    const cmdline = try std.fmt.allocPrint(testing.allocator, "load-buffer \"{s}\"", .{path});
+    defer testing.allocator.free(cmdline);
+    var c = try parse(cmdline, testing.allocator);
+    defer c.deinit(testing.allocator);
+    try testing.expectEqual(CmdResult.ok, c.exec(&server));
+
+    const data = server.buffers.get(null).?;
+    try testing.expectEqualStrings("eintr safe payload content", data);
 }
 
 test "display-message exec" {
