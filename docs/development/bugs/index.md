@@ -37,9 +37,9 @@ Both summary tables below are generated from the `severity` and `status` fields 
 
 | Status | Count |
 |---|---:|
-| Fixed / Resolved | 415 |
+| Fixed / Resolved | 416 |
 | False Positive | 19 |
-| Open (deferred architectural backlog: #360, #361; +1 confirmed 2026-08-31 re-validation: #439) | 3 |
+| Open (deferred architectural backlog: #360, #361) | 2 |
 | **Total** | **437** |
 
 ## All Bugs
@@ -482,4 +482,4 @@ Both summary tables below are generated from the `severity` and `status` fields 
 | [436](436.md) | Command parser has no quote/escape handling; quoted multi-word args mis-tokenize | MEDIUM | Fixed |
 | [437](437.md) | load-buffer fails on EINTR instead of retrying read() | MEDIUM | Fixed |
 | [438](438.md) | new-session leaves a half-created session attached on setupPane failure | MEDIUM | Fixed |
-| [439](439.md) | Pty.allocator is 'undefined' until spawn(); deinit non-idempotent | LOW | Open |
+| [439](439.md) | Pty.allocator is 'undefined' until spawn(); deinit non-idempotent | LOW | Fixed |

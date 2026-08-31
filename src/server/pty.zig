@@ -119,7 +119,7 @@ pub const Pty = struct {
     master: i32,
     slave: i32,
     pid: i32,
-    allocator: std.mem.Allocator = undefined,
+    allocator: ?std.mem.Allocator = null,
     /// Keystrokes / input that could not be written to the (non-blocking) pty
     /// master because the child isn't reading its stdin (e.g. it is throttled
     /// by flow control). Drained when the master becomes writable again
@@ -248,8 +248,12 @@ pub const Pty = struct {
     }
 
     pub fn deinit(self: *Pty) void {
-        if (self.input_buf.capacity > 0) {
-            self.input_buf.deinit(self.allocator);
+        if (self.allocator) |alloc| {
+            if (self.input_buf.capacity > 0) {
+                self.input_buf.deinit(alloc);
+                self.input_buf = .empty;
+            }
+            self.allocator = null;
         }
         if (self.pid > 0) {
             _ = std.c.kill(self.pid, std.c.SIG.KILL);
@@ -297,7 +301,9 @@ pub const Pty = struct {
         // throttled by flow control). Queue the remainder so keystrokes are
         // not lost; the server drains it on POLLOUT.
         const rem = data[off..];
-        self.input_buf.appendSlice(self.allocator, rem) catch return error.WriteFailed;
+        const alloc = self.allocator orelse return error.WriteFailed;
+        if (self.input_buf.items.len + rem.len > 1024 * 1024) return error.WriteFailed;
+        self.input_buf.appendSlice(alloc, rem) catch return error.WriteFailed;
     }
 
     /// Non-blocking drain of queued keystrokes. Returns true when the whole
@@ -485,4 +491,12 @@ test "writeInput queues remainder under backpressure and flushInput drains it â€
         _ = pty.flushInput();
     }
     try testing.expectEqual(@as(usize, 0), pty.input_buf.items.len);
+}
+
+test "Pty.deinit is safe when unspawned and idempotent â€” bug #439" {
+    var pty = try Pty.open();
+    // deinit on unspawned Pty must not crash or use undefined allocator
+    pty.deinit();
+    // calling deinit a second time must be a safe no-op
+    pty.deinit();
 }
