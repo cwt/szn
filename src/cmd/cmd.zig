@@ -32,8 +32,18 @@ pub const CmdEntry = struct {
 fn cmdNewSession(server: *Server, args: []const []const u8) CmdResult {
     const name = if (args.len > 1) args[1] else "default";
     const session = server.newSession(name, 80, 24) catch return .err;
-    const pane = (session.active_window orelse return .err).active_pane orelse return .err;
-    server.setupPane(session, pane, null) catch return .err;
+    const window = session.active_window orelse {
+        server.killSession(session.name) catch {};
+        return .err;
+    };
+    const pane = window.active_pane orelse {
+        server.killSession(session.name) catch {};
+        return .err;
+    };
+    server.setupPane(session, pane, null) catch {
+        server.killSession(session.name) catch {};
+        return .err;
+    };
     if (server.sessions.items.len > 1) {
         const idx = server.sessions.items.len - 1;
         const target = server.sessions.items[idx];
@@ -1858,6 +1868,23 @@ test "new-session exec creates session" {
     const s = server.sessions.items[0];
     try testing.expect(s.active_window != null);
     try testing.expect(s.active_window.?.active_pane != null);
+}
+
+test "new-session cleans up and rolls back on failure — bug #438" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    // Valid new-session creates session
+    var cmd = try parse("new-session sess1", testing.allocator);
+    defer cmd.deinit(testing.allocator);
+    try testing.expectEqual(CmdResult.ok, cmd.exec(&server));
+    try testing.expectEqual(@as(usize, 1), server.sessions.items.len);
+
+    // If active_window is missing during setup, killSession cleans it up
+    const s = try server.newSession("broken", 80, 24);
+    s.active_window = null;
+    server.killSession(s.name) catch {};
+    try testing.expectEqual(@as(usize, 1), server.sessions.items.len);
 }
 
 test "kill-session removes session" {
