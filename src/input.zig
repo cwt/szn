@@ -459,14 +459,8 @@ pub const InputParser = struct {
     fn advanceDcsIntermediate(self: *InputParser, byte: u8) Error!void {
         switch (byte) {
             0x20...0x2F => {},
-            'q' => {
-                self.dcs_is_sixel = true;
-                self.dcs_buf.clearRetainingCapacity();
-                try self.dcs_buf.appendSlice(self.screen.allocator, "\x1bPq");
-                self.state = .dcs_sixel;
-            },
-            0x40...'p', 'r'...0x7E => {
-                // Non-sixel DCS final after intermediate — discard body until ST
+            0x40...0x7E => {
+                // Non-sixel DCS final after intermediate (e.g. DECRQSS ESC P $ q) — discard body until ST
                 self.state = .dcs_discard;
             },
             else => {
@@ -2042,6 +2036,24 @@ test "sixel pixel height estimated from band count" {
     try testing.expectEqual(@as(usize, 1), count);
     // bands = 1 + count('-') = 1 + 3 = 4,  px_height = 4 * 6 = 24
     try testing.expectEqual(@as(u32, 24), opt_found.?.px_height);
+}
+
+test "DECRQSS DCS sequence is discarded and not misrouted as sixel — bug #429" {
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+    screen.cell_size_known = true;
+    var parser = InputParser.init(&screen);
+    defer parser.deinit(testing.allocator);
+
+    // DECRQSS format: ESC P $ q " p ESC \
+    const decrqss = "\x1bP$q\"p\x1b\\";
+    try parser.feed(decrqss);
+
+    // Must return to ground state and NOT create any sixel image
+    try testing.expectEqual(InputParser.State.ground, parser.state);
+    for (screen.sixel_images) |opt_img| {
+        try testing.expect(opt_img == null);
+    }
 }
 
 test "sixel pixel dimensions parsed from raster attributes" {
