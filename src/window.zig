@@ -62,12 +62,28 @@ pub const Pane = struct {
         }
     }
 
+    pub fn saveGrid(self: *Pane) Error!void {
+        if (self.saved_grid) |*sg| {
+            if (sg.width == self.screen.grid.width and sg.height == self.screen.grid.height) {
+                sg.copyVisibleFrom(&self.screen.grid);
+                return;
+            }
+            sg.deinit();
+            self.saved_grid = null;
+        }
+        self.saved_grid = try self.screen.grid.clone(self.screen.grid.allocator);
+    }
+
     pub fn restoreSavedGrid(self: *Pane) void {
         const grid_alloc = self.screen.grid.allocator;
-        if (self.saved_grid) |sg| {
-            self.screen.grid.deinit();
-            self.screen.grid = sg;
-            self.saved_grid = null;
+        if (self.saved_grid) |*sg| {
+            if (sg.width == self.screen.grid.width and sg.height == self.screen.grid.height) {
+                self.screen.grid.copyVisibleFrom(sg);
+            } else {
+                self.screen.grid.deinit();
+                self.screen.grid = sg.*;
+                self.saved_grid = null;
+            }
         } else {
             if (@import("grid.zig").Grid.init(grid_alloc, self.screen.grid.width, self.screen.grid.height)) |fallback| {
                 self.screen.grid.deinit();
@@ -746,4 +762,30 @@ test "window resize and split invalidate cached pane-border-format — bug #433"
     _ = try window.splitPane(testing.allocator, pane, true, 0.5);
     try testing.expect(pane.border_format_cached == null);
     try testing.expectEqual(@as(u32, 0), pane.border_format_gen);
+}
+
+test "Pane.saveGrid and restoreSavedGrid recycle saved_grid in-place — bug #361" {
+    var window = try Window.init(testing.allocator, 1, "test", 80, 24, null, null);
+    defer window.deinit(testing.allocator);
+
+    const pane = window.active_pane.?;
+    pane.screen.grid.writeChar(0, 0, 'A');
+
+    // First save creates saved_grid
+    try pane.saveGrid();
+    try testing.expect(pane.saved_grid != null);
+    try testing.expectEqual(@as(u21, 'A'), pane.saved_grid.?.getCell(0, 0).char);
+
+    // Modify screen grid
+    pane.screen.grid.writeChar(0, 0, 'B');
+
+    // Second save reuses existing saved_grid in-place
+    try pane.saveGrid();
+    try testing.expectEqual(@as(u21, 'B'), pane.saved_grid.?.getCell(0, 0).char);
+
+    // Restore restores content in-place without throwing away saved_grid
+    pane.screen.grid.writeChar(0, 0, 'C');
+    pane.restoreSavedGrid();
+    try testing.expectEqual(@as(u21, 'B'), pane.screen.grid.getCell(0, 0).char);
+    try testing.expect(pane.saved_grid != null);
 }

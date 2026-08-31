@@ -615,11 +615,7 @@ fn cmdChooseBuffer(server: *Server, args: []const []const u8) CmdResult {
         items.append(server.allocator, .{ .name = b.name, .data = b.data }) catch return .err;
     }
 
-    if (pane.saved_grid) |*g| {
-        g.deinit();
-        pane.saved_grid = null;
-    }
-    pane.saved_grid = pane.screen.grid.clone(pane.screen.grid.allocator) catch return .err;
+    pane.saveGrid() catch return .err;
 
     pane.choose_mode.enter(pane.screen.grid.allocator, items.items) catch return .err;
     pane.choose_mode.renderIntoGrid(&pane.screen.grid);
@@ -632,11 +628,7 @@ fn cmdClockMode(server: *Server, args: []const []const u8) CmdResult {
     const window = session.active_window orelse return .err;
     const pane = window.active_pane orelse return .err;
 
-    if (pane.saved_grid) |*g| {
-        g.deinit();
-        pane.saved_grid = null;
-    }
-    pane.saved_grid = pane.screen.grid.clone(pane.screen.grid.allocator) catch return .err;
+    pane.saveGrid() catch return .err;
 
     var utc = false;
     if (args.len > 1 and std.mem.eql(u8, args[1], "-u")) {

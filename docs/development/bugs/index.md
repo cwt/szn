@@ -37,9 +37,9 @@ Both summary tables below are generated from the `severity` and `status` fields 
 
 | Status | Count |
 |---|---:|
-| Fixed / Resolved | 416 |
+| Fixed / Resolved | 418 |
 | False Positive | 19 |
-| Open (deferred architectural backlog: #360, #361) | 2 |
+| Open | 0 |
 | **Total** | **437** |
 
 ## All Bugs
@@ -403,8 +403,8 @@ Both summary tables below are generated from the `severity` and `status` fields 
 | [357](357.md) | `cmdLoadBuffer` invalid free of static pointer with stale capacity | CRITICAL | Fixed |
 | [358](358.md) | Auto window rename: invalid free of name_buf-owned string + aliased double-free | CRITICAL | Fixed |
 | [359](359.md) | Clock mode clones full grid+history every second; arena never reclaimed | HIGH | Fixed |
-| [360](360.md) | Scrollback eviction never reclaims memory (arena no-op frees) | HIGH | Open |
-| [361](361.md) | saved_grid churn leaks one grid clone per mode toggle | HIGH | Open |
+| [360](360.md) | Scrollback eviction never reclaims memory (arena no-op frees) | HIGH | Fixed |
+| [361](361.md) | saved_grid churn leaks one grid clone per mode toggle | HIGH | Fixed |
 | [362](362.md) | Stale poll events after killSession in same batch dereference freed pane memory | HIGH | Fixed |
 | [363](363.md) | OSC52 payloads unbounded size + paste-buffer list unbounded count | HIGH | Fixed |
 | [364](364.md) | remain-on-exit closes pty master without removeFd → POLLNVAL busy-loop | HIGH | Fixed |

@@ -74,6 +74,7 @@ pub const Grid = struct {
     history: std.ArrayList(GridLine) = .empty,
     history_limit: u32 = 2000,
     history_start: usize = 0,
+    history_count: usize = 0,
     start_index: u32 = 0,
     on_line_evict: ?*const fn (ctx: *anyopaque, cells: []const Cell) void = null,
     on_line_evict_ctx: ?*anyopaque = null,
@@ -96,6 +97,8 @@ pub const Grid = struct {
             .width = width,
             .height = height,
             .history_limit = history_limit,
+            .history_start = 0,
+            .history_count = 0,
             .start_index = 0,
         };
         try grid.lines.ensureTotalCapacity(allocator, height);
@@ -113,20 +116,23 @@ pub const Grid = struct {
         return &self.lines.items[idx];
     }
 
-    /// Number of live history lines (ring-buffered via history_start offset).
+    /// Number of live history lines in the circular deque.
     pub fn historyLen(self: *const Grid) usize {
-        if (self.history.items.len < self.history_start) return 0;
-        return self.history.items.len - self.history_start;
+        return self.history_count;
     }
 
     /// Access a live history line by logical index (0 = oldest, historyLen-1 = newest).
     pub fn getHistoryLine(self: *const Grid, idx: usize) *const GridLine {
-        return &self.history.items[self.history_start + idx];
+        if (self.history_limit == 0 or self.history.items.len == 0) return &self.history.items[0];
+        const ring_idx = (self.history_start + idx) % self.history_limit;
+        return &self.history.items[ring_idx];
     }
 
     /// Mutable access to a live history line by logical index.
     pub fn getHistoryLineMut(self: *Grid, idx: usize) *GridLine {
-        return &self.history.items[self.history_start + idx];
+        if (self.history_limit == 0 or self.history.items.len == 0) return &self.history.items[0];
+        const ring_idx = (self.history_start + idx) % self.history_limit;
+        return &self.history.items[ring_idx];
     }
 
     pub fn normalize(self: *Grid) !void {
@@ -136,21 +142,24 @@ pub const Grid = struct {
     }
 
     pub fn clearHistory(self: *Grid) void {
-        const start = @min(self.history_start, self.history.items.len);
-        for (self.history.items[start..]) |*line| {
-            self.notifyEvict(line.cells.items);
-            line.deinit(self.allocator);
+        var i: usize = 0;
+        while (i < self.history_count) : (i += 1) {
+            const ring_idx = (self.history_start + i) % self.history_limit;
+            self.notifyEvict(self.history.items[ring_idx].cells.items);
+            self.history.items[ring_idx].deinit(self.allocator);
         }
         self.history.clearRetainingCapacity();
+        self.history_count = 0;
         self.history_start = 0;
     }
 
     pub fn deinit(self: *Grid) void {
         for (self.lines.items) |*line| line.deinit(self.allocator);
         self.lines.deinit(self.allocator);
-        const start = @min(self.history_start, self.history.items.len);
-        for (self.history.items[start..]) |*line| line.deinit(self.allocator);
+        for (self.history.items) |*line| line.deinit(self.allocator);
         self.history.deinit(self.allocator);
+        self.history_count = 0;
+        self.history_start = 0;
     }
 
     pub fn clone(self: *const Grid, allocator: std.mem.Allocator) Error!Grid {
@@ -160,6 +169,7 @@ pub const Grid = struct {
             .height = self.height,
             .history_limit = self.history_limit,
             .history_start = 0,
+            .history_count = self.history_count,
             .start_index = self.start_index,
             .on_line_evict = self.on_line_evict,
             .on_line_evict_ctx = self.on_line_evict_ctx,
@@ -171,12 +181,12 @@ pub const Grid = struct {
             try new_line.cells.appendSlice(allocator, line.cells.items);
             try copy.lines.append(allocator, new_line);
         }
-        const h_len = self.historyLen();
-        try copy.history.ensureTotalCapacity(allocator, h_len);
-        const start = @min(self.history_start, self.history.items.len);
-        for (self.history.items[start..]) |line| {
-            var new_line = GridLine{ .dirty = line.dirty, .wrapped = line.wrapped };
-            try new_line.cells.appendSlice(allocator, line.cells.items);
+        try copy.history.ensureTotalCapacity(allocator, self.history_count);
+        var i: usize = 0;
+        while (i < self.history_count) : (i += 1) {
+            const src_line = self.getHistoryLine(i);
+            var new_line = GridLine{ .dirty = src_line.dirty, .wrapped = src_line.wrapped };
+            try new_line.cells.appendSlice(allocator, src_line.cells.items);
             try copy.history.append(allocator, new_line);
         }
         return copy;
@@ -250,31 +260,69 @@ pub const Grid = struct {
     pub fn scrollUp(self: *Grid) Error!void {
         if (self.height == 0) return;
 
-        var new_line = GridLine{};
-        try new_line.cells.resize(self.allocator, self.width);
-        @memset(new_line.cells.items, Cell.empty());
-
-        var old_line = self.getLineMut(0).*;
-        old_line.dirty = false;
-        self.getLineMut(0).* = new_line;
-
-        errdefer old_line.deinit(self.allocator);
-        try self.history.append(self.allocator, old_line);
-        if (self.history.items.len - self.history_start > self.history_limit) {
-            self.notifyEvict(self.history.items[self.history_start].cells.items);
-            self.history.items[self.history_start].deinit(self.allocator);
-            self.history_start += 1;
-
-            // Compact periodically to keep the gap bounded
-            if (self.history_start > 256) {
-                const alive = self.history.items[self.history_start..];
-                for (alive, 0..) |*l, j| self.history.items[j] = l.*;
-                self.history.items.len = alive.len;
-                self.history_start = 0;
-            }
+        if (self.history_limit == 0) {
+            var line = self.getLineMut(0);
+            self.notifyEvict(line.cells.items);
+            @memset(line.cells.items, Cell.empty());
+            line.wrapped = false;
+            line.dirty = true;
+            self.start_index = (self.start_index + 1) % self.height;
+            return;
         }
 
-        self.start_index = (self.start_index + 1) % self.height;
+        if (self.history_count < self.history_limit) {
+            if (self.history.items.len < self.history_limit) {
+                var old_top = self.getLineMut(0).*;
+                old_top.dirty = false;
+                var new_line = GridLine{};
+                try new_line.cells.resize(self.allocator, self.width);
+                @memset(new_line.cells.items, Cell.empty());
+                self.getLineMut(0).* = new_line;
+                self.start_index = (self.start_index + 1) % self.height;
+                try self.history.append(self.allocator, old_top);
+                self.history_count += 1;
+            } else {
+                const insert_idx = (self.history_start + self.history_count) % self.history_limit;
+                var old_top = self.getLineMut(0).*;
+                old_top.dirty = false;
+                var new_line = self.history.items[insert_idx];
+                if (new_line.cells.items.len != self.width) {
+                    try new_line.cells.resize(self.allocator, self.width);
+                }
+                @memset(new_line.cells.items, Cell.empty());
+                new_line.wrapped = false;
+                new_line.dirty = true;
+                self.getLineMut(0).* = new_line;
+                self.start_index = (self.start_index + 1) % self.height;
+                self.history.items[insert_idx] = old_top;
+                self.history_count += 1;
+            }
+        } else {
+            // History ring buffer is at full capacity (history_count == history_limit).
+            // The oldest line at history_start is being evicted.
+            const oldest_idx = self.history_start;
+            self.notifyEvict(self.history.items[oldest_idx].cells.items);
+
+            // Recycle the evicted line's cells buffer for the new line at bottom of screen.
+            var recycled = self.history.items[oldest_idx];
+            if (recycled.cells.items.len != self.width) {
+                try recycled.cells.resize(self.allocator, self.width);
+            }
+            @memset(recycled.cells.items, Cell.empty());
+            recycled.wrapped = false;
+            recycled.dirty = true;
+
+            // Move the scrolled-off line into the ring slot
+            var old_top = self.getLineMut(0).*;
+            old_top.dirty = false;
+            self.history.items[oldest_idx] = old_top;
+
+            // Place the recycled line at row 0 (which becomes bottom row after start_index increment)
+            self.getLineMut(0).* = recycled;
+
+            self.history_start = (self.history_start + 1) % self.history_limit;
+            self.start_index = (self.start_index + 1) % self.height;
+        }
     }
 
     /// Rotate the ring so the old bottom row becomes row 0. CONTRACT: the
@@ -287,19 +335,18 @@ pub const Grid = struct {
     }
 
     pub fn scrollDown(self: *Grid) Error!void {
-        if (self.height == 0 or self.history.items.len <= self.history_start) return;
+        if (self.height == 0 or self.history_count == 0) return;
 
-        var line = self.history.pop().?;
-        if (self.history.items.len == self.history_start) {
-            self.history_start = 0;
-            self.history.clearRetainingCapacity();
-        }
+        const newest_idx = (self.history_start + self.history_count - 1) % self.history_limit;
+        const hist_line = self.history.items[newest_idx];
 
-        errdefer line.deinit(self.allocator);
+        // Store bottom line into the history slot so its memory stays alive
+        const bottom_line = self.getLineMut(self.height - 1).*;
+        self.history.items[newest_idx] = bottom_line;
 
-        self.getLineMut(self.height - 1).deinit(self.allocator);
         self.start_index = (self.start_index + self.height - 1) % self.height;
-        self.getLineMut(0).* = line;
+        self.getLineMut(0).* = hist_line;
+        self.history_count -= 1;
     }
 
     pub fn clearLine(self: *Grid, y: u32) void {
@@ -750,9 +797,9 @@ pub const Grid = struct {
         while (j > 0) {
             j -= 1;
             const line = if (j < hist_len)
-                &self.history.items[self.history_start + j]
+                self.getHistoryLine(j)
             else
-                &self.lines.items[j - hist_len];
+                self.getLine(@intCast(j - hist_len));
 
             if (line.wrapped) {
                 last_non_empty = j;
@@ -812,9 +859,9 @@ pub const Grid = struct {
 
             while (line_idx < total) : (line_idx += 1) {
                 const line = if (line_idx < hist_len)
-                    &self.history.items[self.history_start + line_idx]
+                    self.getHistoryLine(line_idx)
                 else
-                    &self.lines.items[line_idx - hist_len];
+                    self.getLine(@intCast(line_idx - hist_len));
 
                 var cells_to_add = line.cells.items;
                 // Trim trailing unwritten cells from all lines to remove padding
@@ -863,11 +910,11 @@ pub const Grid = struct {
         // ── Save and replace old lines ──
         var old_lines = self.lines;
         var old_history = self.history;
-        const old_history_start = self.history_start;
         self.lines = .empty;
         self.history = .empty;
         self.start_index = 0;
         self.history_start = 0;
+        self.history_count = 0;
 
         // ── Rewrap each logical line and build new line set ──
         var new_lines: std.ArrayList(GridLine) = .empty;
@@ -876,7 +923,8 @@ pub const Grid = struct {
             new_lines.deinit(allocator);
             self.lines = old_lines;
             self.history = old_history;
-            self.history_start = old_history_start;
+            self.history_start = 0;
+            self.history_count = old_history.items.len;
         }
 
         var new_cursor_logical_line: ?usize = null;
@@ -922,6 +970,8 @@ pub const Grid = struct {
                 });
             }
             self.lines = new_lines;
+            self.history_count = 0;
+            self.history_start = 0;
             new_lines = .empty;
         } else {
             const h_count = total_len - height;
@@ -956,6 +1006,8 @@ pub const Grid = struct {
             }
             self.lines = vis_list;
             self.history = hist_list;
+            self.history_count = hist_list.items.len;
+            self.history_start = 0;
 
             // Free new_lines backing array
             new_lines.deinit(allocator);
@@ -965,7 +1017,7 @@ pub const Grid = struct {
         // ── Deinit old lines AFTER split succeeds — bug #217/#230 fix ──
         for (old_lines.items) |*l| l.deinit(allocator);
         old_lines.deinit(allocator);
-        for (old_history.items[old_history_start..]) |*l| l.deinit(allocator);
+        for (old_history.items) |*l| l.deinit(allocator);
         old_history.deinit(allocator);
 
         if (cursor_x != null and cursor_y != null) {
@@ -1073,7 +1125,7 @@ test "history respects limit" {
         try grid.scrollUp();
     }
 
-    try testing.expectEqual(@as(usize, 3), grid.history.items.len - grid.history_start);
+    try testing.expectEqual(@as(usize, 3), grid.historyLen());
 }
 
 test "clear line" {
@@ -1211,7 +1263,7 @@ test "scrollDown restores newest history line in LIFO order — bug #249" {
     try grid.scrollUp();
     try grid.scrollUp();
     try grid.scrollUp();
-    try testing.expectEqual(@as(usize, 3), grid.history.items.len - grid.history_start);
+    try testing.expectEqual(@as(usize, 3), grid.historyLen());
     try testing.expectEqual(@as(u21, 'A'), grid.getHistoryLine(0).cells.items[0].char); // oldest
     try testing.expectEqual(@as(u21, 'C'), grid.getHistoryLine(2).cells.items[0].char); // newest
 
@@ -1781,16 +1833,11 @@ test "forceReflow with history and trailing empty lines on screen" {
     var grid = try Grid.init(testing.allocator, 10, 5);
     defer grid.deinit();
 
-    // Push 2 lines into history
-    var h1 = GridLine{};
-    try h1.cells.resize(testing.allocator, 10);
-    @memset(h1.cells.items, Cell.withChar('H'));
-    try grid.history.append(testing.allocator, h1);
-
-    var h2 = GridLine{};
-    try h2.cells.resize(testing.allocator, 10);
-    @memset(h2.cells.items, Cell.withChar('I'));
-    try grid.history.append(testing.allocator, h2);
+    // Push 2 lines into history via scrollUp
+    for (0..10) |x| grid.writeChar(@intCast(x), 0, 'H');
+    try grid.scrollUp();
+    for (0..10) |x| grid.writeChar(@intCast(x), 0, 'I');
+    try grid.scrollUp();
 
     // Visible grid: height 5.
     // Line 0: "Prompt", Line 1..4: empty.
@@ -1961,13 +2008,13 @@ test "Grid.clone with history_start offset — bug #231" {
     defer grid.deinit();
     grid.history_limit = 5;
 
-    // Scroll up 10 times so history receives 10 lines and history_start advances to 5
+    // Scroll up 8 times on capacity 5: history_start advances to 3 (8 % 5)
     var i: usize = 0;
-    while (i < 10) : (i += 1) {
+    while (i < 8) : (i += 1) {
         try grid.scrollUp();
     }
 
-    try testing.expectEqual(@as(usize, 5), grid.history_start);
+    try testing.expectEqual(@as(usize, 3), grid.history_start);
 
     var cloned = try grid.clone(testing.allocator);
     defer cloned.deinit();
@@ -2013,4 +2060,24 @@ test "Grid.copyVisibleFrom copies logical rows when start_index differs — bug 
 
     try testing.expectEqual(@as(u21, '2'), dst.getLine(0).cells.items[0].char);
     try testing.expectEqual(@as(u21, '3'), dst.getLine(1).cells.items[0].char);
+}
+
+test "Grid.scrollUp reuses memory in fixed-capacity deque without growth — bug #360" {
+    var grid = try Grid.initWithLimit(testing.allocator, 80, 5, 10);
+    defer grid.deinit();
+
+    // Scroll 1,000 times through a 10-line history buffer
+    var i: usize = 0;
+    while (i < 1000) : (i += 1) {
+        grid.writeChar(0, 4, @intCast('A' + (i % 26)));
+        try grid.scrollUp();
+    }
+
+    // History count must be strictly capped at 10
+    try testing.expectEqual(@as(usize, 10), grid.historyLen());
+    try testing.expectEqual(@as(usize, 10), grid.history.items.len);
+
+    // Latest scrolled line must be accessible at newest index
+    const newest_char = grid.getHistoryLine(9).cells.items[0].char;
+    try testing.expect(newest_char >= 'A' and newest_char <= 'Z');
 }

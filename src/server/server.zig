@@ -1178,11 +1178,7 @@ pub const Server = struct {
                 writeKeyToPty(pane, prefix_key);
             },
             .clock_mode => {
-                if (pane.saved_grid) |*g| {
-                    g.deinit();
-                    pane.saved_grid = null;
-                }
-                pane.saved_grid = pane.screen.grid.clone(pane.screen.grid.allocator) catch {
+                pane.saveGrid() catch {
                     pane.screen.clock_mode = false;
                     return;
                 };
@@ -1514,11 +1510,7 @@ pub const Server = struct {
                                     try self.command_buf.append(self.allocator, ' ');
                                     self.dirty = true;
                                 } else if (matches.items.len > 1) {
-                                    if (pane.saved_grid) |*g| {
-                                        g.deinit();
-                                        pane.saved_grid = null;
-                                    }
-                                    pane.saved_grid = try pane.screen.grid.clone(pane.screen.grid.allocator);
+                                    try pane.saveGrid();
 
                                     self.command_mode = false;
                                     try pane.choose_mode.enter(pane.screen.grid.allocator, matches.items);
@@ -3974,7 +3966,7 @@ test "clock mode mouse click exits clock and consumes SGR sequence" {
     try s.options.set("mouse", .{ .flag = true });
 
     pane.screen.clock_mode = true;
-    pane.saved_grid = try pane.screen.grid.clone(pane.screen.grid.allocator);
+    try pane.saveGrid();
 
     try server.processInput("\x1b[<0;10;5M");
 
