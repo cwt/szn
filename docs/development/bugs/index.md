@@ -37,9 +37,9 @@ Both summary tables below are generated from the `severity` and `status` fields 
 
 | Status | Count |
 |---|---:|
-| Fixed / Resolved | 411 |
+| Fixed / Resolved | 412 |
 | False Positive | 19 |
-| Open (deferred architectural backlog: #360, #361; +5 confirmed 2026-08-31 re-validation: #435–#439) | 7 |
+| Open (deferred architectural backlog: #360, #361; +4 confirmed 2026-08-31 re-validation: #436–#439) | 6 |
 | **Total** | **437** |
 
 ## All Bugs
@@ -478,7 +478,7 @@ Both summary tables below are generated from the `severity` and `status` fields 
 | [432](432.md) | Status-bar visibleLen counts codepoints, not cells; wide-char window names mis-hit | MEDIUM | Fixed |
 | [433](433.md) | Pane-border-format cache invalidated only on option change, not resize/split | MEDIUM-HIGH | Fixed |
 | [434](434.md) | Region scroll paths skip shiftSixelAnchors, desyncing sixel anchors | MEDIUM | Fixed |
-| [435](435.md) | Screen.resize leaves sixel anchor_row stale for images below new height | MEDIUM | Open |
+| [435](435.md) | Screen.resize leaves sixel anchor_row stale for images below new height | MEDIUM | Fixed |
 | [436](436.md) | Command parser has no quote/escape handling; quoted multi-word args mis-tokenize | MEDIUM | Open |
 | [437](437.md) | load-buffer fails on EINTR instead of retrying read() | MEDIUM | Open |
 | [438](438.md) | new-session leaves a half-created session attached on setupPane failure | MEDIUM | Open |

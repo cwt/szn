@@ -572,6 +572,19 @@ pub const Screen = struct {
             sc.x = @min(sc.x, width -| 1);
             sc.y = @min(sc.y, height -| 1);
         }
+
+        // Sixel images anchored beyond the new screen height or no longer
+        // referenced by visible cells are outside the visible grid. Evict them
+        // so anchors do not retain invalid coordinates (bug #435).
+        for (&self.sixel_images, 0..) |*opt_img, idx| {
+            if (opt_img.*) |*img| {
+                if (img.anchor_row >= @as(i32, @intCast(height)) or !self.isImageReferenced(img.id)) {
+                    self.sixel_refcounts[idx] = 0;
+                    img.deinit(self.allocator);
+                    opt_img.* = null;
+                }
+            }
+        }
     }
 
     pub fn forceReflow(self: *Screen) Error!void {
@@ -2529,6 +2542,27 @@ test "scrollUpInRegion and advanceLine shift sixel image anchor_row — bug #434
 
     // Sixel anchor should have shifted from 10 to 9
     try testing.expectEqual(@as(i32, 9), screen.sixel_images[0].?.anchor_row);
+}
+
+test "Screen.resize evicts sixel images beyond new height — bug #435" {
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+    screen.cell_size_known = true;
+
+    // Add a sixel at row 20
+    screen.cursor.y = 20;
+    screen.cursor.x = 0;
+    const dcs = try testing.allocator.dupe(u8, "\x1bPqTEST\x1b\\");
+    try screen.addSixelImage(dcs, 10, 20);
+    try testing.expect(screen.sixel_images[0] != null);
+    try testing.expectEqual(@as(i32, 20), screen.sixel_images[0].?.anchor_row);
+
+    // Resize height from 24 down to 10
+    try screen.resize(80, 10);
+
+    // Out-of-bounds sixel image should have been evicted
+    try testing.expect(screen.sixel_images[0] == null);
+    try testing.expectEqual(@as(usize, 0), screen.sixel_refcounts[0]);
 }
 
 test "sixel registry wrapping keeps referenced images — bug #198" {
