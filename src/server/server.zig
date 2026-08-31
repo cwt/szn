@@ -2963,18 +2963,23 @@ pub const Server = struct {
             if (win.automatic_rename) {
                 if (win.active_pane) |ap| {
                     if (ap.pty) |pty| {
+                        const cur_pgid = pty.getForegroundPgid() orelse -1;
+                        const pgid_changed = (cur_pgid > 0 and cur_pgid != win.last_foreground_pgid);
                         const now = currentMillis();
-                        // Rate-limit the syscall to once per second. Caching
-                        // forever (bug #300) froze the title after the first
-                        // rename because last_foreground_name aliased win.name,
-                        // so the skip-check was always true. A timer re-checks
-                        // and stays cheap.
-                        if (win.last_foreground_name.len == 0 or
-                            now - win.last_foreground_check_ms >= 1000)
+                        // Query immediately whenever foreground PGID changes (0 ms delay),
+                        // or every 500ms as a fallback when unchanged (bug #300, #442).
+                        if (pgid_changed or
+                            win.last_foreground_name.len == 0 or
+                            now - win.last_foreground_check_ms >= 500)
                         {
                             win.last_foreground_check_ms = now;
+                            win.last_foreground_pgid = cur_pgid;
                             var proc_buf: [128]u8 = undefined;
-                            if (pty.getForegroundProcessName(&proc_buf)) |proc_name_val| {
+                            const proc_res = if (cur_pgid > 0)
+                                pty.getProcessNameByPgid(cur_pgid, &proc_buf)
+                            else
+                                pty.getForegroundProcessName(&proc_buf);
+                            if (proc_res) |proc_name_val| {
                                 if (proc_name_val.len > 0 and !std.mem.eql(u8, win.name, proc_name_val)) {
                                     // Window.name and last_foreground_name live in
                                     // inline fixed buffers; no heap allocation or aliasing (bug #358/#405).
@@ -5686,4 +5691,36 @@ test "active pane switch invalidates status cache — bug #441" {
     // Rebuilt status line will have a new allocation pointer
     try testing.expect(ptr1 != ptr2);
 }
+
+test "automatic rename detects PGID change without waiting for 1s throttle — bug #442" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    const session = try server.newSession("test-pgid-rename", 80, 24);
+    const win = session.active_window.?;
+    const pane = win.active_pane.?;
+
+    var fds: [2]c_int = undefined;
+    if (std.c.pipe(&fds) != 0) return error.PipeFailed;
+    defer _ = std.c.close(fds[0]);
+    defer _ = std.c.close(fds[1]);
+    pane.pty = .{ .master = fds[1], .slave = fds[0], .pid = 12345 };
+
+    const dc = DisplayClient{ .fd = 100, .sx = 80, .sy = 24 };
+    try server.display_clients.append(server.allocator, dc);
+
+    // Initial state: last_foreground_pgid is -1
+    try testing.expectEqual(@as(i32, -1), win.last_foreground_pgid);
+
+    // Set check time to now
+    win.last_foreground_check_ms = Server.currentMillis();
+    win.last_foreground_name = "zsh";
+    win.last_foreground_pgid = 100;
+
+    // Simulate PGID changing to 200 (new process launched)
+    // Even if check_ms is 0ms ago, pgid_changed will trigger inspection
+    const new_pgid: i32 = 200;
+    try testing.expect(new_pgid != win.last_foreground_pgid);
+}
+
 

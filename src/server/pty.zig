@@ -340,13 +340,18 @@ pub const Pty = struct {
         if (ioctl(self.master, TIOCSWINSZ, ws) < 0) return error.IoctlFailed;
     }
 
-    pub fn getForegroundProcessName(self: *const Pty, buf: []u8) Error![]const u8 {
+    pub fn getForegroundPgid(self: *const Pty) ?i32 {
         const pgid = tcgetpgrp(self.master);
-        if (pgid < 0) return error.ProcessExited;
+        if (pgid <= 0) return null;
+        return @as(i32, @intCast(pgid));
+    }
 
+    pub fn getProcessNameByPgid(self: *const Pty, pgid: i32, buf: []u8) Error![]const u8 {
+        _ = self;
+        if (pgid <= 0) return error.ProcessExited;
         const builtin = @import("builtin");
         if (builtin.os.tag == .macos) {
-            proc_name(pgid, buf.ptr, @intCast(buf.len));
+            proc_name(@intCast(pgid), buf.ptr, @intCast(buf.len));
             const len = std.mem.indexOfScalar(u8, buf, 0) orelse buf.len;
             return buf[0..len];
         } else if (builtin.os.tag == .linux) {
@@ -363,6 +368,11 @@ pub const Pty = struct {
         } else {
             return error.ReadFailed;
         }
+    }
+
+    pub fn getForegroundProcessName(self: *const Pty, buf: []u8) Error![]const u8 {
+        const pgid = self.getForegroundPgid() orelse return error.ProcessExited;
+        return self.getProcessNameByPgid(pgid, buf);
     }
 };
 

@@ -21,7 +21,7 @@ Both summary tables below are generated from the `severity` and `status` fields 
 | HIGH | 109 |
 | MEDIUM | 155 |
 | MEDIUM-HIGH | 3 |
-| LOW | 103 |
+| LOW | 104 |
 | LOW (architecture) | 3 |
 | LOW (code quality) | 5 |
 | LOW (correctness) | 1 |
@@ -31,16 +31,16 @@ Both summary tables below are generated from the `severity` and `status` fields 
 | LOW (safety) | 1 |
 | MEDIUM (dead code / refcount drift) | 1 |
 | MEDIUM (performance) | 4 |
-| **Total** | **439** |
+| **Total** | **440** |
 
 ## Summary by Status
 
 | Status | Count |
 |---|---:|
-| Fixed / Resolved | 420 |
+| Fixed / Resolved | 421 |
 | False Positive | 19 |
 | Open | 0 |
-| **Total** | **439** |
+| **Total** | **440** |
 
 ## All Bugs
 
@@ -485,3 +485,4 @@ Both summary tables below are generated from the `severity` and `status` fields 
 | [439](439.md) | Pty.allocator is 'undefined' until spawn(); deinit non-idempotent | LOW | Fixed |
 | [440](440.md) | Global window status options rejected by scope routing and status cache freeze on active window switch | HIGH | Fixed |
 | [441](441.md) | Status cache invalidation lag and missing state change triggers causing delayed status bar updates | HIGH | Fixed |
+| [442](442.md) | Automatic window renaming latency from fixed 1000ms polling rate-limit | LOW | Fixed |

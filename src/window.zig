@@ -283,9 +283,9 @@ pub const Window = struct {
     /// call. Only call the syscall when this differs from win.name (bug #300).
     last_foreground_name: []const u8 = "",
     /// Last time the foreground-process syscall ran, in ms. Rate-limits the
-    /// check to 1/sec so process changes are still detected without a syscall
-    /// on every render (bug #300 follow-up).
+    /// check to 500ms when pgid is unchanged (bug #300, #442).
     last_foreground_check_ms: i64 = 0,
+    last_foreground_pgid: i32 = -1,
     name_dirty: bool = false,
     active_pane_dirty: bool = false,
 
