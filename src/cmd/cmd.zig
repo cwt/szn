@@ -1672,11 +1672,76 @@ pub fn formatHelp(allocator: std.mem.Allocator, command_name: ?[]const u8) Parse
 
 pub fn parse(input: []const u8, allocator: std.mem.Allocator) !CmdArgs {
     var arg_list: std.ArrayList([]const u8) = .empty;
-    errdefer arg_list.deinit(allocator);
-    var it = std.mem.tokenizeScalar(u8, input, ' ');
-    while (it.next()) |token| {
+    errdefer {
+        for (arg_list.items) |arg| {
+            allocator.free(arg);
+        }
+        arg_list.deinit(allocator);
+    }
+
+    var i: usize = 0;
+    while (i < input.len) {
+        // Skip leading whitespace
+        while (i < input.len and (input[i] == ' ' or input[i] == '\t')) : (i += 1) {}
+        if (i >= input.len) break;
+
+        var token_buf: std.ArrayList(u8) = .empty;
+        errdefer token_buf.deinit(allocator);
+
+        var in_double_quotes = false;
+        var in_single_quotes = false;
+
+        while (i < input.len) {
+            const ch = input[i];
+            if (in_single_quotes) {
+                if (ch == '\'') {
+                    in_single_quotes = false;
+                    i += 1;
+                } else {
+                    try token_buf.append(allocator, ch);
+                    i += 1;
+                }
+            } else if (in_double_quotes) {
+                if (ch == '"') {
+                    in_double_quotes = false;
+                    i += 1;
+                } else if (ch == '\\' and i + 1 < input.len) {
+                    const next = input[i + 1];
+                    if (next == '"' or next == '\\' or next == '$' or next == '`') {
+                        try token_buf.append(allocator, next);
+                        i += 2;
+                    } else {
+                        try token_buf.append(allocator, '\\');
+                        try token_buf.append(allocator, next);
+                        i += 2;
+                    }
+                } else {
+                    try token_buf.append(allocator, ch);
+                    i += 1;
+                }
+            } else {
+                if (ch == ' ' or ch == '\t') {
+                    break;
+                } else if (ch == '\'') {
+                    in_single_quotes = true;
+                    i += 1;
+                } else if (ch == '"') {
+                    in_double_quotes = true;
+                    i += 1;
+                } else if (ch == '\\' and i + 1 < input.len) {
+                    try token_buf.append(allocator, input[i + 1]);
+                    i += 2;
+                } else {
+                    try token_buf.append(allocator, ch);
+                    i += 1;
+                }
+            }
+        }
+
+        const token = try token_buf.toOwnedSlice(allocator);
         try arg_list.append(allocator, token);
     }
+
     const name = if (arg_list.items.len > 0) arg_list.items[0] else "";
     const entry = lookup(name) orelse return error.UnknownCommand;
     if (arg_list.items.len - 1 < entry.min_args) return error.MissingArgs;
@@ -1692,6 +1757,9 @@ pub const CmdArgs = struct {
     args: [][]const u8,
 
     pub fn deinit(self: *CmdArgs, allocator: std.mem.Allocator) void {
+        for (self.args) |arg| {
+            allocator.free(arg);
+        }
         allocator.free(self.args);
     }
 
@@ -1732,6 +1800,27 @@ test "parse valid command" {
     defer result.deinit(testing.allocator);
     try testing.expectEqualStrings("new-session", result.args[0]);
     try testing.expectEqualStrings("mysession", result.args[1]);
+}
+
+test "parse handles double quotes, single quotes, and backslash escapes — bug #436" {
+    var r1 = try parse("bind-key C-a \"send-keys C-a\"", testing.allocator);
+    defer r1.deinit(testing.allocator);
+    try testing.expectEqual(@as(usize, 3), r1.args.len);
+    try testing.expectEqualStrings("bind-key", r1.args[0]);
+    try testing.expectEqualStrings("C-a", r1.args[1]);
+    try testing.expectEqualStrings("send-keys C-a", r1.args[2]);
+
+    var r2 = try parse("send-keys 'hello world'", testing.allocator);
+    defer r2.deinit(testing.allocator);
+    try testing.expectEqual(@as(usize, 2), r2.args.len);
+    try testing.expectEqualStrings("send-keys", r2.args[0]);
+    try testing.expectEqualStrings("hello world", r2.args[1]);
+
+    var r3 = try parse("send-keys hello\\ world", testing.allocator);
+    defer r3.deinit(testing.allocator);
+    try testing.expectEqual(@as(usize, 2), r3.args.len);
+    try testing.expectEqualStrings("send-keys", r3.args[0]);
+    try testing.expectEqualStrings("hello world", r3.args[1]);
 }
 
 test "parse unknown command fails" {
