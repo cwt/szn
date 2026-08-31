@@ -1113,6 +1113,7 @@ fn cmdResizePane(server: *Server, args: []const []const u8) CmdResult {
     };
 
     pane.resizeTerminal(target_w, target_h) catch return .err;
+    window.invalidateBorderFormat();
     return .ok;
 }
 

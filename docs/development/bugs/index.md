@@ -37,9 +37,9 @@ Both summary tables below are generated from the `severity` and `status` fields 
 
 | Status | Count |
 |---|---:|
-| Fixed / Resolved | 409 |
+| Fixed / Resolved | 410 |
 | False Positive | 19 |
-| Open (deferred architectural backlog: #360, #361; +7 confirmed 2026-08-31 re-validation: #433–#439) | 9 |
+| Open (deferred architectural backlog: #360, #361; +6 confirmed 2026-08-31 re-validation: #434–#439) | 8 |
 | **Total** | **437** |
 
 ## All Bugs
@@ -476,7 +476,7 @@ Both summary tables below are generated from the `severity` and `status` fields 
 | [430](430.md) | kitty 'u' protocol returns .char, never matches .special/.arrow/.function bindings | MEDIUM-HIGH | Fixed |
 | [431](431.md) | Render output bypasses appendClientOut, defeating display flow control | MEDIUM-HIGH | Fixed |
 | [432](432.md) | Status-bar visibleLen counts codepoints, not cells; wide-char window names mis-hit | MEDIUM | Fixed |
-| [433](433.md) | Pane-border-format cache invalidated only on option change, not resize/split | MEDIUM-HIGH | Open |
+| [433](433.md) | Pane-border-format cache invalidated only on option change, not resize/split | MEDIUM-HIGH | Fixed |
 | [434](434.md) | Region scroll paths skip shiftSixelAnchors, desyncing sixel anchors | MEDIUM | Open |
 | [435](435.md) | Screen.resize leaves sixel anchor_row stale for images below new height | MEDIUM | Open |
 | [436](436.md) | Command parser has no quote/escape handling; quoted multi-word args mis-tokenize | MEDIUM | Open |

@@ -389,6 +389,17 @@ pub const Window = struct {
                 },
             }
         }
+        self.invalidateBorderFormat();
+    }
+
+    pub fn invalidateBorderFormat(self: *Window) void {
+        for (self.panes.items) |p| {
+            if (p.border_format_cached) |bf| {
+                p.screen.grid.allocator.free(bf);
+                p.border_format_cached = null;
+            }
+            p.border_format_gen = 0;
+        }
     }
 
     pub fn addPane(self: *Window, allocator: std.mem.Allocator) Error!*Pane {
@@ -409,6 +420,7 @@ pub const Window = struct {
         self.next_pane_id += 1;
         try self.panes.append(self.allocator, new_pane);
         self.registerPane(new_pane);
+        self.invalidateBorderFormat();
         return new_pane;
     }
 
@@ -421,6 +433,7 @@ pub const Window = struct {
         try self.panes.append(self.allocator, new_pane);
         self.registerPane(new_pane);
         self.setActivePane(new_pane);
+        self.invalidateBorderFormat();
         return new_pane;
     }
 
@@ -444,6 +457,7 @@ pub const Window = struct {
             }
             self.resize(self.width, self.height) catch |err| std.log.warn("resize failed: {any}", .{err});
         }
+        self.invalidateBorderFormat();
     }
 
     pub fn extractPane(self: *Window, allocator: std.mem.Allocator, pane: *Pane) void {
@@ -462,6 +476,7 @@ pub const Window = struct {
             if (self.active_pane) |p| p.active = true;
         }
         self.resize(self.width, self.height) catch |err| std.log.warn("resize failed: {any}", .{err});
+        self.invalidateBorderFormat();
     }
 
     pub fn setActivePane(self: *Window, pane: *Pane) void {
@@ -707,4 +722,28 @@ test "auto-rename avoids freeing name_buf and avoids aliased double-free — bug
     windowTitleCallback(&window, "user@host: ~");
     try testing.expectEqualStrings("user@host: ~", window.name);
     try testing.expectEqualStrings("htop", window.last_foreground_name);
+}
+
+test "window resize and split invalidate cached pane-border-format — bug #433" {
+    var window = try Window.init(testing.allocator, 1, "test", 80, 24, null, null);
+    defer window.deinit(testing.allocator);
+
+    const pane = window.active_pane.?;
+    // Set a simulated cached border format
+    pane.border_format_cached = try pane.screen.grid.allocator.dupe(u8, "80x24");
+    pane.border_format_gen = 5;
+
+    // Resizing window should invalidate border format cache
+    try window.resize(100, 30);
+    try testing.expect(pane.border_format_cached == null);
+    try testing.expectEqual(@as(u32, 0), pane.border_format_gen);
+
+    // Re-simulate cache
+    pane.border_format_cached = try pane.screen.grid.allocator.dupe(u8, "100x30");
+    pane.border_format_gen = 5;
+
+    // Splitting window should also invalidate border format cache
+    _ = try window.splitPane(testing.allocator, pane, true, 0.5);
+    try testing.expect(pane.border_format_cached == null);
+    try testing.expectEqual(@as(u32, 0), pane.border_format_gen);
 }
