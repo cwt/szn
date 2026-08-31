@@ -6,6 +6,7 @@ const expand = format_mod.expand;
 const TemplateCache = format_mod.TemplateCache;
 const colour = @import("colour.zig");
 const Colour = colour.Colour;
+const char_width = @import("char_width.zig");
 
 pub const Error = error{
     OutOfMemory,
@@ -113,10 +114,14 @@ pub fn visibleLen(s: []const u8) usize {
             i = skipEscape(s, i);
             continue;
         }
-        // UTF-8: count one column per codepoint (status bar uses ASCII mostly;
-        // wide chars still count as 1 here — good enough for packing).
+        // UTF-8: decode codepoint and measure cell width using char_width.charWidth
         const cp_len = std.unicode.utf8ByteSequenceLength(s[i]) catch 1;
-        cols += 1;
+        if (i + cp_len <= s.len) {
+            const cp = std.unicode.utf8Decode(s[i .. i + cp_len]) catch ' ';
+            cols += char_width.charWidth(cp);
+        } else {
+            cols += 1;
+        }
         i += cp_len;
     }
     return cols;
@@ -581,6 +586,15 @@ test "render with format escapes" {
 
 test "visibleLen skips CSI" {
     try testing.expectEqual(@as(usize, 3), visibleLen("\x1b[31mabc\x1b[m"));
+}
+
+test "visibleLen measures wide and combining characters accurately — bug #432" {
+    // "日本語" is 3 CJK characters = 6 cells
+    try testing.expectEqual(@as(usize, 6), visibleLen("日本語"));
+    // "cafe\u{0301}" (e + combining acute) is 4 cells
+    try testing.expectEqual(@as(usize, 4), visibleLen("cafe\u{0301}"));
+    // Wide char + SGR styling: "ESC[1m🦀ESC[m" = 2 cells
+    try testing.expectEqual(@as(usize, 2), visibleLen("\x1b[1m🦀\x1b[m"));
 }
 
 test "truncateVisible keeps styles" {
