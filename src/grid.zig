@@ -121,18 +121,25 @@ pub const Grid = struct {
         return self.history_count;
     }
 
+    /// Read-only stand-in returned when the history ring is physically empty.
+    /// Corrupt `history_count`/`history_start` states must degrade to blank
+    /// lines instead of indexing out of bounds and crashing the server (bug #444).
+    const EMPTY_HISTORY_LINE: GridLine = .{};
+
     /// Access a live history line by logical index (0 = oldest, historyLen-1 = newest).
     pub fn getHistoryLine(self: *const Grid, idx: usize) *const GridLine {
-        if (self.history.items.len == 0) return &self.history.items[0];
+        if (self.history.items.len == 0) return &EMPTY_HISTORY_LINE;
         const ring_idx = (self.history_start + idx) % self.history.items.len;
         return &self.history.items[ring_idx];
     }
 
-    /// Mutable access to a live history line by logical index.
-    pub fn getHistoryLineMut(self: *Grid, idx: usize) *GridLine {
-        if (self.history.items.len == 0) return &self.history.items[0];
-        const ring_idx = (self.history_start + idx) % self.history.items.len;
-        return &self.history.items[ring_idx];
+    /// Re-establish the empty-ring invariant after externally corrupt states so
+    /// no mutating path can index into an empty `history` list (bug #444).
+    fn normalizeHistoryRing(self: *Grid) void {
+        if (self.history.items.len == 0) {
+            self.history_count = 0;
+            self.history_start = 0;
+        }
     }
 
     pub fn normalize(self: *Grid) !void {
@@ -142,6 +149,7 @@ pub const Grid = struct {
     }
 
     pub fn clearHistory(self: *Grid) void {
+        self.normalizeHistoryRing();
         var i: usize = 0;
         while (i < self.history_count) : (i += 1) {
             const ring_idx = if (self.history.items.len > 0) (self.history_start + i) % self.history.items.len else 0;
@@ -154,6 +162,7 @@ pub const Grid = struct {
     }
 
     pub fn setHistoryLimit(self: *Grid, new_limit: u32) void {
+        self.normalizeHistoryRing();
         if (new_limit == self.history_limit) return;
         if (new_limit < self.history_count) {
             const excess = self.history_count - new_limit;
@@ -289,6 +298,7 @@ pub const Grid = struct {
 
     pub fn scrollUp(self: *Grid) Error!void {
         if (self.height == 0) return;
+        self.normalizeHistoryRing();
 
         if (self.history_limit == 0) {
             var line = self.getLineMut(0);
@@ -2168,4 +2178,30 @@ test "Grid.scrollDown and scrollUp with wrapped history ring buffer" {
     try testing.expectEqual(@as(usize, 5), grid.historyLen());
     try testing.expectEqual(@as(u21, '7'), grid.getHistoryLine(4).cells.items[0].char);
     try testing.expectEqual(@as(u21, '3'), grid.getHistoryLine(0).cells.items[0].char);
+}
+
+test "Grid recovers from corrupt empty history ring without OOB access (bug #444)" {
+    var grid = try Grid.initWithLimit(testing.allocator, 10, 2, 5);
+    defer grid.deinit();
+
+    // Corrupt the ring bookkeeping while the physical list is empty.
+    grid.history_count = 3;
+    grid.history_start = 7;
+
+    // Read path must return a blank sentinel line, not index out of bounds.
+    try testing.expectEqual(@as(usize, 0), grid.getHistoryLine(0).cells.items.len);
+
+    // scrollDown already guards on items.len == 0 and must leave the grid alive.
+    try grid.scrollDown();
+
+    // Mutating paths must self-heal the corrupt state.
+    grid.clearHistory();
+    try testing.expectEqual(@as(usize, 0), grid.historyLen());
+    try testing.expectEqual(@as(usize, 0), grid.history_start);
+
+    grid.setHistoryLimit(4);
+    grid.writeChar(0, 0, 'x');
+    try grid.scrollUp();
+    try testing.expectEqual(@as(usize, 1), grid.historyLen());
+    try testing.expectEqual(@as(u21, 'x'), grid.getHistoryLine(0).cells.items[0].char);
 }
