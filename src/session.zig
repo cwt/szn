@@ -104,9 +104,11 @@ pub const Session = struct {
         const new_win = try a.create(Window);
         new_win.* = try Window.init(a, @intCast(win_id), name, self.width, self.height, &self.window_options, null);
         new_win.setName(name);
+        const hlimit: ?u32 = if (self.options.get("history-limit")) |hl| @intCast(hl.number) else null;
         for (new_win.panes.items) |p| {
             p.window = new_win;
             p.title_ctx = @ptrCast(new_win);
+            if (hlimit) |hl| p.screen.grid.setHistoryLimit(hl);
         }
         try self.windows.append(a, new_win);
         if (self.active_window) |prev| {

@@ -5723,4 +5723,48 @@ test "automatic rename detects PGID change without waiting for 1s throttle — b
     try testing.expect(new_pgid != win.last_foreground_pgid);
 }
 
+test "scrollback renders newest lines correctly when history ring buffer wraps — bug #443" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
 
+    const session = try server.newSession("test-scrollback", 80, 5);
+    const win0 = session.active_window.?;
+    const pane0 = win0.active_pane.?;
+    pane0.screen.grid.setHistoryLimit(5);
+
+    // Write initial ls output into win0
+    for ("12345") |ch| {
+        pane0.screen.grid.writeChar(0, 0, @intCast(ch));
+        try pane0.screen.grid.scrollUp();
+    }
+
+    // Switch to win1 and back to win0
+    const win1 = try session.newWindow(server.allocator, "win1");
+    session.setActiveWindow(win1);
+    session.setActiveWindow(win0);
+
+    // Write long help output into win0 (scrolling more lines, wrapping the history ring)
+    // Push lines '6', '7', '8'
+    for ("678") |ch| {
+        pane0.screen.grid.writeChar(0, 0, @intCast(ch));
+        try pane0.screen.grid.scrollUp();
+    }
+    // Now history_start = 3, live history: '4', '5', '6', '7', '8'
+    try testing.expectEqual(@as(usize, 5), pane0.screen.grid.historyLen());
+    try testing.expectEqual(@as(usize, 3), pane0.screen.grid.history_start);
+
+    // Enter copy mode and scroll up by 1 line
+    try pane0.enterCopyMode();
+    if (pane0.screen.copy_mode) |*cm| {
+        cm.scroll_offset = 1;
+    }
+
+    // Render display
+    const dc = DisplayClient{ .fd = 100, .sx = 80, .sy = 6 };
+    try server.display_clients.append(server.allocator, dc);
+    server.renderToDisplayClient();
+
+    // Verify row 0 in display shows '8' (the newest line right above the visible screen), NOT '4' or empty
+    const row0_char = server.display_clients.items[0].last_cells.items[0].char;
+    try testing.expectEqual(@as(u21, '8'), row0_char);
+}

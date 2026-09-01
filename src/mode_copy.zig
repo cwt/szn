@@ -270,11 +270,16 @@ pub const CopyMode = struct {
         const combined_idx = (hist_len - scroll) + @as(usize, @intCast(screen_y));
 
         if (combined_idx < hist_len) {
-            const line = &grid.history.items[grid.history_start + combined_idx];
+            const line = grid.getHistoryLine(combined_idx);
             return if (x < line.cells.items.len) line.cells.items[x] else Cell.empty();
         }
 
-        return grid.getCell(x, @as(u32, @intCast(combined_idx - hist_len)));
+        const visible_y = combined_idx - hist_len;
+        if (visible_y < grid.height) {
+            const line = grid.getLine(@intCast(visible_y));
+            return if (x < line.cells.items.len) line.cells.items[x] else Cell.empty();
+        }
+        return Cell.empty();
     }
 
     fn isLineWrapped(self: *const CopyMode, grid: *const Grid, screen_y: u32, scroll_offset: u32) bool {
@@ -286,12 +291,12 @@ pub const CopyMode = struct {
         const combined_idx = (hist_len - scroll) + @as(usize, @intCast(screen_y));
 
         if (combined_idx < hist_len) {
-            return grid.history.items[grid.history_start + combined_idx].wrapped;
+            return grid.getHistoryLine(combined_idx).wrapped;
         }
 
         const visible_y = combined_idx - hist_len;
-        if (visible_y < grid.lines.items.len) {
-            return grid.lines.items[visible_y].wrapped;
+        if (visible_y < grid.height) {
+            return grid.getLine(@intCast(visible_y)).wrapped;
         }
         return false;
     }
@@ -1976,4 +1981,38 @@ test "searchForward tolerates inconsistent history state — bug #293" {
 
     // Restore a consistent history_start so grid.deinit() can free its lines.
     g.history_start = 0;
+}
+
+test "copy_mode getCellAtOffset with wrapped history ring buffer (history_start > 0)" {
+    var g = try Grid.initWithLimit(testing.allocator, 10, 3, 5);
+    defer g.deinit();
+
+    // Fill 5 lines of initial content and scroll into history
+    for ("ABCDE") |ch| {
+        g.writeChar(0, 0, @intCast(ch));
+        try g.scrollUp();
+    }
+    try testing.expectEqual(@as(usize, 5), g.historyLen());
+    try testing.expectEqual(@as(usize, 0), g.history_start);
+
+    // Push 3 more lines to wrap the ring buffer: 'F', 'G', 'H'
+    for ("FGH") |ch| {
+        g.writeChar(0, 0, @intCast(ch));
+        try g.scrollUp();
+    }
+    // Ring buffer now has history_start = 3, live history: 'D', 'E', 'F', 'G', 'H'
+    try testing.expectEqual(@as(usize, 5), g.historyLen());
+    try testing.expectEqual(@as(usize, 3), g.history_start);
+
+    var cm = CopyMode.init(.vi);
+    // When scroll_offset = 1: top row (screen_y=0) should show newest history line 'H'
+    try testing.expectEqual(@as(u21, 'H'), cm.getCellAtOffset(&g, 0, 0, 1).char);
+    // When scroll_offset = 2: top row should show 'G'
+    try testing.expectEqual(@as(u21, 'G'), cm.getCellAtOffset(&g, 0, 0, 2).char);
+    // When scroll_offset = 3: top row should show 'F'
+    try testing.expectEqual(@as(u21, 'F'), cm.getCellAtOffset(&g, 0, 0, 3).char);
+    // When scroll_offset = 4: top row should show 'E'
+    try testing.expectEqual(@as(u21, 'E'), cm.getCellAtOffset(&g, 0, 0, 4).char);
+    // When scroll_offset = 5: top row should show 'D' (oldest live history line)
+    try testing.expectEqual(@as(u21, 'D'), cm.getCellAtOffset(&g, 0, 0, 5).char);
 }

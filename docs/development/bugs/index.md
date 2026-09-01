@@ -486,3 +486,4 @@ Both summary tables below are generated from the `severity` and `status` fields 
 | [440](440.md) | Global window status options rejected by scope routing and status cache freeze on active window switch | HIGH | Fixed |
 | [441](441.md) | Status cache invalidation lag and missing state change triggers causing delayed status bar updates | HIGH | Fixed |
 | [442](442.md) | Automatic window renaming latency from fixed 1000ms polling rate-limit | LOW | Fixed |
+| [443](443.md) | Raw history index arithmetic in render.zig and mode_copy.zig accesses out of bounds or displays stale lines when history ring wraps | HIGH | Fixed |

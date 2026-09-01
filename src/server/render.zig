@@ -201,7 +201,7 @@ pub const Display = struct {
                 const cells = if (combined_idx < 0)
                     @as(?*const std.ArrayList(Cell), null)
                 else if (combined_idx < hist_len)
-                    &pane_grid.history.items[pane_grid.history_start + @as(usize, @intCast(combined_idx))].cells
+                    &pane_grid.getHistoryLine(@as(usize, @intCast(combined_idx))).cells
                 else blk: {
                     const visible_y = combined_idx - @as(isize, @intCast(hist_len));
                     break :blk if (visible_y < pane_grid.height)
@@ -474,7 +474,7 @@ pub const Display = struct {
             const cells = if (combined_idx < 0)
                 @as(?*const std.ArrayList(Cell), null)
             else if (combined_idx < hist_len)
-                &screen.grid.history.items[screen.grid.history_start + @as(usize, @intCast(combined_idx))].cells
+                &screen.grid.getHistoryLine(@as(usize, @intCast(combined_idx))).cells
             else blk: {
                 const visible_y = combined_idx - @as(isize, @intCast(hist_len));
                 break :blk if (visible_y < screen.grid.height)
