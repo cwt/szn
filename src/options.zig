@@ -257,6 +257,13 @@ pub const SESSION_OPTIONS = &[_]OptionDef{
     // by default (bug #206). Setting the option rebuilds the override
     // table from scratch; e.g. `set -g codepoint-widths "U+2705=1"`.
     .{ .name = "codepoint-widths", .type = .string, .default = OptionValue{ .string = "" } },
+    // Variation selector-16 (U+FE0F) emoji presentation width handling,
+    // mirroring tmux `variation-selector-always-wide`.
+    // When enabled, a single-width base character followed by U+FE0F is
+    // promoted to width 2 (with a padding cell), matching terminals that
+    // expand emoji presentation sequences (e.g. Kitty or custom Alacritty).
+    // When disabled (default), standard POSIX 1-cell width is preserved.
+    .{ .name = "variation-selector-always-wide", .type = .flag, .default = OptionValue{ .flag = false } },
 };
 
 pub const WINDOW_OPTIONS = &[_]OptionDef{

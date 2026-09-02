@@ -607,18 +607,26 @@ pub const Display = struct {
                     cur_cx += 1;
                 } else if (cp >= 0x20 and cp != 0x7F) {
                     var buf: [4]u8 = undefined;
-                    const cw = char_width.charWidth(@intCast(cp));
+                    var cw: u32 = char_width.charWidth(@intCast(cp));
+                    if (cw == 1 and x + 1 < w) {
+                        const next_cell = if (cells) |cls| (if (x + 1 < cls.items.len) cls.items[x + 1] else Cell.empty()) else Cell.empty();
+                        if (next_cell.is_padding) {
+                            cw = 2;
+                        }
+                    }
                     const len = std.unicode.utf8Encode(@intCast(cp), &buf) catch {
                         try self.writeBytes("?");
                         cur_cx += 1;
                         continue;
                     };
                     try self.writeBytes(buf[0..len]);
-                    cur_cx += @as(u32, @intCast(cw));
+                    cur_cx += cw;
 
+                    var has_vs16 = false;
                     if (cell.comb1 != 0) {
                         const ccp1 = char_width.combiningCodepoint(cell.comb1);
                         if (ccp1 != 0) {
+                            if (ccp1 == 0xFE0F) has_vs16 = true;
                             const clen = std.unicode.utf8Encode(ccp1, &buf) catch continue;
                             try self.writeBytes(buf[0..clen]);
                         }
@@ -626,9 +634,20 @@ pub const Display = struct {
                     if (cell.comb2 != 0) {
                         const ccp2 = char_width.combiningCodepoint(cell.comb2);
                         if (ccp2 != 0) {
+                            if (ccp2 == 0xFE0F) has_vs16 = true;
                             const clen = std.unicode.utf8Encode(ccp2, &buf) catch continue;
                             try self.writeBytes(buf[0..clen]);
                         }
+                    }
+
+                    // If variation selector-16 (U+FE0F) was emitted, different terminals
+                    // may or may not advance their hardware cursor by 2 columns.
+                    // Reset `anchored = false` (mirroring tmux's TTY_CTX_CELL_INVALIDATE)
+                    // so that szn forces an explicit cursor repositioning before the next
+                    // cell, preventing cursor drift from leaking across the line and
+                    // leaving ghost characters.
+                    if (has_vs16) {
+                        anchored = false;
                     }
                 } else {
                     try self.writeBytes("?");

@@ -44,6 +44,19 @@ pub fn clearOverrides() void {
     override_count = 0;
 }
 
+var variation_selector_always_wide: bool = false;
+
+/// Set whether variation selector-16 (U+FE0F) forces single-width base characters
+/// to become 2-cell wide characters (mirroring tmux `variation-selector-always-wide`).
+pub fn setVariationSelectorAlwaysWide(enabled: bool) void {
+    variation_selector_always_wide = enabled;
+}
+
+/// Get whether variation selector-16 forces width 2.
+pub fn getVariationSelectorAlwaysWide() bool {
+    return variation_selector_always_wide;
+}
+
 pub const OverrideError = error{OverrideTableFull};
 
 fn overrideWidth(cp: u21) ?u2 {

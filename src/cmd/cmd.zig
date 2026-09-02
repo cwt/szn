@@ -988,6 +988,9 @@ fn setOptionInternal(server: *Server, args: []const []const u8, default_window: 
     if (std.mem.eql(u8, option_name, "codepoint-widths") and parsed_val == .string) {
         char_width.applyCodepointWidths(server.allocator, parsed_val.string) catch return .err;
     }
+    if (std.mem.eql(u8, option_name, "variation-selector-always-wide") and parsed_val == .flag) {
+        char_width.setVariationSelectorAlwaysWide(parsed_val.flag);
+    }
     if (std.mem.eql(u8, option_name, "history-limit") and parsed_val == .number) {
         const limit: u32 = @intCast(parsed_val.number);
         if (is_global) {
@@ -3159,4 +3162,3 @@ test "window navigation commands invalidate status_dirty cache — bug #440" {
     try testing.expectEqual(CmdResult.ok, c2.exec(&server));
     try testing.expect(server.status_dirty);
 }
-

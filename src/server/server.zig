@@ -3394,6 +3394,9 @@ pub const Server = struct {
                             std.log.warn("codepoint-widths: {s}", .{@errorName(err)});
                         };
                     }
+                    if (std.mem.eql(u8, s.option, "variation-selector-always-wide") and s.value == .flag) {
+                        char_width.setVariationSelectorAlwaysWide(s.value.flag);
+                    }
                 },
                 .bind_key => |b| {
                     const action = key_binding.mapCommandToAction(b.command) orelse {

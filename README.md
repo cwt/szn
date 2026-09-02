@@ -71,6 +71,22 @@ set -g codepoint-widths "U+2600-U+26FF=1"
 set -g codepoint-widths ""
 ```
 
+### Variation Selector-16 (Emoji Presentation) & Leftover Characters
+
+Some modern terminals (such as Kitty or customized Alacritty builds) promote
+single-width base characters followed by Variation Selector-16 (`U+FE0F`, e.g. `🕶️`,
+`⚡️`, `❤️`) into 2-cell wide emoji presentation sequences. Standard POSIX
+terminals (`xterm`, stock Alacritty, GNOME Terminal) keep them as 1 cell wide.
+
+**If you see leftover or ghost characters on lines containing emojis**, your host
+terminal is likely expanding VS16 sequences to 2 cells while szn is in standard
+1-cell mode. Turn this option on to match your terminal (mirroring tmux):
+
+```tmux
+# In ~/.szn.conf or ~/.tmux.conf
+set -g variation-selector-always-wide on
+```
+
 ## Configuration
 
 szn reads configuration from `~/.config/szn/szn.conf`, `~/.szn.conf`, `~/.config/tmux/tmux.conf`, or `~/.tmux.conf` on startup.

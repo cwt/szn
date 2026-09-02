@@ -413,7 +413,15 @@ pub const Term = struct {
             }
         }
 
-        if (self.cx >= 0) self.cx += char_width.charWidth(cell.char);
+        if (self.cx >= 0) {
+            const has_vs16 = (cell.comb1 != 0 and char_width.combiningCodepoint(cell.comb1) == 0xFE0F) or
+                (cell.comb2 != 0 and char_width.combiningCodepoint(cell.comb2) == 0xFE0F);
+            if (has_vs16) {
+                self.cx = -1;
+            } else {
+                self.cx += char_width.charWidth(cell.char);
+            }
+        }
     }
 
     pub fn drawCell(self: *Term, _x: u32, _y: u32, cell: Cell) Error!void {

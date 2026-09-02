@@ -722,7 +722,8 @@ pub const Screen = struct {
                     const last_col = self.grid.width - 1;
                     var prev_cell = self.grid.getCell(last_col, prev_y);
                     var target_col = last_col;
-                    if (prev_cell.is_padding and last_col > 0) {
+                    const was_padding = prev_cell.is_padding;
+                    if (was_padding and last_col > 0) {
                         target_col = last_col - 1;
                         prev_cell = self.grid.getCell(target_col, prev_y);
                     }
@@ -735,6 +736,22 @@ pub const Screen = struct {
                                 prev_cell.comb2 = cidx;
                             }
                             self.grid.setCell(target_col, prev_y, prev_cell);
+
+                            if (char == 0xFE0F and !was_padding and char_width.getVariationSelectorAlwaysWide()) {
+                                self.grid.setCell(target_col, prev_y, self.eraseCell());
+                                self.decrementMainGridRef(0, self.cursor.y);
+                                self.grid.setCell(0, self.cursor.y, prev_cell);
+
+                                var pad_cell = self.cur_cell;
+                                pad_cell.char = 0;
+                                pad_cell.is_padding = true;
+                                if (self.grid.width > 1) {
+                                    self.decrementMainGridRef(1, self.cursor.y);
+                                    self.grid.setCell(1, self.cursor.y, pad_cell);
+                                }
+                                self.cursor.x = @min(2, self.grid.width);
+                            }
+
                             self.dirty = true;
                             return;
                         }
@@ -744,7 +761,8 @@ pub const Screen = struct {
             }
             var base_x = self.cursor.x - 1;
             var prev_cell = self.grid.getCell(base_x, self.cursor.y);
-            if (prev_cell.is_padding) {
+            const was_padding = prev_cell.is_padding;
+            if (was_padding) {
                 if (self.cursor.x < 2) return;
                 base_x = self.cursor.x - 2;
                 prev_cell = self.grid.getCell(base_x, self.cursor.y);
@@ -760,6 +778,39 @@ pub const Screen = struct {
             // bug #225: don't decrement refcount for combining chars
             // (they modify in-place without erasing the sixel marker).
             self.grid.setCell(base_x, self.cursor.y, prev_cell);
+
+            if (char == 0xFE0F and !was_padding and char_width.getVariationSelectorAlwaysWide()) {
+                if (self.cursor.x < self.grid.width) {
+                    var pad_cell = self.cur_cell;
+                    pad_cell.char = 0;
+                    pad_cell.is_padding = true;
+                    self.decrementMainGridRef(self.cursor.x, self.cursor.y);
+                    self.grid.setCell(self.cursor.x, self.cursor.y, pad_cell);
+                    if (self.mode.line_wrap) {
+                        self.cursor.x += 1;
+                    } else {
+                        self.cursor.x = @min(self.cursor.x + 1, self.grid.width - 1);
+                    }
+                } else if (self.mode.line_wrap) {
+                    self.grid.setCell(base_x, self.cursor.y, self.eraseCell());
+                    self.grid.getLineMut(self.cursor.y).wrapped = true;
+                    self.cursor.x = 0;
+                    try self.advanceLine();
+
+                    self.decrementMainGridRef(0, self.cursor.y);
+                    self.grid.setCell(0, self.cursor.y, prev_cell);
+
+                    var pad_cell = self.cur_cell;
+                    pad_cell.char = 0;
+                    pad_cell.is_padding = true;
+                    if (self.grid.width > 1) {
+                        self.decrementMainGridRef(1, self.cursor.y);
+                        self.grid.setCell(1, self.cursor.y, pad_cell);
+                    }
+                    self.cursor.x = @min(2, self.grid.width);
+                }
+            }
+
             self.dirty = true;
             return;
         }
@@ -3142,4 +3193,80 @@ test "resetHard cleans up alt_grid and copy_mode — bug #426" {
     try screen.resetHard();
     try testing.expect(screen.alt_grid == null);
     try testing.expect(screen.copy_mode == null);
+}
+
+test "variation-selector-always-wide option controls VS16 emoji width promotion" {
+    var screen = try Screen.init(testing.allocator, 10, 5);
+    defer screen.deinit();
+
+    // 1. When option is disabled (default):
+    char_width.setVariationSelectorAlwaysWide(false);
+    defer char_width.setVariationSelectorAlwaysWide(false);
+
+    // Write single-width base character U+1F576 (🕶) followed by U+FE0F
+    try screen.writeChar(0x1F576);
+    try screen.writeChar(0xFE0F);
+
+    // Base char stays width 1, cursor at 1, no padding
+    try testing.expectEqual(@as(u32, 1), screen.cursor.x);
+    const cell0 = screen.grid.getCell(0, 0);
+    try testing.expectEqual(@as(u21, 0x1F576), cell0.char);
+    try testing.expect(!cell0.is_padding);
+    try testing.expect(cell0.comb1 != 0);
+    const cell1 = screen.grid.getCell(1, 0);
+    try testing.expect(!cell1.is_padding);
+
+    // 2. When option is enabled:
+    char_width.setVariationSelectorAlwaysWide(true);
+    screen.cursor.x = 0;
+    screen.cursor.y = 1;
+
+    try screen.writeChar(0x1F576);
+    try screen.writeChar(0xFE0F);
+
+    // Base char promoted to width 2, cursor at 2, padding inserted at 1
+    try testing.expectEqual(@as(u32, 2), screen.cursor.x);
+    const row1_c0 = screen.grid.getCell(0, 1);
+    try testing.expectEqual(@as(u21, 0x1F576), row1_c0.char);
+    try testing.expect(!row1_c0.is_padding);
+    try testing.expect(row1_c0.comb1 != 0);
+
+    const row1_c1 = screen.grid.getCell(1, 1);
+    try testing.expect(row1_c1.is_padding);
+
+    // Write subsequent character 'A', lands at column 2
+    try screen.writeChar('A');
+    try testing.expectEqual(@as(u32, 3), screen.cursor.x);
+    const row1_c2 = screen.grid.getCell(2, 1);
+    try testing.expectEqual(@as(u21, 'A'), row1_c2.char);
+}
+
+test "variation-selector-always-wide wraps cleanly when emoji at end of line" {
+    var screen = try Screen.init(testing.allocator, 5, 5);
+    defer screen.deinit();
+
+    char_width.setVariationSelectorAlwaysWide(true);
+    defer char_width.setVariationSelectorAlwaysWide(false);
+
+    // Fill line up to column 4 (last column)
+    try screen.writeStr("abcd");
+    try testing.expectEqual(@as(u32, 4), screen.cursor.x);
+
+    // Write single-width base char at column 4
+    try screen.writeChar(0x1F576);
+    // Cursor is now at 5 (end of line)
+    try testing.expectEqual(@as(u32, 5), screen.cursor.x);
+
+    // Now write VS16: 2-cell wide char cannot fit at col 4, wraps to row 1
+    try screen.writeChar(0xFE0F);
+
+    // Row 0 col 4 was cleared
+    try testing.expectEqual(@as(u21, 0), screen.grid.getCell(4, 0).char);
+    try testing.expect(screen.grid.getLine(0).wrapped);
+
+    // Row 1 col 0 has 🕶, col 1 has padding, cursor at 2
+    try testing.expectEqual(@as(u32, 1), screen.cursor.y);
+    try testing.expectEqual(@as(u32, 2), screen.cursor.x);
+    try testing.expectEqual(@as(u21, 0x1F576), screen.grid.getCell(0, 1).char);
+    try testing.expect(screen.grid.getCell(1, 1).is_padding);
 }
