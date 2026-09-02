@@ -2589,6 +2589,10 @@ pub const Server = struct {
                     std.log.warn("server ignored unhandled message type: {any}", .{msg_type});
                 },
             }
+            // If the client was removed during message handling (e.g. detach keybinding C-b d,
+            // command dispatch, or explicit disconnect), `reader` has been destroyed.
+            // Return immediately to avoid use-after-free (bug #428, #443).
+            if (!self.client_readers.contains(fd)) return;
             reader.consume(pkt);
         }
     }
@@ -5599,6 +5603,35 @@ test "handleClient detach does not use-after-free MessageReader — bug #428" {
     const detach_pkt = protocol.Packet.make(.detach, "");
     var detach_buf: [32]u8 = undefined;
     const ser = detach_pkt.serialize(&detach_buf);
+    _ = std.c.write(client_fd, ser.ptr, ser.len);
+
+    try server.handleClient(server_fd);
+    try testing.expect(!server.client_readers.contains(server_fd));
+}
+
+test "handleClient stdin_data keybinding detach (C-b d) does not use-after-free MessageReader" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    _ = try server.newSession("test", 80, 24);
+
+    var fds: [2]i32 = undefined;
+    if (std.c.socketpair(std.c.AF.UNIX, std.c.SOCK.STREAM, 0, &fds) != 0) return error.Unexpected;
+    const server_fd = fds[0];
+    const client_fd = fds[1];
+    defer _ = std.c.close(client_fd);
+
+    const reader = try server.allocator.create(MessageReader);
+    reader.* = .{};
+    try server.client_readers.put(server_fd, reader);
+    try server.client_fds.append(server.allocator, server_fd);
+    try server.loop.addFd(server.allocator, server_fd, @as(i16, @intCast(std.posix.POLL.IN)), null);
+    try server.display_clients.append(server.allocator, .{ .fd = server_fd });
+
+    // Send C-b d (Ctrl-b + 'd') over stdin_data
+    const stdin_pkt = protocol.Packet.make(.stdin_data, "\x02d");
+    var stdin_buf: [32]u8 = undefined;
+    const ser = stdin_pkt.serialize(&stdin_buf);
     _ = std.c.write(client_fd, ser.ptr, ser.len);
 
     try server.handleClient(server_fd);
