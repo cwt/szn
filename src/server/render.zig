@@ -607,8 +607,14 @@ pub const Display = struct {
                     cur_cx += 1;
                 } else if (cp >= 0x20 and cp != 0x7F) {
                     var buf: [4]u8 = undefined;
+                    // bug #445: a width-1 cell followed by a padding cell only
+                    // occupies two columns when the cell actually carries a
+                    // VS16 comb char; stale padding must not widen the cursor
+                    // advance.
+                    const has_vs16 = (cell.comb1 != 0 and char_width.combiningCodepoint(cell.comb1) == 0xFE0F) or
+                        (cell.comb2 != 0 and char_width.combiningCodepoint(cell.comb2) == 0xFE0F);
                     var cw: u32 = char_width.charWidth(@intCast(cp));
-                    if (cw == 1 and x + 1 < w) {
+                    if (has_vs16 and cw == 1 and x + 1 < w) {
                         const next_cell = if (cells) |cls| (if (x + 1 < cls.items.len) cls.items[x + 1] else Cell.empty()) else Cell.empty();
                         if (next_cell.is_padding) {
                             cw = 2;
@@ -622,11 +628,9 @@ pub const Display = struct {
                     try self.writeBytes(buf[0..len]);
                     cur_cx += cw;
 
-                    var has_vs16 = false;
                     if (cell.comb1 != 0) {
                         const ccp1 = char_width.combiningCodepoint(cell.comb1);
                         if (ccp1 != 0) {
-                            if (ccp1 == 0xFE0F) has_vs16 = true;
                             const clen = std.unicode.utf8Encode(ccp1, &buf) catch continue;
                             try self.writeBytes(buf[0..clen]);
                         }
@@ -634,7 +638,6 @@ pub const Display = struct {
                     if (cell.comb2 != 0) {
                         const ccp2 = char_width.combiningCodepoint(cell.comb2);
                         if (ccp2 != 0) {
-                            if (ccp2 == 0xFE0F) has_vs16 = true;
                             const clen = std.unicode.utf8Encode(ccp2, &buf) catch continue;
                             try self.writeBytes(buf[0..clen]);
                         }
@@ -1911,4 +1914,38 @@ test "renderContent zero-width combining char does not advance cur_cx" {
     // Verify the combining mark bytes are present after the CUP
     const cc_utf8: [3]u8 = .{ 0xE0, 0xB8, 0xB5 };
     try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, &cc_utf8) != null);
+}
+
+test "render lookahead does not bump cursor for width-1 + padding without VS16 (bug #445)" {
+    const allocator = std.testing.allocator;
+    var capture_buf: std.ArrayList(u8) = .empty;
+    defer capture_buf.deinit(allocator);
+
+    const display = Display{
+        .fd = -1,
+        .sx = 6,
+        .sy = 2,
+        .capture = &capture_buf,
+        .capture_allocator = allocator,
+    };
+
+    var screen = try Screen.init(allocator, 6, 1);
+    defer screen.deinit();
+
+    // Stale pair: width-1 char at col 0 with a padding cell at col 1 and no
+    // VS16 comb char on the base.
+    screen.grid.setCell(0, 0, Cell.withChar('A'));
+    var pad = Cell.empty();
+    pad.is_padding = true;
+    screen.grid.setCell(1, 0, pad);
+    screen.grid.setCell(2, 0, Cell.withChar('B'));
+
+    try display.renderContent(&screen);
+
+    // 'A' advances cur_cx by 1 (no bump); the padding cell at x=1 is skipped;
+    // the next changed cell at x=2 must therefore be re-anchored explicitly
+    // (moveTo(2,0) = "\x1b[1;3H"). Without the fix cur_cx was bumped to 2 and
+    // no CUP was emitted before 'B'.
+    try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1b[1;1H") != null);
+    try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1b[1;3H") != null);
 }

@@ -467,7 +467,12 @@ pub const Term = struct {
             col += 1;
         }
 
-        const next_col = end_col + char_width.charWidth(s.grid.getCell(end_col, ly).char);
+        var next_col = end_col + char_width.charWidth(s.grid.getCell(end_col, ly).char);
+        // bug #447: a promoted VS16 pair ends with a padding cell the loop
+        // above skipped; erase only after the whole pair.
+        if (next_col < width and s.grid.getCell(next_col, ly).is_padding) {
+            next_col += 1;
+        }
         if (next_col < width) {
             if (self.cx < 0 or self.cy < 0 or next_col != @as(u32, @intCast(self.cx)) or ly != @as(u32, @intCast(self.cy))) {
                 try self.cursorMove(next_col, ly);
@@ -1026,4 +1031,28 @@ test "cursorDown/cursorForward with zero dimensions — bug #128" {
     var term = Term.init(Writer.fixed(&buf), 0, 0);
     try term.cursorDown(1);
     try term.cursorForward(1);
+}
+
+test "drawLine clearToEOL skips the padding cell of a promoted VS16 pair (bug #447)" {
+    char_width.setVariationSelectorAlwaysWide(true);
+    defer char_width.setVariationSelectorAlwaysWide(false);
+
+    var s = try screen.Screen.init(testing.allocator, 6, 2);
+    defer s.deinit();
+
+    try s.writeStr("ab");
+    try s.writeChar(0x1F576); // width-1 base at col 2
+    try s.writeChar(0xFE0F); // promoted: padding at col 3
+
+    var buf: [256]u8 = undefined;
+    var term = Term.init(Writer.fixed(&buf), 6, 2);
+    try term.drawLine(&s, 0);
+
+    const out = written(&term.writer);
+    // The erase must not start on the padding column (3, CUP "\x1b[1;4H"):
+    // the cursor move right before "\x1b[K" must target column 4.
+    const el = std.mem.indexOf(u8, out, "\x1b[K").?;
+    const cup = std.mem.lastIndexOf(u8, out[0..el], "\x1b[1;5H").?;
+    try testing.expectEqual(el, cup + "\x1b[1;5H".len);
+    try testing.expect(std.mem.indexOf(u8, out, "\x1b[1;4H") == null);
 }

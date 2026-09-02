@@ -488,3 +488,6 @@ Both summary tables below are generated from the `severity` and `status` fields 
 | [442](442.md) | Automatic window renaming latency from fixed 1000ms polling rate-limit | LOW | Fixed |
 | [443](443.md) | Raw history index arithmetic in render.zig and mode_copy.zig accesses out of bounds or displays stale lines when history ring wraps | HIGH | Fixed |
 | [444](444.md) | History ring defensive guards index empty list out of bounds and getHistoryLineMut is dead code with broken guard | LOW | Fixed |
+| [445](445.md) | variation-selector-always-wide promotes the pair even when VS16 was silently dropped (both comb slots full); render lookahead drifts on width-1+padding without VS16 | MEDIUM | Fixed |
+| [446](446.md) | VS16 promotion erase sites skip the sixel refcount decrement (bug #225 convention) | LOW | Fixed |
+| [447](447.md) | Term.drawLine trailing clearToEOL lands on the second host cell of a line-ending VS16 emoji | LOW | Fixed |

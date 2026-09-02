@@ -730,14 +730,21 @@ pub const Screen = struct {
                     if (prev_cell.char != ' ' and prev_cell.char != 0) {
                         const cidx = char_width.combiningIndex(char);
                         if (cidx != 0) {
+                            var stored = false;
                             if (prev_cell.comb1 == 0) {
                                 prev_cell.comb1 = cidx;
+                                stored = true;
                             } else if (prev_cell.comb2 == 0) {
                                 prev_cell.comb2 = cidx;
+                                stored = true;
                             }
                             self.grid.setCell(target_col, prev_y, prev_cell);
 
-                            if (char == 0xFE0F and !was_padding and char_width.getVariationSelectorAlwaysWide()) {
+                            // bug #445: only promote when the VS16 was actually
+                            // stored; a dropped VS16 must not leave a padding cell.
+                            if (char == 0xFE0F and stored and !was_padding and char_width.getVariationSelectorAlwaysWide()) {
+                                // bug #446: decrement refcount before erasing.
+                                self.decrementMainGridRef(target_col, prev_y);
                                 self.grid.setCell(target_col, prev_y, self.eraseCell());
                                 self.decrementMainGridRef(0, self.cursor.y);
                                 self.grid.setCell(0, self.cursor.y, prev_cell);
@@ -770,16 +777,21 @@ pub const Screen = struct {
             if (prev_cell.char == ' ' or prev_cell.char == 0) return;
             const cidx = char_width.combiningIndex(char);
             if (cidx == 0) return;
+            var stored = false;
             if (prev_cell.comb1 == 0) {
                 prev_cell.comb1 = cidx;
+                stored = true;
             } else if (prev_cell.comb2 == 0) {
                 prev_cell.comb2 = cidx;
+                stored = true;
             }
             // bug #225: don't decrement refcount for combining chars
             // (they modify in-place without erasing the sixel marker).
             self.grid.setCell(base_x, self.cursor.y, prev_cell);
 
-            if (char == 0xFE0F and !was_padding and char_width.getVariationSelectorAlwaysWide()) {
+            // bug #445: only promote when the VS16 was actually
+            // stored; a dropped VS16 must not leave a padding cell.
+            if (char == 0xFE0F and stored and !was_padding and char_width.getVariationSelectorAlwaysWide()) {
                 if (self.cursor.x < self.grid.width) {
                     var pad_cell = self.cur_cell;
                     pad_cell.char = 0;
@@ -792,6 +804,8 @@ pub const Screen = struct {
                         self.cursor.x = @min(self.cursor.x + 1, self.grid.width - 1);
                     }
                 } else if (self.mode.line_wrap) {
+                    // bug #446: decrement refcount before erasing.
+                    self.decrementMainGridRef(base_x, self.cursor.y);
                     self.grid.setCell(base_x, self.cursor.y, self.eraseCell());
                     self.grid.getLineMut(self.cursor.y).wrapped = true;
                     self.cursor.x = 0;
@@ -3269,4 +3283,28 @@ test "variation-selector-always-wide wraps cleanly when emoji at end of line" {
     try testing.expectEqual(@as(u32, 2), screen.cursor.x);
     try testing.expectEqual(@as(u21, 0x1F576), screen.grid.getCell(0, 1).char);
     try testing.expect(screen.grid.getCell(1, 1).is_padding);
+}
+
+test "variation-selector-always-wide does not promote when VS16 cannot be stored (bug #445)" {
+    var screen = try Screen.init(testing.allocator, 10, 5);
+    defer screen.deinit();
+
+    char_width.setVariationSelectorAlwaysWide(true);
+    defer char_width.setVariationSelectorAlwaysWide(false);
+
+    // Fill both combining slots of the base cell.
+    try screen.writeChar('e');
+    try screen.writeChar(0x0301);
+    try screen.writeChar(0x0327);
+    try testing.expect(screen.grid.getCell(0, 0).comb1 != 0);
+    try testing.expect(screen.grid.getCell(0, 0).comb2 != 0);
+
+    // VS16 cannot be stored, so no promotion may happen.
+    try screen.writeChar(0xFE0F);
+
+    try testing.expectEqual(@as(u32, 1), screen.cursor.x);
+    const cell0 = screen.grid.getCell(0, 0);
+    try testing.expect(cell0.comb1 != char_width.combiningIndex(0xFE0F));
+    try testing.expect(cell0.comb2 != char_width.combiningIndex(0xFE0F));
+    try testing.expect(!screen.grid.getCell(1, 0).is_padding);
 }
