@@ -142,7 +142,7 @@ pub const Server = struct {
     global_options: @import("../options.zig").Options,
     global_window_options: @import("../options.zig").Options,
     response_buf: std.ArrayList(u8),
-    display_clients: std.ArrayList(DisplayClient) = .empty,
+    display_clients: std.ArrayList(*DisplayClient) = .empty,
     current_client_fd: ?i32 = null,
     render_buf: std.ArrayList(u8),
     buffers: buffer_mod.BufferList,
@@ -325,8 +325,9 @@ pub const Server = struct {
             _ = c.close(fd);
         }
         self.client_fds.deinit(self.allocator);
-        for (self.display_clients.items) |*dc| {
+        for (self.display_clients.items) |dc| {
             dc.deinit(self.allocator);
+            self.allocator.destroy(dc);
         }
         self.display_clients.deinit(self.allocator);
         if (self.listener_fd) |fd| {
@@ -669,7 +670,7 @@ pub const Server = struct {
                 if (ev.revents & @as(i16, @intCast(std.posix.POLL.OUT)) != 0) {
                     // Socket became writable again — drain any queued
                     // render backlog so a slow link can't stall the loop.
-                    for (self.display_clients.items) |*dc| {
+                    for (self.display_clients.items) |dc| {
                         if (dc.fd == ev.fd) {
                             _ = self.flushDisplayClient(dc);
                             break;
@@ -2342,7 +2343,7 @@ pub const Server = struct {
         @memcpy(full_pkt[0..5], hdr[0..5]);
         @memcpy(full_pkt[5..], raw_buf);
 
-        for (self.display_clients.items) |*dc| {
+        for (self.display_clients.items) |dc| {
             self.queueToClient(dc.fd, full_pkt);
         }
 
@@ -2411,6 +2412,17 @@ pub const Server = struct {
         try self.loop.addFd(self.allocator, fd, @as(i16, @intCast(std.posix.POLL.IN)), null);
     }
 
+    pub fn addDisplayClient(self: *Server, dc_val: DisplayClient) !*DisplayClient {
+        const dc = try self.allocator.create(DisplayClient);
+        dc.* = dc_val;
+        errdefer {
+            dc.deinit(self.allocator);
+            self.allocator.destroy(dc);
+        }
+        try self.display_clients.append(self.allocator, dc);
+        return dc;
+    }
+
     /// Register a client fd as a display client. The socket is switched to
     /// non-blocking so that render writes can never stall the event loop when a
     /// slow link (e.g. ssh) cannot keep up with the child's output volume.
@@ -2428,7 +2440,7 @@ pub const Server = struct {
         if (flags >= 0) {
             _ = c_fcntl(fd, F_SETFL, flags | O_NONBLOCK);
         }
-        try self.display_clients.append(self.allocator, .{ .fd = fd });
+        _ = try self.addDisplayClient(.{ .fd = fd });
     }
 
     fn handleClient(self: *Server, fd: i32) ServerError!void {
@@ -2505,7 +2517,7 @@ pub const Server = struct {
                 },
                 .identify_term => {
                     var exists = false;
-                    for (self.display_clients.items) |*dc| {
+                    for (self.display_clients.items) |dc| {
                         if (dc.fd == fd) {
                             exists = true;
                             break;
@@ -2551,7 +2563,7 @@ pub const Server = struct {
                     if (pkt.data.len >= 8) {
                         const new_w = std.mem.readInt(u32, pkt.data[0..4], .little);
                         const new_h = std.mem.readInt(u32, pkt.data[4..8], .little);
-                        for (self.display_clients.items) |*dc| {
+                        for (self.display_clients.items) |dc| {
                             if (dc.fd == fd) {
                                 dc.sx = std.math.clamp(new_w, 2, 4096);
                                 dc.sy = std.math.clamp(new_h, 2, 4096);
@@ -2587,7 +2599,7 @@ pub const Server = struct {
                     // The client dropped queued output while its downstream pty
                     // was applying backpressure (bug #298). Reset its per-client
                     // diff baseline so the next render sends a full repaint.
-                    for (self.display_clients.items) |*dc| {
+                    for (self.display_clients.items) |dc| {
                         if (dc.fd == fd) {
                             dc.last_cells.clearRetainingCapacity();
                             dc.last_sx = 0;
@@ -2621,13 +2633,14 @@ pub const Server = struct {
             self.allocator.destroy(entry.value);
         }
         _ = c.close(fd);
-        for (self.display_clients.items, 0..) |*dc, idx| {
+        for (self.display_clients.items, 0..) |dc, idx| {
             if (dc.fd == fd) {
                 if (dc.behind) {
                     dc.behind = false;
                     self.behind_count -|= 1;
                 }
                 dc.deinit(self.allocator);
+                self.allocator.destroy(dc);
                 _ = self.display_clients.swapRemove(idx);
                 break;
             }
@@ -2644,7 +2657,7 @@ pub const Server = struct {
         }
         var min_sx: u32 = 999999;
         var min_sy: u32 = 999999;
-        for (self.display_clients.items) |*dc| {
+        for (self.display_clients.items) |dc| {
             if (dc.sx < min_sx) min_sx = dc.sx;
             if (dc.sy < min_sy) min_sy = dc.sy;
         }
@@ -2673,7 +2686,7 @@ pub const Server = struct {
         var hdr: [5]u8 = undefined;
         pkt.header.encode(&hdr);
         const hdr_slice: []const u8 = hdr[0..];
-        for (self.display_clients.items) |*dc| {
+        for (self.display_clients.items) |dc| {
             // Queue onto the pending buffer and let the non-blocking flush
             // deliver it.  A bare c.write could EAGAIN on the now
             // non-blocking socket and lose the query.
@@ -2722,7 +2735,7 @@ pub const Server = struct {
     }
 
     fn queueToClientUrgent(self: *Server, fd: i32, data: []const u8) void {
-        for (self.display_clients.items) |*dc| {
+        for (self.display_clients.items) |dc| {
             if (dc.fd != fd) continue;
             if (!self.appendClientOutUrgent(dc, data)) return;
             _ = self.flushDisplayClient(dc);
@@ -2734,7 +2747,7 @@ pub const Server = struct {
     }
 
     fn queueToClient(self: *Server, fd: i32, data: []const u8) void {
-        for (self.display_clients.items) |*dc| {
+        for (self.display_clients.items) |dc| {
             if (dc.fd != fd) continue;
             if (!self.appendClientOut(dc, data)) return;
             _ = self.flushDisplayClient(dc);
@@ -3044,7 +3057,7 @@ pub const Server = struct {
         // backlog instead of dropping a frame.
         var all_flushed = true;
 
-        for (self.display_clients.items) |*dc| {
+        for (self.display_clients.items) |dc| {
             // First, try to push out anything still queued from a previous
             // render. While a frame is partially sent we must not regenerate a
             // new one: the diff state (last_cells) only advances once the
@@ -4496,18 +4509,11 @@ test "urgent queue delivers command reply even when client is behind — bug #37
     defer _ = std.c.close(fds[0]);
     defer _ = std.c.close(fds[1]);
 
-    var dc = DisplayClient{ .fd = fds[1] };
+    const dc = try server.addDisplayClient(.{ .fd = fds[1] });
     dc.behind = true;
     // Keep the production invariant honest: behind=true implies count >= 1.
     server.behind_count = 1;
-    try dc.out_buf.appendSlice(testing.allocator, "backlogged-frame");
-    try server.display_clients.append(testing.allocator, dc);
-    defer {
-        if (server.display_clients.items.len > 0) {
-            server.display_clients.items[0].out_buf.deinit(testing.allocator);
-        }
-        _ = server.display_clients.pop();
-    }
+    try dc.out_buf.appendSlice(server.allocator, "backlogged-frame");
 
     const pkt = protocol.Packet.make(.ready, "ok");
     var buf: [64]u8 = undefined;
@@ -4953,8 +4959,7 @@ test "flushDisplayClient correctly handles partial writes and buffers remaining 
     try server.loop.addFd(server.allocator, server_fd, @as(i16, @intCast(std.posix.POLL.OUT)), null);
 
     // Create a DisplayClient manually
-    try server.display_clients.append(server.allocator, .{ .fd = server_fd });
-    const dc = &server.display_clients.items[0];
+    const dc = try server.addDisplayClient(.{ .fd = server_fd });
 
     // Fill up socket buffer until write blocks (EAGAIN)
     var fill_buf: [1024]u8 = undefined;
@@ -5177,11 +5182,12 @@ test "OSC 52 clipboard forwarding and buffer copy" {
     defer _ = std.c.close(client_fd);
     defer _ = std.c.close(server_fd);
 
-    try server.display_clients.append(server.allocator, .{ .fd = server_fd });
+    _ = try server.addDisplayClient(.{ .fd = server_fd });
     defer {
-        for (server.display_clients.items, 0..) |*dc, idx| {
+        for (server.display_clients.items, 0..) |dc, idx| {
             if (dc.fd == server_fd) {
                 dc.deinit(server.allocator);
+                server.allocator.destroy(dc);
                 _ = server.display_clients.swapRemove(idx);
                 break;
             }
@@ -5336,11 +5342,10 @@ test "handleClient .redraw resets display client diff state for a full repaint �
         }
     }
 
-    try server.display_clients.append(server.allocator, .{ .fd = server_fd });
-    const dc = &server.display_clients.items[0];
+    const dc = try server.addDisplayClient(.{ .fd = server_fd });
 
     // Give the client a non-empty diff baseline so the reset is observable.
-    try dc.last_cells.append(testing.allocator, @import("../grid.zig").Cell.empty());
+    try dc.last_cells.append(server.allocator, @import("../grid.zig").Cell.empty());
     dc.last_sx = 12;
     dc.last_sy = 34;
 
@@ -5369,14 +5374,13 @@ test "appendClientOut marks display client behind on watermark and skips frames 
     defer _ = std.c.close(fds[0]);
     defer _ = std.c.close(fds[1]);
 
-    try server.display_clients.append(server.allocator, DisplayClient{ .fd = fds[1] });
-    const dc = &server.display_clients.items[0];
+    const dc = try server.addDisplayClient(.{ .fd = fds[1] });
 
     // Pre-fill just past the high watermark.
     const filler = try testing.allocator.alloc(u8, Server.RENDER_HIGH_WATERMARK + 1);
     defer testing.allocator.free(filler);
     @memset(filler, 'x');
-    try dc.out_buf.appendSlice(testing.allocator, filler);
+    try dc.out_buf.appendSlice(server.allocator, filler);
     try testing.expect(!dc.behind);
 
     // A new frame crosses the watermark: behind is set and the frame is
@@ -5495,15 +5499,16 @@ test "renderToDisplayClient does not free string literals for empty pane-border-
     defer _ = std.c.close(client_fd);
     defer _ = std.c.close(server_fd);
 
-    try server.display_clients.append(server.allocator, .{
+    _ = try server.addDisplayClient(.{
         .fd = server_fd,
         .sx = 80,
         .sy = 24,
     });
     defer {
-        for (server.display_clients.items, 0..) |*dc, idx| {
+        for (server.display_clients.items, 0..) |dc, idx| {
             if (dc.fd == server_fd) {
                 dc.deinit(server.allocator);
+                server.allocator.destroy(dc);
                 _ = server.display_clients.swapRemove(idx);
                 break;
             }
@@ -5575,8 +5580,7 @@ test "render caches status line across frames without reallocation — bug #425"
 
     _ = try server.newSession("test-status-cache", 80, 24);
 
-    const dc = DisplayClient{ .fd = 100, .sx = 80, .sy = 24 };
-    try server.display_clients.append(server.allocator, dc);
+    _ = try server.addDisplayClient(.{ .fd = 100, .sx = 80, .sy = 24 });
 
     server.renderToDisplayClient();
 
@@ -5641,7 +5645,7 @@ test "handleClient detach does not use-after-free MessageReader — bug #428" {
     try server.client_readers.put(server_fd, reader);
     try server.client_fds.append(server.allocator, server_fd);
     try server.loop.addFd(server.allocator, server_fd, @as(i16, @intCast(std.posix.POLL.IN)), null);
-    try server.display_clients.append(server.allocator, .{ .fd = server_fd });
+    _ = try server.addDisplayClient(.{ .fd = server_fd });
 
     const detach_pkt = protocol.Packet.make(.detach, "");
     var detach_buf: [32]u8 = undefined;
@@ -5669,7 +5673,7 @@ test "handleClient stdin_data keybinding detach (C-b d) does not use-after-free 
     try server.client_readers.put(server_fd, reader);
     try server.client_fds.append(server.allocator, server_fd);
     try server.loop.addFd(server.allocator, server_fd, @as(i16, @intCast(std.posix.POLL.IN)), null);
-    try server.display_clients.append(server.allocator, .{ .fd = server_fd });
+    _ = try server.addDisplayClient(.{ .fd = server_fd });
 
     // Send C-b d (Ctrl-b + 'd') over stdin_data
     const stdin_pkt = protocol.Packet.make(.stdin_data, "\x02d");
@@ -5698,7 +5702,7 @@ test "handleClient .command early returns if client removed mid-dispatch — bug
     try server.client_readers.put(server_fd, reader);
     try server.client_fds.append(server.allocator, server_fd);
     try server.loop.addFd(server.allocator, server_fd, @as(i16, @intCast(std.posix.POLL.IN)), null);
-    try server.display_clients.append(server.allocator, .{ .fd = server_fd });
+    _ = try server.addDisplayClient(.{ .fd = server_fd });
 
     server.test_after_command_dispatch_hook = struct {
         fn hook(s: *Server, fd: i32) void {
@@ -5724,15 +5728,14 @@ test "appendClientOutFrame and renderToDisplayClient obey RENDER_HIGH_WATERMARK 
     defer _ = std.c.close(fds[0]);
     defer _ = std.c.close(fds[1]);
 
-    try server.display_clients.append(server.allocator, DisplayClient{ .fd = fds[1] });
-    const dc = &server.display_clients.items[0];
+    const dc = try server.addDisplayClient(.{ .fd = fds[1] });
 
     // Pre-fill just below watermark
     const filler_len = Server.RENDER_HIGH_WATERMARK - 2;
     const filler = try testing.allocator.alloc(u8, filler_len);
     defer testing.allocator.free(filler);
     @memset(filler, 'x');
-    try dc.out_buf.appendSlice(testing.allocator, filler);
+    try dc.out_buf.appendSlice(server.allocator, filler);
     try testing.expect(!dc.behind);
 
     // Appending a frame that crosses watermark should succeed and set behind = true
@@ -5756,8 +5759,7 @@ test "window setName invalidates status cache and redraws updated name — bug #
     const session = try server.newSession("test-rename-inval", 80, 24);
     const win = session.active_window.?;
 
-    const dc = DisplayClient{ .fd = 100, .sx = 80, .sy = 24 };
-    try server.display_clients.append(server.allocator, dc);
+    _ = try server.addDisplayClient(.{ .fd = 100, .sx = 80, .sy = 24 });
 
     // Initial render
     server.renderToDisplayClient();
@@ -5786,8 +5788,7 @@ test "active pane switch invalidates status cache — bug #441" {
     const new_pane = try win.splitPane(server.allocator, pane1, false, 0.5);
     _ = new_pane;
 
-    const dc = DisplayClient{ .fd = 100, .sx = 80, .sy = 24 };
-    try server.display_clients.append(server.allocator, dc);
+    _ = try server.addDisplayClient(.{ .fd = 100, .sx = 80, .sy = 24 });
 
     // Initial render
     server.renderToDisplayClient();
@@ -5819,8 +5820,7 @@ test "automatic rename detects PGID change without waiting for 1s throttle — b
     defer _ = std.c.close(fds[1]);
     pane.pty = .{ .master = fds[1], .slave = fds[0], .pid = 12345 };
 
-    const dc = DisplayClient{ .fd = 100, .sx = 80, .sy = 24 };
-    try server.display_clients.append(server.allocator, dc);
+    _ = try server.addDisplayClient(.{ .fd = 100, .sx = 80, .sy = 24 });
 
     // Initial state: last_foreground_pgid is -1
     try testing.expectEqual(@as(i32, -1), win.last_foreground_pgid);
@@ -5873,11 +5873,28 @@ test "scrollback renders newest lines correctly when history ring buffer wraps �
     }
 
     // Render display
-    const dc = DisplayClient{ .fd = 100, .sx = 80, .sy = 6 };
-    try server.display_clients.append(server.allocator, dc);
+    _ = try server.addDisplayClient(.{ .fd = 100, .sx = 80, .sy = 6 });
     server.renderToDisplayClient();
 
     // Verify row 0 in display shows '8' (the newest line right above the visible screen), NOT '4' or empty
     const row0_char = server.display_clients.items[0].last_cells.items[0].char;
     try testing.expectEqual(@as(u21, '8'), row0_char);
+}
+
+test "display client pointer remains stable across display_clients reallocations — bug #450" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    const dc1 = try server.addDisplayClient(.{ .fd = 100, .sx = 80, .sy = 24 });
+    const original_ptr = dc1;
+
+    // Force reallocations of display_clients by registering many clients
+    for (101..130) |fd| {
+        _ = try server.addDisplayClient(.{ .fd = @intCast(fd) });
+    }
+
+    // dc1 must still point to the same valid heap object
+    try testing.expectEqual(original_ptr, server.display_clients.items[0]);
+    try testing.expectEqual(@as(i32, 100), dc1.fd);
+    try testing.expectEqual(@as(u32, 80), dc1.sx);
 }

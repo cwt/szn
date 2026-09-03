@@ -20,7 +20,7 @@ test "handleMouseFocus status click switches to the clicked window — bug #290"
     if (std.c.pipe(&fds) != 0) return error.PipeFailed;
     defer _ = std.c.close(fds[0]);
     defer _ = std.c.close(fds[1]);
-    try server.display_clients.append(server.allocator, DisplayClient{ .fd = fds[1], .sx = 80, .sy = 2 });
+    _ = try server.addDisplayClient(.{ .fd = fds[1], .sx = 80, .sy = 2 });
 
     // Force a render so the status layout (and thus the click ranges) is built.
     server.dirty = true;
@@ -86,8 +86,7 @@ test "queueToClient / sendRequestCellSize self-heals on overflow instead of trun
     }
 
     // Register the display client so sendRequestCellSize() reaches it.
-    try server.display_clients.append(server.allocator, DisplayClient{ .fd = fds[1] });
-    const dcp = &server.display_clients.items[0];
+    const dcp = try server.addDisplayClient(.{ .fd = fds[1] });
 
     // Fill the pipe's kernel buffer so a flushDisplayClient write makes no
     // progress (EAGAIN). That keeps the pending buffer above the cap after the
