@@ -1324,6 +1324,16 @@ test "DECSTBM set scroll region" {
     try parser.feed("\x1b[2;4r");
     try testing.expectEqual(@as(u32, 1), screen.scroll_region.?[0]);
     try testing.expectEqual(@as(u32, 3), screen.scroll_region.?[1]);
+
+    // Reset via bare CSI r clears scroll region — bug #451
+    try parser.feed("\x1b[r");
+    try testing.expect(screen.scroll_region == null);
+
+    // Full-screen CSI 1;5r also clears scroll region
+    try parser.feed("\x1b[2;4r");
+    try testing.expect(screen.scroll_region != null);
+    try parser.feed("\x1b[1;5r");
+    try testing.expect(screen.scroll_region == null);
 }
 
 test "ECH erase chars" {

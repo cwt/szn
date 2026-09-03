@@ -37,9 +37,9 @@ Both summary tables below are generated from the `severity` and `status` fields 
 
 | Status | Count |
 |---|---:|
-| Fixed / Resolved | 423 |
+| Fixed / Resolved | 424 |
 | False Positive | 25 |
-| Open | 3 |
+| Open | 2 |
 | **Total** | **451** |
 
 ## All Bugs
@@ -494,6 +494,6 @@ Both summary tables below are generated from the `severity` and `status` fields 
 | [448](448.md) | handleClient .command case writes the response to fd before re-validating that the client still exists (guard runs one dispatch too late) | MEDIUM | Fixed |
 | [449](449.md) | killSession / killAllSessions destroy panes without clearing pane.valid; isPaneValid can alias an arena-reused address | LOW | Fixed |
 | [450](450.md) | display_clients is an ArrayList of values; every \|*dc\| loop holds a pointer into the backing buffer that a registerDisplayClient append would invalidate | LOW | Fixed |
-| [451](451.md) | DECSTBM full-screen scroll region trap in Screen.setScrollRegion discards scrolled-off lines instead of pushing to history | HIGH | Open |
+| [451](451.md) | DECSTBM full-screen scroll region trap in Screen.setScrollRegion discards scrolled-off lines instead of pushing to history | HIGH | Fixed |
 | [452](452.md) | Grid.resize drops bottom rows via pop() on height reduction instead of scrolling top rows into history | MEDIUM | Open |
 | [453](453.md) | reflowCursorInternal trims trailing screen rows on width change, stealing history lines into visible screen | MEDIUM | Open |

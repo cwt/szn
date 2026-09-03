@@ -558,7 +558,7 @@ pub const Screen = struct {
         if (self.scroll_region) |r| {
             const top = @min(r[0], height -| 1);
             const bottom = @min(r[1], height -| 1);
-            if (top >= bottom) {
+            if (top >= bottom or (top == 0 and bottom >= height -| 1)) {
                 self.scroll_region = null;
             } else {
                 self.scroll_region = .{ top, bottom };
@@ -643,12 +643,16 @@ pub const Screen = struct {
     /// Advance cursor down one line, respecting DECSTBM scroll regions.
     pub fn advanceLine(self: *Screen) Error!void {
         if (self.scroll_region) |r| {
-            if (self.cursor.y == r[1]) {
-                try self.scrollUpInRegion();
-            } else if (self.cursor.y + 1 < self.grid.height) {
-                self.cursor.y += 1;
+            if (r[0] == 0 and r[1] >= self.grid.height -| 1) {
+                self.scroll_region = null;
+            } else {
+                if (self.cursor.y == r[1]) {
+                    try self.scrollUpInRegion();
+                } else if (self.cursor.y + 1 < self.grid.height) {
+                    self.cursor.y += 1;
+                }
+                return;
             }
-            return;
         }
         if (self.cursor.y + 1 >= self.grid.height) {
             try self.grid.scrollUp();
@@ -1250,6 +1254,11 @@ pub const Screen = struct {
 
     pub fn scrollUp(self: *Screen, n: u32) Error!void {
         if (self.scroll_region) |r| {
+            if (r[0] == 0 and r[1] >= self.grid.height -| 1) {
+                self.scroll_region = null;
+            }
+        }
+        if (self.scroll_region) |r| {
             const top = r[0];
             const bottom = r[1];
             const count = @min(n, bottom + 1 - top);
@@ -1294,6 +1303,11 @@ pub const Screen = struct {
 
     pub fn scrollDown(self: *Screen, n: u32) Error!void {
         if (self.scroll_region) |r| {
+            if (r[0] == 0 and r[1] >= self.grid.height -| 1) {
+                self.scroll_region = null;
+            }
+        }
+        if (self.scroll_region) |r| {
             const top = r[0];
             const bottom = r[1];
             const count = @min(n, bottom + 1 - top);
@@ -1335,9 +1349,15 @@ pub const Screen = struct {
     }
 
     pub fn setScrollRegion(self: *Screen, top: u32, bottom: u32) void {
-        self.scroll_region = .{ @min(top, self.grid.height -| 1), @min(bottom, self.grid.height -| 1) };
+        const clamped_top = @min(top, self.grid.height -| 1);
+        const clamped_bottom = @min(bottom, self.grid.height -| 1);
+        if (clamped_top >= clamped_bottom or (clamped_top == 0 and clamped_bottom >= self.grid.height -| 1)) {
+            self.scroll_region = null;
+        } else {
+            self.scroll_region = .{ clamped_top, clamped_bottom };
+        }
         self.cursor.x = 0;
-        self.cursor.y = if (self.mode.origin) self.scroll_region.?[0] else 0;
+        self.cursor.y = if (self.mode.origin and self.scroll_region != null) self.scroll_region.?[0] else 0;
         self.dirty = true;
     }
 
@@ -3307,4 +3327,28 @@ test "variation-selector-always-wide does not promote when VS16 cannot be stored
     try testing.expect(cell0.comb1 != char_width.combiningIndex(0xFE0F));
     try testing.expect(cell0.comb2 != char_width.combiningIndex(0xFE0F));
     try testing.expect(!screen.grid.getCell(1, 0).is_padding);
+}
+
+test "DECSTBM full-screen scroll region does not drop lines into scrollback — bug #451" {
+    var screen = try Screen.init(testing.allocator, 80, 5);
+    defer screen.deinit();
+
+    // Full screen scroll region (0..4 on height 5) must resolve to null
+    screen.setScrollRegion(0, 4);
+    try testing.expect(screen.scroll_region == null);
+
+    // Explicit sub-region should be preserved
+    screen.setScrollRegion(1, 3);
+    try testing.expect(screen.scroll_region != null);
+
+    // Reset back to full screen should clear to null
+    screen.setScrollRegion(0, 4);
+    try testing.expect(screen.scroll_region == null);
+
+    // Advancing lines past bottom of screen must push lines into history
+    for (0..10) |i| {
+        screen.grid.writeChar(0, screen.cursor.y, @intCast('0' + i));
+        try screen.advanceLine();
+    }
+    try testing.expect(screen.grid.historyLen() > 0);
 }
