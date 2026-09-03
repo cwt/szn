@@ -3261,6 +3261,7 @@ pub const Server = struct {
                 if (pane.pty) |pty| {
                     self.loop.removeFd(pty.master);
                 }
+                pane.valid = false;
             }
         }
         // bug #283: panes are torn down here without routing through
@@ -3281,6 +3282,7 @@ pub const Server = struct {
                     if (pane.pty) |pty| {
                         self.loop.removeFd(pty.master);
                     }
+                    pane.valid = false;
                 }
             }
             s.deinit(self.allocator);
@@ -3899,6 +3901,35 @@ test "isPaneValid rejects stale pane pointer after killSession — bug #362" {
 
     // isPaneValid must return false without dereferencing freed memory.
     try testing.expect(!server.isPaneValid(pane));
+}
+
+test "isPaneValid respects pane.valid flag and session teardown clears it — bug #449" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    const s1 = try server.newSession("test1", 80, 24);
+    const win1 = s1.active_window.?;
+    const pane1 = win1.active_pane.?;
+
+    try testing.expect(server.isPaneValid(pane1));
+
+    // While pane is still registered, setting valid = false causes isPaneValid to return false
+    pane1.valid = false;
+    try testing.expect(!server.isPaneValid(pane1));
+
+    // Restore and killSession: pane must be unregistered and invalid
+    pane1.valid = true;
+    try server.killSession("test1");
+    try testing.expect(!server.isPaneValid(pane1));
+
+    // Test killAllSessions clears validity
+    const s2 = try server.newSession("test2", 80, 24);
+    const win2 = s2.active_window.?;
+    const pane2 = win2.active_pane.?;
+    try testing.expect(server.isPaneValid(pane2));
+
+    server.killAllSessions();
+    try testing.expect(!server.isPaneValid(pane2));
 }
 
 test "resolve shell option and env and database" {

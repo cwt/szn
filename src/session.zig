@@ -69,6 +69,7 @@ pub const Session = struct {
         _ = allocator;
         for (self.windows.items) |win| {
             for (win.panes.items) |p| {
+                p.valid = false;
                 p.deinit();
             }
         }

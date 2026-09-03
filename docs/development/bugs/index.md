@@ -37,9 +37,9 @@ Both summary tables below are generated from the `severity` and `status` fields 
 
 | Status | Count |
 |---|---:|
-| Fixed / Resolved | 421 |
+| Fixed / Resolved | 422 |
 | False Positive | 25 |
-| Open | 2 |
+| Open | 1 |
 | **Total** | **448** |
 
 ## All Bugs
@@ -492,5 +492,5 @@ Both summary tables below are generated from the `severity` and `status` fields 
 | [446](446.md) | VS16 promotion erase sites skip the sixel refcount decrement (bug #225 convention) | LOW | Fixed |
 | [447](447.md) | Term.drawLine trailing clearToEOL lands on the second host cell of a line-ending VS16 emoji | LOW | Fixed |
 | [448](448.md) | handleClient .command case writes the response to fd before re-validating that the client still exists (guard runs one dispatch too late) | MEDIUM | Fixed |
-| [449](449.md) | killSession / killAllSessions destroy panes without clearing pane.valid; isPaneValid can alias an arena-reused address | LOW | Open |
+| [449](449.md) | killSession / killAllSessions destroy panes without clearing pane.valid; isPaneValid can alias an arena-reused address | LOW | Fixed |
 | [450](450.md) | display_clients is an ArrayList of values; every \|*dc\| loop holds a pointer into the backing buffer that a registerDisplayClient append would invalidate | LOW | Open |

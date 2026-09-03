@@ -51,6 +51,7 @@ pub const Pane = struct {
     pub fn deinit(self: *Pane) void {
         if (self.deinited) return;
         self.deinited = true;
+        self.valid = false;
         if (self.border_format_cached) |bf| self.screen.grid.allocator.free(bf);
         self.choose_mode.deinit(self.screen.grid.allocator);
         if (self.saved_grid) |*g| g.deinit();
