@@ -76,6 +76,7 @@ pub const Grid = struct {
     history_start: usize = 0,
     history_count: usize = 0,
     start_index: u32 = 0,
+    last_resize_scroll: u32 = 0,
     on_line_evict: ?*const fn (ctx: *anyopaque, cells: []const Cell) void = null,
     on_line_evict_ctx: ?*anyopaque = null,
 
@@ -244,8 +245,45 @@ pub const Grid = struct {
         }
     }
 
+    pub fn lineHasContent(self: *const Grid, y: u32) bool {
+        const line = self.getLine(y);
+        if (line.wrapped) return true;
+        for (line.cells.items) |c| {
+            if (c.char != 0 or c.is_padding or c.comb1 != 0 or c.comb2 != 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     pub fn resize(self: *Grid, new_height: u32) Error!void {
         if (new_height == 0) return;
+        self.last_resize_scroll = 0;
+        // When shrinking height, scroll excess active content into history (bug #452)
+        if (new_height < self.lines.items.len) {
+            var last_content_line: ?u32 = null;
+            var row: u32 = self.height;
+            while (row > 0) {
+                row -= 1;
+                if (self.lineHasContent(row)) {
+                    last_content_line = row;
+                    break;
+                }
+            }
+
+            if (last_content_line) |last_line| {
+                if (last_line >= new_height) {
+                    const needed = (last_line + 1) - new_height;
+                    const max_scroll = self.lines.items.len - new_height;
+                    const count = @min(needed, max_scroll);
+                    var i: usize = 0;
+                    while (i < count) : (i += 1) {
+                        try self.scrollUp();
+                    }
+                    self.last_resize_scroll = count;
+                }
+            }
+        }
         try self.normalize();
         while (self.lines.items.len < new_height) {
             var line = GridLine{};
@@ -2204,4 +2242,29 @@ test "Grid recovers from corrupt empty history ring without OOB access (bug #444
     try grid.scrollUp();
     try testing.expectEqual(@as(usize, 1), grid.historyLen());
     try testing.expectEqual(@as(u21, 'x'), grid.getHistoryLine(0).cells.items[0].char);
+}
+
+test "Grid.resize height reduction scrolls excess top rows into history — bug #452" {
+    var grid = try Grid.initWithLimit(testing.allocator, 10, 5, 10);
+    defer grid.deinit();
+
+    // Fill 5 rows: 'A', 'B', 'C', 'D', 'E'
+    for (0..5) |i| {
+        grid.writeChar(0, @intCast(i), @intCast('A' + i));
+    }
+
+    // Shrink height from 5 to 3: top 2 rows ('A', 'B') must scroll into history
+    try grid.resize(3);
+    try testing.expectEqual(@as(u32, 3), grid.height);
+    try testing.expectEqual(@as(usize, 3), grid.lines.items.len);
+    try testing.expectEqual(@as(usize, 2), grid.historyLen());
+
+    // History should contain 'A' (oldest) and 'B' (newest)
+    try testing.expectEqual(@as(u21, 'A'), grid.getHistoryLine(0).cells.items[0].char);
+    try testing.expectEqual(@as(u21, 'B'), grid.getHistoryLine(1).cells.items[0].char);
+
+    // Visible screen rows must be 'C', 'D', 'E'
+    try testing.expectEqual(@as(u21, 'C'), grid.getCell(0, 0).char);
+    try testing.expectEqual(@as(u21, 'D'), grid.getCell(0, 1).char);
+    try testing.expectEqual(@as(u21, 'E'), grid.getCell(0, 2).char);
 }

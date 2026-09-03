@@ -541,10 +541,17 @@ pub const Screen = struct {
         var cx = self.cursor.x;
         var cy = self.cursor.y;
         try self.grid.setSizeCursor(width, height, self.cursor.x, self.cursor.y, &cx, &cy);
+        if (self.grid.last_resize_scroll > 0) {
+            self.shiftSixelAnchors(-@as(i32, @intCast(self.grid.last_resize_scroll)));
+            cy -|= self.grid.last_resize_scroll;
+        }
         if (self.alt_grid) |*g| {
             var alt_cx = self.alt_cursor.x;
             var alt_cy = self.alt_cursor.y;
             try g.setSizeCursor(width, height, self.alt_cursor.x, self.alt_cursor.y, &alt_cx, &alt_cy);
+            if (g.last_resize_scroll > 0) {
+                alt_cy -|= g.last_resize_scroll;
+            }
             self.alt_cursor.x = @min(alt_cx, width -| 1);
             self.alt_cursor.y = @min(alt_cy, height -| 1);
         }
