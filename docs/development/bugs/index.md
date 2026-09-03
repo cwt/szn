@@ -9,7 +9,7 @@ timestamp: 2026-08-31T04:05:00Z
 
 Sorted by number. See individual bug files for details.
 
-> **Note:** Bugs **#301** and **#302** were never filed (MIA). The #300–#310 performance sweep skipped straight from #300 to #303. Bugs **#349–#394** were filed by the 2026-08-23 deep-audit sweep (full-codebase review; 46 bugs, all since resolved). Bugs **#395–#427** were filed by the 2026-08-30 deep-audit sweep (memory safety, IPC integrity, sixel accounting, config/command surface, dead code, perf, alt-screen mouse wheel; 33 bugs, all since resolved). Bugs **#428–#439** were filed by the 2026-08-31 re-validation sweep (12 confirmed findings from the audit report, re-checked line-by-line against live source; pending fix). Bugs **#448–#450** were filed by the 2026-09-02 stale-pointer bug-class extrapolation audit (three latent instances of the #428/#443 use-after-free pattern, extrapolated to the whole codebase; open, not yet fixed). The tracker covers #1–#300, #303–#450 — **448 entries** in total.
+> **Note:** Bugs **#301** and **#302** were never filed (MIA). The #300–#310 performance sweep skipped straight from #300 to #303. Bugs **#349–#394** were filed by the 2026-08-23 deep-audit sweep (full-codebase review; 46 bugs, all since resolved). Bugs **#395–#427** were filed by the 2026-08-30 deep-audit sweep (memory safety, IPC integrity, sixel accounting, config/command surface, dead code, perf, alt-screen mouse wheel; 33 bugs, all since resolved). Bugs **#428–#439** were filed by the 2026-08-31 re-validation sweep (12 confirmed findings from the audit report, re-checked line-by-line against live source; pending fix). Bugs **#448–#450** were filed by the 2026-09-02 stale-pointer bug-class extrapolation audit. Bugs **#451–#453** were filed by the 2026-09-03 scrollback truncation and pane resize audit (open). The tracker covers #1–#300, #303–#453 — **451 entries** in total.
 
 Both summary tables below are generated from the `severity` and `status` fields in each bug's frontmatter. Regenerate them rather than editing by hand.
 
@@ -18,8 +18,8 @@ Both summary tables below are generated from the `severity` and `status` fields 
 | Severity | Count |
 |---|---:|
 | CRITICAL | 51 |
-| HIGH | 110 |
-| MEDIUM | 157 |
+| HIGH | 111 |
+| MEDIUM | 159 |
 | MEDIUM-HIGH | 3 |
 | LOW | 109 |
 | LOW (architecture) | 3 |
@@ -31,7 +31,7 @@ Both summary tables below are generated from the `severity` and `status` fields 
 | LOW (safety) | 1 |
 | MEDIUM (dead code / refcount drift) | 1 |
 | MEDIUM (performance) | 4 |
-| **Total** | **448** |
+| **Total** | **451** |
 
 ## Summary by Status
 
@@ -39,8 +39,8 @@ Both summary tables below are generated from the `severity` and `status` fields 
 |---|---:|
 | Fixed / Resolved | 423 |
 | False Positive | 25 |
-| Open | 0 |
-| **Total** | **448** |
+| Open | 3 |
+| **Total** | **451** |
 
 ## All Bugs
 
@@ -494,3 +494,6 @@ Both summary tables below are generated from the `severity` and `status` fields 
 | [448](448.md) | handleClient .command case writes the response to fd before re-validating that the client still exists (guard runs one dispatch too late) | MEDIUM | Fixed |
 | [449](449.md) | killSession / killAllSessions destroy panes without clearing pane.valid; isPaneValid can alias an arena-reused address | LOW | Fixed |
 | [450](450.md) | display_clients is an ArrayList of values; every \|*dc\| loop holds a pointer into the backing buffer that a registerDisplayClient append would invalidate | LOW | Fixed |
+| [451](451.md) | DECSTBM full-screen scroll region trap in Screen.setScrollRegion discards scrolled-off lines instead of pushing to history | HIGH | Open |
+| [452](452.md) | Grid.resize drops bottom rows via pop() on height reduction instead of scrolling top rows into history | MEDIUM | Open |
+| [453](453.md) | reflowCursorInternal trims trailing screen rows on width change, stealing history lines into visible screen | MEDIUM | Open |
