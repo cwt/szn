@@ -201,6 +201,7 @@ pub const Server = struct {
     mouse_autoscroll_dir: ?enum { up, down } = null,
     mouse_autoscroll_pane: ?*Pane = null,
     ignore_unknown_msg_warn: bool = false,
+    test_after_command_dispatch_hook: ?*const fn (*Server, i32) void = null,
 
     /// Cell pixel dimensions, learned from the display client's XTWINOPS
     /// response. A terminal property, so the same value applies to every pane.
@@ -2461,6 +2462,17 @@ pub const Server = struct {
                     var result = dispatch.dispatchCommand(self.allocator, self, pkt.data);
                     self.dirty = true;
                     defer result.deinit();
+
+                    if (comptime @import("builtin").is_test) {
+                        if (self.test_after_command_dispatch_hook) |hook| {
+                            hook(self, fd);
+                        }
+                    }
+
+                    // If the command caused the client to be removed mid-dispatch,
+                    // reader has been destroyed and fd closed. Return immediately to avoid
+                    // writing to a closed/recycled fd and use-after-free on reader (bug #448).
+                    if (!self.client_readers.contains(fd)) return;
 
                     var is_display = false;
                     for (self.display_clients.items) |dc| {
@@ -5632,6 +5644,40 @@ test "handleClient stdin_data keybinding detach (C-b d) does not use-after-free 
     const stdin_pkt = protocol.Packet.make(.stdin_data, "\x02d");
     var stdin_buf: [32]u8 = undefined;
     const ser = stdin_pkt.serialize(&stdin_buf);
+    _ = std.c.write(client_fd, ser.ptr, ser.len);
+
+    try server.handleClient(server_fd);
+    try testing.expect(!server.client_readers.contains(server_fd));
+}
+
+test "handleClient .command early returns if client removed mid-dispatch — bug #448" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    _ = try server.newSession("test", 80, 24);
+
+    var fds: [2]i32 = undefined;
+    if (std.c.socketpair(std.c.AF.UNIX, std.c.SOCK.STREAM, 0, &fds) != 0) return error.Unexpected;
+    const server_fd = fds[0];
+    const client_fd = fds[1];
+    defer _ = std.c.close(client_fd);
+
+    const reader = try server.allocator.create(MessageReader);
+    reader.* = .{};
+    try server.client_readers.put(server_fd, reader);
+    try server.client_fds.append(server.allocator, server_fd);
+    try server.loop.addFd(server.allocator, server_fd, @as(i16, @intCast(std.posix.POLL.IN)), null);
+    try server.display_clients.append(server.allocator, .{ .fd = server_fd });
+
+    server.test_after_command_dispatch_hook = struct {
+        fn hook(s: *Server, fd: i32) void {
+            s.removeClient(fd);
+        }
+    }.hook;
+
+    const cmd_pkt = protocol.Packet.make(.command, "list-sessions");
+    var cmd_buf: [64]u8 = undefined;
+    const ser = cmd_pkt.serialize(&cmd_buf);
     _ = std.c.write(client_fd, ser.ptr, ser.len);
 
     try server.handleClient(server_fd);
