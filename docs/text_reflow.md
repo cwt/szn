@@ -2,6 +2,14 @@
 type: architecture_guideline
 title: "Text Reflow in szn"
 description: "Design, algorithms, and implementation of the text reflow system."
+status: stable
+sources:
+  - src/reflow.zig
+  - src/grid.zig
+  - src/screen.zig
+verified: human-reviewed
+stale_after: 2027-01-01T00:00:00Z
+tags: [reflow, algorithms, terminal-emulation, cjk, thai]
 timestamp: 2026-08-03T00:00:00Z
 ---
 

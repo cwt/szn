@@ -2,6 +2,13 @@
 type: architecture_guideline
 title: "Sixel Grid Allocation & Registry Model"
 description: "Architectural design and migration plan to transition szn from coordinate-based sixel overlays to a cell-allocated grid registry model."
+status: stable
+sources:
+  - src/sixel.zig
+  - src/grid.zig
+verified: human-reviewed
+stale_after: 2027-01-01T00:00:00Z
+tags: [sixel, graphics, architecture, grid]
 timestamp: 2026-07-08T04:02:37Z
 ---
 

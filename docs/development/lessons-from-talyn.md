@@ -2,6 +2,12 @@
 type: lessons_learned
 title: "Lessons from Talyn"
 description: "Lessons learned from the Talyn Zig project, adapted to szn's domain."
+status: stable
+sources:
+  - https://github.com/cwt/talyn
+verified: human-reviewed
+stale_after: 2027-01-01T00:00:00Z
+tags: [lessons-learned, zig, arena-allocation, terminal]
 timestamp: 2026-06-30T04:57:33Z
 ---
 

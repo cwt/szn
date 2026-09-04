@@ -2,6 +2,12 @@
 type: improvements
 title: "Performance & Optimization Opportunities — szn"
 description: "Catalog of performance bottlenecks, memory churn, and optimization targets sorted by effort-to-impact."
+status: stable
+sources:
+  - src/
+verified: human-reviewed
+stale_after: 2027-01-01T00:00:00Z
+tags: [performance, optimization, memory, bottlenecks]
 timestamp: 2026-07-20T16:00:00Z
 ---
 

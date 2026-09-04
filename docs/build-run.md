@@ -2,6 +2,15 @@
 type: runbook
 title: "szn Build, Run, and Test"
 description: "How to build, run, test, and benchmark szn, plus prerequisites and dependencies."
+status: stable
+sources:
+  - build.zig
+  - build.zig.zon
+  - src/main.zig
+  - src/test.zig
+verified: human-reviewed
+stale_after: 2027-01-01T00:00:00Z
+tags: [runbook, build, test, benchmark, zig]
 timestamp: 2026-08-30T16:20:00Z
 ---
 

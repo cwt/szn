@@ -2,6 +2,12 @@
 type: architecture_guideline
 title: "Migration Plan: tmux (C) to szn (Zig)"
 description: "Rationale and plan for rewriting tmux in Zig."
+status: stable
+sources:
+  - tmux/
+verified: human-reviewed
+stale_after: 2027-01-01T00:00:00Z
+tags: [migration, tmux, c-to-zig, roadmap]
 timestamp: 2026-07-08T00:00:00Z
 ---
 

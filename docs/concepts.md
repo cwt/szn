@@ -2,6 +2,16 @@
 type: architecture_guideline
 title: "szn Concepts Glossary"
 description: "Definitions of core szn concepts: session, window, pane, grid, cell, screen, layout, sixel, copy/choose mode, display client, options, and buffers."
+status: stable
+sources:
+  - src/session.zig
+  - src/window.zig
+  - src/screen.zig
+  - src/grid.zig
+  - src/options.zig
+verified: human-reviewed
+stale_after: 2027-01-01T00:00:00Z
+tags: [concepts, glossary, architecture, terminology]
 timestamp: 2026-08-30T16:20:00Z
 ---
 

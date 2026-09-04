@@ -2,7 +2,12 @@
 type: index
 title: "Releases"
 description: "szn release notes."
-timestamp: 2026-08-31T00:00:00Z
+status: stable
+sources:
+  - docs/releases/
+verified: human-reviewed
+tags: [releases, changelog, index]
+timestamp: 2026-09-04T09:18:00Z
 ---
 
 # Releases

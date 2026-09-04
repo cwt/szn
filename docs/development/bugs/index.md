@@ -2,7 +2,12 @@
 type: index
 title: "Bug Tracker — szn"
 description: "Individual bug entries for szn, one file per bug."
-timestamp: 2026-08-31T04:05:00Z
+status: stable
+sources:
+  - docs/development/bugs/
+verified: human-reviewed
+tags: [bugs, tracker, index, issues]
+timestamp: 2026-09-04T09:18:00Z
 ---
 
 # Bugs — szn
