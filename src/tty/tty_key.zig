@@ -247,7 +247,17 @@ pub fn parseSgrMouse(params: []const u8, release: bool) ?Event {
         std.log.debug("input: invalid SGR mouse Y '{s}'", .{y_str});
         return null;
     };
+    // SGR mouse has exactly three fields. Trailing garbage (e.g. an extra
+    // ";99") means a malformed or hostile sequence: reject it rather than
+    // silently accepting a prefix (bug #474).
+    if (it.next() != null) {
+        std.log.debug("input: SGR mouse has trailing fields '{s}'", .{params});
+        return null;
+    }
 
+    // Raw 0-based coordinates, unclamped: the parser has no display context.
+    // Callers must treat x/y as untrusted — compare or saturate, never index
+    // (all server consumers use comparisons, -| and caught bufPrint).
     const col: u32 = if (x > 0) x - 1 else 0;
     const row: u32 = if (y > 0) y - 1 else 0;
 
@@ -473,6 +483,21 @@ test "sgr mouse press" {
     try testing.expectEqual(.left, ev.mouse.button);
     try testing.expectEqual(@as(u32, 19), ev.mouse.x);
     try testing.expectEqual(@as(u32, 9), ev.mouse.y);
+}
+
+test "sgr mouse with trailing fields is rejected — bug #474" {
+    // "0;20;10;99M" must not parse as "0;20;10".
+    try testing.expect(parseSgrMouse("0;20;10;99", false) == null);
+    try testing.expect(parseSgrMouse("0;20;10;", false) == null);
+    // Well-formed sequences still parse (0-based coordinates).
+    const ev = parseSgrMouse("0;20;10", false).?;
+    try testing.expect(ev == .mouse);
+    try testing.expectEqual(@as(u32, 19), ev.mouse.x);
+    try testing.expectEqual(@as(u32, 9), ev.mouse.y);
+    // Huge coordinates parse but stay raw; consumers must clamp.
+    const huge = parseSgrMouse("0;4294967295;4294967295", false).?;
+    try testing.expectEqual(@as(u32, 4294967294), huge.mouse.x);
+    try testing.expectEqual(@as(u32, 4294967294), huge.mouse.y);
 }
 
 test "sgr mouse release" {
