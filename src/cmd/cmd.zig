@@ -441,6 +441,9 @@ fn cmdJoinPane(server: *Server, args: []const []const u8) CmdResult {
             src_win.layout.root.leaf = dummy;
             server.unregisterWindowFds(src_win);
             session.killWindow(server.allocator, src_win);
+            // killWindow only deinits panes in win.panes (empty here);
+            // release the placeholder's Grid/Screen explicitly (bug #461).
+            dummy.deinit();
         }
     }
 
@@ -2686,6 +2689,42 @@ test "break-pane and join-pane keep pane ownership consistent — bug #287" {
     // The broken-out window must be gone.
     for (session.windows.items) |w| {
         try testing.expect(w != new_win.?);
+    }
+}
+
+test "repeated break/join cycles release the placeholder pane — bug #461" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    const session = try server.newSession("test", 80, 24);
+    const win = session.active_window.?;
+    const pane1 = win.active_pane.?;
+    _ = try win.splitPane(server.allocator, pane1, true, 0.5);
+
+    // Each cycle breaks pane1 out (source window gains a pane) and joins it
+    // back (source window emptied → placeholder path). Counts must be stable.
+    var cycle: usize = 0;
+    while (cycle < 3) : (cycle += 1) {
+        win.setActivePane(pane1);
+        {
+            var c = try parse("break-pane", testing.allocator);
+            defer c.deinit(testing.allocator);
+            try testing.expectEqual(CmdResult.ok, c.exec(&server));
+        }
+        try testing.expectEqual(@as(usize, 2), session.windows.items.len);
+        session.setActiveWindow(win);
+        const src_idx = for (session.windows.items, 0..) |w, i| {
+            if (w != win) break i;
+        } else unreachable;
+        {
+            var buf: [64]u8 = undefined;
+            const cmd = std.fmt.bufPrint(&buf, "join-pane {d}:0", .{src_idx}) catch return error.Unexpected;
+            var c = try parse(cmd, testing.allocator);
+            defer c.deinit(testing.allocator);
+            try testing.expectEqual(CmdResult.ok, c.exec(&server));
+        }
+        try testing.expectEqual(@as(usize, 1), session.windows.items.len);
+        try testing.expectEqual(@as(usize, 2), win.panes.items.len);
     }
 }
 
