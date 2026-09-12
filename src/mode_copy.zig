@@ -301,21 +301,34 @@ pub const CopyMode = struct {
         return false;
     }
 
+    /// Saturating i64 magnitude → u32 for scroll math. Never traps, even on
+    /// INT64_MIN (bug #470); oversized results degrade to empty cells via the
+    /// `scroll > hist_len` guards in getCellAtOffset/isLineWrapped.
+    fn scrollExtraU32(y_i64: i64) u32 {
+        if (y_i64 == std.math.minInt(i64)) return std.math.maxInt(u32);
+        const mag = -y_i64;
+        return if (mag > std.math.maxInt(u32)) std.math.maxInt(u32) else @intCast(mag);
+    }
+
+    fn screenYU32(y_i64: i64) u32 {
+        return std.math.cast(u32, y_i64) orelse std.math.maxInt(u32);
+    }
+
     fn getCellAtY_i64(self: *const CopyMode, grid: *const Grid, x: u32, y_i64: i64) Cell {
         if (y_i64 < 0) {
-            const extra_scroll = @as(u32, @intCast(-y_i64));
-            return self.getCellAtOffset(grid, x, 0, self.scroll_offset + extra_scroll);
+            const extra_scroll = scrollExtraU32(y_i64);
+            return self.getCellAtOffset(grid, x, 0, self.scroll_offset +| extra_scroll);
         } else {
-            return self.getCellAtOffset(grid, x, @as(u32, @intCast(y_i64)), self.scroll_offset);
+            return self.getCellAtOffset(grid, x, screenYU32(y_i64), self.scroll_offset);
         }
     }
 
     fn isLineWrappedY_i64(self: *const CopyMode, grid: *const Grid, y_i64: i64) bool {
         if (y_i64 < 0) {
-            const extra_scroll = @as(u32, @intCast(-y_i64));
-            return self.isLineWrapped(grid, 0, self.scroll_offset + extra_scroll);
+            const extra_scroll = scrollExtraU32(y_i64);
+            return self.isLineWrapped(grid, 0, self.scroll_offset +| extra_scroll);
         } else {
-            return self.isLineWrapped(grid, @as(u32, @intCast(y_i64)), self.scroll_offset);
+            return self.isLineWrapped(grid, screenYU32(y_i64), self.scroll_offset);
         }
     }
 
@@ -551,17 +564,21 @@ pub const CopyMode = struct {
     /// the match is visible (history matches pinned to the top of the screen).
     fn placeCursorAtLogical(self: *CopyMode, grid: *const Grid, logical: usize, x: usize) void {
         const hist_len = grid.historyLen();
-        const physical_line = logical + (if (grid.width > 0) x / grid.width else 0);
+        const physical_line = logical +| (if (grid.width > 0) x / grid.width else 0);
         const phys_x = if (grid.width > 0) x % grid.width else 0;
 
         if (physical_line < hist_len) {
-            self.scroll_offset = @intCast(hist_len - physical_line);
+            self.scroll_offset = std.math.cast(u32, hist_len - physical_line) orelse std.math.maxInt(u32);
             self.cursor_y = 0;
         } else {
             self.scroll_offset = 0;
-            self.cursor_y = @intCast(physical_line - hist_len);
+            // Clamp to the viewport: a tall rewrapped logical line must not
+            // place the cursor past the last row (bug #469).
+            const y = physical_line - hist_len;
+            const max_y: usize = grid.height -| 1;
+            self.cursor_y = std.math.cast(u32, @min(y, max_y)) orelse std.math.maxInt(u32);
         }
-        self.cursor_x = @intCast(phys_x);
+        self.cursor_x = std.math.cast(u32, phys_x) orelse std.math.maxInt(u32);
     }
 
     /// Build the UTF-8 text of logical line `li` into `out`, then return the
@@ -2015,4 +2032,30 @@ test "copy_mode getCellAtOffset with wrapped history ring buffer (history_start 
     try testing.expectEqual(@as(u21, 'E'), cm.getCellAtOffset(&g, 0, 0, 4).char);
     // When scroll_offset = 5: top row should show 'D' (oldest live history line)
     try testing.expectEqual(@as(u21, 'D'), cm.getCellAtOffset(&g, 0, 0, 5).char);
+}
+
+test "placeCursorAtLogical clamps tall rewrapped hits to the viewport — bug #469" {
+    var cm = CopyMode.init(.vi);
+    var g = try Grid.init(testing.allocator, 4, 3);
+    defer g.deinit();
+
+    // A logical line far beyond the viewport must land on the last row,
+    // never past it, with no scroll offset.
+    cm.placeCursorAtLogical(&g, 100, 500);
+    try testing.expectEqual(@as(u32, 0), cm.scroll_offset);
+    try testing.expect(cm.cursor_y < g.height);
+    try testing.expectEqual(@as(u32, g.height - 1), cm.cursor_y);
+    try testing.expect(cm.cursor_x < g.width);
+}
+
+test "extreme i64 offsets degrade to empty cells instead of trapping — bug #470" {
+    var cm = CopyMode.init(.vi);
+    var g = try Grid.init(testing.allocator, 10, 3);
+    defer g.deinit();
+
+    g.writeChar(0, 0, 'A');
+    // INT64_MIN negation and huge positive offsets must not trap.
+    try testing.expectEqual(@as(u21, 0), cm.getCellAtY_i64(&g, 0, std.math.minInt(i64)).char);
+    try testing.expectEqual(@as(u21, 0), cm.getCellAtY_i64(&g, 0, std.math.maxInt(i64)).char);
+    try testing.expect(!cm.isLineWrappedY_i64(&g, std.math.minInt(i64)));
 }
