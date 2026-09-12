@@ -602,12 +602,12 @@ fn cmdLoadBuffer(server: *Server, args: []const []const u8) CmdResult {
     // allocation — passing data.items (len < capacity) tripped the
     // allocator's canary check on free (bug #357).
     const name = server.buffers.generateName() catch return .err;
-    errdefer server.allocator.free(name);
-    const owned_data = data.toOwnedSlice(server.allocator) catch return .err;
-    server.buffers.pushOwned(name, owned_data) catch {
-        server.allocator.free(owned_data);
+    const owned_data = data.toOwnedSlice(server.allocator) catch {
+        server.allocator.free(name);
         return .err;
     };
+    // pushOwned takes ownership and frees both slices on failure (bug #456).
+    server.buffers.pushOwned(name, owned_data) catch return .err;
     // Both name and owned_data now belong to the buffer stack.
     return .ok;
 }
@@ -659,7 +659,6 @@ fn cmdDisplayMessage(server: *Server, args: []const []const u8) CmdResult {
         msg_len +|= arg.len +| 1;
     }
     const msg = server.allocator.alloc(u8, msg_len -| 1) catch return .err;
-    errdefer server.allocator.free(msg);
     var off: usize = 0;
     for (args[1..], 0..) |arg, i| {
         if (i > 0) {
