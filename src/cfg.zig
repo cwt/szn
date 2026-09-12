@@ -274,19 +274,10 @@ pub fn parseValue(allocator: std.mem.Allocator, s: []const u8) Error!OptionValue
     return OptionValue{ .string = try allocator.dupe(u8, s) };
 }
 
+/// Strip leading blanks. Thin wrapper over the stdlib trim so call sites
+/// stay readable (bug #476: replaces the hand-rolled O(n*m) loop).
 fn trimLeft(slice: []const u8, chars: []const u8) []const u8 {
-    var start: usize = 0;
-    while (start < slice.len) : (start += 1) {
-        var found = false;
-        for (chars) |c| {
-            if (slice[start] == c) {
-                found = true;
-                break;
-            }
-        }
-        if (!found) break;
-    }
-    return slice[start..];
+    return std.mem.trimStart(u8, slice, chars);
 }
 
 fn parseKeyFlags(allocator: std.mem.Allocator, args: []const u8, reverse_opt: ?*bool) Error!struct { remaining: []const u8, key_table: ?[]const u8 } {

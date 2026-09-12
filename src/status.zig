@@ -317,9 +317,13 @@ pub fn buildLine(
 
     var centre_buf: std.ArrayList(u8) = .empty;
     defer centre_buf.deinit(allocator);
+    // Pre-size for the window loop: ~16 bytes per entry plus formats.
+    // Perf: avoids repeated reallocs every status frame (bug #476).
+    try centre_buf.ensureTotalCapacity(allocator, input.windows.len * 32);
 
     if (out_ranges) |r| {
         r.clearRetainingCapacity();
+        try r.ensureTotalCapacity(allocator, input.windows.len);
     }
 
     var centre_cursor: usize = 0;
@@ -849,4 +853,3 @@ test "buildLine respects per-window format overrides — bug #440" {
     try testing.expect(std.mem.indexOf(u8, res.line, "CUSTOM:side") != null);
     try testing.expect(std.mem.indexOf(u8, res.line, "DEF:extra") != null);
 }
-

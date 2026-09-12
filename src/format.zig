@@ -183,6 +183,8 @@ fn aliasName(ch: u8) ?[]const u8 {
 pub fn expand(allocator: std.mem.Allocator, template: []const u8, ctx: *const Context) FormatError![]const u8 {
     var result: std.ArrayList(u8) = .empty;
     errdefer result.deinit(allocator);
+    // Pre-size: expansions are usually near template size (bug #476).
+    try result.ensureTotalCapacity(allocator, template.len);
     try expandInto(allocator, &result, template, ctx, true);
     return try result.toOwnedSlice(allocator);
 }

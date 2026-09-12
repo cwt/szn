@@ -755,6 +755,13 @@ fn cmdCapturePane(server: *Server, _: []const []const u8) CmdResult {
     const window = session.active_window orelse return .err;
     const pane = window.active_pane orelse return .err;
 
+    // Pre-size the output (capped): one row is width cells plus a newline.
+    // Perf: avoids repeated reallocs on large panes (bug #476). The cap
+    // keeps a hostile 4096-wide grid from forcing a giant reservation; the
+    // list still grows geometrically past it if needed.
+    const want: usize = @as(usize, pane.screen.grid.height) * (@as(usize, pane.screen.grid.width) * 2 + 1);
+    server.response_buf.ensureTotalCapacity(server.allocator, @min(want, 1 << 20)) catch return .err;
+
     var y: u32 = 0;
     while (y < pane.screen.grid.height) : (y += 1) {
         var x: u32 = 0;
@@ -1859,11 +1866,8 @@ pub const CmdArgs = struct {
     }
 
     pub fn exec(self: CmdArgs, server: *Server) CmdResult {
-        inline for (CMD_TABLE) |entry| {
-            if (entry == self.entry) {
-                return entry.exec(server, self.args);
-            }
-        }
+        // Direct dispatch: parse() already resolved the entry via lookup(),
+        // so a second table scan here is pure overhead (bug #476).
         return self.entry.exec(server, self.args);
     }
 };

@@ -51,6 +51,8 @@ pub const ChooseMode = struct {
             self.active = false;
         }
 
+        // Pre-size: one slot per item, no growth reallocs (bug #476).
+        try self.items.ensureTotalCapacity(allocator, items.len);
         for (items) |item| {
             const n = try allocator.dupe(u8, item.name);
             errdefer allocator.free(n);
