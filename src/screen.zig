@@ -201,9 +201,9 @@ pub const Screen = struct {
     /// known. Must only be called once `cell_size_known` is true. Safe to call
     /// when there is nothing pending.
     pub fn flushPendingSixel(self: *Screen) void {
+        if (!self.cell_size_known) return;
         const pending = self.pending_sixel orelse return;
         self.pending_sixel = null;
-        if (!self.cell_size_known) return;
         self.placeSixelImage(pending.data, pending.px_width, pending.px_height) catch |e| {
             self.allocator.free(pending.data);
             std.log.warn("failed to replay buffered sixel: {any}", .{e});
@@ -2024,6 +2024,23 @@ test "addSixelImage replays a buffered image once cell size is known — bug #20
     // 200px / 20px = 10 rows of marker cells placed, cursor advanced below.
     try testing.expect(screen.grid.getCell(0, 9).attr.sixel);
     try testing.expect(screen.grid.getCell(0, 10).attr.sixel == false);
+}
+
+test "flushPendingSixel keeps pending sixel when cell size unknown — bug #454" {
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+    screen.cell_size_known = false;
+
+    const dcs = try testing.allocator.dupe(u8, "\x1bPqPENDING\x1b\\");
+    screen.cursor.x = 0;
+    screen.cursor.y = 0;
+    try screen.addSixelImage(dcs, 100, 200);
+    try testing.expect(screen.pending_sixel != null);
+
+    // Must not drop ownership while unknown: still pending, nothing placed.
+    screen.flushPendingSixel();
+    try testing.expect(screen.pending_sixel != null);
+    try testing.expect(screen.sixel_images[0] == null);
 }
 
 test "cursor save and restore" {
