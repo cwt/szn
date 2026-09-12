@@ -1204,7 +1204,7 @@ pub const Server = struct {
                 pane.screen.clock_mode = true;
                 pane.screen.clock_utc = false;
                 const clock = @import("../clock.zig");
-                clock.renderClock(&pane.screen.grid, pane.screen.grid.width, pane.screen.grid.height, false);
+                clock.renderClock(&pane.screen.grid, pane.screen.grid.height, false);
                 pane.dirty = true;
             },
             .command_prompt => {
@@ -1581,7 +1581,7 @@ pub const Server = struct {
             if (pane.choose_mode.active) {
                 if (self.input_reader.state == .esc and byte != '[' and byte != 'O') {
                     self.input_reader.state = .ground;
-                    const escaped = pane.choose_mode.handleKey(.{ .special = .{ .key = .escape } }, self.allocator) catch continue;
+                    const escaped = pane.choose_mode.handleKey(.{ .special = .{ .key = .escape } }) catch continue;
                     if (escaped == .cancelled) {
                         const is_cmd = (pane.choose_mode.target == .command);
                         pane.choose_mode.active = false;
@@ -1597,7 +1597,7 @@ pub const Server = struct {
                 if (self.input_reader.feed(byte)) |event| {
                     switch (event) {
                         .key => |k| {
-                            const res = pane.choose_mode.handleKey(k, self.allocator) catch continue;
+                            const res = pane.choose_mode.handleKey(k) catch continue;
                             switch (res) {
                                 .consumed => {
                                     pane.choose_mode.renderIntoGrid(&pane.screen.grid);
@@ -2973,7 +2973,7 @@ pub const Server = struct {
                     pane.screen.grid.copyVisibleFrom(sg);
                     pane.clock_time = now;
                     const clock = @import("../clock.zig");
-                    clock.renderClock(&pane.screen.grid, pane.screen.grid.width, pane.screen.grid.height, pane.screen.clock_utc);
+                    clock.renderClock(&pane.screen.grid, pane.screen.grid.height, pane.screen.clock_utc);
                     pane.dirty = true;
                 }
             }

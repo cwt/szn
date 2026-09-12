@@ -63,9 +63,10 @@ pub fn utcHms(secs: i64) [3]u32 {
     };
 }
 
-pub fn renderClock(grid: *Grid, sx: u32, sy: u32, utc: bool) void {
-    _ = sx;
-
+/// Render the big-digit clock centred on `grid`. `sy` bounds the visible
+/// height (the grid may be taller than the display area); the width always
+/// comes from the grid itself (bug #477: dropped the unused `sx` param).
+pub fn renderClock(grid: *Grid, sy: u32, utc: bool) void {
     const now_secs = time(null);
     var hour: u32 = undefined;
     var min: u32 = undefined;
@@ -132,7 +133,7 @@ test "renderClock fills grid cells (UTC)" {
     var grid = try Grid.init(testing.allocator, 60, 10);
     defer grid.deinit();
 
-    renderClock(&grid, 60, 10, true);
+    renderClock(&grid, 10, true);
 
     var found_non_empty = false;
     for (grid.lines.items) |line| {
@@ -150,7 +151,7 @@ test "renderClock fills grid cells (local time)" {
     var grid = try Grid.init(testing.allocator, 60, 10);
     defer grid.deinit();
 
-    renderClock(&grid, 60, 10, false);
+    renderClock(&grid, 10, false);
 
     var found_non_empty = false;
     for (grid.lines.items) |line| {

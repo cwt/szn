@@ -110,7 +110,9 @@ pub const ChooseMode = struct {
         }
     }
 
-    pub fn handleKey(self: *ChooseMode, k: Key, _: std.mem.Allocator) !enum { consumed, selected, cancelled } {
+    /// Handle a key in choose mode. Takes no allocator: navigation never
+    /// allocates (bug #477: dropped the unused allocator param).
+    pub fn handleKey(self: *ChooseMode, k: Key) !enum { consumed, selected, cancelled } {
         if (!self.active) return .cancelled;
         if (k == .special) {
             if (k.special.key == .escape) {
@@ -170,13 +172,13 @@ test "choose mode navigation" {
 
     try testing.expectEqual(@as(u32, 0), cm.cursor);
 
-    _ = try cm.handleKey(Key{ .arrow = .{ .key = .down } }, testing.allocator);
+    _ = try cm.handleKey(Key{ .arrow = .{ .key = .down } });
     try testing.expectEqual(@as(u32, 1), cm.cursor);
 
-    _ = try cm.handleKey(Key{ .arrow = .{ .key = .up } }, testing.allocator);
+    _ = try cm.handleKey(Key{ .arrow = .{ .key = .up } });
     try testing.expectEqual(@as(u32, 0), cm.cursor);
 
-    const result = try cm.handleKey(Key{ .char = .{ .code = '\r', .mod = .{} } }, testing.allocator);
+    const result = try cm.handleKey(Key{ .char = .{ .code = '\r', .mod = .{} } });
     try testing.expectEqual(@as(@TypeOf(result), .selected), result);
     try testing.expectEqualStrings("a", cm.selectedItem().?.name);
 }
@@ -189,7 +191,7 @@ test "choose mode cancel" {
         .{ .name = "test", .data = "data" },
     });
 
-    const result = try cm.handleKey(Key{ .char = .{ .code = 'q', .mod = .{} } }, testing.allocator);
+    const result = try cm.handleKey(Key{ .char = .{ .code = 'q', .mod = .{} } });
     try testing.expectEqual(@as(@TypeOf(result), .cancelled), result);
     try testing.expect(!cm.active);
 }
@@ -215,27 +217,27 @@ test "choose mode scrolling" {
     try testing.expectEqual(@as(u32, 0), cm.scroll);
 
     // Go down to index 1 (visible)
-    _ = try cm.handleKey(Key{ .arrow = .{ .key = .down } }, testing.allocator);
+    _ = try cm.handleKey(Key{ .arrow = .{ .key = .down } });
     cm.renderIntoGrid(&grid);
     try testing.expectEqual(@as(u32, 0), cm.scroll);
 
     // Go down to index 2 (scrolls viewport)
-    _ = try cm.handleKey(Key{ .arrow = .{ .key = .down } }, testing.allocator);
+    _ = try cm.handleKey(Key{ .arrow = .{ .key = .down } });
     cm.renderIntoGrid(&grid);
     try testing.expectEqual(@as(u32, 1), cm.scroll);
 
     // Go down to index 3 (scrolls viewport)
-    _ = try cm.handleKey(Key{ .arrow = .{ .key = .down } }, testing.allocator);
+    _ = try cm.handleKey(Key{ .arrow = .{ .key = .down } });
     cm.renderIntoGrid(&grid);
     try testing.expectEqual(@as(u32, 2), cm.scroll);
 
     // Go up to index 2 (within viewport, scroll remains same)
-    _ = try cm.handleKey(Key{ .arrow = .{ .key = .up } }, testing.allocator);
+    _ = try cm.handleKey(Key{ .arrow = .{ .key = .up } });
     cm.renderIntoGrid(&grid);
     try testing.expectEqual(@as(u32, 2), cm.scroll);
 
     // Go up to index 1 (scrolls viewport up)
-    _ = try cm.handleKey(Key{ .arrow = .{ .key = .up } }, testing.allocator);
+    _ = try cm.handleKey(Key{ .arrow = .{ .key = .up } });
     cm.renderIntoGrid(&grid);
     try testing.expectEqual(@as(u32, 1), cm.scroll);
 }

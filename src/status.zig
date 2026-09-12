@@ -105,24 +105,30 @@ pub const RenderedStatus = struct {
     }
 };
 
+/// One step of the visible-width walk shared by visibleLen and
+/// truncateVisible so the ESC-skip / UTF-8-decode / width rule cannot drift
+/// between measuring and truncating (bug #477).
+const MeasuredChunk = struct { next: usize, cols: usize, is_escape: bool };
+
+fn measureChunk(s: []const u8, i: usize) MeasuredChunk {
+    if (s[i] == 0x1b) return .{ .next = skipEscape(s, i), .cols = 0, .is_escape = true };
+    // UTF-8: decode codepoint and measure cell width using char_width.charWidth
+    const cp_len = std.unicode.utf8ByteSequenceLength(s[i]) catch 1;
+    if (i + cp_len <= s.len) {
+        const cp = std.unicode.utf8Decode(s[i .. i + cp_len]) catch ' ';
+        return .{ .next = i + cp_len, .cols = char_width.charWidth(cp), .is_escape = false };
+    }
+    return .{ .next = i + cp_len, .cols = 1, .is_escape = false };
+}
+
 /// Count visible columns, skipping CSI / OSC escape sequences.
 pub fn visibleLen(s: []const u8) usize {
     var cols: usize = 0;
     var i: usize = 0;
     while (i < s.len) {
-        if (s[i] == 0x1b) {
-            i = skipEscape(s, i);
-            continue;
-        }
-        // UTF-8: decode codepoint and measure cell width using char_width.charWidth
-        const cp_len = std.unicode.utf8ByteSequenceLength(s[i]) catch 1;
-        if (i + cp_len <= s.len) {
-            const cp = std.unicode.utf8Decode(s[i .. i + cp_len]) catch ' ';
-            cols += char_width.charWidth(cp);
-        } else {
-            cols += 1;
-        }
-        i += cp_len;
+        const m = measureChunk(s, i);
+        cols += m.cols;
+        i = m.next;
     }
     return cols;
 }
@@ -160,21 +166,13 @@ pub fn truncateVisible(allocator: std.mem.Allocator, s: []const u8, max_cols: us
     var cols: usize = 0;
     var i: usize = 0;
     while (i < s.len and cols < max_cols) {
-        if (s[i] == 0x1b) {
-            const end = skipEscape(s, i);
-            try out.appendSlice(allocator, s[i..end]);
-            i = end;
-            continue;
+        const m = measureChunk(s, i);
+        if (!m.is_escape) {
+            if (cols + m.cols > max_cols) break;
+            cols += m.cols;
         }
-        const cp_len = std.unicode.utf8ByteSequenceLength(s[i]) catch 1;
-        const end = @min(i + cp_len, s.len);
-        const w: usize = if (i + cp_len <= s.len) blk: {
-            const cp = std.unicode.utf8Decode(s[i .. i + cp_len]) catch ' ';
-            break :blk char_width.charWidth(cp);
-        } else 1;
-        if (cols + w > max_cols) break;
+        const end = @min(m.next, s.len);
         try out.appendSlice(allocator, s[i..end]);
-        cols += w;
         i = end;
     }
     return try out.toOwnedSlice(allocator);

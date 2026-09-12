@@ -182,7 +182,6 @@ pub const Display = struct {
 
         for (bounds) |pb| {
             if (!full_rebuild and !pb.pane.dirty) continue;
-            const pane_grid = &pb.pane.screen.grid;
             const pane_has_sixels = blk: {
                 var found = false;
                 for (&pb.pane.screen.sixel_images) |opt| {
@@ -196,19 +195,7 @@ pub const Display = struct {
             for (0..pb.h) |y| {
                 if (pb.y + y >= merged_h) break;
 
-                const hist_len = pane_grid.historyLen();
-                const combined_idx = (@as(isize, @intCast(hist_len)) - @as(isize, @intCast(if (pb.pane.screen.copy_mode) |cm| cm.scroll_offset else 0))) + @as(isize, @intCast(y));
-                const cells = if (combined_idx < 0)
-                    @as(?*const std.ArrayList(Cell), null)
-                else if (combined_idx < hist_len)
-                    &pane_grid.getHistoryLine(@as(usize, @intCast(combined_idx))).cells
-                else blk: {
-                    const visible_y = combined_idx - @as(isize, @intCast(hist_len));
-                    break :blk if (visible_y < pane_grid.height)
-                        &pane_grid.getLine(@intCast(visible_y)).cells
-                    else
-                        @as(?*const std.ArrayList(Cell), null);
-                };
+                const cells = resolveRowCells(&pb.pane.screen, y);
 
                 for (0..pb.w) |x| {
                     if (pb.x + x >= merged_w) break;
@@ -381,13 +368,8 @@ pub const Display = struct {
                             if (y >= merged_screen.grid.height) break;
                             const is_active = isBorderActiveAt(border_x, y, true, active_bound);
                             const border_col = if (is_active) active_border_fg else border_fg;
-                            var cell = &merged_screen.grid.getLineMut(y).cells.items[border_x];
-                            if (cell.char == 0x2500) {
-                                cell.char = 0x253C; // '┼'
-                            } else {
-                                cell.char = 0x2502; // '│'
-                            }
-                            cell.fg = border_col;
+                            const cell = &merged_screen.grid.getLineMut(y).cells.items[border_x];
+                            paintBorderCell(cell, 0x2500, 0x2502, border_col);
                         }
                     }
                     try drawLayoutBorders(s.a, lx, ly, w1, lh, merged_screen, active_bound, border_fg, active_border_fg);
@@ -404,13 +386,8 @@ pub const Display = struct {
                             if (x >= merged_screen.grid.width) break;
                             const is_active = isBorderActiveAt(x, border_y, false, active_bound);
                             const border_col = if (is_active) active_border_fg else border_fg;
-                            var cell = &merged_screen.grid.getLineMut(border_y).cells.items[x];
-                            if (cell.char == 0x2502) {
-                                cell.char = 0x253C; // '┼'
-                            } else {
-                                cell.char = 0x2500; // '─'
-                            }
-                            cell.fg = border_col;
+                            const cell = &merged_screen.grid.getLineMut(border_y).cells.items[x];
+                            paintBorderCell(cell, 0x2502, 0x2500, border_col);
                         }
                     }
                     try drawLayoutBorders(s.a, lx, ly, lw, h1, merged_screen, active_bound, border_fg, active_border_fg);
@@ -418,6 +395,32 @@ pub const Display = struct {
                 }
             },
         }
+    }
+
+    /// Resolve a display row to its backing cell list, honoring copy-mode
+    /// scroll. Shared by the merge stage and the single-pane content path so
+    /// the history/visible mapping cannot drift between them (bug #477).
+    fn resolveRowCells(screen: *const Screen, y: usize) ?*const std.ArrayList(Cell) {
+        const hist_len = screen.grid.historyLen();
+        const scroll: isize = @intCast(if (screen.copy_mode) |cm| cm.scroll_offset else 0);
+        const combined_idx = @as(isize, @intCast(hist_len)) - scroll + @as(isize, @intCast(y));
+        if (combined_idx < 0) return null;
+        if (combined_idx < hist_len) return &screen.grid.getHistoryLine(@as(usize, @intCast(combined_idx))).cells;
+        const visible_y = combined_idx - @as(isize, @intCast(hist_len));
+        if (visible_y < screen.grid.height) return &screen.grid.getLine(@intCast(visible_y)).cells;
+        return null;
+    }
+
+    /// Paint one border cell: merge with a perpendicular line into a cross,
+    /// otherwise draw our own line glyph. Shared by both border arms so the
+    /// merge rule cannot drift between them (bug #477).
+    fn paintBorderCell(cell: *Cell, cross_glyph: u21, line_glyph: u21, fg: Colour) void {
+        if (cell.char == cross_glyph) {
+            cell.char = 0x253C; // '┼'
+        } else {
+            cell.char = line_glyph;
+        }
+        cell.fg = fg;
     }
 
     fn isBorderActiveAt(bx: u32, by: u32, is_vertical: bool, active_bound: ?PaneBounds) bool {
@@ -470,19 +473,7 @@ pub const Display = struct {
         try self.writeBytes("\x1b[m");
 
         for (0..h) |y| {
-            const hist_len = screen.grid.historyLen();
-            const combined_idx = (@as(isize, @intCast(hist_len)) - @as(isize, @intCast(if (screen.copy_mode) |cm| cm.scroll_offset else 0))) + @as(isize, @intCast(y));
-            const cells = if (combined_idx < 0)
-                @as(?*const std.ArrayList(Cell), null)
-            else if (combined_idx < hist_len)
-                &screen.grid.getHistoryLine(@as(usize, @intCast(combined_idx))).cells
-            else blk: {
-                const visible_y = combined_idx - @as(isize, @intCast(hist_len));
-                break :blk if (visible_y < screen.grid.height)
-                    &screen.grid.getLine(@intCast(visible_y)).cells
-                else
-                    @as(?*const std.ArrayList(Cell), null);
-            };
+            const cells = resolveRowCells(screen, y);
 
             // Track the terminal cursor column within this row.
             // We start as not anchored and only issue a moveTo when we actually write a changed cell.

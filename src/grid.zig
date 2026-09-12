@@ -54,6 +54,12 @@ pub const Cell = packed struct(u128) {
 
 pub const GridLine = struct {
     cells: std.ArrayList(Cell) = .empty,
+    /// Line-granularity mutation flag. Preserved through scroll/clone/compact
+    /// paths with tested copy semantics (see isDirty/clearDirty tests). The
+    /// renderer currently keys off pane-level dirt plus the last_cells diff,
+    /// so no production code reads this yet — it is retained (not removed) as
+    /// the hook for a future merge-stage line skip, which needs scroll-aware
+    /// mapping to be correct (bug #477).
     dirty: bool = true,
     /// True when this line is a soft-wrap continuation from the previous line.
     /// Used by reflow to reconstruct logical lines.

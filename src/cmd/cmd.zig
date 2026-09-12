@@ -650,7 +650,7 @@ fn cmdClockMode(server: *Server, args: []const []const u8) CmdResult {
     pane.screen.clock_mode = true;
     pane.screen.clock_utc = utc;
     const clock = @import("../clock.zig");
-    clock.renderClock(&pane.screen.grid, pane.screen.grid.width, pane.screen.grid.height, utc);
+    clock.renderClock(&pane.screen.grid, pane.screen.grid.height, utc);
     pane.dirty = true;
     return .ok;
 }
@@ -688,17 +688,14 @@ fn cmdCopyMode(server: *Server, args: []const []const u8) CmdResult {
     return .ok;
 }
 
-fn indexOfIgnoreCase(haystack: []const u8, needle: []const u8) ?usize {
-    return std.ascii.indexOfIgnoreCase(haystack, needle);
-}
-
 fn cmdFindWindow(server: *Server, args: []const []const u8) CmdResult {
     if (args.len < 2) return .err;
     const query = args[1];
     const session = server.activeSession() orelse return .err;
 
     for (session.windows.items) |w| {
-        if (indexOfIgnoreCase(w.name, query) != null) {
+        // Single use; call stdlib directly (bug #477: removed one-line wrapper).
+        if (std.ascii.indexOfIgnoreCase(w.name, query) != null) {
             session.setActiveWindow(w);
             return .ok;
         }
@@ -819,16 +816,47 @@ fn cmdListCommands(server: *Server, _: []const []const u8) CmdResult {
     return .ok;
 }
 
+/// Shared help-text emitters used by both cmdHelp (server response buffer)
+/// and formatHelp (owned string); keeps the two outputs identical (bug #477).
+fn appendEntrySummary(out: *std.ArrayList(u8), allocator: std.mem.Allocator, entry: *const CmdEntry) !void {
+    var line_buf: [256]u8 = undefined;
+    const line = if (entry.args_usage.len > 0)
+        try std.fmt.bufPrint(&line_buf, "  {s}  {s}\n", .{ entry.name, entry.args_usage })
+    else
+        try std.fmt.bufPrint(&line_buf, "  {s}\n", .{entry.name});
+    try out.appendSlice(allocator, line);
+}
+
+fn appendEntryDetail(out: *std.ArrayList(u8), allocator: std.mem.Allocator, entry: *const CmdEntry) !void {
+    var line_buf: [512]u8 = undefined;
+    var line = try std.fmt.bufPrint(&line_buf, "  Name:    {s}\n", .{entry.name});
+    try out.appendSlice(allocator, line);
+
+    if (entry.alias) |a| {
+        line = try std.fmt.bufPrint(&line_buf, "  Alias:   {s}\n", .{a});
+        try out.appendSlice(allocator, line);
+    }
+
+    line = try std.fmt.bufPrint(&line_buf, "  Usage:   szn {s}", .{entry.name});
+    try out.appendSlice(allocator, line);
+    if (entry.args_usage.len > 0) {
+        line = try std.fmt.bufPrint(&line_buf, " {s}", .{entry.args_usage});
+        try out.appendSlice(allocator, line);
+    }
+    try out.appendSlice(allocator, "\n");
+
+    if (entry.description.len > 0) {
+        line = try std.fmt.bufPrint(&line_buf, "  Details: {s}\n", .{entry.description});
+        try out.appendSlice(allocator, line);
+    }
+
+    try out.appendSlice(allocator, "\n");
+}
+
 fn cmdHelp(server: *Server, args: []const []const u8) CmdResult {
     if (args.len < 2) {
-        const table = cmdTable();
-        for (table) |entry| {
-            var buf: [256]u8 = undefined;
-            const line = if (entry.args_usage.len > 0)
-                std.fmt.bufPrint(&buf, "  {s}  {s}\n", .{ entry.name, entry.args_usage }) catch return .err
-            else
-                std.fmt.bufPrint(&buf, "  {s}\n", .{entry.name}) catch return .err;
-            server.response_buf.appendSlice(server.allocator, line) catch return .err;
+        for (cmdTable()) |entry| {
+            appendEntrySummary(&server.response_buf, server.allocator, entry) catch return .err;
         }
         const footer = "\nUse `szn help <command>` for details on a specific command.\n";
         server.response_buf.appendSlice(server.allocator, footer) catch return .err;
@@ -843,31 +871,7 @@ fn cmdHelp(server: *Server, args: []const []const u8) CmdResult {
         return .err;
     };
 
-    var buf: [512]u8 = undefined;
-    const lf = "\n";
-
-    var line = std.fmt.bufPrint(&buf, "  Name:    {s}\n", .{entry.name}) catch return .err;
-    server.response_buf.appendSlice(server.allocator, line) catch return .err;
-
-    if (entry.alias) |a| {
-        line = std.fmt.bufPrint(&buf, "  Alias:   {s}\n", .{a}) catch return .err;
-        server.response_buf.appendSlice(server.allocator, line) catch return .err;
-    }
-
-    line = std.fmt.bufPrint(&buf, "  Usage:   szn {s}", .{entry.name}) catch return .err;
-    server.response_buf.appendSlice(server.allocator, line) catch return .err;
-    if (entry.args_usage.len > 0) {
-        line = std.fmt.bufPrint(&buf, " {s}", .{entry.args_usage}) catch return .err;
-        server.response_buf.appendSlice(server.allocator, line) catch return .err;
-    }
-    server.response_buf.appendSlice(server.allocator, lf) catch return .err;
-
-    if (entry.description.len > 0) {
-        line = std.fmt.bufPrint(&buf, "  Details: {s}\n", .{entry.description}) catch return .err;
-        server.response_buf.appendSlice(server.allocator, line) catch return .err;
-    }
-
-    server.response_buf.appendSlice(server.allocator, lf) catch return .err;
+    appendEntryDetail(&server.response_buf, server.allocator, entry) catch return .err;
     return .ok;
 }
 
@@ -1731,37 +1735,10 @@ pub fn formatHelp(allocator: std.mem.Allocator, command_name: ?[]const u8) Parse
             return try buf.toOwnedSlice(allocator);
         };
 
-        var line_buf: [512]u8 = undefined;
-        var line = try std.fmt.bufPrint(&line_buf, "  Name:    {s}\n", .{entry.name});
-        try buf.appendSlice(allocator, line);
-
-        if (entry.alias) |a| {
-            line = try std.fmt.bufPrint(&line_buf, "  Alias:   {s}\n", .{a});
-            try buf.appendSlice(allocator, line);
-        }
-
-        line = try std.fmt.bufPrint(&line_buf, "  Usage:   szn {s}", .{entry.name});
-        try buf.appendSlice(allocator, line);
-        if (entry.args_usage.len > 0) {
-            line = try std.fmt.bufPrint(&line_buf, " {s}", .{entry.args_usage});
-            try buf.appendSlice(allocator, line);
-        }
-        try buf.appendSlice(allocator, "\n");
-
-        if (entry.description.len > 0) {
-            line = try std.fmt.bufPrint(&line_buf, "  Details: {s}\n", .{entry.description});
-            try buf.appendSlice(allocator, line);
-        }
-        try buf.appendSlice(allocator, "\n");
+        try appendEntryDetail(&buf, allocator, entry);
     } else {
-        const table = cmdTable();
-        for (table) |entry| {
-            var line_buf: [256]u8 = undefined;
-            const line = if (entry.args_usage.len > 0)
-                try std.fmt.bufPrint(&line_buf, "  {s}  {s}\n", .{ entry.name, entry.args_usage })
-            else
-                try std.fmt.bufPrint(&line_buf, "  {s}\n", .{entry.name});
-            try buf.appendSlice(allocator, line);
+        for (cmdTable()) |entry| {
+            try appendEntrySummary(&buf, allocator, entry);
         }
         try buf.appendSlice(allocator, "\nUse `szn help <command>` for details on a specific command.\n");
     }

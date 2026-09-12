@@ -456,14 +456,8 @@ pub const Screen = struct {
     /// Returns true if the sixel image with the given absolute ID is referenced
     /// by any cell.  Uses the per-slot refcount for O(1) lookup (bug #225).
     pub fn isImageReferenced(self: *const Screen, id: u32) bool {
-        for (self.sixel_images, 0..) |opt_img, idx| {
-            if (opt_img) |img| {
-                if ((img.id & 0x1FFFFF) == (id & 0x1FFFFF)) {
-                    return self.sixel_refcounts[idx] > 0;
-                }
-            }
-        }
-        return false;
+        const idx = self.findSixelImageSlot(id) orelse return false;
+        return self.sixel_refcounts[idx] > 0;
     }
 
     /// Returns true if any sixel image is registered or pending.
@@ -477,14 +471,8 @@ pub const Screen = struct {
 
     /// Finds a sixel image in the registry by its absolute ID.
     pub fn findSixelImage(self: *const Screen, image_id: u32) ?SixelImage {
-        for (self.sixel_images) |opt_img| {
-            if (opt_img) |img| {
-                if ((img.id & 0x1FFFFF) == (image_id & 0x1FFFFF)) {
-                    return img;
-                }
-            }
-        }
-        return null;
+        const idx = self.findSixelImageSlot(image_id) orelse return null;
+        return self.sixel_images[idx];
     }
 
     /// Finds the slot index of a sixel image in the registry by its absolute ID.
