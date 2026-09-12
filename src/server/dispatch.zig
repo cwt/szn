@@ -56,7 +56,7 @@ pub fn dispatchCommand(allocator: std.mem.Allocator, server: *Server, cmd_line: 
         server.dirty = true;
         server.status_dirty = true;
     }
-    return switch (result) {
+    var dispatched: DispatchResult = switch (result) {
         .ok => blk: {
             const has_buf = server.response_buf.items.len > 0;
             const duped: ?[]const u8 = if (has_buf)
@@ -95,11 +95,32 @@ pub fn dispatchCommand(allocator: std.mem.Allocator, server: *Server, cmd_line: 
             .is_owned = false,
         },
     };
+    // The client drops any frame past MAX_PACKET_SIZE and exits (bug #375).
+    // Never emit one: a pathological capture (e.g. a 4096-wide CJK grid)
+    // becomes an honest error instead of a client kill (bug #475).
+    if (resultExceedsPacketCap(dispatched.data.len)) {
+        std.log.warn("command response too large ({d} bytes), returning error", .{dispatched.data.len});
+        dispatched.deinit();
+        return .{
+            .response_type = .err,
+            .data = "response too large",
+            .allocator = allocator,
+            .is_owned = false,
+        };
+    }
+    return dispatched;
 }
 
 const c_usleep = struct {
     extern "c" fn usleep(usec: c_uint) c_int;
 }.usleep;
+
+/// True when a command response body would not fit in one wire packet
+/// (5-byte header + body must satisfy validPacketLength). Oversized results
+/// are converted to errors before send (bug #475).
+pub fn resultExceedsPacketCap(data_len: usize) bool {
+    return data_len + 5 > protocol.MAX_PACKET_SIZE;
+}
 
 /// Advance a pending-write slice by a write(2) byte count. A count beyond
 /// the slice is a short-count anomaly: report WriteFailed instead of slicing
@@ -157,6 +178,13 @@ pub fn sendResponse(fd: i32, result: *const DispatchResult) Error!void {
             body_remaining = try advanceWritten(body_remaining, n);
         }
     }
+}
+
+test "resultExceedsPacketCap matches validPacketLength — bug #475" {
+    try testing.expect(!resultExceedsPacketCap(0));
+    try testing.expect(!resultExceedsPacketCap(protocol.MAX_PACKET_SIZE - 5));
+    try testing.expect(resultExceedsPacketCap(protocol.MAX_PACKET_SIZE - 4));
+    try testing.expect(resultExceedsPacketCap(protocol.MAX_PACKET_SIZE));
 }
 
 test "advanceWritten clamps short-count anomalies — bug #472" {
