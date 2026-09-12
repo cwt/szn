@@ -1828,7 +1828,10 @@ pub fn parse(input: []const u8, allocator: std.mem.Allocator) !CmdArgs {
         }
 
         const token = try token_buf.toOwnedSlice(allocator);
-        try arg_list.append(allocator, token);
+        arg_list.append(allocator, token) catch |err| {
+            allocator.free(token);
+            return err;
+        };
     }
 
     const name = if (arg_list.items.len > 0) arg_list.items[0] else "";
@@ -1922,6 +1925,21 @@ test "parse missing args fails" {
 
 test "parse too many args fails" {
     try testing.expectError(error.TooManyArgs, parse("new-session a b c", testing.allocator));
+}
+
+test "parse OOM never leaks partial tokens — bug #458" {
+    // Sweep every allocation point: each failure must return OOM without
+    // leaking (backed by testing.allocator, which trips on leaks).
+    var fail_index: usize = 0;
+    while (fail_index < 32) : (fail_index += 1) {
+        var failing = std.testing.FailingAllocator.init(testing.allocator, .{ .fail_index = fail_index });
+        if (parse("display-message my session args here", failing.allocator())) |res| {
+            var r = res;
+            r.deinit(failing.allocator());
+        } else |err| {
+            try testing.expectEqual(error.OutOfMemory, err);
+        }
+    }
 }
 
 test "cmd table all entries have names" {
