@@ -1,8 +1,12 @@
 ---
 type: index
 title: "szn Documentation Bundle"
-description: "OKF v0.1 knowledge bundle root for the szn project."
-timestamp: 2026-07-30T00:00:00Z
+description: "OKF v0.2 knowledge bundle root for the szn project."
+status: stable
+sources:
+  - docs/
+verified: human-reviewed
+timestamp: 2026-09-04T09:18:00Z
 ---
 
 # szn Docs
@@ -13,7 +17,7 @@ timestamp: 2026-07-30T00:00:00Z
 - [IPC Protocol](ipc-protocol.md)
 - [Build, Run, and Test](build-run.md)
 - [Concepts Glossary](concepts.md)
-- [Text Reflow](TEXT_REFLOW.md)
+- [Text Reflow](text_reflow.md)
 
 ## Meta
 

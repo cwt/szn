@@ -64,7 +64,7 @@ Target Zig 0.16.0 (latest stable). Use `std.zig` style.
 
 ## Documentation
 
-- `docs/TEXT_REFLOW.md` — text reflow design and algorithms
+- `docs/text_reflow.md` — text reflow design and algorithms
 - `docs/development/` — migration plan, bug tracker, dev lessons
-- `PROGRESS.md` — implementation status tracker
+- `docs/development/progress.md` — implementation status tracker
 - `README.md` — project overview and usage

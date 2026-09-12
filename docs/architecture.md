@@ -2,6 +2,20 @@
 type: architecture_guideline
 title: "szn Architecture Overview"
 description: "How szn is structured: process model, server event loop, session/window/pane data model, rendering, input parsing, screen/grid, and command subsystem."
+status: stable
+sources:
+  - src/main.zig
+  - src/server/server.zig
+  - src/server/loop.zig
+  - src/session.zig
+  - src/window.zig
+  - src/screen.zig
+  - src/grid.zig
+  - src/input.zig
+  - src/cmd/mod.zig
+verified: human-reviewed
+stale_after: 2027-01-01T00:00:00Z
+tags: [architecture, overview, server, client, process-model]
 timestamp: 2026-08-30T16:20:00Z
 ---
 

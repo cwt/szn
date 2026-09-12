@@ -2,6 +2,14 @@
 type: api_spec
 title: "szn Client-Server IPC Protocol"
 description: "Wire format for the client/server packet protocol: 5-byte length-prefixed header, message types, framing, handshake, and socket addressing."
+status: stable
+sources:
+  - src/server/protocol.zig
+  - src/server/server.zig
+  - src/client/client.zig
+verified: human-reviewed
+stale_after: 2027-01-01T00:00:00Z
+tags: [ipc, protocol, networking, packet-format, api-spec]
 timestamp: 2026-08-30T16:20:00Z
 ---
 

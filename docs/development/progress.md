@@ -2,6 +2,13 @@
 type: project_priority
 title: "szn Functional Clone Progress"
 description: "Progress tracker toward a fully functional tmux clone."
+status: stable
+sources:
+  - src/
+  - build.zig.zon
+verified: human-reviewed
+stale_after: 2026-12-31T00:00:00Z
+tags: [progress, roadmap, parity, milestones]
 timestamp: 2026-08-31T00:00:00Z
 ---
 
