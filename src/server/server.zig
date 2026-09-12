@@ -2357,7 +2357,6 @@ pub const Server = struct {
             return;
         }
         const decoded = self.allocator.alloc(u8, decoded_len) catch return;
-        errdefer self.allocator.free(decoded);
         decoder.decode(decoded, base64) catch {
             self.allocator.free(decoded);
             return;
@@ -2367,11 +2366,8 @@ pub const Server = struct {
             self.allocator.free(decoded);
             return;
         };
-        errdefer self.allocator.free(name);
-        self.buffers.pushOwned(name, decoded) catch {
-            self.allocator.free(name);
-            self.allocator.free(decoded);
-        };
+        // pushOwned takes ownership and frees both slices on failure (bug #456).
+        self.buffers.pushOwned(name, decoded) catch return;
     }
 
     pub fn watchPanePty(self: *Server, pane: *Pane) ServerError!void {
