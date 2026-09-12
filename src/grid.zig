@@ -471,6 +471,7 @@ pub const Grid = struct {
 
     pub fn insertChars(self: *Grid, x: u32, y: u32, n: u32) void {
         if (y >= self.height) return;
+        if (self.width == 0) return;
         const num = @min(n, self.width -| x);
         if (num == 0) return;
         const line = self.getLineMut(y);
@@ -511,6 +512,7 @@ pub const Grid = struct {
     }
 
     pub fn clearArea(self: *Grid, sx: u32, sy: u32, ex: u32, ey: u32) void {
+        if (self.width == 0) return;
         var y = sy;
         while (y <= ey and y < self.height) : (y += 1) {
             const line = self.getLineMut(y);
@@ -2294,6 +2296,18 @@ test "Grid.resize height reduction scrolls excess top rows into history — bug 
     try testing.expectEqual(@as(u21, 'C'), grid.getCell(0, 0).char);
     try testing.expectEqual(@as(u21, 'D'), grid.getCell(0, 1).char);
     try testing.expectEqual(@as(u21, 'E'), grid.getCell(0, 2).char);
+}
+
+test "Grid char ops are safe on zero-width grids — bug #462" {
+    var grid = try Grid.init(testing.allocator, 10, 4);
+    defer grid.deinit();
+    grid.width = 0;
+    // None of these may wrap or panic; they are all no-ops.
+    grid.insertChars(0, 0, 3);
+    grid.deleteChars(0, 0, 3);
+    grid.eraseChars(0, 0, 3);
+    grid.clearArea(0, 0, 5, 3);
+    try testing.expectEqual(@as(u32, 0), grid.width);
 }
 
 test "Grid.initWithLimit frees partial lines when resize fails — bug #459" {

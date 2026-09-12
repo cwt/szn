@@ -698,6 +698,12 @@ pub const Screen = struct {
             return;
         }
         if (char == '\t') {
+            // A zero tab stop would trap on division; treat it as a no-op
+            // advance. A zero-width grid has no column to land on (bug #463).
+            if (self.tab_stop == 0 or self.grid.width == 0) {
+                self.dirty = true;
+                return;
+            }
             self.cursor.x = ((self.cursor.x / self.tab_stop) + 1) * self.tab_stop;
             if (self.cursor.x >= self.grid.width) {
                 self.cursor.x = self.grid.width - 1;
@@ -2041,6 +2047,21 @@ test "flushPendingSixel keeps pending sixel when cell size unknown — bug #454"
     screen.flushPendingSixel();
     try testing.expect(screen.pending_sixel != null);
     try testing.expect(screen.sixel_images[0] == null);
+}
+
+test "TAB is safe with zero tab stop or zero grid width — bug #463" {
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+
+    screen.tab_stop = 0;
+    screen.cursor.x = 5;
+    try screen.writeChar('\t');
+    try testing.expectEqual(@as(u32, 5), screen.cursor.x);
+
+    screen.tab_stop = 8;
+    screen.grid.width = 0;
+    try screen.writeChar('\t');
+    try testing.expectEqual(@as(u32, 5), screen.cursor.x);
 }
 
 test "cursor save and restore" {
