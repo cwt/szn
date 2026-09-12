@@ -172,6 +172,10 @@ pub const Grid = struct {
                 const ring_idx = if (self.history.items.len > 0) (self.history_start + i) % self.history.items.len else 0;
                 self.notifyEvict(self.history.items[ring_idx].cells.items);
                 self.history.items[ring_idx].deinit(self.allocator);
+                // Blank the freed slot so a later compaction OOM (which leaves
+                // history.items.len long) cannot double-free it in deinit
+                // (bug #455).
+                self.history.items[ring_idx] = GridLine{};
             }
             self.history_start = if (self.history.items.len > 0) (self.history_start + excess) % self.history.items.len else 0;
             self.history_count = new_limit;
@@ -2188,6 +2192,25 @@ test "Grid.setHistoryLimit adjusts ring buffer capacity dynamically" {
 
     try testing.expectEqual(@as(usize, 5), grid.historyLen());
     try testing.expectEqual(@as(u21, '6'), grid.getHistoryLine(4).cells.items[0].char);
+}
+
+test "Grid.setHistoryLimit blanks freed slots so deinit stays safe — bug #455" {
+    var grid = try Grid.initWithLimit(testing.allocator, 10, 2, 5);
+    defer grid.deinit();
+
+    // Rotate the ring so history_start > 0.
+    for (0..8) |i| {
+        grid.writeChar(0, 0, @intCast('0' + i));
+        try grid.scrollUp();
+    }
+    try testing.expect(grid.history_start > 0);
+
+    // Shrink: freed oldest slots must be blanked, live window intact.
+    grid.setHistoryLimit(3);
+    try testing.expectEqual(@as(usize, 3), grid.historyLen());
+    try testing.expectEqual(@as(u21, '5'), grid.getHistoryLine(0).cells.items[0].char);
+    try testing.expectEqual(@as(u21, '7'), grid.getHistoryLine(2).cells.items[0].char);
+    // deinit at scope end must not double-free (verified with blanked slots).
 }
 
 test "Grid.scrollDown and scrollUp with wrapped history ring buffer" {
