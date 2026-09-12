@@ -216,8 +216,9 @@ pub const Display = struct {
                     if (pane_has_sixels and cell.attr.sixel) {
                         const image_id = cell.char;
                         if (pb.pane.screen.findSixelImage(image_id)) |img| {
-                            const cell_rows = if (img.px_height > 0) (img.px_height + pb.pane.screen.cell_px_height - 1) / pb.pane.screen.cell_px_height else 1;
-                            const cell_cols = if (img.px_width > 0) (img.px_width + pb.pane.screen.cell_px_width - 1) / pb.pane.screen.cell_px_width else 1;
+                            // Saturating ceil-div, matching Screen.placeSixelImage (bug #464).
+                            const cell_rows = if (img.px_height > 0) (img.px_height +| pb.pane.screen.cell_px_height -| 1) / pb.pane.screen.cell_px_height else 1;
+                            const cell_cols = if (img.px_width > 0) (img.px_width +| pb.pane.screen.cell_px_width -| 1) / pb.pane.screen.cell_px_width else 1;
 
                             // Position derived from the image's stored anchor
                             // (bug #200), not per-cell comb offsets.
@@ -367,10 +368,9 @@ pub const Display = struct {
             .leaf => {},
             .split => |s| {
                 if (s.direction == .horizontal) {
-                    const available_w = lw -| 1;
-                    const split_w = @as(u32, @intFromFloat(@as(f64, @floatFromInt(available_w)) * s.proportion));
-                    const w1 = @max(1, split_w);
-                    const w2 = @max(1, available_w -| w1);
+                    const sizes = @import("../layout.zig").splitSizes(lw -| 1, s.proportion);
+                    const w1 = sizes.first;
+                    const w2 = sizes.second;
                     const border_x = lx + w1;
 
                     if (border_x < merged_screen.grid.width) {
@@ -391,10 +391,9 @@ pub const Display = struct {
                     try drawLayoutBorders(s.a, lx, ly, w1, lh, merged_screen, active_bound, border_fg, active_border_fg);
                     try drawLayoutBorders(s.b, lx + w1 + 1, ly, w2, lh, merged_screen, active_bound, border_fg, active_border_fg);
                 } else {
-                    const available_h = lh -| 1;
-                    const split_h = @as(u32, @intFromFloat(@as(f64, @floatFromInt(available_h)) * s.proportion));
-                    const h1 = @max(1, split_h);
-                    const h2 = @max(1, available_h -| h1);
+                    const sizes = @import("../layout.zig").splitSizes(lh -| 1, s.proportion);
+                    const h1 = sizes.first;
+                    const h2 = sizes.second;
                     const border_y = ly + h1;
 
                     if (border_y < merged_screen.grid.height) {

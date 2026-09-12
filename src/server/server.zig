@@ -2187,17 +2187,15 @@ pub const Server = struct {
             },
             .split => |s| {
                 if (s.direction == .horizontal) {
-                    const available_w = lw -| 1;
-                    const split_w = @as(u32, @intFromFloat(@as(f64, @floatFromInt(available_w)) * s.proportion));
-                    const w1 = @max(1, split_w);
-                    const w2 = @max(1, available_w -| w1);
+                    const sizes = layout.splitSizes(lw -| 1, s.proportion);
+                    const w1 = sizes.first;
+                    const w2 = sizes.second;
                     try self.collectPaneBounds(s.a, lx, ly, w1, lh, result);
                     try self.collectPaneBounds(s.b, lx + w1 + 1, ly, w2, lh, result);
                 } else {
-                    const available_h = lh -| 1;
-                    const split_h = @as(u32, @intFromFloat(@as(f64, @floatFromInt(available_h)) * s.proportion));
-                    const h1 = @max(1, split_h);
-                    const h2 = @max(1, available_h -| h1);
+                    const sizes = layout.splitSizes(lh -| 1, s.proportion);
+                    const h1 = sizes.first;
+                    const h2 = sizes.second;
                     try self.collectPaneBounds(s.a, lx, ly, lw, h1, result);
                     try self.collectPaneBounds(s.b, lx, ly + h1 + 1, lw, h2, result);
                 }
@@ -2293,10 +2291,9 @@ pub const Server = struct {
             },
             .split => |s| {
                 if (s.direction == .horizontal) {
-                    const available_w = lw -| 1;
-                    const split_w = @as(u32, @intFromFloat(@as(f64, @floatFromInt(available_w)) * s.proportion));
-                    const w1 = @max(1, split_w);
-                    const w2 = @max(1, available_w -| w1);
+                    const sizes = layout.splitSizes(lw -| 1, s.proportion);
+                    const w1 = sizes.first;
+                    const w2 = sizes.second;
                     if (x < lx + w1) {
                         return self.findPaneAtNode(s.a, x, y, lx, ly, w1, lh);
                     } else if (x == lx + w1) {
@@ -2305,10 +2302,9 @@ pub const Server = struct {
                         return self.findPaneAtNode(s.b, x, y, lx + w1 + 1, ly, w2, lh);
                     }
                 } else {
-                    const available_h = lh -| 1;
-                    const split_h = @as(u32, @intFromFloat(@as(f64, @floatFromInt(available_h)) * s.proportion));
-                    const h1 = @max(1, split_h);
-                    const h2 = @max(1, available_h -| h1);
+                    const sizes = layout.splitSizes(lh -| 1, s.proportion);
+                    const h1 = sizes.first;
+                    const h2 = sizes.second;
                     if (y < ly + h1) {
                         return self.findPaneAtNode(s.a, x, y, lx, ly, lw, h1);
                     } else if (y == ly + h1) {

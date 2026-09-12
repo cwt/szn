@@ -25,6 +25,36 @@ pub const Split = struct {
     b: *Node,
 };
 
+/// Child sizes for one split axis. `available` is the parent size minus the
+/// 1-cell border. Guarantees `first + 1 + second <= available + 1`, i.e. the
+/// children plus the border never exceed the parent (bugs #467, #468).
+pub const SplitSizes = struct { first: u32, second: u32 };
+
+/// Only (0,1) is a meaningful split proportion. Anything else (NaN, Inf,
+/// out of range) falls back to an even split (bugs #467, #468).
+pub fn sanitizeProportion(proportion: f64) f64 {
+    if (std.math.isFinite(proportion) and proportion > 0.0 and proportion < 1.0)
+        return proportion;
+    return 0.5;
+}
+
+pub fn splitSizes(available: u32, proportion: f64) SplitSizes {
+    // Sanitize: only (0,1) is meaningful, otherwise @intFromFloat below
+    // could trap on NaN/Inf/negative/huge values (bug #467).
+    const p = sanitizeProportion(proportion);
+    if (available < 2) {
+        // Degenerate: no room for two panes plus a border (bug #468). The
+        // first child keeps the space; the second collapses to zero rather
+        // than overflowing the parent.
+        return .{ .first = available, .second = 0 };
+    }
+    // 0 < p < 1 and available >= 2, so the product is finite and strictly
+    // below available: @intFromFloat cannot trap.
+    const split = @as(u32, @intFromFloat(@as(f64, @floatFromInt(available)) * p));
+    const first = std.math.clamp(split, 1, available - 1);
+    return .{ .first = first, .second = available - first };
+}
+
 pub const Layout = struct {
     allocator: std.mem.Allocator,
     root: *Node,
@@ -98,18 +128,19 @@ pub const Layout = struct {
         var child_w2 = parent_w;
         var child_h2 = parent_h;
 
+        // Store the sanitized proportion so every later recompute of this
+        // split sees a valid value (bugs #467, #468).
+        const prop = sanitizeProportion(proportion);
         if (direction == .horizontal) {
             if (parent_w < 3) return error.PaneTooSmall;
-            const available_w = parent_w - 1;
-            const split_w = @as(u32, @intFromFloat(@as(f64, @floatFromInt(available_w)) * proportion));
-            child_w1 = std.math.clamp(split_w, 1, available_w - 1);
-            child_w2 = available_w - child_w1;
+            const sizes = splitSizes(parent_w - 1, prop);
+            child_w1 = sizes.first;
+            child_w2 = sizes.second;
         } else {
             if (parent_h < 3) return error.PaneTooSmall;
-            const available_h = parent_h - 1;
-            const split_h = @as(u32, @intFromFloat(@as(f64, @floatFromInt(available_h)) * proportion));
-            child_h1 = std.math.clamp(split_h, 1, available_h - 1);
-            child_h2 = available_h - child_h1;
+            const sizes = splitSizes(parent_h - 1, prop);
+            child_h1 = sizes.first;
+            child_h2 = sizes.second;
         }
 
         const new_pane = try a.create(Pane);
@@ -139,7 +170,7 @@ pub const Layout = struct {
         b_node.* = Node{ .leaf = new_pane };
         split.* = Split{
             .direction = direction,
-            .proportion = proportion,
+            .proportion = prop,
             .a = a_node,
             .b = b_node,
         };
@@ -234,17 +265,15 @@ pub const Layout = struct {
             },
             .split => |s| {
                 if (s.direction == .horizontal) {
-                    const available_w = lw -| 1;
-                    const split_w = @as(u32, @intFromFloat(@as(f64, @floatFromInt(available_w)) * s.proportion));
-                    const w1 = @max(1, split_w);
-                    const w2 = @max(1, available_w -| w1);
+                    const sizes = splitSizes(lw -| 1, s.proportion);
+                    const w1 = sizes.first;
+                    const w2 = sizes.second;
                     if (findNodeBounds(s.a, target, lx, ly, w1, lh)) |b| return b;
                     if (findNodeBounds(s.b, target, lx + w1 + 1, ly, w2, lh)) |b| return b;
                 } else {
-                    const available_h = lh -| 1;
-                    const split_h = @as(u32, @intFromFloat(@as(f64, @floatFromInt(available_h)) * s.proportion));
-                    const h1 = @max(1, split_h);
-                    const h2 = @max(1, available_h -| h1);
+                    const sizes = splitSizes(lh -| 1, s.proportion);
+                    const h1 = sizes.first;
+                    const h2 = sizes.second;
                     if (findNodeBounds(s.a, target, lx, ly, lw, h1)) |b| return b;
                     if (findNodeBounds(s.b, target, lx, ly + h1 + 1, lw, h2)) |b| return b;
                 }
@@ -373,6 +402,54 @@ test "split proportions are correct" {
     _ = try layout.splitPane(testing.allocator, pane1, .horizontal, 0.75);
 
     try testing.expectEqual(@as(usize, 2), layout.countLeaves());
+}
+
+test "splitSizes sanitizes hostile proportions — bug #467" {
+    // Valid proportions partition exactly: first + 1 + second == available + 1.
+    const even = splitSizes(79, 0.5);
+    try testing.expectEqual(@as(u32, 39), even.first);
+    try testing.expectEqual(@as(u32, 40), even.second);
+
+    // Hostile values must not trap in @intFromFloat; they fall back to 0.5.
+    const hostile = [_]f64{ std.math.nan(f64), std.math.inf(f64), -std.math.inf(f64), -0.5, 0.0, 1.0, 2.0, 1e300 };
+    for (hostile) |p| {
+        const s = splitSizes(79, p);
+        try testing.expectEqual(@as(u32, 39), s.first);
+        try testing.expectEqual(@as(u32, 40), s.second);
+    }
+}
+
+test "splitSizes never exceeds the parent on tiny sizes — bug #468" {
+    // available < 2: first keeps the space, second collapses, total fits.
+    const tiny0 = splitSizes(0, 0.5);
+    try testing.expectEqual(@as(u32, 0), tiny0.first);
+    try testing.expectEqual(@as(u32, 0), tiny0.second);
+    const tiny1 = splitSizes(1, 0.5);
+    try testing.expectEqual(@as(u32, 1), tiny1.first);
+    try testing.expectEqual(@as(u32, 0), tiny1.second);
+
+    // Normal sizes: children plus the 1-cell border exactly fill the parent.
+    var available: u32 = 2;
+    while (available < 200) : (available += 1) {
+        const s = splitSizes(available, 0.3);
+        try testing.expect(s.first >= 1);
+        try testing.expect(s.second >= 1);
+        try testing.expectEqual(available + 1, s.first + 1 + s.second);
+    }
+}
+
+test "splitPane sanitizes hostile proportion instead of panicking — bug #467" {
+    const pane1 = try createTestPane(testing.allocator, 0);
+
+    var layout = try Layout.init(testing.allocator, pane1, 80, 24);
+    defer layout.deinit();
+
+    const pane2 = try layout.splitPane(testing.allocator, pane1, .horizontal, std.math.nan(f64));
+    try testing.expectEqual(@as(usize, 2), layout.countLeaves());
+    // Stored proportion is the sanitized 0.5, so every recompute is safe.
+    const s = layout.root.split;
+    try testing.expectEqual(@as(f64, 0.5), s.proportion);
+    _ = pane2;
 }
 
 test "close pane collapses parent split" {
