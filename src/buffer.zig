@@ -38,6 +38,10 @@ pub const BufferList = struct {
 
     pub fn pushOwned(self: *BufferList, name: []const u8, data: []const u8) !void {
         self.evictOldestIfFull();
+        errdefer {
+            self.allocator.free(name);
+            self.allocator.free(data);
+        }
         try self.items.insert(self.allocator, 0, .{ .name = name, .data = data });
     }
 
@@ -184,6 +188,20 @@ test "buffer list evicts oldest past max_buffers — bug #363" {
     try testing.expect(bl.get("buf2") != null);
     try testing.expect(bl.get("buf1") == null);
     try testing.expect(bl.get("buf0") == null);
+}
+
+test "pushOwned frees name and data when insert fails — bug #456" {
+    var failing = std.testing.FailingAllocator.init(testing.allocator, .{ .fail_index = 0 });
+    var bl = BufferList.init(failing.allocator());
+    defer bl.deinit();
+
+    const name = try testing.allocator.dupe(u8, "b0");
+    const data = try testing.allocator.dupe(u8, "payload");
+    // Insert must fail (backing alloc denied); both slices must be freed
+    // via the list allocator (forwarded to testing.allocator) — a leak
+    // here trips the test allocator's leak detection.
+    try testing.expectError(error.OutOfMemory, bl.pushOwned(name, data));
+    try testing.expectEqual(@as(usize, 0), bl.items.items.len);
 }
 
 test "BufferList.delete preserves recency order — bug #410" {
