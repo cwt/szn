@@ -103,6 +103,10 @@ pub const Grid = struct {
             .start_index = 0,
         };
         try grid.lines.ensureTotalCapacity(allocator, height);
+        errdefer {
+            for (grid.lines.items) |*line| line.deinit(allocator);
+            grid.lines.deinit(allocator);
+        }
         try grid.resize(height);
         return grid;
     }
@@ -2290,4 +2294,19 @@ test "Grid.resize height reduction scrolls excess top rows into history — bug 
     try testing.expectEqual(@as(u21, 'C'), grid.getCell(0, 0).char);
     try testing.expectEqual(@as(u21, 'D'), grid.getCell(0, 1).char);
     try testing.expectEqual(@as(u21, 'E'), grid.getCell(0, 2).char);
+}
+
+test "Grid.initWithLimit frees partial lines when resize fails — bug #459" {
+    // Sweep every allocation point: failures must not leak (backed by
+    // testing.allocator, which trips on leaks). Successes are deinited.
+    var fail_index: usize = 0;
+    while (fail_index < 16) : (fail_index += 1) {
+        var failing = std.testing.FailingAllocator.init(testing.allocator, .{ .fail_index = fail_index });
+        if (Grid.initWithLimit(failing.allocator(), 10, 4, 5)) |grid| {
+            var g = grid;
+            g.deinit();
+        } else |err| {
+            try testing.expectEqual(error.OutOfMemory, err);
+        }
+    }
 }
