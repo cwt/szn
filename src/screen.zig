@@ -353,8 +353,22 @@ pub const Screen = struct {
             self.sixel_refcounts[slot] = 0;
         }
 
-        const cell_rows = if (px_height > 0) (px_height + self.cell_px_height - 1) / self.cell_px_height else 1;
-        const cell_cols = if (px_width > 0) (px_width + self.cell_px_width - 1) / self.cell_px_width else 1;
+        // Saturating ceil-div: absurd wire dimensions must not wrap small and
+        // defeat the fully-contained drop below (bug #464).
+        const cell_rows = if (px_height > 0) (px_height +| self.cell_px_height -| 1) / self.cell_px_height else 1;
+        const cell_cols = if (px_width > 0) (px_width +| self.cell_px_width -| 1) / self.cell_px_width else 1;
+
+        // Fully-contained rule (see addSixelImage): an image larger than the
+        // pane can never be drawn. Drop it here too — the replay path
+        // (flushPendingSixel) bypasses the early drop, and without this the
+        // marker loop below would scroll the grid cell_rows times (bug #464).
+        if (cell_rows > self.grid.height or cell_cols > self.grid.width) {
+            std.log.debug("dropping oversized sixel placement: {d}x{d} cells", .{ cell_cols, cell_rows });
+            self.allocator.free(dcs_bytes);
+            self.sixel_images[slot] = null;
+            self.sixel_refcounts[slot] = 0;
+            return;
+        }
 
         // Place marker cells row by row, scrolling the grid up as needed so that
         // *every* row of the image gets a complete set of marker cells even when
@@ -2062,6 +2076,24 @@ test "TAB is safe with zero tab stop or zero grid width — bug #463" {
     screen.grid.width = 0;
     try screen.writeChar('\t');
     try testing.expectEqual(@as(u32, 5), screen.cursor.x);
+}
+
+test "placeSixelImage drops absurd wire dimensions instead of wrapping — bug #464" {
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+    screen.cell_size_known = true;
+    screen.cell_px_width = 10;
+    screen.cell_px_height = 20;
+
+    const dcs = try testing.allocator.dupe(u8, "\x1bPqHUGE\x1b\\");
+    screen.cursor.x = 0;
+    screen.cursor.y = 0;
+    // maxInt(u32) pixels would wrap to a small footprint with wrapping
+    // arithmetic; it must be dropped without scrolling the grid.
+    try screen.addSixelImage(dcs, std.math.maxInt(u32), std.math.maxInt(u32));
+    try testing.expect(screen.sixel_images[0] == null);
+    try testing.expect(!screen.grid.getCell(0, 0).attr.sixel);
+    try testing.expectEqual(@as(usize, 0), screen.grid.historyLen());
 }
 
 test "cursor save and restore" {
