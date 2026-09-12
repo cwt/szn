@@ -101,6 +101,16 @@ const c_usleep = struct {
     extern "c" fn usleep(usec: c_uint) c_int;
 }.usleep;
 
+/// Advance a pending-write slice by a write(2) byte count. A count beyond
+/// the slice is a short-count anomaly: report WriteFailed instead of slicing
+/// out of bounds (bug #472).
+fn advanceWritten(remaining: []const u8, n: isize) Error![]const u8 {
+    if (n <= 0) return error.WriteFailed;
+    const written: usize = @intCast(n);
+    if (written > remaining.len) return error.WriteFailed;
+    return remaining[written..];
+}
+
 pub fn sendResponse(fd: i32, result: *const DispatchResult) Error!void {
     const pkt = Packet.make(result.response_type, result.data);
     var hdr_buf: [5]u8 = undefined;
@@ -123,7 +133,7 @@ pub fn sendResponse(fd: i32, result: *const DispatchResult) Error!void {
             return error.WriteFailed;
         }
         if (n == 0) return error.ConnectionClosed;
-        hdr_remaining = hdr_remaining[@intCast(n)..];
+        hdr_remaining = try advanceWritten(hdr_remaining, n);
     }
 
     // Write data body — retry partial writes up to bounded attempts
@@ -144,9 +154,19 @@ pub fn sendResponse(fd: i32, result: *const DispatchResult) Error!void {
                 return error.WriteFailed;
             }
             if (n == 0) return error.ConnectionClosed;
-            body_remaining = body_remaining[@intCast(n)..];
+            body_remaining = try advanceWritten(body_remaining, n);
         }
     }
+}
+
+test "advanceWritten clamps short-count anomalies — bug #472" {
+    const rest = try advanceWritten("hello", 2);
+    try testing.expectEqualStrings("llo", rest);
+    const empty = try advanceWritten("hi", 2);
+    try testing.expectEqual(@as(usize, 0), empty.len);
+    try testing.expectError(error.WriteFailed, advanceWritten("hi", 3));
+    try testing.expectError(error.WriteFailed, advanceWritten("hi", 0));
+    try testing.expectError(error.WriteFailed, advanceWritten("hi", -1));
 }
 
 test "dispatch new-session" {
