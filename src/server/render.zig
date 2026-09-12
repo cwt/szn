@@ -221,9 +221,11 @@ pub const Display = struct {
                             const cell_cols = if (img.px_width > 0) (img.px_width +| pb.pane.screen.cell_px_width -| 1) / pb.pane.screen.cell_px_width else 1;
 
                             // Position derived from the image's stored anchor
-                            // (bug #200), not per-cell comb offsets.
-                            const img_pane_col = @as(i32, @intCast(img.anchor_col));
-                            const img_pane_row = @as(i32, @intCast(img.anchor_row));
+                            // (bug #200), not per-cell comb offsets. i64
+                            // geometry: narrowing u32 dims to i32 would trap
+                            // past INT32_MAX (bug #473).
+                            const img_pane_col: i64 = @intCast(img.anchor_col);
+                            const img_pane_row: i64 = img.anchor_row;
 
                             // Mark the cell as sixel only when the image is
                             // *fully contained* in this pane, matching the
@@ -233,9 +235,9 @@ pub const Display = struct {
                             // overlay, or blank cells without sixel — which
                             // appears as a "tail" / ghost on screen (bug #202).
                             const contained_img = img_pane_col >= 0 and
-                                img_pane_col + @as(i32, @intCast(cell_cols)) <= @as(i32, @intCast(pb.w)) and
+                                img_pane_col + @as(i64, cell_cols) <= @as(i64, pb.w) and
                                 img_pane_row >= 0 and
-                                img_pane_row + @as(i32, @intCast(cell_rows)) <= @as(i32, @intCast(pb.h));
+                                img_pane_row + @as(i64, cell_rows) <= @as(i64, pb.h);
 
                             if (!contained_img) {
                                 cell.attr.sixel = false;
@@ -763,21 +765,24 @@ pub const Display = struct {
             // cleared/scrolled past them, so they must be erased, not redrawn.
             if (screen.sixel_refcounts[slot] == 0) continue;
 
-            const cell_rows = if (img.px_height > 0) (img.px_height + screen.cell_px_height - 1) / screen.cell_px_height else 1;
-            const cell_cols = if (img.px_width > 0) (img.px_width + screen.cell_px_width - 1) / screen.cell_px_width else 1;
+            // Saturating ceil-div, matching Screen.placeSixelImage (bug #464).
+            const cell_rows = if (img.px_height > 0) (img.px_height +| screen.cell_px_height -| 1) / screen.cell_px_height else 1;
+            const cell_cols = if (img.px_width > 0) (img.px_width +| screen.cell_px_width -| 1) / screen.cell_px_width else 1;
 
-            const img_pane_col = @as(i32, @intCast(img.anchor_col));
-            const img_pane_row = @as(i32, @intCast(img.anchor_row));
+            // i64 geometry: narrowing u32 dims to i32 would trap past
+            // INT32_MAX (bug #473).
+            const img_pane_col: i64 = @intCast(img.anchor_col);
+            const img_pane_row: i64 = img.anchor_row;
 
-            const pane_left = @as(i32, @intCast(pb.x));
-            const pane_top = @as(i32, @intCast(pb.y));
-            const pane_right = pane_left + @as(i32, @intCast(pane_w));
-            const pane_bottom = pane_top + @as(i32, @intCast(pane_h));
+            const pane_left: i64 = @intCast(pb.x);
+            const pane_top: i64 = @intCast(pb.y);
+            const pane_right = pane_left + @as(i64, pane_w);
+            const pane_bottom = pane_top + @as(i64, pane_h);
 
             const img_left = pane_left + img_pane_col;
             const img_top = pane_top + img_pane_row;
-            const img_right = img_left + @as(i32, @intCast(cell_cols));
-            const img_bottom = img_top + @as(i32, @intCast(cell_rows));
+            const img_right = img_left + @as(i64, cell_cols);
+            const img_bottom = img_top + @as(i64, cell_rows);
 
             const contained = img_left >= pane_left and
                 img_right <= pane_right and
@@ -785,7 +790,13 @@ pub const Display = struct {
                 img_bottom <= pane_bottom;
 
             if (contained) {
-                state.anchors[slot] = .{ .col = img_left, .row = img_top };
+                // Saturating narrow: SixelAnchor stores i32 display cells
+                // (bug #473). Contained coordinates are display-bound, so the
+                // fallback is unreachable in practice.
+                state.anchors[slot] = .{
+                    .col = std.math.cast(i32, img_left) orelse std.math.maxInt(i32),
+                    .row = std.math.cast(i32, img_top) orelse std.math.maxInt(i32),
+                };
                 state.ids[slot] = img.id;
             }
         }

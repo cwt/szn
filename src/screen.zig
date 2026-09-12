@@ -337,15 +337,18 @@ pub const Screen = struct {
             self.sixel_refcounts[slot] = 0;
         }
 
+        // Saturating narrowing: cursor rows are grid-bound, but a huge grid
+        // must degrade to INT32_MAX rather than trap in @intCast (bug #473).
+        const anchor_row_i32 = std.math.cast(i32, self.cursor.y) orelse std.math.maxInt(i32);
         self.sixel_images[slot] = SixelImage{
             .data = dcs_bytes,
             .col = self.cursor.x,
-            .row = @intCast(self.cursor.y),
+            .row = anchor_row_i32,
             .px_width = px_width,
             .px_height = px_height,
             .id = id,
             .anchor_col = self.cursor.x,
-            .anchor_row = @intCast(self.cursor.y),
+            .anchor_row = anchor_row_i32,
             .alt_screen = self.mode.alt_screen, // bug #219: tag so shiftSixelAnchors filters correctly
         };
         errdefer {
@@ -599,7 +602,9 @@ pub const Screen = struct {
         // so anchors do not retain invalid coordinates (bug #435).
         for (&self.sixel_images, 0..) |*opt_img, idx| {
             if (opt_img.*) |*img| {
-                if (img.anchor_row >= @as(i32, @intCast(height)) or !self.isImageReferenced(img.id)) {
+                // i64 comparison: narrowing height to i32 would trap past
+                // INT32_MAX (bug #473).
+                if (@as(i64, img.anchor_row) >= @as(i64, height) or !self.isImageReferenced(img.id)) {
                     self.sixel_refcounts[idx] = 0;
                     img.deinit(self.allocator);
                     opt_img.* = null;
@@ -1128,10 +1133,13 @@ pub const Screen = struct {
         for (self.sixel_images, 0..) |opt_img, idx| {
             if (opt_img) |img| {
                 const cell_h = if (self.cell_px_height > 0) self.cell_px_height else 20;
-                const cell_rows = if (img.px_height > 0) (img.px_height + (cell_h - 1)) / cell_h else 1;
+                // Saturating ceil-div, matching placeSixelImage (bug #464).
+                const cell_rows = if (img.px_height > 0) (img.px_height +| cell_h -| 1) / cell_h else 1;
+                // i64 geometry: narrowing u32 dims to i32 would trap past
+                // INT32_MAX (bug #473).
                 const remove = switch (mode) {
-                    0 => (img.anchor_row + @as(i32, @intCast(cell_rows))) > @as(i32, @intCast(self.cursor.y)),
-                    1 => img.anchor_row <= @as(i32, @intCast(self.cursor.y)),
+                    0 => (@as(i64, img.anchor_row) + @as(i64, cell_rows)) > @as(i64, self.cursor.y),
+                    1 => @as(i64, img.anchor_row) <= @as(i64, self.cursor.y),
                     2, 3 => true,
                     else => false,
                 };
