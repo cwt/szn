@@ -88,7 +88,12 @@ pub const Loop = struct {
     }
 
     pub fn pollOnce(self: *Loop, allocator: std.mem.Allocator, timeout: i32) Error![]PollEvent {
-        if (self.fds.items.len == 0) return &[0]PollEvent{};
+        // Return the owned (empty) event buffer, never a stack temporary
+        // whose address would escape (bug #471).
+        if (self.fds.items.len == 0) {
+            self.event_buf.clearRetainingCapacity();
+            return self.event_buf.items;
+        }
 
         const pollfd_count = self.fds.items.len;
         try self.pollfds.resize(allocator, pollfd_count);
@@ -102,7 +107,10 @@ pub const Loop = struct {
         }
 
         const ready = try std.posix.poll(self.pollfds.items[0..pollfd_count], timeout);
-        if (ready == 0) return &[0]PollEvent{};
+        if (ready == 0) {
+            self.event_buf.clearRetainingCapacity();
+            return self.event_buf.items;
+        }
 
         self.event_buf.clearRetainingCapacity();
         try self.event_buf.ensureTotalCapacity(allocator, pollfd_count);
@@ -193,6 +201,17 @@ test "addFdEvents / removeFdEvents toggle bits without dropping others — bug #
 
     loop.removeFdEvents(7, std.posix.POLL.OUT);
     try testing.expectEqual(@as(i16, @intCast(std.posix.POLL.IN)), loop.fds.items[0].events);
+}
+
+test "pollOnce on an empty loop returns a stable empty slice — bug #471" {
+    var loop = Loop.init();
+    defer loop.deinit(testing.allocator);
+    const e1 = try loop.pollOnce(testing.allocator, 0);
+    const e2 = try loop.pollOnce(testing.allocator, 0);
+    try testing.expectEqual(@as(usize, 0), e1.len);
+    try testing.expectEqual(@as(usize, 0), e2.len);
+    // Owned backing, not a stack temporary: stable across calls.
+    try testing.expect(e1.ptr == e2.ptr);
 }
 
 test "pollOnce reports POLLNVAL for a closed registered fd — bug #364" {
