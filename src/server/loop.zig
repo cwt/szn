@@ -25,6 +25,10 @@ pub const Loop = struct {
     running: bool = true,
     event_buf: std.ArrayList(PollEvent) = .empty,
     pollfds: std.ArrayList(std.posix.pollfd) = .empty,
+    /// Refcounted set of non-null udata values currently registered on any
+    /// fd, keyed by @intFromPtr. Lets a stale pointer be validated without
+    /// dereferencing it (bug #479; see isUdataRegistered).
+    udata_counts: std.AutoHashMapUnmanaged(usize, u32) = .empty,
 
     pub fn init() Loop {
         return Loop{};
@@ -34,15 +38,43 @@ pub const Loop = struct {
         self.fds.deinit(allocator);
         self.event_buf.deinit(allocator);
         self.pollfds.deinit(allocator);
+        self.udata_counts.deinit(allocator);
+    }
+
+    fn trackUdata(self: *Loop, allocator: std.mem.Allocator, udata: ?*anyopaque) Error!void {
+        const key = @intFromPtr(udata orelse return);
+        const gop = try self.udata_counts.getOrPut(allocator, key);
+        if (!gop.found_existing) gop.value_ptr.* = 0;
+        gop.value_ptr.* +|= 1;
+    }
+
+    fn untrackUdata(self: *Loop, udata: ?*anyopaque) void {
+        const key = @intFromPtr(udata orelse return);
+        if (self.udata_counts.getPtr(key)) |count| {
+            if (count.* > 0) count.* -= 1;
+            if (count.* == 0) _ = self.udata_counts.remove(key);
+        }
+    }
+
+    /// True when this pointer value is registered as some fd's udata right
+    /// now. Dereference-free: safe to call with a pointer into freed memory.
+    pub fn isUdataRegistered(self: *Loop, udata: usize) bool {
+        return self.udata_counts.contains(udata);
     }
 
     pub fn addFd(self: *Loop, allocator: std.mem.Allocator, fd: i32, events: i16, udata: ?*anyopaque) Error!void {
         for (self.fds.items) |*f| {
             if (f.fd == fd) {
+                if (f.udata != udata) {
+                    try self.trackUdata(allocator, udata);
+                    self.untrackUdata(f.udata);
+                }
                 f.* = FdEntry{ .fd = fd, .events = events, .udata = udata };
                 return;
             }
         }
+        try self.trackUdata(allocator, udata);
+        errdefer self.untrackUdata(udata);
         try self.fds.append(allocator, FdEntry{
             .fd = fd,
             .events = events,
@@ -53,6 +85,7 @@ pub const Loop = struct {
     pub fn removeFd(self: *Loop, fd: i32) void {
         for (self.fds.items, 0..) |f, i| {
             if (f.fd == fd) {
+                self.untrackUdata(f.udata);
                 _ = self.fds.swapRemove(i);
                 return;
             }
@@ -229,4 +262,36 @@ test "pollOnce reports POLLNVAL for a closed registered fd — bug #364" {
     const events = try loop.pollOnce(testing.allocator, 0);
     try testing.expect(events.len == 1);
     try testing.expect((events[0].revents & @as(i16, @intCast(std.posix.POLL.NVAL))) != 0);
+}
+
+test "udata registry validates pointers without dereferencing — bug #479" {
+    var loop = Loop.init();
+    defer loop.deinit(testing.allocator);
+
+    const p1: usize = @intFromPtr(@as(*anyopaque, @ptrFromInt(0x1000)));
+    const p2: usize = @intFromPtr(@as(*anyopaque, @ptrFromInt(0x2000)));
+
+    try loop.addFd(testing.allocator, 1, @as(i16, @intCast(std.posix.POLL.IN)), @ptrFromInt(p1));
+    try testing.expect(loop.isUdataRegistered(p1));
+    try testing.expect(!loop.isUdataRegistered(p2));
+
+    // Re-adding the same fd with the same udata must not double-count.
+    try loop.addFd(testing.allocator, 1, @as(i16, @intCast(std.posix.POLL.IN)), @ptrFromInt(p1));
+    loop.removeFd(1);
+    try testing.expect(!loop.isUdataRegistered(p1));
+
+    // Re-adding the same fd with a new udata retires the old one.
+    try loop.addFd(testing.allocator, 1, @as(i16, @intCast(std.posix.POLL.IN)), @ptrFromInt(p1));
+    try loop.addFd(testing.allocator, 1, @as(i16, @intCast(std.posix.POLL.IN)), @ptrFromInt(p2));
+    try testing.expect(!loop.isUdataRegistered(p1));
+    try testing.expect(loop.isUdataRegistered(p2));
+
+    // Two fds sharing one udata: registered until the last one goes.
+    try loop.addFd(testing.allocator, 2, @as(i16, @intCast(std.posix.POLL.IN)), @ptrFromInt(p1));
+    loop.removeFd(1);
+    try testing.expect(!loop.isUdataRegistered(p2));
+    try testing.expect(loop.isUdataRegistered(p1));
+    loop.removeFd(2);
+    try testing.expect(!loop.isUdataRegistered(p1));
+    try testing.expectEqual(@as(u32, 0), loop.udata_counts.count());
 }

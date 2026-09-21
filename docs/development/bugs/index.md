@@ -14,7 +14,7 @@ timestamp: 2026-09-04T09:18:00Z
 
 Sorted by number. See individual bug files for details.
 
-> **Note:** Bugs **#301** and **#302** were never filed (MIA). The #300–#310 performance sweep skipped straight from #300 to #303. Bugs **#349–#394** were filed by the 2026-08-23 deep-audit sweep (full-codebase review; 46 bugs, all since resolved). Bugs **#395–#427** were filed by the 2026-08-30 deep-audit sweep (memory safety, IPC integrity, sixel accounting, config/command surface, dead code, perf, alt-screen mouse wheel; 33 bugs, all since resolved). Bugs **#428–#439** were filed by the 2026-08-31 re-validation sweep (12 confirmed findings from the audit report, re-checked line-by-line against live source; pending fix). Bugs **#448–#450** were filed by the 2026-09-02 stale-pointer bug-class extrapolation audit. Bugs **#451–#453** were filed by the 2026-09-03 scrollback truncation and pane resize audit (open). Bugs **#478–#483** were filed by the 2026-09-22 hot-path performance review (6 open performance findings: parser byte-by-byte dispatch, isPaneValid/tree-walk regression, per-cell SGR formatting, full-grid diff, per-frame heap copy, per-space writes). The tracker covers #1–#300, #303–#453, #478–#483 — **457 entries** in total.
+> **Note:** Bugs **#301** and **#302** were never filed (MIA). The #300–#310 performance sweep skipped straight from #300 to #303. Bugs **#349–#394** were filed by the 2026-08-23 deep-audit sweep (full-codebase review; 46 bugs, all since resolved). Bugs **#395–#427** were filed by the 2026-08-30 deep-audit sweep (memory safety, IPC integrity, sixel accounting, config/command surface, dead code, perf, alt-screen mouse wheel; 33 bugs, all since resolved). Bugs **#428–#439** were filed by the 2026-08-31 re-validation sweep (12 confirmed findings from the audit report, re-checked line-by-line against live source; pending fix). Bugs **#448–#450** were filed by the 2026-09-02 stale-pointer bug-class extrapolation audit. Bugs **#451–#453** were filed by the 2026-09-03 scrollback truncation and pane resize audit (open). Bugs **#478–#483** were filed by the 2026-09-22 hot-path performance review (6 performance findings, all fixed 2026-09-22: parser byte-by-byte dispatch, isPaneValid/tree-walk regression, per-cell SGR formatting, full-grid diff, per-frame heap copy, per-space writes). The tracker covers #1–#300, #303–#453, #478–#483 — **457 entries** in total.
 
 Both summary tables below are generated from the `severity` and `status` fields in each bug's frontmatter. Regenerate them rather than editing by hand.
 
@@ -502,9 +502,9 @@ Both summary tables below are generated from the `severity` and `status` fields 
 | [451](451.md) | DECSTBM full-screen scroll region trap in Screen.setScrollRegion discards scrolled-off lines instead of pushing to history | HIGH | Fixed |
 | [452](452.md) | Grid.resize drops bottom rows via pop() on height reduction instead of scrolling top rows into history | MEDIUM | Fixed |
 | [453](453.md) | reflowCursorInternal trims trailing screen rows on width change, stealing history lines into visible screen | MEDIUM | False Positive |
-| [478](478.md) | feedPty feeds the input parser byte-by-byte: 4096 state-machine dispatches per PTY read | MEDIUM | Open |
-| [479](479.md) | isPaneValid regression: O(N·M·P) tree walk per PTY event, plus full-tree scans in pumpPaneInput and tickSixelWait every loop tick | MEDIUM | Open |
-| [480](480.md) | Render diff loop formats SGR escape sequences per changed cell with std.fmt.bufPrint | LOW | Open |
-| [481](481.md) | renderContent does a full O(rows×cols) diff of last_cells every frame even when few lines changed | MEDIUM | Open |
-| [482](482.md) | display-client render frames copy the whole frame into dc.out_buf instead of writing render_buf directly to the socket | LOW | Open |
-| [483](483.md) | space cells emit one byte() write each; consecutive blank runs should batch | LOW | Open |
+| [478](478.md) | feedPty feeds the input parser byte-by-byte: 4096 state-machine dispatches per PTY read | MEDIUM | Fixed |
+| [479](479.md) | isPaneValid regression: O(N·M·P) tree walk per PTY event, plus full-tree scans in pumpPaneInput and tickSixelWait every loop tick | MEDIUM | Fixed |
+| [480](480.md) | Render diff loop formats SGR escape sequences per changed cell with std.fmt.bufPrint | LOW | Fixed |
+| [481](481.md) | renderContent does a full O(rows×cols) diff of last_cells every frame even when few lines changed | MEDIUM | Fixed |
+| [482](482.md) | display-client render frames copy the whole frame into dc.out_buf instead of writing render_buf directly to the socket | LOW | Fixed |
+| [483](483.md) | space cells emit one byte() write each; consecutive blank runs should batch | LOW | Fixed |

@@ -30,6 +30,100 @@ pub const ThemeColours = struct {
     pane_active_border_fg: Colour,
 };
 
+/// Precomputed SGR escape fragment (bug #480). The render diff loop used to
+/// run std.fmt.bufPrint for every changed colour/attribute of every changed
+/// cell; the set of sequences is finite, so they are built once at comptime.
+const SgrFrag = struct {
+    bytes: [13]u8 = undefined,
+    len: u8 = 0,
+
+    fn slice(self: *const SgrFrag) []const u8 {
+        return self.bytes[0..self.len];
+    }
+};
+
+const indexed_fg_sgr = blk: {
+    @setEvalBranchQuota(200000);
+    var table: [256]SgrFrag = undefined;
+    for (0..256) |i| {
+        const s = std.fmt.bufPrint(&table[i].bytes, "\x1b[38;5;{d}m", .{i}) catch unreachable;
+        table[i].len = @intCast(s.len);
+    }
+    break :blk table;
+};
+
+const indexed_bg_sgr = blk: {
+    @setEvalBranchQuota(200000);
+    var table: [256]SgrFrag = undefined;
+    for (0..256) |i| {
+        const s = std.fmt.bufPrint(&table[i].bytes, "\x1b[48;5;{d}m", .{i}) catch unreachable;
+        table[i].len = @intCast(s.len);
+    }
+    break :blk table;
+};
+
+const attr_sgr = blk: {
+    @setEvalBranchQuota(20000);
+    const codes = [_][]const u8{ "1", "2", "3", "4", "5", "7", "8", "9", "53", "4:2", "4:3" };
+    var table: [codes.len]SgrFrag = undefined;
+    for (codes, 0..) |code, i| {
+        const s = std.fmt.bufPrint(&table[i].bytes, "\x1b[{s}m", .{code}) catch unreachable;
+        table[i].len = @intCast(s.len);
+    }
+    break :blk table;
+};
+
+/// Copy a precomputed fragment into the escape buffer. Returns bytes written
+/// (0 if it does not fit; the fragment set is bounded so this cannot happen,
+/// but it must never panic on a render path).
+fn appendFrag(dest: []u8, frag: []const u8) usize {
+    if (dest.len < frag.len) return 0;
+    @memcpy(dest[0..frag.len], frag);
+    return frag.len;
+}
+
+fn appendSpan(dest: []u8, pos: *usize, s: []const u8) bool {
+    if (pos.* + s.len > dest.len) return false;
+    @memcpy(dest[pos.* .. pos.* + s.len], s);
+    pos.* += s.len;
+    return true;
+}
+
+fn appendDecU8(dest: []u8, pos: *usize, v: u8) bool {
+    if (v >= 100) {
+        if (pos.* + 3 > dest.len) return false;
+        dest[pos.*] = '0' + v / 100;
+        dest[pos.* + 1] = '0' + (v / 10) % 10;
+        dest[pos.* + 2] = '0' + v % 10;
+        pos.* += 3;
+    } else if (v >= 10) {
+        if (pos.* + 2 > dest.len) return false;
+        dest[pos.*] = '0' + v / 10;
+        dest[pos.* + 1] = '0' + v % 10;
+        pos.* += 2;
+    } else {
+        if (pos.* + 1 > dest.len) return false;
+        dest[pos.*] = '0' + v;
+        pos.* += 1;
+    }
+    return true;
+}
+
+/// Write `ESC[<base>;2;r;g;bm` without std.fmt (bug #480). Returns bytes
+/// written, or 0 when dest is too small.
+fn appendRgbSgr(dest: []u8, base: u8, rgb: [3]u8) usize {
+    var pos: usize = 0;
+    if (!appendSpan(dest, &pos, "\x1b[")) return 0;
+    if (!appendDecU8(dest, &pos, base)) return 0;
+    if (!appendSpan(dest, &pos, ";2;")) return 0;
+    for (rgb, 0..) |component, i| {
+        if (i != 0 and !appendSpan(dest, &pos, ";")) return 0;
+        if (!appendDecU8(dest, &pos, component)) return 0;
+    }
+    if (!appendSpan(dest, &pos, "m")) return 0;
+    return pos;
+}
+
 pub const Display = struct {
     fd: i32,
     sx: u32,
@@ -196,6 +290,7 @@ pub const Display = struct {
                 if (pb.y + y >= merged_h) break;
 
                 const cells = resolveRowCells(&pb.pane.screen, y);
+                const merged_line = merged_screen.grid.getLineMut(@intCast(pb.y + y));
 
                 for (0..pb.w) |x| {
                     if (pb.x + x >= merged_w) break;
@@ -244,7 +339,14 @@ pub const Display = struct {
                             cell.attr.reverse = !cell.attr.reverse;
                         }
                     }
-                    merged_screen.grid.getLineMut(@intCast(pb.y + y)).cells.items[pb.x + x] = cell;
+                    // Row-granular diff (bug #481): only mark the merged line
+                    // dirty when its content actually changes, so renderContent
+                    // can skip clean rows.
+                    const dst = &merged_line.cells.items[pb.x + x];
+                    if (!dst.eql(cell)) {
+                        dst.* = cell;
+                        merged_line.dirty = true;
+                    }
                 }
             }
         }
@@ -275,7 +377,9 @@ pub const Display = struct {
                         if (i + cp_len > fmt.len) break;
                         const cp = std.unicode.utf8Decode(fmt[i .. i + cp_len]) catch 0;
                         if (pb.x + col >= merged_screen.grid.width) break;
-                        var cell = &merged_screen.grid.getLineMut(top_y).cells.items[pb.x + col];
+                        const border_line = merged_screen.grid.getLineMut(top_y);
+                        border_line.dirty = true;
+                        var cell = &border_line.cells.items[pb.x + col];
                         cell.char = cp;
                         if (pb.pane == active_pane) {
                             cell.fg = mode_border_fg;
@@ -297,7 +401,9 @@ pub const Display = struct {
                         const cp_len = std.unicode.utf8ByteSequenceLength(fmt[i]) catch 1;
                         if (i + cp_len > fmt.len) break;
                         const cp = std.unicode.utf8Decode(fmt[i .. i + cp_len]) catch 0;
-                        var cell = &merged_screen.grid.getLineMut(row).cells.items[left_x];
+                        const border_line = merged_screen.grid.getLineMut(row);
+                        border_line.dirty = true;
+                        var cell = &border_line.cells.items[left_x];
                         cell.char = cp;
                         if (pb.pane == active_pane) {
                             cell.fg = mode_border_fg;
@@ -368,7 +474,9 @@ pub const Display = struct {
                             if (y >= merged_screen.grid.height) break;
                             const is_active = isBorderActiveAt(border_x, y, true, active_bound);
                             const border_col = if (is_active) active_border_fg else border_fg;
-                            const cell = &merged_screen.grid.getLineMut(y).cells.items[border_x];
+                            const border_line = merged_screen.grid.getLineMut(y);
+                            border_line.dirty = true;
+                            const cell = &border_line.cells.items[border_x];
                             paintBorderCell(cell, 0x2500, 0x2502, border_col);
                         }
                     }
@@ -386,7 +494,9 @@ pub const Display = struct {
                             if (x >= merged_screen.grid.width) break;
                             const is_active = isBorderActiveAt(x, border_y, false, active_bound);
                             const border_col = if (is_active) active_border_fg else border_fg;
-                            const cell = &merged_screen.grid.getLineMut(border_y).cells.items[x];
+                            const border_line = merged_screen.grid.getLineMut(border_y);
+                            border_line.dirty = true;
+                            const cell = &border_line.cells.items[x];
                             paintBorderCell(cell, 0x2502, 0x2500, border_col);
                         }
                     }
@@ -453,6 +563,9 @@ pub const Display = struct {
                 }
                 self.last_sx.?.* = self.sx;
                 self.last_sy.?.* = self.sy;
+                // The invalidated last_cells force a full redraw; the row skip
+                // relies on line dirty flags, so mark every line dirty (#481).
+                for (screen.grid.lines.items) |*line| line.dirty = true;
             }
         }
 
@@ -464,6 +577,7 @@ pub const Display = struct {
                 inv.char = 0x1FFFFF; // invalid Unicode to force redraw
                 @memset(lc.items, inv);
             }
+            for (screen.grid.lines.items) |*line| line.dirty = true;
         }
 
         var active_fg = Colour.default_();
@@ -472,7 +586,20 @@ pub const Display = struct {
 
         try self.writeBytes("\x1b[m");
 
+        // Scratch run of spaces used to emit consecutive blank cells in one
+        // write instead of one writeBytes per cell (bug #483).
+        var spaces: [256]u8 = undefined;
+        @memset(&spaces, ' ');
+
         for (0..h) |y| {
+            // Row-granular skip (bug #481): the merge stage marks a line dirty
+            // only when its merged content changed, so a clean line is
+            // identical to last_cells. Only trusted while the diff state is
+            // active; force_clear and size resets mark every line dirty.
+            if (self.last_cells != null and y < screen.grid.lines.items.len) {
+                if (!screen.grid.lines.items[y].dirty) continue;
+            }
+
             const cells = resolveRowCells(screen, y);
 
             // Track the terminal cursor column within this row.
@@ -480,7 +607,8 @@ pub const Display = struct {
             var cur_cx: u32 = 0;
             var anchored = false;
 
-            for (0..w) |x| {
+            var x: u32 = 0;
+            while (x < w) : (x += 1) {
                 var cell = if (cells) |cls| (if (x < cls.items.len) cls.items[x] else Cell.empty()) else Cell.empty();
                 if (screen.copy_mode) |cm| {
                     if (cm.isSelected(@intCast(x), @intCast(y))) {
@@ -526,20 +654,16 @@ pub const Display = struct {
                     var sgr_pos: usize = 0;
 
                     if (attr_changed) {
-                        sgr_pos += (std.fmt.bufPrint(sgr_buf[sgr_pos..], "\x1b[m", .{}) catch break).len;
+                        sgr_pos += appendFrag(sgr_buf[sgr_pos..], "\x1b[m");
 
                         const attrFields = comptime blk: {
                             const all = std.meta.fields(Attr);
                             break :blk all[0 .. all.len - 2];
                         };
-                        const attrCodes = [_][]const u8{
-                            "1",   "2", "3", "4",  "5",
-                            "7",   "8", "9", "53", "4:2",
-                            "4:3",
-                        };
+                        comptime std.debug.assert(attrFields.len == attr_sgr.len);
                         inline for (attrFields, 0..) |field, idx| {
                             if (@field(cell.attr, field.name)) {
-                                sgr_pos += (std.fmt.bufPrint(sgr_buf[sgr_pos..], "\x1b[{s}m", .{attrCodes[idx]}) catch break).len;
+                                sgr_pos += appendFrag(sgr_buf[sgr_pos..], attr_sgr[idx].slice());
                             }
                         }
 
@@ -553,15 +677,15 @@ pub const Display = struct {
                         switch (cell.fg.tag) {
                             .default_, .terminal => {
                                 if (!attr_changed) {
-                                    sgr_pos += (std.fmt.bufPrint(sgr_buf[sgr_pos..], "\x1b[39m", .{}) catch break).len;
+                                    sgr_pos += appendFrag(sgr_buf[sgr_pos..], "\x1b[39m");
                                 }
                             },
                             .indexed => {
-                                sgr_pos += (std.fmt.bufPrint(sgr_buf[sgr_pos..], "\x1b[38;5;{}m", .{@as(u8, @truncate(cell.fg.value))}) catch break).len;
+                                sgr_pos += appendFrag(sgr_buf[sgr_pos..], indexed_fg_sgr[@as(u8, @truncate(cell.fg.value))].slice());
                             },
                             .rgb => {
                                 const rgb = cell.fg.toRgb().?;
-                                sgr_pos += (std.fmt.bufPrint(sgr_buf[sgr_pos..], "\x1b[38;2;{};{};{}m", .{ rgb[0], rgb[1], rgb[2] }) catch break).len;
+                                sgr_pos += appendRgbSgr(sgr_buf[sgr_pos..], 38, rgb);
                             },
                         }
                     }
@@ -570,15 +694,15 @@ pub const Display = struct {
                         switch (cell.bg.tag) {
                             .default_, .terminal => {
                                 if (!attr_changed) {
-                                    sgr_pos += (std.fmt.bufPrint(sgr_buf[sgr_pos..], "\x1b[49m", .{}) catch break).len;
+                                    sgr_pos += appendFrag(sgr_buf[sgr_pos..], "\x1b[49m");
                                 }
                             },
                             .indexed => {
-                                sgr_pos += (std.fmt.bufPrint(sgr_buf[sgr_pos..], "\x1b[48;5;{}m", .{@as(u8, @truncate(cell.bg.value))}) catch break).len;
+                                sgr_pos += appendFrag(sgr_buf[sgr_pos..], indexed_bg_sgr[@as(u8, @truncate(cell.bg.value))].slice());
                             },
                             .rgb => {
                                 const rgb = cell.bg.toRgb().?;
-                                sgr_pos += (std.fmt.bufPrint(sgr_buf[sgr_pos..], "\x1b[48;2;{};{};{}m", .{ rgb[0], rgb[1], rgb[2] }) catch break).len;
+                                sgr_pos += appendRgbSgr(sgr_buf[sgr_pos..], 48, rgb);
                             },
                         }
                     }
@@ -595,8 +719,31 @@ pub const Display = struct {
                     cp = 0;
                 }
                 if (cp == 0 or cp == ' ') {
-                    try self.writeBytes(" ");
-                    cur_cx += 1;
+                    // Batch a run of identical blank cells into one write
+                    // (bug #483): blank cells dominate mostly-empty screens.
+                    var run: u32 = 1;
+                    while (x + run < w and run < spaces.len) : (run += 1) {
+                        var next = if (cells) |cls| (if (x + run < cls.items.len) cls.items[x + run] else Cell.empty()) else Cell.empty();
+                        if (next.is_padding) break;
+                        if (screen.copy_mode) |cm| {
+                            if (cm.isSelected(@intCast(x + run), @intCast(y))) {
+                                next.attr.reverse = !next.attr.reverse;
+                            }
+                        }
+                        if (!next.eql(cell)) break;
+                        if (self.last_cells) |lc| {
+                            const idx = y * w + (x + run);
+                            if (idx < lc.items.len) {
+                                // A blank replacing a sixel needs its own
+                                // erase escape — stop before it.
+                                if (lc.items[idx].attr.sixel and !next.attr.sixel) break;
+                                lc.items[idx] = next;
+                            }
+                        }
+                    }
+                    try self.writeBytes(spaces[0..run]);
+                    cur_cx += run;
+                    x += run - 1;
                 } else if (cp >= 0x20 and cp != 0x7F) {
                     var buf: [4]u8 = undefined;
                     // bug #445: a width-1 cell followed by a padding cell only
@@ -648,6 +795,10 @@ pub const Display = struct {
                     try self.writeBytes("?");
                     cur_cx += 1;
                 }
+            }
+
+            if (self.last_cells != null and y < screen.grid.lines.items.len) {
+                screen.grid.lines.items[y].dirty = false;
             }
         }
 
@@ -704,9 +855,15 @@ pub const Display = struct {
             col = @intCast(@min(status_mod.visibleLen(line), self.sx));
         }
 
-        const max_len = self.sx;
-        while (col < max_len) : (col += 1) {
-            try self.writeBytes(" ");
+        // Emit the remaining padding as space runs instead of one write per
+        // column (bug #483).
+        var padding = self.sx -| col;
+        var spaces: [256]u8 = undefined;
+        @memset(&spaces, ' ');
+        while (padding > 0) {
+            const chunk = @min(padding, spaces.len);
+            try self.writeBytes(spaces[0..chunk]);
+            padding -= chunk;
         }
 
         try self.writeBytes("\x1b[m");
@@ -1949,4 +2106,204 @@ test "render lookahead does not bump cursor for width-1 + padding without VS16 (
     // no CUP was emitted before 'B'.
     try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1b[1;1H") != null);
     try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1b[1;3H") != null);
+}
+
+test "precomputed indexed SGR fragments match bufPrint — bug #480" {
+    for ([_]u8{ 0, 1, 9, 10, 99, 100, 231, 255 }) |i| {
+        var buf: [32]u8 = undefined;
+        const fg = std.fmt.bufPrint(&buf, "\x1b[38;5;{d}m", .{i}) catch unreachable;
+        try testing.expectEqualStrings(fg, indexed_fg_sgr[i].slice());
+        const bg = std.fmt.bufPrint(&buf, "\x1b[48;5;{d}m", .{i}) catch unreachable;
+        try testing.expectEqualStrings(bg, indexed_bg_sgr[i].slice());
+    }
+}
+
+test "appendRgbSgr writes sequences without std.fmt — bug #480" {
+    var buf: [32]u8 = undefined;
+
+    const n1 = appendRgbSgr(&buf, 38, .{ 1, 2, 3 });
+    try testing.expectEqualStrings("\x1b[38;2;1;2;3m", buf[0..n1]);
+
+    const n2 = appendRgbSgr(&buf, 48, .{ 255, 128, 0 });
+    try testing.expectEqualStrings("\x1b[48;2;255;128;0m", buf[0..n2]);
+
+    const n3 = appendRgbSgr(&buf, 38, .{ 0, 0, 0 });
+    try testing.expectEqualStrings("\x1b[38;2;0;0;0m", buf[0..n3]);
+
+    // A destination too small must return 0 without panicking.
+    var small: [4]u8 = undefined;
+    try testing.expectEqual(@as(usize, 0), appendRgbSgr(&small, 38, .{ 255, 255, 255 }));
+}
+
+test "renderContent emits precomputed indexed/attr SGR — bug #480" {
+    const allocator = testing.allocator;
+    var capture_buf: std.ArrayList(u8) = .empty;
+    defer capture_buf.deinit(allocator);
+
+    var display = Display{
+        .fd = -1,
+        .sx = 3,
+        .sy = 2,
+        .capture = &capture_buf,
+        .capture_allocator = allocator,
+    };
+
+    var screen = try Screen.init(allocator, 3, 2);
+    defer screen.deinit();
+
+    var cell = Cell.withChar('A');
+    cell.fg = Colour.fromIndexed(200);
+    cell.bg = Colour.fromRgb(16, 32, 245);
+    cell.attr.bold = true;
+    screen.grid.setCell(0, 0, cell);
+
+    try display.renderContent(&screen);
+
+    const out = capture_buf.items;
+    try testing.expect(std.mem.indexOf(u8, out, "\x1b[38;5;200m") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "\x1b[48;2;16;32;245m") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "\x1b[1m") != null);
+}
+
+test "renderContent skips clean rows — bug #481" {
+    const allocator = testing.allocator;
+    var capture_buf: std.ArrayList(u8) = .empty;
+    defer capture_buf.deinit(allocator);
+
+    var last_cells: std.ArrayList(Cell) = .empty;
+    defer last_cells.deinit(allocator);
+    var last_sx: u32 = 0;
+    var last_sy: u32 = 0;
+
+    var display = Display{
+        .fd = -1,
+        .sx = 4,
+        .sy = 3,
+        .capture = &capture_buf,
+        .capture_allocator = allocator,
+        .last_cells = &last_cells,
+        .last_sx = &last_sx,
+        .last_sy = &last_sy,
+    };
+
+    var screen = try Screen.init(allocator, 4, 3);
+    defer screen.deinit();
+
+    screen.grid.setCell(0, 0, Cell.withChar('A'));
+    screen.grid.setCell(0, 1, Cell.withChar('B'));
+    try display.renderContent(&screen);
+    capture_buf.clearRetainingCapacity();
+
+    // Only row 1 changes; row 0 must not be re-emitted.
+    screen.grid.setCell(0, 1, Cell.withChar('C'));
+    try display.renderContent(&screen);
+
+    const out = capture_buf.items;
+    try testing.expect(std.mem.indexOf(u8, out, "C") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "A") == null);
+}
+
+test "renderAll second frame repaints only the changed row — bug #481" {
+    const allocator = testing.allocator;
+    var capture_buf: std.ArrayList(u8) = .empty;
+    defer capture_buf.deinit(allocator);
+
+    var last_cells: std.ArrayList(Cell) = .empty;
+    defer last_cells.deinit(allocator);
+    var merged_screen: ?Screen = null;
+    defer if (merged_screen) |*ms| ms.deinit();
+    var last_sx: u32 = 0;
+    var last_sy: u32 = 0;
+    var last_paste: ?bool = null;
+
+    const display = Display{
+        .fd = -1,
+        .sx = 80,
+        .sy = 24,
+        .capture = &capture_buf,
+        .capture_allocator = allocator,
+        .last_cells = &last_cells,
+        .last_sx = &last_sx,
+        .last_sy = &last_sy,
+        .merged_screen = &merged_screen,
+        .last_paste = &last_paste,
+    };
+
+    var win = try Window.init(allocator, 1, "test-win", 80, 23, null, null);
+    defer win.deinit(allocator);
+    const pane = win.active_pane.?;
+
+    const bounds = [_]PaneBounds{.{ .pane = pane, .x = 0, .y = 0, .w = 80, .h = 23 }};
+    const windows = [_]*Window{&win};
+    const Node = @import("../layout.zig").Node;
+    const node = Node{ .leaf = pane };
+    const theme = ThemeColours{
+        .status_fg = Colour.default_(),
+        .status_bg = Colour.default_(),
+        .pane_border_fg = Colour.fromIndexed(8),
+        .pane_active_border_fg = Colour.fromIndexed(2),
+    };
+
+    try pane.screen.writeStr("first");
+    pane.dirty = true;
+    try display.renderAll(allocator, &bounds, pane, "sess", &windows, &win, &node, theme, null, false, "", 0, false, false, null, true);
+
+    capture_buf.clearRetainingCapacity();
+    pane.screen.grid.setCell(0, 5, Cell.withChar('Z'));
+    pane.dirty = true;
+    try display.renderAll(allocator, &bounds, pane, "sess", &windows, &win, &node, theme, null, false, "", 0, false, false, null, true);
+
+    const out = capture_buf.items;
+    try testing.expect(std.mem.indexOf(u8, out, "Z") != null);
+    // Row 0 is unchanged and must not be re-emitted.
+    try testing.expect(std.mem.indexOf(u8, out, "first") == null);
+}
+
+test "renderContent batches blank runs — bug #483" {
+    const allocator = testing.allocator;
+    var capture_buf: std.ArrayList(u8) = .empty;
+    defer capture_buf.deinit(allocator);
+
+    var last_cells: std.ArrayList(Cell) = .empty;
+    defer last_cells.deinit(allocator);
+    var last_sx: u32 = 0;
+    var last_sy: u32 = 0;
+
+    var display = Display{
+        .fd = -1,
+        .sx = 12,
+        .sy = 2,
+        .capture = &capture_buf,
+        .capture_allocator = allocator,
+        .last_cells = &last_cells,
+        .last_sx = &last_sx,
+        .last_sy = &last_sy,
+    };
+
+    var screen = try Screen.init(allocator, 12, 2);
+    defer screen.deinit();
+
+    // Blank screen: every cell differs from the invalidated baseline and must
+    // be emitted as one batched run of spaces.
+    try display.renderContent(&screen);
+    try testing.expect(std.mem.indexOf(u8, capture_buf.items, "            ") != null);
+}
+
+test "renderStatusBar pads with a space run — bug #483" {
+    const allocator = testing.allocator;
+    var capture_buf: std.ArrayList(u8) = .empty;
+    defer capture_buf.deinit(allocator);
+
+    const display = Display{
+        .fd = -1,
+        .sx = 20,
+        .sy = 2,
+        .capture = &capture_buf,
+        .capture_allocator = allocator,
+    };
+
+    try display.renderStatusBar("hi", Colour.default_(), Colour.default_(), null, false, "", 0, false);
+
+    // "hi" followed by the 18-column pad, all spaces.
+    try testing.expect(std.mem.indexOf(u8, capture_buf.items, "hi                  ") != null);
 }

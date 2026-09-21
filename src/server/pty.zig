@@ -125,6 +125,12 @@ pub const Pty = struct {
     /// by flow control). Drained when the master becomes writable again
     /// (POLLOUT) so keystrokes are never dropped under backpressure.
     input_buf: std.ArrayList(u8) = .empty,
+    /// Optional hook invoked when writeInput() has to queue bytes in
+    /// input_buf, so the owner can arm POLLOUT on the master right away
+    /// instead of rescanning every pane each tick (bug #479). Set by
+    /// Server.watchPanePty.
+    input_queued_cb: ?*const fn (ctx: ?*anyopaque, master: i32) void = null,
+    input_queued_ctx: ?*anyopaque = null,
 
     pub fn open() Error!Pty {
         var master: c_int = 0;
@@ -304,6 +310,7 @@ pub const Pty = struct {
         const alloc = self.allocator orelse return error.WriteFailed;
         if (self.input_buf.items.len + rem.len > 1024 * 1024) return error.WriteFailed;
         self.input_buf.appendSlice(alloc, rem) catch return error.WriteFailed;
+        if (self.input_queued_cb) |cb| cb(self.input_queued_ctx, self.master);
     }
 
     /// Non-blocking drain of queued keystrokes. Returns true when the whole
@@ -473,6 +480,18 @@ test "writeInput queues remainder under backpressure and flushInput drains it â€
     var pty = Pty{ .master = fds[1], .slave = -1, .pid = -1, .allocator = testing.allocator };
     defer pty.deinit();
 
+    // bug #479: queueing must notify the owner so it can arm POLLOUT without
+    // rescanning panes.
+    const Counter = struct {
+        var count: usize = 0;
+        fn onQueued(ctx: ?*anyopaque, master: i32) void {
+            _ = ctx;
+            _ = master;
+            count += 1;
+        }
+    };
+    pty.input_queued_cb = Counter.onQueued;
+
     // Fill the kernel pipe buffer so the next write EAGAINs immediately.
     var junk: [65536]u8 = undefined;
     @memset(&junk, 'x');
@@ -489,6 +508,7 @@ test "writeInput queues remainder under backpressure and flushInput drains it â€
     @memset(big, 'y');
     try pty.writeInput(big);
     try testing.expect(pty.input_buf.items.len > 0);
+    try testing.expectEqual(@as(usize, 1), Counter.count);
 
     // Drain the read end and flush repeatedly until the queue empties.
     // flushInput makes forward progress but returns false when the pipe is

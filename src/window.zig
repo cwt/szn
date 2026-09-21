@@ -37,6 +37,12 @@ pub const Pane = struct {
     choose_mode: choose_mod.ChooseMode = .{},
     saved_grid: ?@import("grid.zig").Grid = null,
     clock_time: u64 = 0,
+    /// Optional hook invoked after a PTY read leaves a sixel awaiting a
+    /// measured cell size, so the server can track the pane directly instead
+    /// of walking the session tree every tick (bug #479). Set by
+    /// Server.watchPanePty.
+    sixel_pending_hook: ?*const fn (ctx: ?*anyopaque, pane: *Pane) void = null,
+    sixel_pending_ctx: ?*anyopaque = null,
 
     pub fn init(allocator: std.mem.Allocator, id: u32, width: u32, height: u32) Error!Pane {
         return Pane{
@@ -171,10 +177,11 @@ pub const Pane = struct {
         var buf: [4096]u8 = undefined;
         const n = try pty.readOutput(&buf);
         const parser = self.getParser();
-        for (buf[0..n]) |byte| {
-            try parser.advance(byte);
-        }
+        try parser.advanceBatch(buf[0..n]);
         self.dirty = true;
+        if (self.screen.pending_sixel != null) {
+            if (self.sixel_pending_hook) |hook| hook(self.sixel_pending_ctx, self);
+        }
     }
 
     pub fn writeInput(self: *Pane, data: []const u8) Error!void {

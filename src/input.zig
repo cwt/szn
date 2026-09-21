@@ -1001,10 +1001,29 @@ pub const InputParser = struct {
         }
     }
 
-    pub fn feed(self: *InputParser, bytes: []const u8) Error!void {
-        for (bytes) |b| {
-            try self.advance(b);
+    /// Batch feed: fast-forwards runs of printable ASCII straight to the
+    /// screen in one loop, delegating control bytes and UTF-8 sequences to
+    /// the byte-at-a-time state machine. A 4096-byte read of ordinary text
+    /// now costs one run walk instead of 4096 state dispatches (bug #478).
+    pub fn advanceBatch(self: *InputParser, bytes: []const u8) Error!void {
+        var i: usize = 0;
+        while (i < bytes.len) {
+            if (self.state == .ground and self.utf8_expected == 0) {
+                var end = i;
+                while (end < bytes.len and bytes[end] >= 0x20 and bytes[end] <= 0x7E) : (end += 1) {}
+                if (end > i) {
+                    try self.screen.writeStr(bytes[i..end]);
+                    i = end;
+                    continue;
+                }
+            }
+            try self.advance(bytes[i]);
+            i += 1;
         }
+    }
+
+    pub fn feed(self: *InputParser, bytes: []const u8) Error!void {
+        try self.advanceBatch(bytes);
     }
 };
 
@@ -2645,4 +2664,49 @@ test "CAN (0x18) and SUB (0x1A) abort pending escape, CSI, and OSC sequences —
     // 3) Normal character following aborted sequence writes to screen as regular text
     try parser.feed("A");
     try testing.expectEqual(@as(u21, 'A'), screen.grid.getCell(0, 0).char);
+}
+
+fn expectScreensEqual(a: *Screen, b: *Screen) !void {
+    try testing.expectEqual(a.cursor.x, b.cursor.x);
+    try testing.expectEqual(a.cursor.y, b.cursor.y);
+    try testing.expectEqual(a.grid.width, b.grid.width);
+    try testing.expectEqual(a.grid.height, b.grid.height);
+    try testing.expectEqual(a.grid.lines.items.len, b.grid.lines.items.len);
+    for (a.grid.lines.items, b.grid.lines.items) |la, lb| {
+        try testing.expectEqual(la.wrapped, lb.wrapped);
+        try testing.expectEqual(la.cells.items.len, lb.cells.items.len);
+        for (la.cells.items, lb.cells.items) |ca, cb| {
+            try testing.expect(ca.eql(cb));
+        }
+    }
+}
+
+test "advanceBatch matches byte-at-a-time advance — bug #478" {
+    const cases = [_][]const u8{
+        "hello world",
+        "plain ascii that wraps past the twenty column boundary 0123456789",
+        "abc\x1b[31mdef\x1b[0m ghi",
+        "line one\r\nline two\tX",
+        "caf\xc3\xa9 \xe2\x9c\x93 done",
+        "A\x18B\x1b[2Jclear",
+        "\x1b]0;title\x07rest",
+        "\xff\xfe plain after invalid lead",
+        "\x1bPq#0;2;0;0;0#0~~\x1b\\after",
+    };
+    for (cases) |input| {
+        var s1 = try Screen.init(testing.allocator, 20, 4);
+        defer s1.deinit();
+        var s2 = try Screen.init(testing.allocator, 20, 4);
+        defer s2.deinit();
+        var p1 = InputParser.init(&s1);
+        defer p1.deinit(testing.allocator);
+        var p2 = InputParser.init(&s2);
+        defer p2.deinit(testing.allocator);
+
+        try p1.advanceBatch(input);
+        for (input) |b| try p2.advance(b);
+
+        try testing.expectEqual(p1.state, p2.state);
+        try expectScreensEqual(&s1, &s2);
+    }
 }

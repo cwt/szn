@@ -260,6 +260,13 @@ pub const Server = struct {
     /// clears. anyDisplayClientBehind() becomes O(1) (bug #303).
     behind_count: u32 = 0,
 
+    /// Panes whose screen has a sixel buffered awaiting a measured cell size
+    /// (#204). Maintained by the Pane feed hook set in watchPanePty, so
+    /// tickSixelWait no longer walks every session/window/pane each tick
+    /// (bug #479). Entries are removed when the sixel resolves or the pane is
+    /// torn down.
+    sixel_wait_panes: std.ArrayListUnmanaged(*Pane) = .empty,
+
     pub fn init(allocator: std.mem.Allocator) ServerError!Server {
         const key_binding = @import("../key_binding.zig");
         const options_mod = @import("../options.zig");
@@ -315,6 +322,7 @@ pub const Server = struct {
         self.buffers.deinit();
         self.render_buf.deinit(self.allocator);
         self.response_buf.deinit(self.allocator);
+        self.sixel_wait_panes.deinit(self.allocator);
         self.loop.deinit(self.allocator);
         for (self.sessions.items) |s| {
             s.deinit(self.allocator);
@@ -692,31 +700,21 @@ pub const Server = struct {
         // Keep POLLOUT armed for any pane whose keystroke queue is waiting on a
         // writable master, so queued input drains once the child reads stdin
         // (flow control, bug #298 follow-up).
-        self.pumpPaneInput();
-
         // Manage the sixel-wait: pause panes with a buffered sixel (removing their
         // POLL.IN so the loop sleeps instead of spinning at 100% CPU) and re-arm
         // them once the sixel resolves (bug #298).
         self.tickSixelWait();
     }
 
-    /// Arm POLLOUT on the master of every pane that still has queued keystrokes
-    /// (see Pty.writeInput / flushInput). No-op for panes whose queue is empty.
-    fn pumpPaneInput(self: *Server) void {
-        for (self.sessions.items) |session| {
-            for (session.windows.items) |win| {
-                for (win.panes.items) |p| {
-                    if (p.pty) |pty| {
-                        if (pty.input_buf.items.len > 0) {
-                            self.loop.addFdEvents(pty.master, std.posix.POLL.OUT);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     fn isPaneValid(self: *Server, pane: *Pane) bool {
+        // Fast path (bug #479): a pane whose pointer is still registered with
+        // the event loop is certainly live, so reading its flag is safe.
+        // Every teardown path unregisters the pty fd before freeing the pane
+        // (#362/#449), so a miss falls back to the identity-only tree walk.
+        // That keeps the old semantics for deliberately unwatched panes
+        // (e.g. pty closed after remain-on-exit) while never dereferencing a
+        // freed pointer.
+        if (self.loop.isUdataRegistered(@intFromPtr(pane))) return pane.valid;
         for (self.sessions.items) |session| {
             for (session.windows.items) |win| {
                 for (win.panes.items) |p| {
@@ -913,6 +911,9 @@ pub const Server = struct {
             if (p.pty) |pty| {
                 self.loop.removeFd(pty.master);
             }
+            // bug #479: the pane is about to be freed by Session.killWindow —
+            // drop it from the sixel-wait list first.
+            self.removeSixelWaitPane(p);
         }
     }
 
@@ -923,6 +924,8 @@ pub const Server = struct {
         // bug #283: the pane is about to be freed — drop any cached mouse
         // pointer that references it before the memory goes away.
         self.clearPaneMouseRefs(pane);
+        // bug #479: and drop it from the sixel-wait list.
+        self.removeSixelWaitPane(pane);
 
         outer: for (self.sessions.items) |session| {
             for (session.windows.items) |win| {
@@ -2367,11 +2370,50 @@ pub const Server = struct {
     }
 
     pub fn watchPanePty(self: *Server, pane: *Pane) ServerError!void {
-        const pty = pane.pty orelse return;
+        const pty = if (pane.pty) |*p| p else return;
         const parser = pane.getParser();
         parser.clipboard_cb = paneClipboardCallback;
         parser.clipboard_ctx = self;
         try self.loop.addFd(self.allocator, pty.master, @as(i16, @intCast(std.posix.POLL.IN)), @ptrCast(pane));
+        // bug #479: arm POLLOUT at queue time (Pty.writeInput hook) and track
+        // this pane for sixel-wait handling without a per-tick tree walk.
+        pty.input_queued_cb = onPtyInputQueued;
+        pty.input_queued_ctx = @ptrCast(self);
+        pane.sixel_pending_hook = onSixelPending;
+        pane.sixel_pending_ctx = @ptrCast(self);
+        // The fd may already hold queued input (re-watch after HUP): addFd
+        // replaced the entry's event bits, so re-arm POLLOUT explicitly.
+        if (pty.input_buf.items.len > 0) {
+            self.loop.addFdEvents(pty.master, std.posix.POLL.OUT);
+        }
+    }
+
+    fn onPtyInputQueued(ctx: ?*anyopaque, master: i32) void {
+        const self: *Server = @ptrCast(@alignCast(ctx orelse return));
+        self.loop.addFdEvents(master, std.posix.POLL.OUT);
+    }
+
+    fn onSixelPending(ctx: ?*anyopaque, pane: *Pane) void {
+        const self: *Server = @ptrCast(@alignCast(ctx orelse return));
+        self.addSixelWaitPane(pane);
+    }
+
+    fn addSixelWaitPane(self: *Server, pane: *Pane) void {
+        for (self.sixel_wait_panes.items) |p| {
+            if (p == pane) return;
+        }
+        self.sixel_wait_panes.append(self.allocator, pane) catch |err| {
+            std.log.warn("sixel wait list append failed: {any}", .{err});
+        };
+    }
+
+    fn removeSixelWaitPane(self: *Server, pane: *Pane) void {
+        for (self.sixel_wait_panes.items, 0..) |p, i| {
+            if (p == pane) {
+                _ = self.sixel_wait_panes.swapRemove(i);
+                return;
+            }
+        }
     }
 
     fn handleAccept(self: *Server) ServerError!void {
@@ -2828,6 +2870,72 @@ pub const Server = struct {
         return true;
     }
 
+    /// Send one serialized frame to a display client. When no earlier frame is
+    /// still draining, the bytes go straight to the socket and only the unsent
+    /// remainder of a partial write is copied into out_buf (bug #482) — the
+    /// old path always heap-copied the whole frame before the write. Falls
+    /// back to queueing when a previous frame is still pending.
+    fn writeFrameToClient(self: *Server, dc: *DisplayClient, hdr: []const u8, body: []const u8) bool {
+        if (dc.out_buf.items.len > 0) return self.appendClientOutFrame(dc, hdr, body);
+        const total_len = hdr.len + body.len;
+
+        // Flow control (bug #298 follow-up, bug #431): while this client is
+        // behind, additional frames are skipped, not queued.
+        if (dc.behind) return true;
+
+        // Reserve the worst case (the whole frame) up front so a partial write
+        // can always queue its remainder — a half-written frame must never be
+        // abandoned because an allocation failed.
+        dc.out_buf.ensureTotalCapacity(self.allocator, total_len) catch return false;
+
+        var off: usize = 0;
+        while (off < total_len) {
+            const chunk: []const u8 = if (off < hdr.len) hdr[off..] else body[off - hdr.len ..];
+            const n = c.write(dc.fd, chunk.ptr, chunk.len);
+            if (n < 0) {
+                const err = std.c.errno(n);
+                if (err == .INTR) continue;
+                if (err == .AGAIN) break;
+                // Broken pipe / fatal — mirror flushDisplayClient: give up on
+                // this client's backlog; the reader notices the hangup.
+                if (dc.behind) {
+                    dc.behind = false;
+                    self.behind_count -|= 1;
+                }
+                self.loop.removeFdEvents(dc.fd, std.posix.POLL.OUT);
+                return true;
+            }
+            if (n == 0) break;
+            off += @as(usize, @intCast(n));
+        }
+
+        if (off < total_len) {
+            if (off < hdr.len) {
+                dc.out_buf.appendSliceAssumeCapacity(hdr[off..]);
+            }
+            const body_off = off -| hdr.len;
+            if (body_off < body.len) {
+                dc.out_buf.appendSliceAssumeCapacity(body[body_off..]);
+            }
+            self.loop.addFdEvents(dc.fd, std.posix.POLL.OUT);
+            // A single large frame may cross the watermark on its own; that
+            // sets behind (the sent prefix cannot be unfetched) and further
+            // frames are skipped until the socket drains.
+            if (dc.out_buf.items.len > RENDER_HIGH_WATERMARK and !dc.behind) {
+                dc.behind = true;
+                self.behind_count += 1;
+            }
+        }
+
+        // Frame-flow diagnostics (bug #298): count what reached clients.
+        self.rendered_frames += 1;
+        self.rendered_bytes += @as(u64, @intCast(total_len));
+        if (self.rendered_frames % 200 == 0) {
+            std.log.debug("server sent {d} frames / {d} bytes to clients", .{ self.rendered_frames, self.rendered_bytes });
+        }
+        return true;
+    }
+
     /// Non-blocking flush of a display client's pending output buffer. Returns
     /// true if every buffered byte was written. On EAGAIN the remainder stays
     /// in out_buf and POLLOUT is armed so flushDisplayClient is retried by the
@@ -2877,6 +2985,19 @@ pub const Server = struct {
         return false;
     }
 
+    /// Force this client's next frame to repaint fully: blank the cell-diff
+    /// baseline and mark every merged line dirty so the row skip (bug #481)
+    /// cannot skip a stale line. Used whenever last_cells is invalidated
+    /// outside renderContent.
+    fn invalidateClientDiff(dc: *DisplayClient) void {
+        if (dc.last_cells.items.len > 0) {
+            @memset(dc.last_cells.items, Cell.empty());
+        }
+        if (dc.merged_screen) |*ms| {
+            for (ms.grid.lines.items) |*line| line.dirty = true;
+        }
+    }
+
     /// True when any attached display client is behind and flow control should
     /// throttle pane reads.
     fn anyDisplayClientBehind(self: *Server) bool {
@@ -2903,37 +3024,40 @@ pub const Server = struct {
     /// awaiting a measured cell size, stop polling its pty for input (its data
     /// stays in the kernel buffer) so the event loop sleeps instead of
     /// busy-spinning on the level-triggered POLL.IN at 100% CPU (bug #298).
-    /// Runs every loop iteration: keeps the cell-size request armed, applies
-    /// the `cell_size_wait_ms` timeout, and re-arms the pane once the sixel is
-    /// flushed (cell size arrived or timeout gave up).
+    /// Iterates only the panes tracked by the feed hook (bug #479) — no
+    /// session-tree walk when nothing is pending.
     pub fn tickSixelWait(self: *Server) void {
         const now = currentMillis();
         // Don't re-arm a pane's POLL.IN while flow control is throttling it —
         // that would undo handlePtyEvent's unarm and bring back the busy-spin.
         const flow_controlled = self.anyDisplayClientBehind();
-        for (self.sessions.items) |session| {
-            for (session.windows.items) |win| {
-                for (win.panes.items) |p| {
-                    if (p.pty) |pty| {
-                        if (p.screen.pending_sixel != null) {
-                            self.needs_cell_size_refresh = true;
-                            if (self.cell_size_pending_since == 0) {
-                                self.cell_size_pending_since = now;
-                            }
-                            self.loop.removeFdEvents(pty.master, std.posix.POLL.IN);
-                            if (now - self.cell_size_pending_since > cell_size_wait_ms) {
-                                p.screen.flushPendingSixel();
-                                self.cell_size_pending_since = 0;
-                            }
-                        } else {
-                            if (self.cell_size_pending_since != 0) {
-                                self.cell_size_pending_since = 0;
-                            }
-                            if (!flow_controlled) {
-                                self.loop.addFdEvents(pty.master, std.posix.POLL.IN);
-                            }
-                        }
-                    }
+        var i: usize = 0;
+        while (i < self.sixel_wait_panes.items.len) {
+            const p = self.sixel_wait_panes.items[i];
+            const pty = p.pty orelse {
+                _ = self.sixel_wait_panes.swapRemove(i);
+                continue;
+            };
+            if (p.screen.pending_sixel != null) {
+                self.needs_cell_size_refresh = true;
+                if (self.cell_size_pending_since == 0) {
+                    self.cell_size_pending_since = now;
+                }
+                self.loop.removeFdEvents(pty.master, std.posix.POLL.IN);
+                if (now - self.cell_size_pending_since > cell_size_wait_ms) {
+                    p.screen.flushPendingSixel();
+                    self.cell_size_pending_since = 0;
+                }
+                i += 1;
+            } else {
+                // Sixel resolved (measured or timed out): allow the pane to be
+                // read again.
+                _ = self.sixel_wait_panes.swapRemove(i);
+                if (self.cell_size_pending_since != 0) {
+                    self.cell_size_pending_since = 0;
+                }
+                if (!flow_controlled) {
+                    self.loop.addFdEvents(pty.master, std.posix.POLL.IN);
                 }
             }
         }
@@ -3198,7 +3322,7 @@ pub const Server = struct {
                 std.log.warn("render error: {any}", .{err});
                 all_flushed = false;
                 if (dc.last_cells.items.len > 0) {
-                    @memset(dc.last_cells.items, Cell.empty());
+                    invalidateClientDiff(dc);
                 }
                 continue;
             };
@@ -3211,10 +3335,10 @@ pub const Server = struct {
             const pkt = protocol.Packet.make(.output, self.render_buf.items);
             var hdr: [5]u8 = undefined;
             pkt.header.encode(&hdr);
-            if (!self.appendClientOutFrame(dc, &hdr, self.render_buf.items)) {
+            if (!self.writeFrameToClient(dc, &hdr, self.render_buf.items)) {
                 all_flushed = false;
                 if (dc.last_cells.items.len > 0) {
-                    @memset(dc.last_cells.items, Cell.empty());
+                    invalidateClientDiff(dc);
                 }
                 continue;
             }
@@ -3266,6 +3390,7 @@ pub const Server = struct {
                 if (pane.pty) |pty| {
                     self.loop.removeFd(pty.master);
                 }
+                self.removeSixelWaitPane(pane);
                 pane.valid = false;
             }
         }
@@ -3287,6 +3412,7 @@ pub const Server = struct {
                     if (pane.pty) |pty| {
                         self.loop.removeFd(pty.master);
                     }
+                    self.removeSixelWaitPane(pane);
                     pane.valid = false;
                 }
             }
@@ -3899,12 +4025,19 @@ test "isPaneValid rejects stale pane pointer after killSession — bug #362" {
     const win = s.active_window.?;
     const pane = win.active_pane.?;
 
+    // bug #479: liveness keys off event-loop registration, so register the
+    // pane the way the server does in production.
+    pane.pty = try @import("pty.zig").Pty.open();
+    try server.watchPanePty(pane);
+    try testing.expect(server.loop.isUdataRegistered(@intFromPtr(pane)));
     try testing.expect(server.isPaneValid(pane));
 
     // Kill the session.
     try server.killSession("test");
 
-    // isPaneValid must return false without dereferencing freed memory.
+    // The pane's fd registration is gone, so isPaneValid must return false
+    // without dereferencing freed memory.
+    try testing.expect(!server.loop.isUdataRegistered(@intFromPtr(pane)));
     try testing.expect(!server.isPaneValid(pane));
 }
 
@@ -3915,6 +4048,8 @@ test "isPaneValid respects pane.valid flag and session teardown clears it — bu
     const s1 = try server.newSession("test1", 80, 24);
     const win1 = s1.active_window.?;
     const pane1 = win1.active_pane.?;
+    pane1.pty = try @import("pty.zig").Pty.open();
+    try server.watchPanePty(pane1);
 
     try testing.expect(server.isPaneValid(pane1));
 
@@ -3931,10 +4066,41 @@ test "isPaneValid respects pane.valid flag and session teardown clears it — bu
     const s2 = try server.newSession("test2", 80, 24);
     const win2 = s2.active_window.?;
     const pane2 = win2.active_pane.?;
+    pane2.pty = try @import("pty.zig").Pty.open();
+    try server.watchPanePty(pane2);
     try testing.expect(server.isPaneValid(pane2));
 
     server.killAllSessions();
     try testing.expect(!server.isPaneValid(pane2));
+}
+
+test "sixel wait list tracks panes without a tree walk — bug #479" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    const s = try server.newSession("test", 80, 24);
+    const pane = s.active_window.?.active_pane.?;
+    pane.pty = try @import("pty.zig").Pty.open();
+    try server.watchPanePty(pane);
+
+    // watchPanePty wires the feed hook.
+    try testing.expect(pane.sixel_pending_hook != null);
+    try testing.expectEqual(@as(usize, 0), server.sixel_wait_panes.items.len);
+
+    // The hook records the pane, idempotently.
+    pane.sixel_pending_hook.?(pane.sixel_pending_ctx, pane);
+    pane.sixel_pending_hook.?(pane.sixel_pending_ctx, pane);
+    try testing.expectEqual(@as(usize, 1), server.sixel_wait_panes.items.len);
+
+    // No pending sixel: the tick drops the entry and re-arms the pane.
+    server.tickSixelWait();
+    try testing.expectEqual(@as(usize, 0), server.sixel_wait_panes.items.len);
+
+    // Teardown removes tracked panes before they are freed.
+    pane.sixel_pending_hook.?(pane.sixel_pending_ctx, pane);
+    try testing.expectEqual(@as(usize, 1), server.sixel_wait_panes.items.len);
+    try server.killSession("test");
+    try testing.expectEqual(@as(usize, 0), server.sixel_wait_panes.items.len);
 }
 
 test "resolve shell option and env and database" {
@@ -5889,4 +6055,57 @@ test "display client pointer remains stable across display_clients reallocations
     try testing.expectEqual(original_ptr, server.display_clients.items[0]);
     try testing.expectEqual(@as(i32, 100), dc1.fd);
     try testing.expectEqual(@as(u32, 80), dc1.sx);
+}
+
+test "writeFrameToClient writes directly and queues only the remainder — bug #482" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    var fds: [2]c_int = undefined;
+    if (std.c.socketpair(std.c.AF.UNIX, std.c.SOCK.STREAM, 0, &fds) != 0) return error.Unexpected;
+    defer _ = std.c.close(fds[0]);
+    defer _ = std.c.close(fds[1]);
+
+    const dc = try server.addDisplayClient(.{ .fd = fds[1] });
+
+    // Fast path: a frame with nothing queued goes straight to the socket and
+    // leaves out_buf empty (no full-frame heap copy).
+    var hdr: [5]u8 = undefined;
+    const pkt = protocol.Packet.make(.output, "direct");
+    pkt.header.encode(&hdr);
+    try testing.expect(server.writeFrameToClient(dc, &hdr, "direct"));
+    try testing.expectEqual(@as(usize, 0), dc.out_buf.items.len);
+
+    var recv_buf: [64]u8 = undefined;
+    const n = std.c.read(fds[0], &recv_buf, recv_buf.len);
+    try testing.expectEqual(@as(isize, @intCast(hdr.len + "direct".len)), n);
+    try testing.expectEqualSlices(u8, hdr ++ "direct", recv_buf[0..@intCast(n)]);
+
+    // Make the write end non-blocking and fill the kernel socket buffer so the
+    // next write EAGAINs immediately.
+    const F_GETFL: c_int = 3;
+    const F_SETFL: c_int = 4;
+    const O_NONBLOCK: c_int = comptime switch (@import("builtin").os.tag) {
+        .linux => @as(c_int, 0o4000),
+        else => @as(c_int, 0x0004),
+    };
+    const flags = std.c.fcntl(fds[1], F_GETFL, @as(c_int, 0));
+    if (flags >= 0) _ = std.c.fcntl(fds[1], F_SETFL, flags | O_NONBLOCK);
+
+    var junk: [65536]u8 = undefined;
+    @memset(&junk, 'x');
+    var guard: usize = 0;
+    while (guard < 4096) : (guard += 1) {
+        if (std.c.write(fds[1], &junk, junk.len) < 0) break;
+    }
+
+    // EAGAIN: the whole frame must be queued for POLLOUT, nothing lost.
+    const frame = try testing.allocator.alloc(u8, 512 * 1024);
+    defer testing.allocator.free(frame);
+    @memset(frame, 'y');
+    const pkt2 = protocol.Packet.make(.output, frame);
+    pkt2.header.encode(&hdr);
+    try testing.expect(server.writeFrameToClient(dc, &hdr, frame));
+    try testing.expectEqual(@as(usize, hdr.len + frame.len), dc.out_buf.items.len);
+    try testing.expect(std.mem.indexOf(u8, dc.out_buf.items, "yy") != null);
 }
