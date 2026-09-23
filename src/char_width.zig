@@ -139,6 +139,7 @@ pub const ParseOverrideError = error{
 
 fn searchTable(key: u21, ranges: []const WidthRange) bool {
     if (ranges.len == 0) return false;
+    if (key < ranges[0].start or key > ranges[ranges.len - 1].end) return false;
     var lo: usize = 0;
     var hi: usize = ranges.len;
     while (lo < hi) {
@@ -220,7 +221,9 @@ pub fn combiningCodepoint(idx: u13) u21 {
 pub fn charWidth(cp: u21) u2 {
     // User overrides win first — these let the operator match whatever width
     // their terminal actually uses for ambiguous codepoints (bug #206).
-    if (overrideWidth(cp)) |w| return w;
+    if (override_count > 0) {
+        if (overrideWidth(cp)) |w| return w;
+    }
 
     // Fast path: ASCII printable + Latin-1 Supplement
     if (cp < 0x0300) {

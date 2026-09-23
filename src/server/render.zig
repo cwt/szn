@@ -547,7 +547,7 @@ pub const Display = struct {
         }
     }
 
-    fn renderContent(self: Display, screen: *Screen) Error!void {
+    pub fn renderContent(self: Display, screen: *Screen) Error!void {
         const h = @min(screen.grid.height, self.sy -| 1);
         const w = @min(screen.grid.width, self.sx);
 
@@ -584,7 +584,40 @@ pub const Display = struct {
         var active_bg = Colour.default_();
         var active_attr = Attr{};
 
-        try self.writeBytes("\x1b[m");
+        var out_buf: [1024]u8 = undefined;
+        var out_len: usize = 0;
+
+        const emit = struct {
+            fn write(disp: Display, buf: *[1024]u8, len: *usize, bytes: []const u8) Error!void {
+                if (len.* + bytes.len > buf.len) {
+                    if (len.* > 0) {
+                        try disp.writeBytes(buf[0..len.*]);
+                        len.* = 0;
+                    }
+                    if (bytes.len >= buf.len) {
+                        try disp.writeBytes(bytes);
+                        return;
+                    }
+                }
+                @memcpy(buf[len.* .. len.* + bytes.len], bytes);
+                len.* += bytes.len;
+            }
+
+            fn move(disp: Display, buf: *[1024]u8, len: *usize, x: u32, y: u32) Error!void {
+                var cup_buf: [32]u8 = undefined;
+                const seq = std.fmt.bufPrint(&cup_buf, "\x1b[{d};{d}H", .{ y + 1, x + 1 }) catch return;
+                try write(disp, buf, len, seq);
+            }
+
+            fn flush(disp: Display, buf: *[1024]u8, len: *usize) Error!void {
+                if (len.* > 0) {
+                    try disp.writeBytes(buf[0..len.*]);
+                    len.* = 0;
+                }
+            }
+        };
+
+        try emit.write(self, &out_buf, &out_len, "\x1b[m");
 
         // Scratch run of spaces used to emit consecutive blank cells in one
         // write instead of one writeBytes per cell (bug #483).
@@ -601,6 +634,8 @@ pub const Display = struct {
             }
 
             const cells = resolveRowCells(screen, y);
+            const row_cells: []const Cell = if (cells) |cls| cls.items else &.{};
+            const row_base = y * w;
 
             // Track the terminal cursor column within this row.
             // We start as not anchored and only issue a moveTo when we actually write a changed cell.
@@ -609,7 +644,7 @@ pub const Display = struct {
 
             var x: u32 = 0;
             while (x < w) : (x += 1) {
-                var cell = if (cells) |cls| (if (x < cls.items.len) cls.items[x] else Cell.empty()) else Cell.empty();
+                var cell = if (x < row_cells.len) row_cells[x] else Cell.empty();
                 if (screen.copy_mode) |cm| {
                     if (cm.isSelected(@intCast(x), @intCast(y))) {
                         cell.attr.reverse = !cell.attr.reverse;
@@ -618,7 +653,7 @@ pub const Display = struct {
 
                 var force_erase = false;
                 if (self.last_cells) |lc| {
-                    const cell_idx = y * w + x;
+                    const cell_idx = row_base + x;
                     if (cell_idx < lc.items.len) {
                         const last_cell = lc.items[cell_idx];
                         if (cell.eql(last_cell)) {
@@ -636,13 +671,13 @@ pub const Display = struct {
 
                 // Re-anchor cursor if we have drifted from the expected column.
                 if (!anchored or cur_cx != @as(u32, @intCast(x))) {
-                    try self.moveTo(@intCast(x), @intCast(y));
+                    try emit.move(self, &out_buf, &out_len, @intCast(x), @intCast(y));
                     cur_cx = @intCast(x);
                     anchored = true;
                 }
 
                 if (force_erase) {
-                    try self.writeBytes("\x1b[X");
+                    try emit.write(self, &out_buf, &out_len, "\x1b[X");
                 }
 
                 var fg_changed = @as(u32, @bitCast(cell.fg)) != @as(u32, @bitCast(active_fg));
@@ -711,7 +746,7 @@ pub const Display = struct {
                     active_bg = cell.bg;
                     active_attr = cell.attr;
 
-                    try self.writeBytes(sgr_buf[0..sgr_pos]);
+                    try emit.write(self, &out_buf, &out_len, sgr_buf[0..sgr_pos]);
                 }
 
                 var cp = cell.char;
@@ -741,7 +776,7 @@ pub const Display = struct {
                             }
                         }
                     }
-                    try self.writeBytes(spaces[0..run]);
+                    try emit.write(self, &out_buf, &out_len, spaces[0..run]);
                     cur_cx += run;
                     x += run - 1;
                 } else if (cp >= 0x20 and cp != 0x7F) {
@@ -760,25 +795,25 @@ pub const Display = struct {
                         }
                     }
                     const len = std.unicode.utf8Encode(@intCast(cp), &buf) catch {
-                        try self.writeBytes("?");
+                        try emit.write(self, &out_buf, &out_len, "?");
                         cur_cx += 1;
                         continue;
                     };
-                    try self.writeBytes(buf[0..len]);
+                    try emit.write(self, &out_buf, &out_len, buf[0..len]);
                     cur_cx += cw;
 
                     if (cell.comb1 != 0) {
                         const ccp1 = char_width.combiningCodepoint(cell.comb1);
                         if (ccp1 != 0) {
                             const clen = std.unicode.utf8Encode(ccp1, &buf) catch continue;
-                            try self.writeBytes(buf[0..clen]);
+                            try emit.write(self, &out_buf, &out_len, buf[0..clen]);
                         }
                     }
                     if (cell.comb2 != 0) {
                         const ccp2 = char_width.combiningCodepoint(cell.comb2);
                         if (ccp2 != 0) {
                             const clen = std.unicode.utf8Encode(ccp2, &buf) catch continue;
-                            try self.writeBytes(buf[0..clen]);
+                            try emit.write(self, &out_buf, &out_len, buf[0..clen]);
                         }
                     }
 
@@ -792,7 +827,7 @@ pub const Display = struct {
                         anchored = false;
                     }
                 } else {
-                    try self.writeBytes("?");
+                    try emit.write(self, &out_buf, &out_len, "?");
                     cur_cx += 1;
                 }
             }
@@ -802,7 +837,8 @@ pub const Display = struct {
             }
         }
 
-        try self.writeBytes("\x1b[m");
+        try emit.write(self, &out_buf, &out_len, "\x1b[m");
+        try emit.flush(self, &out_buf, &out_len);
     }
 
     fn renderStatusBar(
@@ -852,7 +888,11 @@ pub const Display = struct {
             col = display_len;
         } else if (status_line) |line| {
             try self.writeBytes(line);
-            col = @intCast(@min(status_mod.visibleLen(line), self.sx));
+            const vlen = if (std.mem.indexOfScalar(u8, line, 0x1b) == null)
+                line.len
+            else
+                status_mod.visibleLen(line);
+            col = @intCast(@min(vlen, self.sx));
         }
 
         // Emit the remaining padding as space runs instead of one write per

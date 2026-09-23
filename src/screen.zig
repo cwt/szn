@@ -492,6 +492,7 @@ pub const Screen = struct {
     /// Decrement the refcount for the sixel image occupying cell (x, y) on the
     /// main grid.  If the cell has no sixel marker the call is a no-op.
     fn decrementMainGridRef(self: *Screen, x: u32, y: u32) void {
+        if (!self.hasSixelImages()) return;
         if (x >= self.grid.width or y >= self.grid.height) return;
         const cell = self.grid.getCell(x, y);
         if (!cell.attr.sixel) return;
@@ -505,6 +506,7 @@ pub const Screen = struct {
 
     /// Decrement refcount for every cell in the given line's cells slice.
     fn decrementLineRefs(self: *Screen, cells: []const Cell) void {
+        if (!self.hasSixelImages()) return;
         for (cells, 0..) |cell, x| {
             if (cell.attr.sixel) {
                 const id = @as(u32, cell.char & 0x1FFFFF);
@@ -925,9 +927,81 @@ pub const Screen = struct {
         }
     }
 
+    fn writeAsciiRun(self: *Screen, run: []const u8) Error!void {
+        if (run.len == 0 or self.grid.width == 0) return;
+        if (self.mode.insert) {
+            for (run) |c| try self.writeChar(c);
+            return;
+        }
+
+        const has_sixels = self.hasSixelImages();
+        var rem = run;
+        while (rem.len > 0) {
+            if (self.mode.line_wrap) {
+                if (self.cursor.x >= self.grid.width) {
+                    self.grid.getLineMut(self.cursor.y).wrapped = true;
+                    self.cursor.x = 0;
+                    try self.advanceLine();
+                }
+            } else {
+                if (self.cursor.x >= self.grid.width) {
+                    self.cursor.x = self.grid.width - 1;
+                }
+            }
+
+            const avail = self.grid.width - self.cursor.x;
+            if (avail == 0) {
+                self.decrementMainGridRef(self.cursor.x, self.cursor.y);
+                var cell = self.cur_cell;
+                cell.char = rem[rem.len - 1];
+                self.grid.setCell(self.cursor.x, self.cursor.y, cell);
+                self.last_char = rem[rem.len - 1];
+                self.dirty = true;
+                break;
+            }
+
+            const chunk = @min(avail, rem.len);
+            const line = self.grid.getLineMut(self.cursor.y);
+            const dest = line.cells.items[self.cursor.x .. self.cursor.x + chunk];
+
+            if (has_sixels) {
+                for (dest) |cell| {
+                    if (cell.attr.sixel) {
+                        const id = @as(u32, cell.char & 0x1FFFFF);
+                        if (self.findSixelImageSlot(id)) |slot| {
+                            if (self.sixel_refcounts[slot] > 0) {
+                                self.sixel_refcounts[slot] -= 1;
+                            }
+                        }
+                    }
+                }
+            }
+
+            for (dest, rem[0..chunk]) |*cell, ch| {
+                cell.* = self.cur_cell;
+                cell.char = ch;
+            }
+
+            self.cursor.x += @intCast(chunk);
+            line.dirty = true;
+            self.dirty = true;
+            self.last_char = rem[chunk - 1];
+            rem = rem[chunk..];
+        }
+    }
+
     pub fn writeStr(self: *Screen, s: []const u8) Error!void {
-        for (s) |c| {
-            try self.writeChar(c);
+        var i: usize = 0;
+        while (i < s.len) {
+            if (s[i] >= 0x20 and s[i] <= 0x7E and !self.mode.insert) {
+                var end = i;
+                while (end < s.len and s[end] >= 0x20 and s[end] <= 0x7E) : (end += 1) {}
+                try self.writeAsciiRun(s[i..end]);
+                i = end;
+            } else {
+                try self.writeChar(s[i]);
+                i += 1;
+            }
         }
     }
 

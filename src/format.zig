@@ -25,39 +25,33 @@ const Tm = extern struct {
 };
 
 pub const Context = struct {
-    map: std.StringHashMap([]const u8),
+    arena: std.heap.ArenaAllocator,
+    map: std.StringHashMapUnmanaged([]const u8) = .empty,
     default_fg: colour_mod.Colour = colour_mod.Colour.default_(),
     default_bg: colour_mod.Colour = colour_mod.Colour.default_(),
 
     pub fn init(allocator: std.mem.Allocator) Context {
         return .{
-            .map = std.StringHashMap([]const u8).init(allocator),
+            .arena = std.heap.ArenaAllocator.init(allocator),
+            .map = .empty,
             .default_fg = colour_mod.Colour.default_(),
             .default_bg = colour_mod.Colour.default_(),
         };
     }
 
     pub fn deinit(self: *Context) void {
-        var it = self.map.iterator();
-        while (it.next()) |entry| {
-            self.map.allocator.free(entry.key_ptr.*);
-            self.map.allocator.free(entry.value_ptr.*);
-        }
-        self.map.deinit();
+        self.arena.deinit();
     }
 
     pub fn set(self: *Context, key: []const u8, value: []const u8) !void {
+        const alloc = self.arena.allocator();
         if (self.map.getEntry(key)) |entry| {
-            const new_value = try self.map.allocator.dupe(u8, value);
-            self.map.allocator.free(entry.value_ptr.*);
-            entry.value_ptr.* = new_value;
+            entry.value_ptr.* = try alloc.dupe(u8, value);
             return;
         }
-        const k = try self.map.allocator.dupe(u8, key);
-        errdefer self.map.allocator.free(k);
-        const v = try self.map.allocator.dupe(u8, value);
-        errdefer self.map.allocator.free(v);
-        try self.map.put(k, v);
+        const k = try alloc.dupe(u8, key);
+        const v = try alloc.dupe(u8, value);
+        try self.map.put(alloc, k, v);
     }
 
     pub fn get(self: *const Context, key: []const u8) ?[]const u8 {

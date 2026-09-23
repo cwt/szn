@@ -481,29 +481,25 @@ pub const Grid = struct {
         const num = @min(n, self.width -| x);
         if (num == 0) return;
         const line = self.getLineMut(y);
-        var i = self.width - 1;
-        while (i >= x + num) : (i -= 1) {
-            line.cells.items[i] = line.cells.items[i - num];
+        const shift_count = self.width - (x + num);
+        if (shift_count > 0) {
+            std.mem.copyBackwards(Cell, line.cells.items[x + num .. self.width], line.cells.items[x .. x + shift_count]);
         }
-        const end = @min(x + num, self.width);
-        for (x..end) |col| {
-            line.cells.items[col] = Cell.empty();
-        }
+        @memset(line.cells.items[x .. x + num], Cell.empty());
         line.dirty = true;
     }
 
     pub fn deleteChars(self: *Grid, x: u32, y: u32, n: u32) void {
         if (y >= self.height) return;
+        if (self.width == 0) return;
         const num = @min(n, self.width -| x);
         if (num == 0) return;
         const line = self.getLineMut(y);
-        var i = x;
-        while (i + num < self.width) : (i += 1) {
-            line.cells.items[i] = line.cells.items[i + num];
+        const shift_count = self.width - (x + num);
+        if (shift_count > 0) {
+            std.mem.copyForwards(Cell, line.cells.items[x .. x + shift_count], line.cells.items[x + num .. self.width]);
         }
-        while (i < self.width) : (i += 1) {
-            line.cells.items[i] = Cell.empty();
-        }
+        @memset(line.cells.items[self.width - num .. self.width], Cell.empty());
         line.dirty = true;
     }
 
