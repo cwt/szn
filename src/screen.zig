@@ -1230,7 +1230,7 @@ pub const Screen = struct {
     pub fn eraseChars(self: *Screen, n: u32) void {
         const fill = self.eraseCell();
         const cx = @min(self.cursor.x, self.grid.width -| 1);
-        const end = @min(cx + n, self.grid.width);
+        const end = @min(cx +| n, self.grid.width);
         if (cx < end) {
             const line = self.grid.getLineMut(self.cursor.y);
             // bug #225: decrement refcounts for erased cells.
@@ -3252,6 +3252,21 @@ test "full-line ECH clears wrapped flag, partial ECH keeps it — bug #369" {
     screen.cursor.x = 0;
     screen.eraseChars(screen.grid.width);
     try testing.expect(!screen.grid.getLine(0).wrapped);
+}
+
+test "eraseChars saturating parameter does not overflow — bug #485" {
+    var screen = try Screen.init(testing.allocator, 10, 5);
+    defer screen.deinit();
+
+    try screen.writeStr("hello");
+    screen.cursor.x = 2;
+    screen.cursor.y = 0;
+    screen.eraseChars(std.math.maxInt(u32));
+    try testing.expectEqual(@as(u32, 2), screen.cursor.x);
+    try testing.expectEqual(@as(u21, 'h'), screen.grid.getCell(0, 0).char);
+    try testing.expectEqual(@as(u21, 'e'), screen.grid.getCell(1, 0).char);
+    try testing.expectEqual(@as(u21, 0), screen.grid.getCell(2, 0).char);
+    try testing.expectEqual(@as(u21, 0), screen.grid.getCell(3, 0).char);
 }
 
 test "cursorDown and cursorUp clamp cursor.x when cursor.x equals grid.width" {

@@ -42,9 +42,9 @@ Both summary tables below are generated from the `severity` and `status` fields 
 
 | Status | Count |
 |---|---:|
-| Fixed / Resolved | 426 |
+| Fixed / Resolved | 427 |
 | False Positive | 26 |
-| Open | 23 |
+| Open | 22 |
 | **Total** | **475** |
 
 ## All Bugs
@@ -509,7 +509,7 @@ Both summary tables below are generated from the `severity` and `status` fields 
 | [482](482.md) | display-client render frames copy the whole frame into dc.out_buf instead of writing render_buf directly to the socket | LOW | Fixed |
 | [483](483.md) | space cells emit one byte() write each; consecutive blank runs should batch | LOW | Fixed |
 | [484](484.md) | expandTruncateInto slice-out-of-bounds panic on malformed UTF-8 in status format values | CRITICAL | Fixed |
-| [485](485.md) | eraseChars: cx + n overflows u32 on untrusted CSI param, panicking the server | CRITICAL | Open |
+| [485](485.md) | eraseChars: cx + n overflows u32 on untrusted CSI param, panicking the server | CRITICAL | Fixed |
 | [486](486.md) | Pty.deinit SIGKILLs the child PID unconditionally: PID-reuse race can kill an unrelated process | HIGH | Open |
 | [487](487.md) | runServerDaemon closes fd 0 twice: open("/dev/null") returns fd 0, leaving the daemon with stdin closed | HIGH | Open |
 | [488](488.md) | connectProbeUnix treats all errors as stale socket: fd exhaustion unlinks a live server's socket (split-brain) | HIGH | Open |
