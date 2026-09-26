@@ -205,7 +205,6 @@ pub const Screen = struct {
         const pending = self.pending_sixel orelse return;
         self.pending_sixel = null;
         self.placeSixelImage(pending.data, pending.px_width, pending.px_height) catch |e| {
-            self.allocator.free(pending.data);
             std.log.warn("failed to replay buffered sixel: {any}", .{e});
         };
     }
@@ -213,14 +212,13 @@ pub const Screen = struct {
     /// Store a sixel image at the current cursor position.
     /// `dcs_bytes` must be the complete raw DCS sequence (ESC P ... ESC \).
     /// Ownership is transferred — `dcs_bytes` must have been allocated with
-    /// `self.allocator`.
+    /// `self.allocator`. On error or drop, `dcs_bytes` is freed.
     pub fn addSixelImage(
         self: *Screen,
         dcs_bytes: []u8,
         px_width: u32,
         px_height: u32,
     ) Error!void {
-        errdefer self.allocator.free(dcs_bytes);
         // Under the fully-contained sixel rule an image can only ever be drawn
         // when it fits entirely inside the pane. If it spans more cell rows or
         // columns than the grid has it can never be `contained`, so it would be
@@ -271,6 +269,8 @@ pub const Screen = struct {
 
     /// Place an already-captured sixel at the current cursor (used directly
     /// once the cell size is known, or to replay a buffered sixel, #204).
+    /// Takes ownership of `dcs_bytes`. On error, frees `dcs_bytes` and leaves
+    /// no slot, marker cells, or refcounts behind (bug #501).
     fn placeSixelImage(
         self: *Screen,
         dcs_bytes: []u8,
@@ -352,8 +352,12 @@ pub const Screen = struct {
             .alt_screen = self.mode.alt_screen, // bug #219: tag so shiftSixelAnchors filters correctly
         };
         errdefer {
-            self.sixel_images[slot] = null;
+            if (self.sixel_images[slot]) |*img| {
+                img.deinit(self.allocator);
+                self.sixel_images[slot] = null;
+            }
             self.sixel_refcounts[slot] = 0;
+            self.clearSixelMarkerCells(id);
         }
 
         // Saturating ceil-div: absurd wire dimensions must not wrap small and
@@ -3755,4 +3759,44 @@ test "eraseDisplay 1 clears surviving marker cells of straddling sixel image —
     try testing.expect(!screen.grid.getCell(0, 3).attr.sixel);
     try testing.expect(!screen.grid.getCell(0, 4).attr.sixel);
     try testing.expect(!screen.grid.getCell(0, 5).attr.sixel);
+}
+
+test "placeSixelImage errdefer frees image bytes and rolls back markers on error — bug #501" {
+    var screen = try Screen.init(testing.allocator, 10, 2);
+    defer screen.deinit();
+    screen.cell_size_known = true;
+    screen.cell_px_width = 10;
+    screen.cell_px_height = 20;
+    screen.grid.history_limit = 5;
+
+    // Start cursor at row 0 of 2-row grid
+    screen.cursor.x = 0;
+    screen.cursor.y = 0;
+
+    // 2 rows tall (40px). First row (y=0) placed at cursor row 0.
+    // Next row (y=1) advances cursor to row 1.
+    // Below-image cursor advance (lines 425-429) advances cursor to row 2 (>= height)
+    // which triggers scrollUp!
+    const dcs = try testing.allocator.dupe(u8, "\x1bPqTEST\x1b\\");
+
+    // Make grid.allocator fail when scrollUp tries to allocate history
+    var failing = std.testing.FailingAllocator.init(testing.allocator, .{ .fail_index = 0 });
+    screen.grid.allocator = failing.allocator();
+
+    // placeSixelImage must fail with OutOfMemory
+    const res = screen.placeSixelImage(dcs, 10, 40);
+    try testing.expectError(error.OutOfMemory, res);
+
+    // Restore grid allocator for screen.deinit
+    screen.grid.allocator = testing.allocator;
+
+    // Slot and refcounts must be cleared
+    try testing.expect(screen.sixel_images[0] == null);
+    try testing.expectEqual(@as(usize, 0), screen.sixel_refcounts[0]);
+
+    // Placed marker cells must have been rolled back
+    try testing.expect(!screen.grid.getCell(0, 0).attr.sixel);
+    try testing.expect(!screen.grid.getCell(0, 1).attr.sixel);
+
+    // dcs must have been freed by errdefer (verified by testing.allocator leak detection at test exit)
 }
