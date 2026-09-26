@@ -69,9 +69,10 @@ pub const Key = union(enum) {
     },
 };
 
-const ParseError = error{
+pub const ParseError = error{
     InvalidCsi,
     UnknownKey,
+    IgnoredEvent,
 };
 
 /// Parse a CSI sequence (without the leading `\e[`) into a Key.
@@ -146,6 +147,7 @@ pub fn parseCsi(seq: []const u8) ParseError!Key {
             //   basic:         CSI code;modifiers u
             //   disambiguate:  CSI > code;modifiers u      (codepoint is the base key, shift in modifiers)
             //   events:        CSI [>] code;modifiers;event u  (event=1 press, 2 repeat, 3 release)
+            //   sub-params:    CSI code:alternate...;modifiers:event u
             const u_pos = std.mem.lastIndexOfScalar(u8, seq, 'u') orelse return error.InvalidCsi;
             const inner = seq[0..u_pos];
 
@@ -157,10 +159,21 @@ pub fn parseCsi(seq: []const u8) ParseError!Key {
             var it = std.mem.splitScalar(u8, body, ';');
 
             const codepoint_str = it.first();
-            const codepoint = std.fmt.parseInt(u32, codepoint_str, 10) catch return error.InvalidCsi;
+            const base_code_str = if (std.mem.indexOfScalar(u8, codepoint_str, ':')) |colon|
+                codepoint_str[0..colon]
+            else
+                codepoint_str;
+            const codepoint = std.fmt.parseInt(u32, base_code_str, 10) catch return error.InvalidCsi;
+
+            var event_type: u8 = 1;
 
             const k_mod: Modifier = if (it.next()) |mod_str| blk: {
-                const mp = std.fmt.parseInt(u8, mod_str, 10) catch return error.InvalidCsi;
+                var mod_it = std.mem.splitScalar(u8, mod_str, ':');
+                const raw_mod = mod_it.first();
+                if (mod_it.next()) |evt_str| {
+                    event_type = std.fmt.parseInt(u8, evt_str, 10) catch return error.InvalidCsi;
+                }
+                const mp = std.fmt.parseInt(u8, raw_mod, 10) catch return error.InvalidCsi;
                 // Kitty adds +1 as a base offset.  Shift=1, Alt=2, Ctrl=4, etc.
                 const adjusted = mp -| 1;
                 break :blk Modifier{
@@ -170,6 +183,14 @@ pub fn parseCsi(seq: []const u8) ParseError!Key {
                     .meta = adjusted & 8 != 0,
                 };
             } else Modifier{};
+
+            if (it.next()) |evt_str| {
+                const clean_evt = if (std.mem.indexOfScalar(u8, evt_str, ':')) |c| evt_str[0..c] else evt_str;
+                event_type = std.fmt.parseInt(u8, clean_evt, 10) catch return error.InvalidCsi;
+            }
+
+            if (event_type == 3) return error.IgnoredEvent;
+            if (event_type == 0 or event_type > 3) return error.InvalidCsi;
 
             if (codepoint > 0x10FFFF) return error.InvalidCsi;
             return switch (codepoint) {
@@ -765,4 +786,25 @@ test "parse kitty normalizes special, arrow, and function keys — bug #430" {
     const f1_key = try parse("\x1b[57376u");
     try testing.expectEqual(std.meta.activeTag(f1_key), .function);
     try testing.expectEqual(f1_key.function.key, .f1);
+}
+
+test "parse kitty event types and colon sub-parameters — bug #489" {
+    // Press (event=1) with colon separator
+    const press_key = try parse("\x1b[97;1:1u");
+    try testing.expectEqual(std.meta.activeTag(press_key), .char);
+    try testing.expectEqual(@as(u21, 'a'), press_key.char.code);
+
+    // Repeat (event=2) passes through
+    const repeat_key = try parse("\x1b[97;1:2u");
+    try testing.expectEqual(std.meta.activeTag(repeat_key), .char);
+    try testing.expectEqual(@as(u21, 'a'), repeat_key.char.code);
+
+    // Release (event=3) is dropped with IgnoredEvent
+    try testing.expectError(error.IgnoredEvent, parse("\x1b[97;1:3u"));
+    try testing.expectError(error.IgnoredEvent, parse("\x1b[97;1;3u"));
+
+    // Alternate key codes with colon prefix
+    const alt_code_key = try parse("\x1b[97:65;1u");
+    try testing.expectEqual(std.meta.activeTag(alt_code_key), .char);
+    try testing.expectEqual(@as(u21, 'a'), alt_code_key.char.code);
 }
