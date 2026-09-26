@@ -548,7 +548,7 @@ pub const Display = struct {
     }
 
     pub fn renderContent(self: Display, screen: *Screen) Error!void {
-        const h = @min(screen.grid.height, self.sy -| 1);
+        const h = @min(screen.grid.height, self.sy);
         const w = @min(screen.grid.width, self.sx);
 
         if (self.last_cells) |lc| {
@@ -2346,4 +2346,29 @@ test "renderStatusBar pads with a space run — bug #483" {
 
     // "hi" followed by the 18-column pad, all spaces.
     try testing.expect(std.mem.indexOf(u8, capture_buf.items, "hi                  ") != null);
+}
+
+test "renderContent renders bottom row when screen height equals display.sy — bug #495" {
+    const allocator = testing.allocator;
+    var capture_buf: std.ArrayList(u8) = .empty;
+    defer capture_buf.deinit(allocator);
+
+    const display = Display{
+        .fd = -1,
+        .sx = 10,
+        .sy = 3,
+        .capture = &capture_buf,
+        .capture_allocator = allocator,
+    };
+
+    var screen = try Screen.init(allocator, 10, 3);
+    defer screen.deinit();
+
+    // Place character 'Z' on row 2 (bottom row when sy = 3)
+    screen.grid.setCell(0, 2, Cell.withChar('Z'));
+
+    try display.renderContent(&screen);
+
+    // Verify row 2 content was rendered
+    try testing.expect(std.mem.indexOf(u8, capture_buf.items, "Z") != null);
 }
