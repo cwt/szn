@@ -42,9 +42,9 @@ Both summary tables below are generated from the `severity` and `status` fields 
 
 | Status | Count |
 |---|---:|
-| Fixed / Resolved | 438 |
+| Fixed / Resolved | 439 |
 | False Positive | 26 |
-| Open | 11 |
+| Open | 10 |
 | **Total** | **475** |
 
 ## All Bugs
@@ -521,7 +521,7 @@ Both summary tables below are generated from the `severity` and `status` fields 
 | [494](494.md) | Grid.scrollUp spare-slot branch overwrites a live line when the ring is physically full | MEDIUM | Fixed |
 | [495](495.md) | renderContent drops the last content row when the status bar is disabled | MEDIUM | Fixed |
 | [496](496.md) | cell_size wire message stores unvalidated u32s server-wide | MEDIUM | Fixed |
-| [497](497.md) | test helper setRaw hardcodes macOS termios cc indices (VMIN/VTIME), wrong slots on Linux | LOW | Open |
+| [497](497.md) | test helper setRaw hardcodes macOS termios cc indices (VMIN/VTIME), wrong slots on Linux | LOW | Fixed |
 | [498](498.md) | client silently exits 0 when setRaw fails (raw.setRaw() catch return) | LOW | Open |
 | [499](499.md) | InputParser.deinit takes an arbitrary allocator but every allocation uses screen.allocator | LOW | Open |
 | [500](500.md) | tty.Term.setAttributes emits a bare SGR reset on sixel-bit-only change without nulling fg/bg (latent) | LOW | Open |

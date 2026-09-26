@@ -1893,8 +1893,18 @@ test "cursorPosition honours origin mode" {
     try testing.expectEqual(@as(u32, 0), screen.cursor.x);
 }
 
-const VMIN: usize = 16;
-const VTIME: usize = 17;
+const VMIN: usize = switch (@import("builtin").os.tag) {
+    .linux => 6,
+    .macos, .ios => 16,
+    .freebsd => 4,
+    else => 6,
+};
+const VTIME: usize = switch (@import("builtin").os.tag) {
+    .linux => 5,
+    .macos, .ios => 17,
+    .freebsd => 5,
+    else => 5,
+};
 
 fn setRaw(fd: i32) void {
     var raw: std.c.termios = undefined;
@@ -1905,6 +1915,24 @@ fn setRaw(fd: i32) void {
     raw.cc[VMIN] = 1;
     raw.cc[VTIME] = 0;
     _ = std.c.tcsetattr(fd, std.c.TCSA.FLUSH, &raw);
+}
+
+test "input test helper VMIN and VTIME match the target platform — bug #497" {
+    switch (@import("builtin").os.tag) {
+        .linux => {
+            try testing.expectEqual(@as(usize, 6), VMIN);
+            try testing.expectEqual(@as(usize, 5), VTIME);
+        },
+        .macos, .ios => {
+            try testing.expectEqual(@as(usize, 16), VMIN);
+            try testing.expectEqual(@as(usize, 17), VTIME);
+        },
+        .freebsd => {
+            try testing.expectEqual(@as(usize, 4), VMIN);
+            try testing.expectEqual(@as(usize, 5), VTIME);
+        },
+        else => {},
+    }
 }
 
 test "DSR cursor position report" {
