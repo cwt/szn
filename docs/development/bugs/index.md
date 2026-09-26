@@ -42,9 +42,9 @@ Both summary tables below are generated from the `severity` and `status` fields 
 
 | Status | Count |
 |---|---:|
-| Fixed / Resolved | 431 |
+| Fixed / Resolved | 432 |
 | False Positive | 26 |
-| Open | 18 |
+| Open | 17 |
 | **Total** | **475** |
 
 ## All Bugs
@@ -514,7 +514,7 @@ Both summary tables below are generated from the `severity` and `status` fields 
 | [487](487.md) | runServerDaemon closes fd 0 twice: open("/dev/null") returns fd 0, leaving the daemon with stdin closed | HIGH | Fixed |
 | [488](488.md) | connectProbeUnix treats all errors as stale socket: fd exhaustion unlinks a live server's socket (split-brain) | HIGH | Fixed |
 | [489](489.md) | kitty CSI u parser drops the event-type field: key releases become phantom presses | MEDIUM | Fixed |
-| [490](490.md) | OSC 52 forward path allocates and queues before the MAX_PASTE_SIZE check (memory amplification) | MEDIUM | Open |
+| [490](490.md) | OSC 52 forward path allocates and queues before the MAX_PASTE_SIZE check (memory amplification) | MEDIUM | Fixed |
 | [491](491.md) | VS16 promotion undercounts the sixel refcount: slot can be reused while a live marker references it | MEDIUM | Open |
 | [492](492.md) | scrollUpInRegion/scrollDownInRegion shift sixel anchors outside the scroll region | MEDIUM | Open |
 | [493](493.md) | eraseDisplay 0/1 removes straddling sixel images but leaves stale marker cells with dead ids | MEDIUM | Open |

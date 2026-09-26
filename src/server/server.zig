@@ -2329,6 +2329,15 @@ pub const Server = struct {
     fn paneClipboardCallback(ctx: ?*anyopaque, target: []const u8, base64: []const u8) void {
         const self: *Server = @ptrCast(@alignCast(ctx orelse return));
 
+        // Enforce MAX_PASTE_SIZE before allocating or forwarding: the payload
+        // is pane-controlled and must not balloon server memory (bugs #363, #490).
+        const decoder = std.base64.standard.Decoder;
+        const decoded_len = decoder.calcSizeForSlice(base64) catch return;
+        if (decoded_len > MAX_PASTE_SIZE) {
+            std.log.warn("OSC52 clipboard payload too large ({d} bytes), dropping", .{decoded_len});
+            return;
+        }
+
         // 1. Forward raw OSC 52 to all display clients wrapped in an output packet
         const raw_buf = std.fmt.allocPrint(self.allocator, "\x1b]52;{s};{s}\x07", .{ target, base64 }) catch return;
         defer self.allocator.free(raw_buf);
@@ -2346,15 +2355,7 @@ pub const Server = struct {
             self.queueToClient(dc.fd, full_pkt);
         }
 
-        // 2. Decode base64 and push to self.buffers. Enforce MAX_PASTE_SIZE:
-        // the payload is pane-controlled and must not balloon server memory
-        // (bug #363).
-        const decoder = std.base64.standard.Decoder;
-        const decoded_len = decoder.calcSizeForSlice(base64) catch return;
-        if (decoded_len > MAX_PASTE_SIZE) {
-            std.log.warn("OSC52 clipboard payload too large ({d} bytes), dropping", .{decoded_len});
-            return;
-        }
+        // 2. Decode base64 and push to self.buffers.
         const decoded = self.allocator.alloc(u8, decoded_len) catch return;
         decoder.decode(decoded, base64) catch {
             self.allocator.free(decoded);
@@ -5380,6 +5381,74 @@ test "OSC 52 clipboard forwarding and buffer copy" {
     const read_res = std.c.read(client_fd, &temp_buf, temp_buf.len);
     const received = temp_buf[0..@intCast(read_res)];
     try testing.expect(std.mem.indexOf(u8, received, "\x1b]52;c;aGVsbG8=\x07") != null);
+}
+
+test "OSC 52 clipboard drops oversized payload without forwarding — bug #490" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    const s = try server.newSession("test-osc52-oversized", 80, 24);
+    const win = s.active_window.?;
+    const pane = win.active_pane.?;
+
+    var fds: [2]i32 = undefined;
+    if (std.c.socketpair(std.posix.AF.LOCAL, std.posix.SOCK.STREAM, 0, &fds) != 0) {
+        return error.SocketPairFailed;
+    }
+    const client_fd = fds[0];
+    const server_fd = fds[1];
+    defer _ = std.c.close(client_fd);
+    defer _ = std.c.close(server_fd);
+
+    _ = try server.addDisplayClient(.{ .fd = server_fd });
+    defer {
+        for (server.display_clients.items, 0..) |dc, idx| {
+            if (dc.fd == server_fd) {
+                dc.deinit(server.allocator);
+                server.allocator.destroy(dc);
+                _ = server.display_clients.swapRemove(idx);
+                break;
+            }
+        }
+    }
+
+    const parser = pane.getParser();
+    parser.clipboard_cb = Server.paneClipboardCallback;
+    parser.clipboard_ctx = &server;
+
+    // Create an oversized payload: > MAX_PASTE_SIZE
+    const encoder = std.base64.standard.Encoder;
+    const raw_payload = try testing.allocator.alloc(u8, Server.MAX_PASTE_SIZE + 10);
+    defer testing.allocator.free(raw_payload);
+    @memset(raw_payload, 'A');
+
+    const b64_buf = try testing.allocator.alloc(u8, encoder.calcSize(raw_payload.len));
+    defer testing.allocator.free(b64_buf);
+    _ = encoder.encode(b64_buf, raw_payload);
+
+    // Feed OSC 52 sequence with oversized payload
+    const osc52_seq = try std.fmt.allocPrint(testing.allocator, "\x1b]52;c;{s}\x07", .{b64_buf});
+    defer testing.allocator.free(osc52_seq);
+    try parser.feed(osc52_seq);
+
+    // 1. Verify buffer was not created
+    try testing.expect(server.buffers.get(null) == null);
+
+    // 2. Verify display client received nothing
+    const c_fcntl = struct {
+        extern "c" fn fcntl(fd: i32, cmd: i32, ...) i32;
+    }.fcntl;
+    const O_NONBLOCK = comptime switch (@import("builtin").os.tag) {
+        .macos, .ios, .watchos, .tvos => 0x0004,
+        .freebsd, .netbsd, .openbsd, .dragonfly => 0x0004,
+        else => 0x0800, // Linux
+    };
+    const flags = c_fcntl(client_fd, 3, @as(i32, 0));
+    _ = c_fcntl(client_fd, 4, flags | O_NONBLOCK);
+
+    var temp_buf: [128]u8 = undefined;
+    const read_res = std.c.read(client_fd, &temp_buf, temp_buf.len);
+    try testing.expect(read_res <= 0);
 }
 
 test "mouse drag event forwarding" {
