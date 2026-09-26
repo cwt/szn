@@ -543,6 +543,26 @@ pub const Screen = struct {
         }
     }
 
+    /// Clear all marker cells on the main grid that reference the given sixel image ID (bug #493).
+    fn clearSixelMarkerCells(self: *Screen, image_id: u32) void {
+        const fill = self.eraseCell();
+        const id_masked = image_id & 0x1FFFFF;
+        var y: u32 = 0;
+        while (y < self.grid.height) : (y += 1) {
+            const line = self.grid.getLineMut(y);
+            var had_marker = false;
+            for (line.cells.items) |*cell| {
+                if (cell.attr.sixel and (cell.char & 0x1FFFFF) == id_masked) {
+                    cell.* = fill;
+                    had_marker = true;
+                }
+            }
+            if (had_marker) {
+                line.dirty = true;
+            }
+        }
+    }
+
     pub fn eraseCell(self: *const Screen) Cell {
         return .{
             .char = 0,
@@ -1234,6 +1254,8 @@ pub const Screen = struct {
                     removed_sixel = true;
                     // bug #225: zero refcount for evicted image.
                     self.sixel_refcounts[idx] = 0;
+                    // bug #493: clear surviving marker cells so dead IDs are not left on the grid.
+                    self.clearSixelMarkerCells(img.id);
                     const slot = &self.sixel_images[idx];
                     if (slot.*) |*img_ptr| {
                         img_ptr.deinit(self.allocator);
@@ -3661,4 +3683,76 @@ test "DECSTBM full-screen scroll region does not drop lines into scrollback — 
         try screen.advanceLine();
     }
     try testing.expect(screen.grid.historyLen() > 0);
+}
+
+test "eraseDisplay 0 clears surviving marker cells of straddling sixel image — bug #493" {
+    var screen = try Screen.init(testing.allocator, 10, 10);
+    defer screen.deinit();
+    screen.cell_size_known = true;
+    screen.cell_px_width = 10;
+    screen.cell_px_height = 20;
+
+    // Image placed at row 2 with height 80px (4 rows: 2, 3, 4, 5)
+    screen.cursor.y = 2;
+    screen.cursor.x = 0;
+    const dcs = try testing.allocator.dupe(u8, "\x1bPqTEST\x1b\\");
+    try screen.placeSixelImage(dcs, 10, 80);
+
+    // Verify initial markers placed on rows 2, 3, 4, 5
+    try testing.expect(screen.grid.getCell(0, 2).attr.sixel);
+    try testing.expect(screen.grid.getCell(0, 3).attr.sixel);
+    try testing.expect(screen.grid.getCell(0, 4).attr.sixel);
+    try testing.expect(screen.grid.getCell(0, 5).attr.sixel);
+    try testing.expectEqual(@as(usize, 4), screen.sixel_refcounts[0]);
+
+    // Erase from row 4 onwards (ED 0)
+    screen.cursor.y = 4;
+    screen.cursor.x = 0;
+    screen.eraseDisplay(0);
+
+    // Sixel image is evicted and refcount is zeroed
+    try testing.expect(screen.sixel_images[0] == null);
+    try testing.expectEqual(@as(usize, 0), screen.sixel_refcounts[0]);
+
+    // Crucially: surviving rows 2 and 3 must NOT have stale marker cells!
+    try testing.expect(!screen.grid.getCell(0, 2).attr.sixel);
+    try testing.expect(!screen.grid.getCell(0, 3).attr.sixel);
+    try testing.expect(!screen.grid.getCell(0, 4).attr.sixel);
+    try testing.expect(!screen.grid.getCell(0, 5).attr.sixel);
+}
+
+test "eraseDisplay 1 clears surviving marker cells of straddling sixel image — bug #493" {
+    var screen = try Screen.init(testing.allocator, 10, 10);
+    defer screen.deinit();
+    screen.cell_size_known = true;
+    screen.cell_px_width = 10;
+    screen.cell_px_height = 20;
+
+    // Image placed at row 2 with height 80px (4 rows: 2, 3, 4, 5)
+    screen.cursor.y = 2;
+    screen.cursor.x = 0;
+    const dcs = try testing.allocator.dupe(u8, "\x1bPqTEST\x1b\\");
+    try screen.placeSixelImage(dcs, 10, 80);
+
+    // Verify initial markers placed on rows 2, 3, 4, 5
+    try testing.expect(screen.grid.getCell(0, 2).attr.sixel);
+    try testing.expect(screen.grid.getCell(0, 3).attr.sixel);
+    try testing.expect(screen.grid.getCell(0, 4).attr.sixel);
+    try testing.expect(screen.grid.getCell(0, 5).attr.sixel);
+    try testing.expectEqual(@as(usize, 4), screen.sixel_refcounts[0]);
+
+    // Erase from top to row 3 (ED 1)
+    screen.cursor.y = 3;
+    screen.cursor.x = 0;
+    screen.eraseDisplay(1);
+
+    // Sixel image is evicted and refcount is zeroed
+    try testing.expect(screen.sixel_images[0] == null);
+    try testing.expectEqual(@as(usize, 0), screen.sixel_refcounts[0]);
+
+    // Crucially: surviving rows 4 and 5 must NOT have stale marker cells!
+    try testing.expect(!screen.grid.getCell(0, 2).attr.sixel);
+    try testing.expect(!screen.grid.getCell(0, 3).attr.sixel);
+    try testing.expect(!screen.grid.getCell(0, 4).attr.sixel);
+    try testing.expect(!screen.grid.getCell(0, 5).attr.sixel);
 }
