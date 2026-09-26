@@ -387,7 +387,7 @@ pub const Screen = struct {
         while (y < cell_rows) : (y += 1) {
             if (self.cursor.y >= self.grid.height) {
                 try self.grid.scrollUp();
-                self.shiftSixelAnchors(-1);
+                self.shiftSixelAnchors(-1, null);
                 self.cursor.y = self.grid.height - 1;
             }
             const grid_y = self.cursor.y;
@@ -424,7 +424,7 @@ pub const Screen = struct {
         // landed on the status bar, hiding the shell prompt).
         while (self.cursor.y >= self.grid.height) {
             try self.grid.scrollUp();
-            self.shiftSixelAnchors(-1);
+            self.shiftSixelAnchors(-1, null);
             self.cursor.y = self.grid.height - 1;
         }
 
@@ -436,19 +436,32 @@ pub const Screen = struct {
         self.dirty = true;
     }
 
-    /// Shift every registered sixel image's stored anchor by `delta_rows`
-    /// whenever the main grid scrolls (bug #200: the render position is derived
+    /// Shift registered sixel images' stored anchors by `delta_rows`
+    /// whenever content scrolls (bug #200: the render position is derived
     /// from the image's anchor, which must track content as it scrolls).
     /// Only shifts images that belong to the currently active screen
     /// (bug #219: alt-screen images must not drift when the main grid scrolls).
-    fn shiftSixelAnchors(self: *Screen, delta_rows: i32) void {
+    /// When `region` is provided ([top, bottom]), only shifts images intersecting
+    /// the scroll region (bug #492).
+    fn shiftSixelAnchors(self: *Screen, delta_rows: i32, region: ?[2]u32) void {
         const is_alt = self.mode.alt_screen;
+        const cell_h = if (self.cell_px_height > 0) self.cell_px_height else 20;
         for (&self.sixel_images) |*opt_img| {
             if (opt_img.*) |*img| {
                 // Only shift images that belong to the active screen.
-                if (img.alt_screen == is_alt) {
-                    img.anchor_row += delta_rows;
+                if (img.alt_screen != is_alt) continue;
+
+                if (region) |r| {
+                    const top_i32 = std.math.cast(i32, r[0]) orelse std.math.maxInt(i32);
+                    const bottom_i32 = std.math.cast(i32, r[1]) orelse std.math.maxInt(i32);
+                    const footprint_rows: i32 = @intCast(if (img.px_height > 0) (img.px_height +| cell_h -| 1) / cell_h else 1);
+                    // Skip images entirely outside [top, bottom]
+                    if (img.anchor_row > bottom_i32 or img.anchor_row + footprint_rows <= top_i32) {
+                        continue;
+                    }
                 }
+
+                img.anchor_row += delta_rows;
             }
         }
     }
@@ -559,7 +572,7 @@ pub const Screen = struct {
         var cy = self.cursor.y;
         try self.grid.setSizeCursor(width, height, self.cursor.x, self.cursor.y, &cx, &cy);
         if (self.grid.last_resize_scroll > 0) {
-            self.shiftSixelAnchors(-@as(i32, @intCast(self.grid.last_resize_scroll)));
+            self.shiftSixelAnchors(-@as(i32, @intCast(self.grid.last_resize_scroll)), null);
             cy -|= self.grid.last_resize_scroll;
         }
         if (self.alt_grid) |*g| {
@@ -644,7 +657,7 @@ pub const Screen = struct {
         @memset(last.cells.items, self.eraseCell());
         last.wrapped = false;
         last.dirty = true;
-        self.shiftSixelAnchors(-1);
+        self.shiftSixelAnchors(-1, .{ top, bottom });
     }
 
     fn scrollDownInRegion(self: *Screen) Error!void {
@@ -663,7 +676,7 @@ pub const Screen = struct {
         @memset(first.cells.items, self.eraseCell());
         first.wrapped = false;
         first.dirty = true;
-        self.shiftSixelAnchors(1);
+        self.shiftSixelAnchors(1, .{ top, bottom });
     }
 
     /// Advance cursor down one line, respecting DECSTBM scroll regions.
@@ -682,7 +695,7 @@ pub const Screen = struct {
         }
         if (self.cursor.y + 1 >= self.grid.height) {
             try self.grid.scrollUp();
-            self.shiftSixelAnchors(-1);
+            self.shiftSixelAnchors(-1, null);
             const bottom_line = self.grid.getLineMut(self.grid.height - 1);
             // bug #225: decrement refcounts for fill cells.
             self.decrementLineRefs(bottom_line.cells.items);
@@ -1391,7 +1404,7 @@ pub const Screen = struct {
             // content shift so their anchors stay in sync with their cells.
             // Shift by the FULL amount: scrolling n>1 lines used to move
             // anchors by only one row (bug #387).
-            self.shiftSixelAnchors(-@as(i32, @intCast(count)));
+            self.shiftSixelAnchors(-@as(i32, @intCast(count)), .{ top, bottom });
             self.dirty = true;
         } else {
             const count = @min(n, self.grid.height);
@@ -1399,7 +1412,7 @@ pub const Screen = struct {
             var i: u32 = 0;
             while (i < count) : (i += 1) {
                 try self.grid.scrollUp();
-                self.shiftSixelAnchors(-1);
+                self.shiftSixelAnchors(-1, null);
                 const bottom_line = self.grid.getLineMut(self.grid.height - 1);
                 // bug #225: decrement refcounts for the fill cells.
                 self.decrementLineRefs(bottom_line.cells.items);
@@ -1438,7 +1451,7 @@ pub const Screen = struct {
             // Mirror the non-region branch: region SD moves content down, so
             // sixel anchors must follow too. The shift was missing entirely,
             // desyncing images after any region SD (bug #387).
-            self.shiftSixelAnchors(@as(i32, @intCast(count)));
+            self.shiftSixelAnchors(@as(i32, @intCast(count)), .{ top, bottom });
             self.dirty = true;
         } else {
             const count = @min(n, self.grid.height);
@@ -1446,7 +1459,7 @@ pub const Screen = struct {
             var i: u32 = 0;
             while (i < count) : (i += 1) {
                 self.grid.shiftDown();
-                self.shiftSixelAnchors(1);
+                self.shiftSixelAnchors(1, null);
                 const top_line = self.grid.getLineMut(0);
                 self.decrementLineRefs(top_line.cells.items);
                 @memset(top_line.cells.items, fill);
@@ -2757,7 +2770,7 @@ test "shiftSixelAnchors only shifts images on the active screen — bug #219" {
     // Instead, manually simulate: call shiftSixelAnchors with alt_screen=false
     // (main screen scrolling). The alt image should NOT move.
     screen.mode.alt_screen = false; // pretend we switched back
-    screen.shiftSixelAnchors(-1);
+    screen.shiftSixelAnchors(-1, null);
 
     // Main image shifted from row 5 → 4
     try testing.expectEqual(@as(i32, 4), screen.sixel_images[0].?.anchor_row);
@@ -2786,6 +2799,58 @@ test "scrollUpInRegion and advanceLine shift sixel image anchor_row — bug #434
 
     // Sixel anchor should have shifted from 10 to 9
     try testing.expectEqual(@as(i32, 9), screen.sixel_images[0].?.anchor_row);
+}
+
+test "region scroll does not shift sixel anchors outside scroll region — bug #492" {
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+    screen.cell_size_known = true;
+
+    // Image 0 at row 2 (above region 5..15)
+    screen.cursor.y = 2;
+    screen.cursor.x = 0;
+    const dcs0 = try testing.allocator.dupe(u8, "\x1bPqTOP\x1b\\");
+    try screen.addSixelImage(dcs0, 10, 20);
+
+    // Image 1 at row 10 (inside region 5..15)
+    screen.cursor.y = 10;
+    screen.cursor.x = 0;
+    const dcs1 = try testing.allocator.dupe(u8, "\x1bPqMID\x1b\\");
+    try screen.addSixelImage(dcs1, 10, 20);
+
+    // Image 2 at row 20 (below region 5..15)
+    screen.cursor.y = 20;
+    screen.cursor.x = 0;
+    const dcs2 = try testing.allocator.dupe(u8, "\x1bPqBOT\x1b\\");
+    try screen.addSixelImage(dcs2, 10, 20);
+
+    try testing.expectEqual(@as(i32, 2), screen.sixel_images[0].?.anchor_row);
+    try testing.expectEqual(@as(i32, 10), screen.sixel_images[1].?.anchor_row);
+    try testing.expectEqual(@as(i32, 20), screen.sixel_images[2].?.anchor_row);
+
+    // Set scroll region rows 5..15
+    screen.setScrollRegion(5, 15);
+
+    // Advance line at bottom of region triggers scrollUpInRegion
+    screen.cursor.y = 15;
+    try screen.advanceLine();
+
+    // Only image 1 (inside region) shifts from 10 to 9; images 0 and 2 must not shift!
+    try testing.expectEqual(@as(i32, 2), screen.sixel_images[0].?.anchor_row);
+    try testing.expectEqual(@as(i32, 9), screen.sixel_images[1].?.anchor_row);
+    try testing.expectEqual(@as(i32, 20), screen.sixel_images[2].?.anchor_row);
+
+    // Scroll up by 2 more lines in region
+    try screen.scrollUp(2);
+    try testing.expectEqual(@as(i32, 2), screen.sixel_images[0].?.anchor_row);
+    try testing.expectEqual(@as(i32, 7), screen.sixel_images[1].?.anchor_row);
+    try testing.expectEqual(@as(i32, 20), screen.sixel_images[2].?.anchor_row);
+
+    // Scroll down by 2 lines in region
+    try screen.scrollDown(2);
+    try testing.expectEqual(@as(i32, 2), screen.sixel_images[0].?.anchor_row);
+    try testing.expectEqual(@as(i32, 9), screen.sixel_images[1].?.anchor_row);
+    try testing.expectEqual(@as(i32, 20), screen.sixel_images[2].?.anchor_row);
 }
 
 test "Screen.resize evicts sixel images beyond new height — bug #435" {
@@ -3337,7 +3402,7 @@ test "region scroll shifts sixel anchors by full amount — bug #387" {
     defer screen.deinit();
     screen.cell_size_known = true;
 
-    screen.cursor.y = 3;
+    screen.cursor.y = 5;
     screen.cursor.x = 0;
     const dcs = try testing.allocator.dupe(u8, "\x1bPqIMG\x1b\\");
     try screen.addSixelImage(dcs, 10, 20);

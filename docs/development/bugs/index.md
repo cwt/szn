@@ -42,9 +42,9 @@ Both summary tables below are generated from the `severity` and `status` fields 
 
 | Status | Count |
 |---|---:|
-| Fixed / Resolved | 433 |
+| Fixed / Resolved | 434 |
 | False Positive | 26 |
-| Open | 16 |
+| Open | 15 |
 | **Total** | **475** |
 
 ## All Bugs
@@ -516,7 +516,7 @@ Both summary tables below are generated from the `severity` and `status` fields 
 | [489](489.md) | kitty CSI u parser drops the event-type field: key releases become phantom presses | MEDIUM | Fixed |
 | [490](490.md) | OSC 52 forward path allocates and queues before the MAX_PASTE_SIZE check (memory amplification) | MEDIUM | Fixed |
 | [491](491.md) | VS16 promotion undercounts the sixel refcount: slot can be reused while a live marker references it | MEDIUM | Fixed |
-| [492](492.md) | scrollUpInRegion/scrollDownInRegion shift sixel anchors outside the scroll region | MEDIUM | Open |
+| [492](492.md) | scrollUpInRegion/scrollDownInRegion shift sixel anchors outside the scroll region | MEDIUM | Fixed |
 | [493](493.md) | eraseDisplay 0/1 removes straddling sixel images but leaves stale marker cells with dead ids | MEDIUM | Open |
 | [494](494.md) | Grid.scrollUp spare-slot branch overwrites a live line when the ring is physically full | MEDIUM | Open |
 | [495](495.md) | renderContent drops the last content row when the status bar is disabled | MEDIUM | Open |
