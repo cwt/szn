@@ -42,9 +42,9 @@ Both summary tables below are generated from the `severity` and `status` fields 
 
 | Status | Count |
 |---|---:|
-| Fixed / Resolved | 425 |
+| Fixed / Resolved | 426 |
 | False Positive | 26 |
-| Open | 24 |
+| Open | 23 |
 | **Total** | **475** |
 
 ## All Bugs
@@ -508,7 +508,7 @@ Both summary tables below are generated from the `severity` and `status` fields 
 | [481](481.md) | renderContent does a full O(rows×cols) diff of last_cells every frame even when few lines changed | MEDIUM | Fixed |
 | [482](482.md) | display-client render frames copy the whole frame into dc.out_buf instead of writing render_buf directly to the socket | LOW | Fixed |
 | [483](483.md) | space cells emit one byte() write each; consecutive blank runs should batch | LOW | Fixed |
-| [484](484.md) | expandTruncateInto slice-out-of-bounds panic on malformed UTF-8 in status format values | CRITICAL | Open |
+| [484](484.md) | expandTruncateInto slice-out-of-bounds panic on malformed UTF-8 in status format values | CRITICAL | Fixed |
 | [485](485.md) | eraseChars: cx + n overflows u32 on untrusted CSI param, panicking the server | CRITICAL | Open |
 | [486](486.md) | Pty.deinit SIGKILLs the child PID unconditionally: PID-reuse race can kill an unrelated process | HIGH | Open |
 | [487](487.md) | runServerDaemon closes fd 0 twice: open("/dev/null") returns fd 0, leaving the daemon with stdin closed | HIGH | Open |

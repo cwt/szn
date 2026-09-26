@@ -733,13 +733,14 @@ fn expandTruncateInto(allocator: std.mem.Allocator, out: *std.ArrayList(u8), con
     var count: usize = 0;
     var idx: usize = 0;
     while (idx < value.len) {
-        const len = std.unicode.utf8ByteSequenceLength(value[idx]) catch 1;
         if (count >= n) break;
+        const len = std.unicode.utf8ByteSequenceLength(value[idx]) catch 1;
         count += 1;
-        idx += len;
+        idx = @min(idx + len, value.len);
     }
 
     if (!negative) {
+        idx = @min(idx, value.len);
         try out.appendSlice(allocator, value[0..idx]);
         return;
     }
@@ -749,7 +750,7 @@ fn expandTruncateInto(allocator: std.mem.Allocator, out: *std.ArrayList(u8), con
     while (j < value.len) {
         const len = std.unicode.utf8ByteSequenceLength(value[j]) catch 1;
         total_chars += 1;
-        j += len;
+        j = @min(j + len, value.len);
     }
     if (total_chars <= n) {
         try out.appendSlice(allocator, value);
@@ -762,8 +763,9 @@ fn expandTruncateInto(allocator: std.mem.Allocator, out: *std.ArrayList(u8), con
     while (k < value.len and cur < skip) {
         const len = std.unicode.utf8ByteSequenceLength(value[k]) catch 1;
         cur += 1;
-        k += len;
+        k = @min(k + len, value.len);
     }
+    k = @min(k, value.len);
     try out.appendSlice(allocator, value[k..]);
 }
 
@@ -1339,4 +1341,32 @@ test "strftime hour minute present" {
     defer testing.allocator.free(result);
     try testing.expect(result.len >= 4);
     try testing.expect(result[2] == ':');
+}
+
+test "expandTruncateInto with malformed UTF-8 does not panic — bug #484" {
+    var ctx = Context.init(testing.allocator);
+    defer ctx.deinit();
+
+    // Value ending with truncated 2-byte lead byte (0xC3)
+    try ctx.set("title_c3", "abc\xC3");
+    // Value ending with truncated 3-byte sequence (0xE2 0x82)
+    try ctx.set("title_e2", "abc\xE2\x82");
+
+    // Positive truncation: truncate to 4 chars
+    const r1 = try expand(testing.allocator, "#{=4:title_c3}", &ctx);
+    defer testing.allocator.free(r1);
+    try testing.expectEqualStrings("abc\xC3", r1);
+
+    const r2 = try expand(testing.allocator, "#{=4:title_e2}", &ctx);
+    defer testing.allocator.free(r2);
+    try testing.expectEqualStrings("abc\xE2\x82", r2);
+
+    // Negative truncation: keep last 2 chars
+    const r3 = try expand(testing.allocator, "#{=-2:title_c3}", &ctx);
+    defer testing.allocator.free(r3);
+    try testing.expect(r3.len > 0);
+
+    const r4 = try expand(testing.allocator, "#{=-2:title_e2}", &ctx);
+    defer testing.allocator.free(r4);
+    try testing.expect(r4.len > 0);
 }
