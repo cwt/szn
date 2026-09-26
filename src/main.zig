@@ -432,19 +432,19 @@ fn waitForSocket() Error!void {
     return error.SocketNotFound;
 }
 
-fn runServerDaemon(allocator: std.mem.Allocator) Error!void {
-    // Close stdin/stdout/stderr inherited from parent — daemon doesn't need them.
-    // Re-open to /dev/null to avoid accidental terminal I/O.
-    _ = c.close(0);
-    _ = c.close(1);
-    _ = c.close(2);
+fn redirectStdioToDevNull() void {
     const dev_null = c.open("/dev/null", c.O{ .ACCMODE = .RDWR }, @as(c_uint, 0));
     if (dev_null >= 0) {
         _ = c.dup2(dev_null, 0);
         _ = c.dup2(dev_null, 1);
         _ = c.dup2(dev_null, 2);
-        _ = c.close(dev_null);
+        if (dev_null > 2) _ = c.close(dev_null);
     }
+}
+
+fn runServerDaemon(allocator: std.mem.Allocator) Error!void {
+    // Re-open stdin/stdout/stderr to /dev/null to avoid accidental terminal I/O.
+    redirectStdioToDevNull();
 
     _ = c.setsid();
 
@@ -1193,4 +1193,28 @@ test "isNotCellSizeReply distinguishes valid prefix from non-matching keys" {
     try testing.expect(isNotCellSizeReply("\x1b[A")); // Up arrow
     try testing.expect(isNotCellSizeReply("\x1b[H")); // Home
     try testing.expect(isNotCellSizeReply("\x1b[49m")); // Non-matching CSI
+}
+
+test "redirectStdioToDevNull leaves fds 0, 1, 2 open and valid — bug #487" {
+    const c_fcntl = struct {
+        extern "c" fn fcntl(fd: c_int, cmd: c_int, ...) c_int;
+    }.fcntl;
+    const F_GETFL: c_int = 3;
+
+    const pid = c.fork();
+    try testing.expect(pid >= 0);
+    if (pid == 0) {
+        redirectStdioToDevNull();
+        const f0 = c_fcntl(0, F_GETFL, @as(c_int, 0));
+        const f1 = c_fcntl(1, F_GETFL, @as(c_int, 0));
+        const f2 = c_fcntl(2, F_GETFL, @as(c_int, 0));
+        if (f0 >= 0 and f1 >= 0 and f2 >= 0) {
+            c._exit(0);
+        } else {
+            c._exit(1);
+        }
+    }
+    var status: c_int = 0;
+    _ = c.waitpid(pid, &status, 0);
+    try testing.expectEqual(@as(c_int, 0), status);
 }
