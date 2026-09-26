@@ -42,11 +42,17 @@ fn mapErr(rc: c_int) Error!i32 {
 
 extern "c" fn chmod(path: [*:0]const u8, mode: c_uint) c_int;
 
+pub const ProbeResult = enum {
+    live,
+    stale,
+};
+
 /// Try to connect to a (possibly live) unix socket at `path`. Success means
-/// another szn server is serving it; failure means the path is free or the
-/// socket is stale (bug #378).
-fn connectProbeUnix(path: [*:0]const u8) Error!void {
-    const fd = try mapErr(c.socket(c.AF.UNIX, c.SOCK.STREAM, 0));
+/// another szn server is serving it; ECONNREFUSED/ENOENT means the path is free or the
+/// socket is stale (bug #378). Any other error (e.g. EMFILE on socket()) is propagated
+/// rather than treated as a stale socket (bug #488).
+pub fn connectProbeUnix(path: [*:0]const u8) Error!ProbeResult {
+    const fd = mapErr(c.socket(c.AF.UNIX, c.SOCK.STREAM, 0)) catch |err| return err;
     defer _ = c.close(fd);
     var addr = std.mem.zeroes(c.sockaddr.un);
     addr.family = c.AF.UNIX;
@@ -55,7 +61,14 @@ fn connectProbeUnix(path: [*:0]const u8) Error!void {
         addr.len = @intCast(@offsetOf(c.sockaddr.un, "path") + plen);
     }
     @memcpy(addr.path[0..plen], path[0..plen]);
-    _ = try mapErr(c.connect(fd, @ptrCast(&addr), @as(c.socklen_t, @intCast(@offsetOf(c.sockaddr.un, "path") + plen + 1))));
+    const rc = c.connect(fd, @ptrCast(&addr), @as(c.socklen_t, @intCast(@offsetOf(c.sockaddr.un, "path") + plen + 1)));
+    if (rc == 0) return .live;
+    const err = std.c.errno(rc);
+    if (err == .CONNREFUSED or err == .NOENT) {
+        return .stale;
+    }
+    _ = try mapErr(rc);
+    return .stale;
 }
 
 pub fn createListener() Error!i32 {
@@ -65,11 +78,10 @@ pub fn createListener() Error!i32 {
     // Probe before unlinking: an existing live endpoint means another server
     // already owns this socket path. Blindly unlinking stole the endpoint and
     // orphaned the first server's clients (bug #378).
-    if (connectProbeUnix(path)) |_| {
+    const probe = try connectProbeUnix(path);
+    if (probe == .live) {
         std.log.err("socket {s} is served by an existing szn; refusing to steal it", .{path});
         return error.AddressInUse;
-    } else |_| {
-        // ECONNREFUSED etc. — stale socket from a dead server: safe to replace.
     }
     _ = c.unlink(path.ptr);
 
@@ -123,4 +135,9 @@ test "listener creates and closes" {
     defer closeSocket(fd);
     defer shutdown();
     try testing.expect(fd >= 0);
+}
+
+test "connectProbeUnix returns stale for nonexistent path — bug #488" {
+    const probe = try connectProbeUnix("/tmp/szn-nonexistent-test-488.sock");
+    try testing.expectEqual(ProbeResult.stale, probe);
 }
