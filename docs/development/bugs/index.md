@@ -7,14 +7,14 @@ sources:
   - docs/development/bugs/
 verified: human-reviewed
 tags: [bugs, tracker, index, issues]
-timestamp: 2026-09-04T09:18:00Z
+timestamp: 2026-09-26T12:35:00Z
 ---
 
 # Bugs — szn
 
 Sorted by number. See individual bug files for details.
 
-> **Note:** Bugs **#301** and **#302** were never filed (MIA). The #300–#310 performance sweep skipped straight from #300 to #303. Bugs **#349–#394** were filed by the 2026-08-23 deep-audit sweep (full-codebase review; 46 bugs, all since resolved). Bugs **#395–#427** were filed by the 2026-08-30 deep-audit sweep (memory safety, IPC integrity, sixel accounting, config/command surface, dead code, perf, alt-screen mouse wheel; 33 bugs, all since resolved). Bugs **#428–#439** were filed by the 2026-08-31 re-validation sweep (12 confirmed findings from the audit report, re-checked line-by-line against live source; pending fix). Bugs **#448–#450** were filed by the 2026-09-02 stale-pointer bug-class extrapolation audit. Bugs **#451–#453** were filed by the 2026-09-03 scrollback truncation and pane resize audit (open). Bugs **#478–#483** were filed by the 2026-09-22 hot-path performance review (6 performance findings, all fixed 2026-09-22: parser byte-by-byte dispatch, isPaneValid/tree-walk regression, per-cell SGR formatting, full-grid diff, per-frame heap copy, per-space writes). The tracker covers #1–#300, #303–#453, #478–#483 — **457 entries** in total.
+> **Note:** Bugs **#301** and **#302** were never filed (MIA). The #300–#310 performance sweep skipped straight from #300 to #303. Bugs **#349–#394** were filed by the 2026-08-23 deep-audit sweep (full-codebase review; 46 bugs, all since resolved). Bugs **#395–#427** were filed by the 2026-08-30 deep-audit sweep (memory safety, IPC integrity, sixel accounting, config/command surface, dead code, perf, alt-screen mouse wheel; 33 bugs, all since resolved). Bugs **#428–#439** were filed by the 2026-08-31 re-validation sweep (12 confirmed findings from the audit report, re-checked line-by-line against live source; pending fix). Bugs **#448–#450** were filed by the 2026-09-02 stale-pointer bug-class extrapolation audit. Bugs **#451–#453** were filed by the 2026-09-03 scrollback truncation and pane resize audit (open). Bugs **#478–#483** were filed by the 2026-09-22 hot-path performance review (6 performance findings, all fixed 2026-09-22: parser byte-by-byte dispatch, isPaneValid/tree-walk regression, per-cell SGR formatting, full-grid diff, per-frame heap copy, per-space writes). Bugs **#484–#501** were filed by the 2026-09-26 external code review (Muse deep review: full read of main.zig plus 5 parallel reviewer passes over the remaining source, with empirical verification under Zig 0.16.0 — `zig build` clean, 1012/1012 tests pass on Linux, clean cross-compile for aarch64-macos; 18 findings, open). The tracker covers #1–#300, #303–#453, #478–#501 — **475 entries** in total.
 
 Both summary tables below are generated from the `severity` and `status` fields in each bug's frontmatter. Regenerate them rather than editing by hand.
 
@@ -22,11 +22,11 @@ Both summary tables below are generated from the `severity` and `status` fields 
 
 | Severity | Count |
 |---|---:|
-| CRITICAL | 51 |
-| HIGH | 111 |
-| MEDIUM | 162 |
+| CRITICAL | 53 |
+| HIGH | 114 |
+| MEDIUM | 170 |
 | MEDIUM-HIGH | 3 |
-| LOW | 109 |
+| LOW | 114 |
 | LOW (architecture) | 3 |
 | LOW (code quality) | 5 |
 | LOW (correctness) | 1 |
@@ -36,7 +36,7 @@ Both summary tables below are generated from the `severity` and `status` fields 
 | LOW (safety) | 1 |
 | MEDIUM (dead code / refcount drift) | 1 |
 | MEDIUM (performance) | 4 |
-| **Total** | **457** |
+| **Total** | **475** |
 
 ## Summary by Status
 
@@ -44,8 +44,8 @@ Both summary tables below are generated from the `severity` and `status` fields 
 |---|---:|
 | Fixed / Resolved | 425 |
 | False Positive | 26 |
-| Open | 6 |
-| **Total** | **457** |
+| Open | 24 |
+| **Total** | **475** |
 
 ## All Bugs
 
@@ -508,3 +508,21 @@ Both summary tables below are generated from the `severity` and `status` fields 
 | [481](481.md) | renderContent does a full O(rows×cols) diff of last_cells every frame even when few lines changed | MEDIUM | Fixed |
 | [482](482.md) | display-client render frames copy the whole frame into dc.out_buf instead of writing render_buf directly to the socket | LOW | Fixed |
 | [483](483.md) | space cells emit one byte() write each; consecutive blank runs should batch | LOW | Fixed |
+| [484](484.md) | expandTruncateInto slice-out-of-bounds panic on malformed UTF-8 in status format values | CRITICAL | Open |
+| [485](485.md) | eraseChars: cx + n overflows u32 on untrusted CSI param, panicking the server | CRITICAL | Open |
+| [486](486.md) | Pty.deinit SIGKILLs the child PID unconditionally: PID-reuse race can kill an unrelated process | HIGH | Open |
+| [487](487.md) | runServerDaemon closes fd 0 twice: open("/dev/null") returns fd 0, leaving the daemon with stdin closed | HIGH | Open |
+| [488](488.md) | connectProbeUnix treats all errors as stale socket: fd exhaustion unlinks a live server's socket (split-brain) | HIGH | Open |
+| [489](489.md) | kitty CSI u parser drops the event-type field: key releases become phantom presses | MEDIUM | Open |
+| [490](490.md) | OSC 52 forward path allocates and queues before the MAX_PASTE_SIZE check (memory amplification) | MEDIUM | Open |
+| [491](491.md) | VS16 promotion undercounts the sixel refcount: slot can be reused while a live marker references it | MEDIUM | Open |
+| [492](492.md) | scrollUpInRegion/scrollDownInRegion shift sixel anchors outside the scroll region | MEDIUM | Open |
+| [493](493.md) | eraseDisplay 0/1 removes straddling sixel images but leaves stale marker cells with dead ids | MEDIUM | Open |
+| [494](494.md) | Grid.scrollUp spare-slot branch overwrites a live line when the ring is physically full | MEDIUM | Open |
+| [495](495.md) | renderContent drops the last content row when the status bar is disabled | MEDIUM | Open |
+| [496](496.md) | cell_size wire message stores unvalidated u32s server-wide | MEDIUM | Open |
+| [497](497.md) | test helper setRaw hardcodes macOS termios cc indices (VMIN/VTIME), wrong slots on Linux | LOW | Open |
+| [498](498.md) | client silently exits 0 when setRaw fails (raw.setRaw() catch return) | LOW | Open |
+| [499](499.md) | InputParser.deinit takes an arbitrary allocator but every allocation uses screen.allocator | LOW | Open |
+| [500](500.md) | tty.Term.setAttributes emits a bare SGR reset on sixel-bit-only change without nulling fg/bg (latent) | LOW | Open |
+| [501](501.md) | placeSixelImage errdefer drops the slot without freeing image bytes (latent ownership trap) | LOW | Open |
