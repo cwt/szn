@@ -42,9 +42,9 @@ Both summary tables below are generated from the `severity` and `status` fields 
 
 | Status | Count |
 |---|---:|
-| Fixed / Resolved | 427 |
+| Fixed / Resolved | 428 |
 | False Positive | 26 |
-| Open | 22 |
+| Open | 21 |
 | **Total** | **475** |
 
 ## All Bugs
@@ -510,7 +510,7 @@ Both summary tables below are generated from the `severity` and `status` fields 
 | [483](483.md) | space cells emit one byte() write each; consecutive blank runs should batch | LOW | Fixed |
 | [484](484.md) | expandTruncateInto slice-out-of-bounds panic on malformed UTF-8 in status format values | CRITICAL | Fixed |
 | [485](485.md) | eraseChars: cx + n overflows u32 on untrusted CSI param, panicking the server | CRITICAL | Fixed |
-| [486](486.md) | Pty.deinit SIGKILLs the child PID unconditionally: PID-reuse race can kill an unrelated process | HIGH | Open |
+| [486](486.md) | Pty.deinit SIGKILLs the child PID unconditionally: PID-reuse race can kill an unrelated process | HIGH | Fixed |
 | [487](487.md) | runServerDaemon closes fd 0 twice: open("/dev/null") returns fd 0, leaving the daemon with stdin closed | HIGH | Open |
 | [488](488.md) | connectProbeUnix treats all errors as stale socket: fd exhaustion unlinks a live server's socket (split-brain) | HIGH | Open |
 | [489](489.md) | kitty CSI u parser drops the event-type field: key releases become phantom presses | MEDIUM | Open |

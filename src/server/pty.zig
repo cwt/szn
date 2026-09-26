@@ -261,8 +261,10 @@ pub const Pty = struct {
             }
             self.allocator = null;
         }
+        self.reap();
         if (self.pid > 0) {
             _ = std.c.kill(self.pid, std.c.SIG.KILL);
+            self.reap();
         }
         if (self.master >= 0) {
             _ = close(self.master);
@@ -272,7 +274,6 @@ pub const Pty = struct {
             _ = close(self.slave);
             self.slave = -1;
         }
-        self.reap();
     }
 
     pub fn readOutput(self: *Pty, buf: []u8) Error!usize {
@@ -529,4 +530,23 @@ test "Pty.deinit is safe when unspawned and idempotent — bug #439" {
     pty.deinit();
     // calling deinit a second time must be a safe no-op
     pty.deinit();
+}
+
+test "Pty.deinit skips SIGKILL when child is already reaped — bug #486" {
+    var pty = try Pty.open();
+    const argv = [_][]const u8{"true"};
+    try pty.spawn(testing.allocator, &argv, "", "", null, 1024);
+    const pid = pty.pid;
+    try testing.expect(pid > 0);
+
+    // Reap the child outside of pty (simulating reapZombies waitpid(-1))
+    var status: c_int = 0;
+    while (true) {
+        const rc = std.c.waitpid(pid, &status, 0);
+        if (rc > 0 or (rc == -1 and std.c.errno(rc) != .INTR)) break;
+    }
+
+    // deinit() must reap / detect dead child and clear pid without sending SIGKILL
+    pty.deinit();
+    try testing.expectEqual(@as(c_int, -1), pty.pid);
 }
