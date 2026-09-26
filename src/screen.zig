@@ -504,6 +504,16 @@ pub const Screen = struct {
         }
     }
 
+    /// Increment the refcount for the sixel image occupying cell if it has a sixel marker (bug #491).
+    fn incrementCellRef(self: *Screen, cell: Cell) void {
+        if (!self.hasSixelImages()) return;
+        if (!cell.attr.sixel) return;
+        const id = @as(u32, cell.char & 0x1FFFFF);
+        if (self.findSixelImageSlot(id)) |slot| {
+            self.sixel_refcounts[slot] += 1;
+        }
+    }
+
     /// Decrement refcount for every cell in the given line's cells slice.
     fn decrementLineRefs(self: *Screen, cells: []const Cell) void {
         if (!self.hasSixelImages()) return;
@@ -774,6 +784,7 @@ pub const Screen = struct {
                                 self.grid.setCell(target_col, prev_y, self.eraseCell());
                                 self.decrementMainGridRef(0, self.cursor.y);
                                 self.grid.setCell(0, self.cursor.y, prev_cell);
+                                self.incrementCellRef(prev_cell); // bug #491: re-increment for moved sixel marker
 
                                 var pad_cell = self.cur_cell;
                                 pad_cell.char = 0;
@@ -839,6 +850,7 @@ pub const Screen = struct {
 
                     self.decrementMainGridRef(0, self.cursor.y);
                     self.grid.setCell(0, self.cursor.y, prev_cell);
+                    self.incrementCellRef(prev_cell); // bug #491: re-increment for moved sixel marker
 
                     var pad_cell = self.cur_cell;
                     pad_cell.char = 0;
@@ -3465,6 +3477,77 @@ test "variation-selector-always-wide wraps cleanly when emoji at end of line" {
     try testing.expectEqual(@as(u32, 2), screen.cursor.x);
     try testing.expectEqual(@as(u21, 0x1F576), screen.grid.getCell(0, 1).char);
     try testing.expect(screen.grid.getCell(1, 1).is_padding);
+}
+
+test "variation-selector-always-wide preserves sixel refcount on promotion wrap — bug #491" {
+    var screen = try Screen.init(testing.allocator, 5, 5);
+    defer screen.deinit();
+
+    char_width.setVariationSelectorAlwaysWide(true);
+    defer char_width.setVariationSelectorAlwaysWide(false);
+
+    screen.cell_size_known = true;
+    screen.cell_px_width = 10;
+    screen.cell_px_height = 20;
+    screen.next_sixel_id = 1;
+
+    // Fill line up to column 4 (last column)
+    try screen.writeStr("abcd");
+    try testing.expectEqual(@as(u32, 4), screen.cursor.x);
+
+    // Place a 1-cell sixel image at column 4
+    const dcs1 = try testing.allocator.dupe(u8, "\x1bPqIMG1\x1b\\");
+    try screen.placeSixelImage(dcs1, 10, 20);
+    // placeSixelImage leaves cursor at x=0, y=1. Reset cursor to after the placed marker at (5, 0)
+    screen.cursor.x = 5;
+    screen.cursor.y = 0;
+    try testing.expectEqual(@as(usize, 1), screen.sixel_refcounts[1]);
+
+    // Now write VS16: 2-cell wide char cannot fit at col 4, wraps to row 1
+    try screen.writeChar(0xFE0F);
+
+    // Verify row 0 col 4 was cleared
+    try testing.expectEqual(@as(u21, 0), screen.grid.getCell(4, 0).char);
+    // Verify row 1 col 0 has the moved sixel cell
+    const cell_moved = screen.grid.getCell(0, 1);
+    try testing.expect(cell_moved.attr.sixel);
+
+    // Verify refcount is still 1 (not decremented to 0)
+    try testing.expectEqual(@as(usize, 1), screen.sixel_refcounts[1]);
+}
+
+test "variation-selector-always-wide preserves sixel refcount on auto-wrapped newline — bug #491" {
+    var screen = try Screen.init(testing.allocator, 5, 5);
+    defer screen.deinit();
+
+    char_width.setVariationSelectorAlwaysWide(true);
+    defer char_width.setVariationSelectorAlwaysWide(false);
+
+    screen.cell_size_known = true;
+    screen.cell_px_width = 10;
+    screen.cell_px_height = 20;
+    screen.next_sixel_id = 1;
+
+    // Fill line up to column 4
+    try screen.writeStr("abcd");
+    // Place a 1-cell sixel image at col 4
+    const dcs1 = try testing.allocator.dupe(u8, "\x1bPqIMG1\x1b\\");
+    try screen.placeSixelImage(dcs1, 10, 20);
+    // Mark line 0 wrapped and put cursor at (0, 1)
+    screen.grid.getLineMut(0).wrapped = true;
+    screen.cursor.x = 0;
+    screen.cursor.y = 1;
+    try testing.expectEqual(@as(usize, 1), screen.sixel_refcounts[1]);
+
+    // Write VS16: attaches to (4, 0), then promotes and moves to (0, 1)
+    try screen.writeChar(0xFE0F);
+
+    // Verify row 0 col 4 cleared, row 1 col 0 has sixel cell
+    try testing.expectEqual(@as(u21, 0), screen.grid.getCell(4, 0).char);
+    try testing.expect(screen.grid.getCell(0, 1).attr.sixel);
+
+    // Verify refcount is still 1
+    try testing.expectEqual(@as(usize, 1), screen.sixel_refcounts[1]);
 }
 
 test "variation-selector-always-wide does not promote when VS16 cannot be stored (bug #445)" {
