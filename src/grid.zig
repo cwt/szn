@@ -362,35 +362,34 @@ pub const Grid = struct {
             return;
         }
 
-        if (self.history_count < self.history_limit) {
-            if (self.history.items.len < self.history_limit and self.history.items.len == self.history_count and self.history_start == 0) {
-                var old_top = self.getLineMut(0).*;
-                old_top.dirty = false;
-                var new_line = GridLine{};
+        if (self.history.items.len < self.history_limit and self.history.items.len == self.history_count and self.history_start == 0) {
+            var old_top = self.getLineMut(0).*;
+            old_top.dirty = false;
+            var new_line = GridLine{};
+            try new_line.cells.resize(self.allocator, self.width);
+            @memset(new_line.cells.items, Cell.empty());
+            self.getLineMut(0).* = new_line;
+            self.start_index = (self.start_index + 1) % self.height;
+            try self.history.append(self.allocator, old_top);
+            self.history_count += 1;
+        } else if (self.history_count < self.history_limit and self.history_count < self.history.items.len) {
+            const insert_idx = if (self.history.items.len > 0) (self.history_start + self.history_count) % self.history.items.len else 0;
+            var old_top = self.getLineMut(0).*;
+            old_top.dirty = false;
+            var new_line = self.history.items[insert_idx];
+            if (new_line.cells.items.len != self.width) {
                 try new_line.cells.resize(self.allocator, self.width);
-                @memset(new_line.cells.items, Cell.empty());
-                self.getLineMut(0).* = new_line;
-                self.start_index = (self.start_index + 1) % self.height;
-                try self.history.append(self.allocator, old_top);
-                self.history_count += 1;
-            } else {
-                const insert_idx = if (self.history.items.len > 0) (self.history_start + self.history_count) % self.history.items.len else 0;
-                var old_top = self.getLineMut(0).*;
-                old_top.dirty = false;
-                var new_line = self.history.items[insert_idx];
-                if (new_line.cells.items.len != self.width) {
-                    try new_line.cells.resize(self.allocator, self.width);
-                }
-                @memset(new_line.cells.items, Cell.empty());
-                new_line.wrapped = false;
-                new_line.dirty = true;
-                self.getLineMut(0).* = new_line;
-                self.start_index = (self.start_index + 1) % self.height;
-                self.history.items[insert_idx] = old_top;
-                self.history_count += 1;
             }
+            @memset(new_line.cells.items, Cell.empty());
+            new_line.wrapped = false;
+            new_line.dirty = true;
+            self.getLineMut(0).* = new_line;
+            self.start_index = (self.start_index + 1) % self.height;
+            self.history.items[insert_idx] = old_top;
+            self.history_count += 1;
         } else {
-            // History ring buffer is at full capacity (history_count == history_limit).
+            // History ring buffer is at full capacity (history_count == history_limit
+            // or physically full history_count == history.items.len, bug #494).
             // The oldest line at history_start is being evicted.
             const oldest_idx = self.history_start;
             self.notifyEvict(self.history.items[oldest_idx].cells.items);
@@ -2325,4 +2324,43 @@ test "Grid.initWithLimit frees partial lines when resize fails — bug #459" {
             try testing.expectEqual(error.OutOfMemory, err);
         }
     }
+}
+
+test "Grid.scrollUp takes eviction path when ring is physically full — bug #494" {
+    var grid = try Grid.initWithLimit(testing.allocator, 10, 2, 10);
+    defer grid.deinit();
+
+    // Push 5 lines into history so history.items.len == 5 and history_count == 5
+    for (0..5) |i| {
+        grid.writeChar(0, 0, @intCast('0' + i));
+        try grid.scrollUp();
+    }
+    try testing.expectEqual(@as(usize, 5), grid.history.items.len);
+    try testing.expectEqual(@as(usize, 5), grid.history_count);
+
+    // Simulate wrapped ring where history_start != 0 but items.len == history_count < history_limit
+    grid.history_start = 2;
+
+    var evicted_count: usize = 0;
+    grid.on_line_evict_ctx = &evicted_count;
+    grid.on_line_evict = struct {
+        fn evict(ctx: *anyopaque, cells: []const Cell) void {
+            const count: *usize = @ptrCast(@alignCast(ctx));
+            count.* += 1;
+            _ = cells;
+        }
+    }.evict;
+
+    // Scroll up another line: ring is physically full, so it must take the eviction path!
+    grid.writeChar(0, 0, 'X');
+    try grid.scrollUp();
+
+    // 1. Eviction callback fired for the evicted line
+    try testing.expectEqual(@as(usize, 1), evicted_count);
+
+    // 2. history_start advanced from 2 to 3
+    try testing.expectEqual(@as(usize, 3), grid.history_start);
+
+    // 3. history_count remained at 5 (did not erroneously increment past items.len)
+    try testing.expectEqual(@as(usize, 5), grid.history_count);
 }
