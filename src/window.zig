@@ -61,7 +61,7 @@ pub const Pane = struct {
         if (self.border_format_cached) |bf| self.screen.grid.allocator.free(bf);
         self.choose_mode.deinit(self.screen.grid.allocator);
         if (self.saved_grid) |*g| g.deinit();
-        if (self.parser) |*p| p.deinit(self.screen.grid.allocator);
+        if (self.parser) |*p| p.deinit();
         self.screen.deinit();
         if (self.pty) |*p| {
             p.deinit();

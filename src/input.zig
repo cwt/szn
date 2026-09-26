@@ -88,9 +88,9 @@ pub const InputParser = struct {
         self.osc_buf.clearRetainingCapacity();
     }
 
-    pub fn deinit(self: *InputParser, allocator: std.mem.Allocator) void {
-        self.dcs_buf.deinit(allocator);
-        self.osc_buf.deinit(allocator);
+    pub fn deinit(self: *InputParser) void {
+        self.dcs_buf.deinit(self.screen.allocator);
+        self.osc_buf.deinit(self.screen.allocator);
     }
 
     fn clearParams(self: *InputParser) void {
@@ -1454,7 +1454,7 @@ test "osc title ignored no crash" {
     var screen = try Screen.init(testing.allocator, 80, 24);
     defer screen.deinit();
     var parser = InputParser.init(&screen);
-    defer parser.deinit(testing.allocator);
+    defer parser.deinit();
     try parser.feed("\x1b]0;my title\x07");
     // Just verify no crash and parser returns to ground
     try testing.expectEqual(@as(u8, @intFromEnum(InputParser.State.ground)), @intFromEnum(parser.state));
@@ -1464,7 +1464,7 @@ test "stray ESC in OSC aborts string and next sequence still runs — bug #377" 
     var screen = try Screen.init(testing.allocator, 80, 24);
     defer screen.deinit();
     var parser = InputParser.init(&screen);
-    defer parser.deinit(testing.allocator);
+    defer parser.deinit();
 
     // Title terminated by a bare ESC (no ST), followed by SGR red.
     // With the bug the '[' was swallowed and "31m" printed as literal text.
@@ -1701,7 +1701,7 @@ test "OSC 52 clipboard ignored no crash" {
     var screen = try Screen.init(testing.allocator, 80, 24);
     defer screen.deinit();
     var parser = InputParser.init(&screen);
-    defer parser.deinit(testing.allocator);
+    defer parser.deinit();
     try parser.feed("\x1b]52;c;dGVzdA==\x07");
     try testing.expectEqual(@as(u8, @intFromEnum(InputParser.State.ground)), @intFromEnum(parser.state));
 }
@@ -1710,7 +1710,7 @@ test "OSC with ST terminator" {
     var screen = try Screen.init(testing.allocator, 80, 24);
     defer screen.deinit();
     var parser = InputParser.init(&screen);
-    defer parser.deinit(testing.allocator);
+    defer parser.deinit();
     try parser.feed("\x1b]0;test\x1b\\");
     try testing.expectEqual(@as(u8, @intFromEnum(InputParser.State.ground)), @intFromEnum(parser.state));
 }
@@ -1719,7 +1719,7 @@ test "OSC with ST terminator invokes title callback" {
     var screen = try Screen.init(testing.allocator, 80, 24);
     defer screen.deinit();
     var parser = InputParser.init(&screen);
-    defer parser.deinit(testing.allocator);
+    defer parser.deinit();
     var mock = TitleMock{};
     parser.title_cb = TitleMock.callback;
     parser.title_ctx = &mock;
@@ -1732,7 +1732,7 @@ test "OSC with BEL terminator still works" {
     var screen = try Screen.init(testing.allocator, 80, 24);
     defer screen.deinit();
     var parser = InputParser.init(&screen);
-    defer parser.deinit(testing.allocator);
+    defer parser.deinit();
     var mock = TitleMock{};
     parser.title_cb = TitleMock.callback;
     parser.title_ctx = &mock;
@@ -1783,7 +1783,7 @@ test "OSC 2 window title parsing" {
     var screen = try Screen.init(testing.allocator, 80, 24);
     defer screen.deinit();
     var parser = InputParser.init(&screen);
-    defer parser.deinit(testing.allocator);
+    defer parser.deinit();
     var mock = TitleMock{};
     parser.title_cb = TitleMock.callback;
     parser.title_ctx = &mock;
@@ -2012,7 +2012,7 @@ test "sixel DCS ESC-backslash terminator stores image" {
     defer screen.deinit();
     screen.cell_size_known = true;
     var parser = InputParser.init(&screen);
-    defer parser.deinit(testing.allocator);
+    defer parser.deinit();
 
     // Minimal sixel: ESC P q <payload> ESC \
     // The payload is just one band of 'A' (0x41 in sixel = colour 1, 6 pixels tall).
@@ -2049,7 +2049,7 @@ test "sixel DCS 8-bit ST (0x9C) terminator stores image" {
     defer screen.deinit();
     screen.cell_size_known = true;
     var parser = InputParser.init(&screen);
-    defer parser.deinit(testing.allocator);
+    defer parser.deinit();
 
     // Same as above but using the 8-bit C1 ST (0x9C) instead of ESC \.
     const sixel = "\x1bPqAA\x9c";
@@ -2075,7 +2075,7 @@ test "sixel pixel height estimated from band count" {
     defer screen.deinit();
     screen.cell_size_known = true;
     var parser = InputParser.init(&screen);
-    defer parser.deinit(testing.allocator);
+    defer parser.deinit();
 
     // 3 '-' characters = 4 bands (initial 1 + 3 newlines) = 24 px height.
     const sixel = "\x1bPqA-A-A-A\x1b\\";
@@ -2100,7 +2100,7 @@ test "DECRQSS DCS sequence is discarded and not misrouted as sixel — bug #429"
     defer screen.deinit();
     screen.cell_size_known = true;
     var parser = InputParser.init(&screen);
-    defer parser.deinit(testing.allocator);
+    defer parser.deinit();
 
     // DECRQSS format: ESC P $ q " p ESC \
     const decrqss = "\x1bP$q\"p\x1b\\";
@@ -2118,7 +2118,7 @@ test "sixel pixel dimensions parsed from raster attributes" {
     defer screen.deinit();
     screen.cell_size_known = true;
     var parser = InputParser.init(&screen);
-    defer parser.deinit(testing.allocator);
+    defer parser.deinit();
 
     // Sixel with raster attributes command setting aspect ratio 1:1, width 320, height 240
     const sixel = "\x1bPq\"1;1;320;240A\x1b\\";
@@ -2154,7 +2154,7 @@ test "sixel raster dimensions saturate instead of overflowing — bug #356" {
     defer screen.deinit();
     screen.cell_size_known = true;
     var parser = InputParser.init(&screen);
-    defer parser.deinit(testing.allocator);
+    defer parser.deinit();
 
     // 11-digit width/height overflowed u32 with the bug (checked-multiply
     // panic in safe builds). Must parse saturated and not panic.
@@ -2167,7 +2167,7 @@ test "sixel cursor advances after image" {
     defer screen.deinit();
     screen.cell_size_known = true;
     var parser = InputParser.init(&screen);
-    defer parser.deinit(testing.allocator);
+    defer parser.deinit();
 
     // Single-band image (6 px tall, 1 cell row = 1 row advance).
     const sixel = "\x1bPqA\x1b\\";
@@ -2183,7 +2183,7 @@ test "sixel from dcs_param path (ESC P 0 ; 0 q ...)" {
     defer screen.deinit();
     screen.cell_size_known = true;
     var parser = InputParser.init(&screen);
-    defer parser.deinit(testing.allocator);
+    defer parser.deinit();
 
     // With parameters before 'q': ESC P 0 ; 0 q <payload> ESC \
     const sixel = "\x1bP0;0qA\x1b\\";
@@ -2201,7 +2201,7 @@ test "non-sixel DCS sequence is silently discarded" {
     var screen = try Screen.init(testing.allocator, 80, 24);
     defer screen.deinit();
     var parser = InputParser.init(&screen);
-    defer parser.deinit(testing.allocator);
+    defer parser.deinit();
 
     // tmux passthrough DCS (final byte '!') — not sixel, must be dropped.
     const tmux_dcs = "\x1bPtmux;\x1b\x1b[31mHello\x1b\x1b[m\x1b\\";
@@ -2220,7 +2220,7 @@ test "sixel MAX_SIXEL_DATA cap transitions to discard and frees memory — bug #
     var screen = try Screen.init(testing.allocator, 80, 24);
     defer screen.deinit();
     var parser = InputParser.init(&screen);
-    defer parser.deinit(testing.allocator);
+    defer parser.deinit();
 
     // Enter sixel state
     try parser.feed("\x1bPq");
@@ -2300,7 +2300,7 @@ test "DA1 (CSI c) responds with sixel capability" {
     var screen = try Screen.init(testing.allocator, 80, 24);
     defer screen.deinit();
     var parser = InputParser.init(&screen);
-    defer parser.deinit(testing.allocator);
+    defer parser.deinit();
     parser.pty = &p.pty;
 
     try parser.feed("\x1b[c"); // DA1
@@ -2318,7 +2318,7 @@ test "DA2 (CSI > c) responds with secondary attributes" {
     var screen = try Screen.init(testing.allocator, 80, 24);
     defer screen.deinit();
     var parser = InputParser.init(&screen);
-    defer parser.deinit(testing.allocator);
+    defer parser.deinit();
     parser.pty = &p.pty;
 
     try parser.feed("\x1b[>c"); // DA2
@@ -2339,7 +2339,7 @@ test "DSR cursor position over pipe" {
     screen.cursor.y = 7;
 
     var parser = InputParser.init(&screen);
-    defer parser.deinit(testing.allocator);
+    defer parser.deinit();
     parser.pty = &p.pty;
 
     try parser.feed("\x1b[6n");
@@ -2356,7 +2356,7 @@ test "DECRQM responds with mode status" {
     var screen = try Screen.init(testing.allocator, 80, 24);
     defer screen.deinit();
     var parser = InputParser.init(&screen);
-    defer parser.deinit(testing.allocator);
+    defer parser.deinit();
     parser.pty = &p.pty;
 
     // Test DECRQM private mode 2026 (synchronized output) — default reset (2)
@@ -2391,7 +2391,7 @@ test "kitty keyboard protocol and extkeys" {
     var screen = try Screen.init(testing.allocator, 80, 24);
     defer screen.deinit();
     var parser = InputParser.init(&screen);
-    defer parser.deinit(testing.allocator);
+    defer parser.deinit();
     parser.pty = &p.pty;
 
     // Test extkeys mode setting
@@ -2429,7 +2429,7 @@ test "modifyOtherKeys huge level does not panic — bug #355" {
     var screen = try Screen.init(testing.allocator, 80, 24);
     defer screen.deinit();
     var parser = InputParser.init(&screen);
-    defer parser.deinit(testing.allocator);
+    defer parser.deinit();
     parser.pty = &p.pty;
 
     // With the bug, @intCast(u32 → u8) panicked on wire-controlled values.
@@ -2449,7 +2449,7 @@ test "XTSMGRAPHICS (CSI ? 2 ; 1 S) reports sixel supported" {
     var screen = try Screen.init(testing.allocator, 80, 24);
     defer screen.deinit();
     var parser = InputParser.init(&screen);
-    defer parser.deinit(testing.allocator);
+    defer parser.deinit();
     parser.pty = &p.pty;
 
     try parser.feed("\x1b[?2;1S"); // XTSMGRAPHICS sixel query
@@ -2464,7 +2464,7 @@ test "DCS sixel intermediate propagates append error" {
     var screen = try Screen.init(testing.allocator, 80, 24);
     defer screen.deinit();
     var parser = InputParser.init(&screen);
-    defer parser.deinit(testing.allocator);
+    defer parser.deinit();
 
     // A DCS sixel sequence: ESC P q <data> ESC \
     try parser.feed("\x1bPq#0;2;100;200;0;0;0;0;0\x1b\\");
@@ -2481,7 +2481,7 @@ test "XTSMGRAPHICS does not interfere with scroll-up (CSI S without ?)" {
     for (0..5) |i| screen.grid.writeChar(0, @intCast(i), @intCast('A' + i));
 
     var parser = InputParser.init(&screen);
-    defer parser.deinit(testing.allocator);
+    defer parser.deinit();
     // No PTY — scroll-up must still work normally.
 
     try parser.feed("\x1b[1S"); // CSI 1 S = scroll up 1 line (no intermediate)
@@ -2495,7 +2495,7 @@ test "partial UTF-8 aborted by ESC — bug #114" {
     defer screen.deinit();
 
     var parser = InputParser.init(&screen);
-    defer parser.deinit(testing.allocator);
+    defer parser.deinit();
 
     screen.cursor.x = 5;
     screen.cursor.y = 10;
@@ -2519,7 +2519,7 @@ test "SOS/PM/APC with ESC backslash ST terminator — bug #131" {
     defer screen.deinit();
 
     var parser = InputParser.init(&screen);
-    defer parser.deinit(testing.allocator);
+    defer parser.deinit();
 
     // SOS (ESC X) begins a string; ESC \ (ST) should terminate it.
     try parser.feed(&[_]u8{ 0x1B, 'X', 'h', 'e', 'l', 'l', 'o', 0x1B, '\\' });
@@ -2541,7 +2541,7 @@ test "DECSM 1000/1002/1003/1006 mouse modes set screen flags for inner app compa
     defer screen.deinit();
 
     var parser = InputParser.init(&screen);
-    defer parser.deinit(testing.allocator);
+    defer parser.deinit();
 
     // DECSM 1000 (normal mouse tracking)
     try parser.feed("\x1b[?1000h");
@@ -2570,7 +2570,7 @@ test "OSC buffer capped at 1 MiB to prevent OOM — bug #261" {
     defer screen.deinit();
 
     var parser = InputParser.init(&screen);
-    defer parser.deinit(testing.allocator);
+    defer parser.deinit();
 
     // Feed 1 MiB + 1 bytes of OSC data without terminator — should cap and drop to ground.
     var buf: [1024]u8 = undefined;
@@ -2595,7 +2595,7 @@ test "C1 NEL moves down without swallowing next byte — bug #388" {
     var screen = try Screen.init(testing.allocator, 10, 5);
     defer screen.deinit();
     var parser = InputParser.init(&screen);
-    defer parser.deinit(testing.allocator);
+    defer parser.deinit();
     try parser.feed(&[_]u8{ 0x85, 'A' });
     try testing.expectEqual(@as(u32, 1), screen.cursor.y);
     try testing.expectEqual(@as(u21, 'A'), screen.grid.getCell(0, 1).char);
@@ -2605,7 +2605,7 @@ test "8-bit OSC (0x9D) collects until BEL — bug #388" {
     var screen = try Screen.init(testing.allocator, 80, 24);
     defer screen.deinit();
     var parser = InputParser.init(&screen);
-    defer parser.deinit(testing.allocator);
+    defer parser.deinit();
     // With the bug 0x9D routed to PM/APC and the title was discarded until
     // a 7-bit ST that never comes.
     try parser.feed(&[_]u8{ 0x9D, '0', ';', 't', 0x07 });
@@ -2618,7 +2618,7 @@ test "ESC ESC backslash inside sixel payload still terminates — bug #388" {
     defer screen.deinit();
     screen.cell_size_known = true;
     var parser = InputParser.init(&screen);
-    defer parser.deinit(testing.allocator);
+    defer parser.deinit();
 
     // Payload "A ESC B" then ESC ESC \: the double-ESC previously ate the
     // real terminator as data.
@@ -2658,7 +2658,7 @@ test "XTSMGRAPHICS unknown Ps1 gets no reply — bug #388" {
     var screen = try Screen.init(testing.allocator, 80, 24);
     defer screen.deinit();
     var parser = InputParser.init(&screen);
-    defer parser.deinit(testing.allocator);
+    defer parser.deinit();
     parser.pty = &p.pty;
 
     try parser.feed("\x1b[?7;1S"); // Ps1=7 unsupported
@@ -2673,7 +2673,7 @@ test "CAN (0x18) and SUB (0x1A) abort pending escape, CSI, and OSC sequences —
     var screen = try Screen.init(testing.allocator, 80, 24);
     defer screen.deinit();
     var parser = InputParser.init(&screen);
-    defer parser.deinit(testing.allocator);
+    defer parser.deinit();
 
     // 1) Incomplete OSC aborted by CAN (0x18)
     try parser.feed("\x1b]0;unfinished title");
@@ -2727,9 +2727,9 @@ test "advanceBatch matches byte-at-a-time advance — bug #478" {
         var s2 = try Screen.init(testing.allocator, 20, 4);
         defer s2.deinit();
         var p1 = InputParser.init(&s1);
-        defer p1.deinit(testing.allocator);
+        defer p1.deinit();
         var p2 = InputParser.init(&s2);
-        defer p2.deinit(testing.allocator);
+        defer p2.deinit();
 
         try p1.advanceBatch(input);
         for (input) |b| try p2.advance(b);
@@ -2737,4 +2737,15 @@ test "advanceBatch matches byte-at-a-time advance — bug #478" {
         try testing.expectEqual(p1.state, p2.state);
         try expectScreensEqual(&s1, &s2);
     }
+}
+
+test "InputParser.deinit uses screen.allocator internally without external allocator arg — bug #499" {
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+    var parser = InputParser.init(&screen);
+    // Allocate into osc_buf and dcs_buf
+    try parser.feed("\x1b]0;temporary title\x07");
+    try parser.feed("\x1bPq#0;2;100;100;100#0~~\x1b\\");
+    // deinit() must free using screen.allocator without leaking or requiring an allocator argument
+    parser.deinit();
 }
