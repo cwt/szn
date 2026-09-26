@@ -14,7 +14,7 @@ const client_mod = @import("client/client.zig");
 const socket_path = @import("socket_path.zig");
 const log_mod = @import("log.zig");
 
-pub const Error = server_mod.ServerError || client_mod.Error || connect.Error || socket_path.Error || log_mod.Error || error{ OutOfMemory, SocketNotFound, WriteFailed, ReadFailed };
+pub const Error = server_mod.ServerError || client_mod.Error || raw_mod.Error || connect.Error || socket_path.Error || log_mod.Error || error{ OutOfMemory, SocketNotFound, WriteFailed, ReadFailed };
 
 pub const std_options: std.Options = .{
     .logFn = log_mod.logFn,
@@ -178,6 +178,9 @@ pub fn main(init: std.process.Init) !void {
         switch (err) {
             error.SocketNotFound, error.ConnectionRefused => {
                 std.debug.print("No szn server running\n", .{});
+            },
+            error.GetAttrFailed, error.SetRawFailed => {
+                std.debug.print("Failed to set raw mode on terminal\n", .{});
             },
             else => {
                 std.debug.print("Error: {any}\n", .{err});
@@ -655,8 +658,14 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
     };
     std.posix.sigaction(.WINCH, &act, null);
 
-    var raw = raw_mod.RawTerminal.init(stdin_fd) catch return;
-    raw.setRaw() catch return;
+    var raw = raw_mod.RawTerminal.init(stdin_fd) catch |err| {
+        std.log.err("failed to initialize raw terminal: {any}", .{err});
+        return err;
+    };
+    raw.setRaw() catch |err| {
+        std.log.err("failed to set raw mode: {any}", .{err});
+        return err;
+    };
     _ = tcflush(stdin_fd, TCIFLUSH);
     defer raw.deinit();
 
@@ -1217,4 +1226,14 @@ test "redirectStdioToDevNull leaves fds 0, 1, 2 open and valid — bug #487" {
     var status: c_int = 0;
     _ = c.waitpid(pid, &status, 0);
     try testing.expectEqual(@as(c_int, 0), status);
+}
+
+test "RawTerminal.init returns GetAttrFailed on non-tty fd — bug #498" {
+    var fds: [2]i32 = undefined;
+    if (std.c.pipe(&fds) != 0) return error.Unexpected;
+    defer {
+        _ = std.c.close(fds[0]);
+        _ = std.c.close(fds[1]);
+    }
+    try testing.expectError(error.GetAttrFailed, raw_mod.RawTerminal.init(fds[0]));
 }
