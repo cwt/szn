@@ -14,6 +14,10 @@ timestamp: 2026-09-04T09:18:00Z
 This file tracks all modifications, extensions, and updates to the `szn` documentation bundle in chronological order.
 
 | Timestamp | Document | Action | Description |
+| 2026-09-27T01:20:00Z | [v0.10.0.md](releases/v0.10.0.md) | Created | Created release notes for v0.10.0 (hot-path performance architecture, VS16 emoji promotion, hardened sixel graphics engine, and 61-bug stability sweep). |
+| 2026-09-27T01:20:00Z | [index.md](releases/index.md), [README.md](../README.md) | Updated | Added v0.10.0 to releases index, documented variation-selector-always-wide option, and updated test count to 1,032. |
+| 2026-09-27T01:20:00Z | [progress.md](development/progress.md) | Updated | Updated test count to 1,032; documented v0.10.0 release milestone. |
+| 2026-09-27T01:20:00Z | [build.zig.zon](../build.zig.zon) | Updated | Bumped version to 0.10.0. |
 | 2026-09-04T09:18:00Z | [index.md](index.md), [text_reflow.md](text_reflow.md), [migration.md](development/migration.md), [progress.md](development/progress.md), [szn-audit-2026-08-31.md](development/szn-audit-2026-08-31.md) | Updated | Upgraded bundle to OKF v0.2: renamed all-capitals documents to lowercase, adopted v0.2 trust signals (status, sources, verified, stale_after), added frontmatter and index linkage to audit report. |
 | 2026-08-31T07:15:00Z | [442.md](development/bugs/442.md) | Created | Filed and resolved bug #442 for automatic window renaming latency via zero-overhead PGID change detection. |
 | 2026-08-31T07:05:00Z | [441.md](development/bugs/441.md) | Created | Filed and resolved bug #441 for status cache invalidation lag, auto-rename and OSC title triggers, and pane switch invalidation. |

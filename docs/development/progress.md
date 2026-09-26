@@ -9,7 +9,7 @@ sources:
 verified: human-reviewed
 stale_after: 2026-12-31T00:00:00Z
 tags: [progress, roadmap, parity, milestones]
-timestamp: 2026-08-31T00:00:00Z
+timestamp: 2026-09-27T01:20:00Z
 ---
 
 # szn — Functional Clone Progress
@@ -17,7 +17,7 @@ timestamp: 2026-08-31T00:00:00Z
 Track progress toward a fully functional tmux clone.
 Based on code audit as of 2026-06-21.
 
-## Current State: 970 tests passing, v0.9.1 hotfix release. Resolved window status option scope routing (`set -g` fallback), status cache freeze on active window switch, single-quoted format strings, and per-window format resolution (#440). Fixed real-time status cache invalidation lag and state change triggers on auto-rename, OSC window titles, active pane switches, and command dispatches (#441). Resolved automatic window renaming delay via instantaneous PGID state change detection (#442). Added `set-window-option` / `setw` (49 commands registered). Configurable per-pane scrollback history (`history-limit`) with zero-allocation ring-buffer deque and line buffer recycling (#360, #361), dynamic runtime logging control (`SZN_LOG`), command parser quoting/escapes (#436), kitty keyboard normalization (#430), alternate-screen mouse wheel arrow forwarding (#427), DECSET 1003 `mouse_any` (#422), render frame flow control (#431), and a 47-bug stability sweep (#395–#442).
+## Current State: 1,032 tests passing, v0.10.0 release. Hot-path performance architecture overhaul (batch chunk parser `advanceBatch`, fast-path ASCII streaming in `writeStr`, O(1) pane validity tracking `isPaneValid`, batched SGR and render output, arena format string allocations). Configurable Unicode VS16 emoji presentation width option (`variation-selector-always-wide`). Hardened Sixel graphics subsystem (containment verification, scroll-region bound anchor shifting, surviving marker cell purging, transactional placement error rollback). Stable display client pointer lifetimes (`ArrayList(*DisplayClient)`), bounded OSC 52 clipboard and IPC frame limits, race-free PTY child reaping before SIGKILL, Kitty extended keyboard release filtering, raw terminal diagnostics, and a 61-bug stability sweep (#441–#501).
 
 ---
 
@@ -38,7 +38,7 @@ Based on code audit as of 2026-06-21.
 | 10 | Commands | ✅ Done | ~74 | All 49 commands registered in `CMD_TABLE` (including set-window-option / setw, copy-mode, paste-buffer, find-window, show-messages, and list-keys) |
 | 11 | Full Integration | ✅ Done | ~30 | integration.zig integration test suite complete |
 
-**Total: 970 / 970 tests passing (verified 2026-08-31). All Phases 0–11 fully complete.**
+**Total: 1,032 / 1,032 tests passing (verified 2026-09-27). All Phases 0–11 fully complete.**
 
 > The per-phase **Tests** column above is a snapshot taken when each phase
 > landed, not a partition of the current total — later phases and audit sweeps

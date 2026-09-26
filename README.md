@@ -112,6 +112,15 @@ szn set-option -g history-limit 50000
 szn set-option history-limit 5000
 ```
 
+### Emoji Presentation & VS16 Width
+
+By default, single-width characters followed by Unicode Variation Selector 16 (`U+FE0F`) preserve POSIX 1-cell width. To promote them to 2 cells with padding cells (matching modern terminals like Kitty and Alacritty), enable `variation-selector-always-wide`:
+
+```tmux
+# In ~/.szn.conf or ~/.tmux.conf
+set -g variation-selector-always-wide on
+```
+
 ## Status
 
 All core development phases (Phases 0 to 11) are fully implemented and complete. We have a robust, functional Zig terminal multiplexer featuring:
@@ -121,7 +130,7 @@ All core development phases (Phases 0 to 11) are fully implemented and complete.
 - Standard VT100 wrap-pending and Background Color Erase (BCE) support for accurate rendering.
 - Full multi-pane layouts, interactive copy mode, status bars, and config parsing (`.szn.conf`).
 - **Advanced Text Reflow** — automatically rewraps text on pane resizing, respecting CJK characters, combining marks, and Thai cluster integrity (including an $O(1)$ syllable backtracking algorithm). See [docs/text_reflow.md](docs/text_reflow.md) for full design details.
-- **970 unit and integration tests passing.**
+- **1,032 unit and integration tests passing.**
 
 > **Running the suite:** `zig build test` leaves a stale `$TMPDIR/szn.sock`
 > behind, which makes 3 socket tests fail on every *subsequent* run. Delete it
