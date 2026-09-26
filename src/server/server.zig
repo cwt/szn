@@ -2610,16 +2610,20 @@ pub const Server = struct {
                 },
                 .cell_size => {
                     if (pkt.data.len >= 8) {
-                        const height_px = std.mem.readInt(u32, pkt.data[0..4], .little);
-                        const width_px = std.mem.readInt(u32, pkt.data[4..8], .little);
-                        // Store on the server so the value survives session/window
-                        // (re)creation, and apply to every existing screen. The
-                        // message is sent at startup — often before any session
-                        // exists — so the active-pane branch alone would drop it.
-                        self.cell_px_height = height_px;
-                        self.cell_px_width = width_px;
-                        self.cell_size_known = true;
-                        self.applyCellSizeToAllScreens();
+                        const raw_h = std.mem.readInt(u32, pkt.data[0..4], .little);
+                        const raw_w = std.mem.readInt(u32, pkt.data[4..8], .little);
+                        if (raw_h > 0 and raw_w > 0) {
+                            const height_px = std.math.clamp(raw_h, 1, 1024);
+                            const width_px = std.math.clamp(raw_w, 1, 1024);
+                            // Store on the server so the value survives session/window
+                            // (re)creation, and apply to every existing screen. The
+                            // message is sent at startup — often before any session
+                            // exists — so the active-pane branch alone would drop it.
+                            self.cell_px_height = height_px;
+                            self.cell_px_width = width_px;
+                            self.cell_size_known = true;
+                            self.applyCellSizeToAllScreens();
+                        }
                     }
                 },
                 .detach => {
@@ -5944,6 +5948,75 @@ test "handleClient .command early returns if client removed mid-dispatch — bug
 
     try server.handleClient(server_fd);
     try testing.expect(!server.client_readers.contains(server_fd));
+}
+
+test "cell_size wire message clamps dimensions and ignores zeroes — bug #496" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    var fds: [2]i32 = undefined;
+    if (std.c.socketpair(std.posix.AF.LOCAL, std.posix.SOCK.STREAM, 0, &fds) != 0) {
+        return error.SocketPairFailed;
+    }
+    const server_fd = fds[0];
+    const client_fd = fds[1];
+    defer _ = std.c.close(client_fd);
+    defer _ = std.c.close(server_fd);
+
+    const reader = try server.allocator.create(MessageReader);
+    reader.* = .{};
+    try server.client_readers.put(server_fd, reader);
+    try server.client_fds.append(server.allocator, server_fd);
+    defer {
+        if (server.client_readers.fetchRemove(server_fd)) |entry| {
+            server.allocator.destroy(entry.value);
+        }
+    }
+
+    // 1. Send cell_size with zero dimensions: must be rejected / ignored
+    server.cell_px_height = 20;
+    server.cell_px_width = 10;
+    server.cell_size_known = false;
+
+    var zero_payload: [8]u8 = undefined;
+    std.mem.writeInt(u32, zero_payload[0..4], 0, .little);
+    std.mem.writeInt(u32, zero_payload[4..8], 0, .little);
+    const zero_pkt = protocol.Packet.make(.cell_size, &zero_payload);
+    var zero_buf: [32]u8 = undefined;
+    const ser_zero = zero_pkt.serialize(&zero_buf);
+    _ = std.c.write(client_fd, ser_zero.ptr, ser_zero.len);
+
+    try server.handleClient(server_fd);
+    try testing.expectEqual(@as(u32, 20), server.cell_px_height);
+    try testing.expectEqual(@as(u32, 10), server.cell_px_width);
+    try testing.expect(!server.cell_size_known);
+
+    // 2. Send cell_size with huge/absurd dimensions (0xFFFFFFFF): must be clamped to 1024
+    var huge_payload: [8]u8 = undefined;
+    std.mem.writeInt(u32, huge_payload[0..4], 0xFFFFFFFF, .little);
+    std.mem.writeInt(u32, huge_payload[4..8], 5000, .little);
+    const huge_pkt = protocol.Packet.make(.cell_size, &huge_payload);
+    var huge_buf: [32]u8 = undefined;
+    const ser_huge = huge_pkt.serialize(&huge_buf);
+    _ = std.c.write(client_fd, ser_huge.ptr, ser_huge.len);
+
+    try server.handleClient(server_fd);
+    try testing.expectEqual(@as(u32, 1024), server.cell_px_height);
+    try testing.expectEqual(@as(u32, 1024), server.cell_px_width);
+    try testing.expect(server.cell_size_known);
+
+    // 3. Send valid dimensions (16x8): accepted as-is
+    var valid_payload: [8]u8 = undefined;
+    std.mem.writeInt(u32, valid_payload[0..4], 16, .little);
+    std.mem.writeInt(u32, valid_payload[4..8], 8, .little);
+    const valid_pkt = protocol.Packet.make(.cell_size, &valid_payload);
+    var valid_buf: [32]u8 = undefined;
+    const ser_valid = valid_pkt.serialize(&valid_buf);
+    _ = std.c.write(client_fd, ser_valid.ptr, ser_valid.len);
+
+    try server.handleClient(server_fd);
+    try testing.expectEqual(@as(u32, 16), server.cell_px_height);
+    try testing.expectEqual(@as(u32, 8), server.cell_px_width);
 }
 
 test "appendClientOutFrame and renderToDisplayClient obey RENDER_HIGH_WATERMARK — bug #431" {
