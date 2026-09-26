@@ -42,9 +42,9 @@ Both summary tables below are generated from the `severity` and `status` fields 
 
 | Status | Count |
 |---|---:|
-| Fixed / Resolved | 441 |
+| Fixed / Resolved | 442 |
 | False Positive | 26 |
-| Open | 8 |
+| Open | 7 |
 | **Total** | **475** |
 
 ## All Bugs
@@ -524,5 +524,5 @@ Both summary tables below are generated from the `severity` and `status` fields 
 | [497](497.md) | test helper setRaw hardcodes macOS termios cc indices (VMIN/VTIME), wrong slots on Linux | LOW | Fixed |
 | [498](498.md) | client silently exits 0 when setRaw fails (raw.setRaw() catch return) | LOW | Fixed |
 | [499](499.md) | InputParser.deinit takes an arbitrary allocator but every allocation uses screen.allocator | LOW | Fixed |
-| [500](500.md) | tty.Term.setAttributes emits a bare SGR reset on sixel-bit-only change without nulling fg/bg (latent) | LOW | Open |
+| [500](500.md) | tty.Term.setAttributes emits a bare SGR reset on sixel-bit-only change without nulling fg/bg (latent) | LOW | Fixed |
 | [501](501.md) | placeSixelImage errdefer drops the slot without freeing image bytes (latent ownership trap) | LOW | Open |

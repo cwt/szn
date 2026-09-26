@@ -24,6 +24,16 @@ comptime {
     std.debug.assert(attrFields.len == attrCodes.len);
 }
 
+const SGR_ATTR_MASK: u16 = blk: {
+    var mask: u16 = 0;
+    for (attrFields) |field| {
+        var a: Attr = .{};
+        @field(a, field.name) = true;
+        mask |= @as(u16, @bitCast(a));
+    }
+    break :blk mask;
+};
+
 pub const Term = struct {
     writer: Writer,
     sx: u32,
@@ -143,15 +153,21 @@ pub const Term = struct {
     // ── Attributes ──
 
     pub fn setAttributes(self: *Term, attrs: Attr) Error!void {
-        const changed = @as(u16, @bitCast(attrs)) ^ @as(u16, @bitCast(self.attrs));
-        if (changed == 0) return;
-
-        if (@as(u16, @bitCast(attrs)) == 0) {
-            try self.resetAttributes();
+        const cur_bits = @as(u16, @bitCast(self.attrs)) & SGR_ATTR_MASK;
+        const new_bits = @as(u16, @bitCast(attrs)) & SGR_ATTR_MASK;
+        const changed = cur_bits ^ new_bits;
+        if (changed == 0) {
+            self.attrs = attrs;
             return;
         }
 
-        if (@as(u16, @bitCast(self.attrs)) != 0 and (@as(u16, @bitCast(self.attrs)) & ~@as(u16, @bitCast(attrs))) != 0) {
+        if (new_bits == 0) {
+            try self.resetAttributes();
+            self.attrs = attrs;
+            return;
+        }
+
+        if (cur_bits != 0 and (cur_bits & ~new_bits) != 0) {
             try self.write("\x1b[m");
             self.fg = null;
             self.bg = null;
@@ -1004,6 +1020,25 @@ test "setAttributes reset does not clobber colors — C3 fix" {
     const fg_pos = std.mem.indexOf(u8, out, "\x1b[38;2;0;255;0m") orelse return error.TestFailed;
     try testing.expect(reset_pos < fg_pos);
     try testing.expect(std.mem.indexOf(u8, out, "B") != null);
+}
+
+test "setAttributes ignores sixel marker bit and does not emit bare SGR reset or desync colors — bug #500" {
+    var buf: [128]u8 = undefined;
+    var term = Term.init(Writer.fixed(&buf), 80, 24);
+
+    // Set a foreground color
+    try term.setForeground(Colour.fromRgb(255, 0, 0));
+    term.writer.end = 0;
+
+    // Transition from no attrs to sixel-only attr
+    try term.setAttributes(.{ .sixel = true });
+    // Should emit nothing (no bare \x1b[m) and must not clear term.fg
+    try testing.expectEqual(@as(usize, 0), term.writer.end);
+    try testing.expect(term.fg != null);
+
+    // Now setting the same color must still be recognized as already set
+    try term.setForeground(Colour.fromRgb(255, 0, 0));
+    try testing.expectEqual(@as(usize, 0), term.writer.end);
 }
 
 test "draw screen draws all lines" {
