@@ -451,8 +451,14 @@ pub const LibThai = struct {
     brk: ?*ThBrk,
 };
 
+const InitState = enum(u8) {
+    uninitialized = 0,
+    initializing = 1,
+    initialized = 2,
+};
+
 var libthai_instance: ?LibThai = null;
-var libthai_tried = false;
+var libthai_state: std.atomic.Value(u8) = std.atomic.Value(u8).init(@intFromEnum(InitState.uninitialized));
 
 fn initLibThai() void {
     const paths = [_][]const u8{
@@ -497,22 +503,46 @@ fn initLibThai() void {
     }
 }
 
+/// Returns a pointer to the globally initialized LibThai instance, or null if libthai is unavailable.
+///
+/// Thread safety:
+/// Loading and initialization are synchronized using atomic state transitions (bug #504).
+/// In accordance with szn's single-threaded event loop architecture (src/server/loop.zig),
+/// terminal processing and reflow execute on the main server thread. If concurrent background
+/// threads need to break words in the future, each thread should allocate its own ThBrk handle.
 pub fn getLibThai() ?*const LibThai {
-    if (!libthai_tried) {
-        libthai_tried = true;
-        initLibThai();
+    while (true) {
+        const state = libthai_state.load(.acquire);
+        if (state == @intFromEnum(InitState.initialized)) {
+            if (libthai_instance) |*inst| return inst;
+            return null;
+        }
+        if (state == @intFromEnum(InitState.uninitialized)) {
+            if (libthai_state.cmpxchgStrong(
+                @intFromEnum(InitState.uninitialized),
+                @intFromEnum(InitState.initializing),
+                .acq_rel,
+                .acquire,
+            ) == null) {
+                initLibThai();
+                libthai_state.store(@intFromEnum(InitState.initialized), .release);
+                if (libthai_instance) |*inst| return inst;
+                return null;
+            }
+        }
+        // Another thread is actively initializing; yield.
+        std.Thread.yield() catch {};
     }
-    if (libthai_instance) |*inst| return inst;
-    return null;
 }
 
 pub fn deinitLibThai() void {
-    if (libthai_instance) |*inst| {
-        if (inst.brk) |b| inst.th_brk_delete(b);
-        inst.dynlib.close();
-        libthai_instance = null;
+    if (libthai_state.swap(@intFromEnum(InitState.uninitialized), .acq_rel) != @intFromEnum(InitState.uninitialized)) {
+        if (libthai_instance) |*inst| {
+            if (inst.brk) |b| inst.th_brk_delete(b);
+            inst.dynlib.close();
+            libthai_instance = null;
+        }
     }
-    libthai_tried = false;
 }
 
 pub fn findWordBreaks(allocator: std.mem.Allocator, cells: []const Cell) ![]usize {
@@ -604,4 +634,19 @@ test "findWordBreaks using libthai if available" {
     // libthai returns internal break positions, so it will return index 4.
     try testing.expect(breaks.len >= 1);
     try testing.expectEqual(@as(usize, 4), breaks[0]);
+}
+
+test "getLibThai: thread-safe concurrent access" {
+    const Worker = struct {
+        fn run() void {
+            _ = getLibThai();
+        }
+    };
+    var threads: [4]std.Thread = undefined;
+    for (&threads) |*t| {
+        t.* = try std.Thread.spawn(.{}, Worker.run, .{});
+    }
+    for (threads) |t| {
+        t.join();
+    }
 }

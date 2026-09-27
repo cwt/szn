@@ -14,6 +14,8 @@ timestamp: 2026-09-04T09:18:00Z
 This file tracks all modifications, extensions, and updates to the `szn` documentation bundle in chronological order.
 
 | Timestamp | Document | Action | Description |
+| 2026-09-27T16:11:00Z | [504.md](development/bugs/504.md) | Resolved | Synchronized LibThai loading and deinitialization with atomic state transitions and documented server-thread lifecycle (bug #504). |
+| 2026-09-27T16:11:00Z | [BUGS.md](development/bugs/index.md) | Updated | Marked #504 Fixed, bumped Fixed/Resolved total (480 entries). |
 | 2026-09-27T16:08:00Z | [503.md](development/bugs/503.md) | Resolved | Simplified cellHasMaiHanAkat to strictly test combiningCodepoint on table indices, eliminating dead raw-codepoint check (bug #503). |
 | 2026-09-27T16:08:00Z | [BUGS.md](development/bugs/index.md) | Updated | Marked #503 Fixed, bumped Fixed/Resolved total (479 entries). |
 | 2026-09-27T16:05:00Z | [502.md](development/bugs/502.md) | Resolved | Fixed Thai cluster segmentation in findThaiClusterEnd to consume consecutive following vowels in compound syllables like เ-าะ (bug #502). |
