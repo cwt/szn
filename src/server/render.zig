@@ -642,6 +642,59 @@ pub const Display = struct {
             var cur_cx: u32 = 0;
             var anchored = false;
 
+            if (self.last_cells) |lc| {
+                // Thai SARA AM (U+0E33) and Lao SARA AM (U+0EB3) visually project
+                // a NIKKAHIT mark over the preceding cell (x - 1) via terminal font
+                // shaping (e.g. Kitty with Tlwg Typo). When SARA AM is deleted or
+                // modified, or when the preceding consonant changes, the terminal
+                // clears the shaped cluster, leaving cell x - 1 blank.
+                // Invalidate the neighbor in last_cells so both cells are re-emitted
+                // and redrawn cleanly together.
+                var check_x: u32 = 1;
+                while (check_x < w) : (check_x += 1) {
+                    const idx = row_base + check_x;
+                    const prev_idx = row_base + (check_x - 1);
+                    if (idx < lc.items.len) {
+                        const last_has_am = (lc.items[idx].char == 0x0E33 or lc.items[idx].char == 0x0EB3);
+                        const cur_cell = blk: {
+                            var cl = if (check_x < row_cells.len) row_cells[check_x] else Cell.empty();
+                            if (screen.copy_mode) |cm| {
+                                if (cm.isSelected(@intCast(check_x), @intCast(y))) {
+                                    cl.attr.reverse = !cl.attr.reverse;
+                                }
+                            }
+                            break :blk cl;
+                        };
+                        const cur_has_am = (cur_cell.char == 0x0E33 or cur_cell.char == 0x0EB3);
+
+                        if (last_has_am or cur_has_am) {
+                            const cur_prev = blk: {
+                                const px = check_x - 1;
+                                var cl = if (px < row_cells.len) row_cells[px] else Cell.empty();
+                                if (screen.copy_mode) |cm| {
+                                    if (cm.isSelected(@intCast(px), @intCast(y))) {
+                                        cl.attr.reverse = !cl.attr.reverse;
+                                    }
+                                }
+                                break :blk cl;
+                            };
+                            const prev_changed = !cur_prev.eql(lc.items[prev_idx]);
+                            const cur_changed = !cur_cell.eql(lc.items[idx]);
+
+                            if (cur_changed and !prev_changed) {
+                                var inv = Cell.empty();
+                                inv.char = 0x1FFFFF;
+                                lc.items[prev_idx] = inv;
+                            } else if (prev_changed and !cur_changed) {
+                                var inv = Cell.empty();
+                                inv.char = 0x1FFFFF;
+                                lc.items[idx] = inv;
+                            }
+                        }
+                    }
+                }
+            }
+
             var x: u32 = 0;
             while (x < w) : (x += 1) {
                 var cell = if (x < row_cells.len) row_cells[x] else Cell.empty();
@@ -2371,4 +2424,49 @@ test "renderContent renders bottom row when screen height equals display.sy — 
 
     // Verify row 2 content was rendered
     try testing.expect(std.mem.indexOf(u8, capture_buf.items, "Z") != null);
+}
+
+test "renderContent re-emits preceding cell when SARA AM is deleted" {
+    const allocator = testing.allocator;
+    var capture_buf: std.ArrayList(u8) = .empty;
+    defer capture_buf.deinit(allocator);
+
+    var last_cells: std.ArrayList(Cell) = .empty;
+    defer last_cells.deinit(allocator);
+    var last_sx: u32 = 0;
+    var last_sy: u32 = 0;
+
+    var display = Display{
+        .fd = -1,
+        .sx = 4,
+        .sy = 1,
+        .capture = &capture_buf,
+        .capture_allocator = allocator,
+        .last_cells = &last_cells,
+        .last_sx = &last_sx,
+        .last_sy = &last_sy,
+    };
+
+    var screen = try Screen.init(allocator, 4, 1);
+    defer screen.deinit();
+
+    // Frame 1: col 0 has 'ก' (0x0E01), col 1 has 'ำ' (0x0E33 SARA AM)
+    screen.grid.setCell(0, 0, Cell.withChar(0x0E01));
+    screen.grid.setCell(1, 0, Cell.withChar(0x0E33));
+    try display.renderContent(&screen);
+
+    capture_buf.clearRetainingCapacity();
+
+    // Frame 2: SARA AM is deleted at col 1 (replaced with empty cell)
+    // Col 0 ('ก') is unchanged in screen.grid, but must be re-emitted
+    // so that Kitty restores the base consonant on screen.
+    screen.grid.setCell(1, 0, Cell.empty());
+    try display.renderContent(&screen);
+
+    var buf: [4]u8 = undefined;
+    const len = try std.unicode.utf8Encode(0x0E01, &buf);
+    const thai_ko = buf[0..len];
+
+    // Verify col 0 'ก' was re-emitted in Frame 2
+    try testing.expect(std.mem.indexOf(u8, capture_buf.items, thai_ko) != null);
 }
