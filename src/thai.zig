@@ -107,7 +107,7 @@ pub fn cellHasMaiHanAkat(cell: Cell) bool {
 /// Find the end of a Thai visual cluster starting at position `start`.
 ///
 /// A Thai cluster in the grid has the form:
-///   [leading vowel] + base + [following vowel] + [right-attaching marks]
+///   [leading vowel] + base + [following vowels] + [right-attaching marks]
 ///
 /// Combining marks (tone marks, vowel signs) are stored in the comb1/comb2
 /// fields of the base or following-vowel cell, not as separate cells.
@@ -149,8 +149,8 @@ pub fn findThaiClusterEnd(line: []const Cell, start: usize) usize {
     }
     if (pos >= line.len) return pos;
 
-    // Check for an optional following vowel
-    if (isThaiFollowingVowel(line[pos].char)) {
+    // Check for optional following vowels (may have multiple, e.g. เ-าะ as in เกาะ)
+    while (pos < line.len and isThaiFollowingVowel(line[pos].char)) {
         pos += 1;
     }
 
@@ -311,6 +311,27 @@ test "findThaiClusterEnd: leading vowel + base + following vowel" {
         Cell.withChar(0x0E32), // SARA AA
     };
     try testing.expectEqual(@as(usize, 3), findThaiClusterEnd(&line, 0));
+}
+
+test "findThaiClusterEnd: leading vowel + base + multiple following vowels (เ-าะ as in เกาะ)" {
+    var line = [_]Cell{
+        Cell.withChar(0x0E40), // SARA E
+        Cell.withChar(0x0E01), // KO KAI
+        Cell.withChar(0x0E32), // SARA AA
+        Cell.withChar(0x0E30), // SARA A
+    };
+    try testing.expectEqual(@as(usize, 4), findThaiClusterEnd(&line, 0));
+}
+
+test "findThaiClusterEnd: base + multiple following vowels with right-attaching marks (เกาะๆ)" {
+    var line = [_]Cell{
+        Cell.withChar(0x0E40), // SARA E
+        Cell.withChar(0x0E01), // KO KAI
+        Cell.withChar(0x0E32), // SARA AA
+        Cell.withChar(0x0E30), // SARA A
+        Cell.withChar(0x0E46), // MAI YAMOK
+    };
+    try testing.expectEqual(@as(usize, 5), findThaiClusterEnd(&line, 0));
 }
 
 test "findThaiClusterEnd: leading vowel at end of line" {

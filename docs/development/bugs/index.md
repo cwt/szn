@@ -42,9 +42,9 @@ Both summary tables below are generated from the `severity` and `status` fields 
 
 | Status | Count |
 |---|---:|
-| Fixed / Resolved | 477 |
+| Fixed / Resolved | 478 |
 | False Positive | 22 |
-| Open | 4 |
+| Open | 3 |
 | **Total** | **503** |
 
 ## All Bugs
@@ -550,7 +550,7 @@ Both summary tables below are generated from the `severity` and `status` fields 
 | [499](499.md) | InputParser.deinit takes an arbitrary allocator but every allocation uses screen.allocator | LOW | Fixed |
 | [500](500.md) | tty.Term.setAttributes emits a bare SGR reset on sixel-bit-only change without nulling fg/bg (latent) | LOW | Fixed |
 | [501](501.md) | placeSixelImage errdefer drops the slot without freeing image bytes (latent ownership trap) | LOW | Fixed |
-| [502](502.md) | findThaiClusterEnd splits เ-าะ compound vowel syllables (leaves ะ as orphaned cluster) | MEDIUM | Open |
+| [502](502.md) | findThaiClusterEnd splits เ-าะ compound vowel syllables (leaves ะ as orphaned cluster) | MEDIUM | Fixed |
 | [503](503.md) | cellHasMaiHanAkat raw-codepoint check compares table index to raw codepoint | LOW | Open |
 | [504](504.md) | libthai loader and break context lack thread-safety synchronization (latent) | LOW | Open |
 | [505](505.md) | text_reflow.md references non-existent src/reflow.zig and omits libthai integration | LOW | Open |
