@@ -14,6 +14,8 @@ timestamp: 2026-09-04T09:18:00Z
 This file tracks all modifications, extensions, and updates to the `szn` documentation bundle in chronological order.
 
 | Timestamp | Document | Action | Description |
+| 2026-09-27T16:08:00Z | [503.md](development/bugs/503.md) | Resolved | Simplified cellHasMaiHanAkat to strictly test combiningCodepoint on table indices, eliminating dead raw-codepoint check (bug #503). |
+| 2026-09-27T16:08:00Z | [BUGS.md](development/bugs/index.md) | Updated | Marked #503 Fixed, bumped Fixed/Resolved total (479 entries). |
 | 2026-09-27T16:05:00Z | [502.md](development/bugs/502.md) | Resolved | Fixed Thai cluster segmentation in findThaiClusterEnd to consume consecutive following vowels in compound syllables like เ-าะ (bug #502). |
 | 2026-09-27T16:05:00Z | [BUGS.md](development/bugs/index.md) | Updated | Marked #502 Fixed, bumped Fixed/Resolved total (478 entries). |
 | 2026-09-27T15:45:00Z | [bugs 502-505](development/bugs/) | Created | Filed 4 bug entries (#502–#505) from Thai reflow and text architecture review: 1 MEDIUM (#502: เ-าะ compound vowel cluster split), 3 LOW (#503: cellHasMaiHanAkat dead raw-codepoint check, #504: libthai unsynchronized globals, #505: text_reflow.md stale references and omitted libthai docs). |

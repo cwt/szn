@@ -49,6 +49,7 @@ pub fn isThaiLeadingVowel(cp: u21) bool {
 /// Returns true if cp is a Thai following vowel.
 ///
 /// These appear after the base consonant:
+///
 ///   U+0E30  SARA A        ◌ะ
 ///   U+0E31  MAI HAN AKAT  ◌ั
 ///   U+0E32  SARA AA       ◌า
@@ -95,12 +96,8 @@ pub fn isThaiBase(cp: u21) bool {
 /// character or as a combining mark in comb1/comb2.
 pub fn cellHasMaiHanAkat(cell: Cell) bool {
     if (cell.char == 0x0E31) return true;
-    if (cell.comb1 != 0) {
-        if (cell.comb1 == 0x0E31 or char_width.combiningCodepoint(cell.comb1) == 0x0E31) return true;
-    }
-    if (cell.comb2 != 0) {
-        if (cell.comb2 == 0x0E31 or char_width.combiningCodepoint(cell.comb2) == 0x0E31) return true;
-    }
+    if (cell.comb1 != 0 and char_width.combiningCodepoint(cell.comb1) == 0x0E31) return true;
+    if (cell.comb2 != 0 and char_width.combiningCodepoint(cell.comb2) == 0x0E31) return true;
     return false;
 }
 
@@ -350,8 +347,8 @@ test "findThaiClusterEnd: base with combining marks in comb fields" {
     var line = [_]Cell{
         Cell.withChar(0x0E01), // KO KAI
     };
-    line[0].comb1 = 0x0E34; // SARA I
-    line[0].comb2 = 0x0E48; // MAI EK
+    line[0].comb1 = char_width.combiningIndex(0x0E34); // SARA I
+    line[0].comb2 = char_width.combiningIndex(0x0E48); // MAI EK
     try testing.expectEqual(@as(usize, 1), findThaiClusterEnd(&line, 0));
 }
 
@@ -360,8 +357,8 @@ test "findThaiClusterEnd: leading vowel + base + comb marks on base" {
         Cell.withChar(0x0E40), // SARA E
         Cell.withChar(0x0E01), // KO KAI
     };
-    line[1].comb1 = 0x0E34; // SARA I
-    line[1].comb2 = 0x0E48; // MAI EK
+    line[1].comb1 = char_width.combiningIndex(0x0E34); // SARA I
+    line[1].comb2 = char_width.combiningIndex(0x0E48); // MAI EK
     try testing.expectEqual(@as(usize, 2), findThaiClusterEnd(&line, 0));
 }
 
