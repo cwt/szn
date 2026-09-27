@@ -42,9 +42,9 @@ Both summary tables below are generated from the `severity` and `status` fields 
 
 | Status | Count |
 |---|---:|
-| Fixed / Resolved | 480 |
+| Fixed / Resolved | 481 |
 | False Positive | 22 |
-| Open | 1 |
+| Open | 0 |
 | **Total** | **503** |
 
 ## All Bugs
@@ -553,4 +553,4 @@ Both summary tables below are generated from the `severity` and `status` fields 
 | [502](502.md) | findThaiClusterEnd splits เ-าะ compound vowel syllables (leaves ะ as orphaned cluster) | MEDIUM | Fixed |
 | [503](503.md) | cellHasMaiHanAkat raw-codepoint check compares table index to raw codepoint | LOW | Fixed |
 | [504](504.md) | libthai loader and break context lack thread-safety synchronization (latent) | LOW | Fixed |
-| [505](505.md) | text_reflow.md references non-existent src/reflow.zig and omits libthai integration | LOW | Open |
+| [505](505.md) | text_reflow.md references non-existent src/reflow.zig and omits libthai integration | LOW | Fixed |

@@ -14,6 +14,8 @@ timestamp: 2026-09-04T09:18:00Z
 This file tracks all modifications, extensions, and updates to the `szn` documentation bundle in chronological order.
 
 | Timestamp | Document | Action | Description |
+| 2026-09-27T16:13:00Z | [505.md](development/bugs/505.md) | Resolved | Corrected text_reflow.md sources, documented two-tier libthai architecture and fallback backtracking, and added Sara Am width-1 rationale (bug #505). |
+| 2026-09-27T16:13:00Z | [BUGS.md](development/bugs/index.md) | Updated | Marked #505 Fixed, bumped Fixed/Resolved total (481 entries, 0 open). |
 | 2026-09-27T16:11:00Z | [504.md](development/bugs/504.md) | Resolved | Synchronized LibThai loading and deinitialization with atomic state transitions and documented server-thread lifecycle (bug #504). |
 | 2026-09-27T16:11:00Z | [BUGS.md](development/bugs/index.md) | Updated | Marked #504 Fixed, bumped Fixed/Resolved total (480 entries). |
 | 2026-09-27T16:08:00Z | [503.md](development/bugs/503.md) | Resolved | Simplified cellHasMaiHanAkat to strictly test combiningCodepoint on table indices, eliminating dead raw-codepoint check (bug #503). |

@@ -4,13 +4,13 @@ title: "Text Reflow in szn"
 description: "Design, algorithms, and implementation of the text reflow system."
 status: stable
 sources:
-  - src/reflow.zig
   - src/grid.zig
   - src/screen.zig
+  - src/thai.zig
 verified: human-reviewed
 stale_after: 2027-01-01T00:00:00Z
 tags: [reflow, algorithms, terminal-emulation, cjk, thai]
-timestamp: 2026-08-03T00:00:00Z
+timestamp: 2026-09-27T16:13:00Z
 ---
 
 # Text Reflow in szn
@@ -55,7 +55,7 @@ Splitting a Thai cluster across line boundaries makes the text unreadable and co
 A single Thai character cell is defined as a base consonant that may contain up to two combining marks (stored inside `comb1` and `comb2` of the [Cell](../src/grid.zig) struct). A cluster spans across a sequence of cells matching this syntax:
 
 ```
-[Leading Vowel]? ➔ Base Consonant [รร]? ➔ [Following Vowel]? ➔ [Right-Attaching Marks]*
+[Leading Vowel]? ➔ Base Consonant [รร]? ➔ [Following Vowels]* ➔ [Right-Attaching Marks]*
 ```
 
 1. **Leading Vowels** (U+0E40–U+0E44): เ, แ, โ, ใ, ไ (Width 1, placed before the base).
@@ -63,6 +63,7 @@ A single Thai character cell is defined as a base consonant that may contain up 
 3. **Following Vowels** (U+0E30, U+0E31, U+0E32, U+0E33, U+0E45):
    * U+0E30 SARA A, U+0E32 SARA AA, U+0E33 SARA AM, U+0E45 LAKKHANGYAO: Width 1.
    * U+0E31 MAI HAN AKAT: Width 0 (combining mark functionally acting as a following vowel to ensure correct cluster integrity).
+   * **Compound Vowels**: Compound vowels such as **เ-าะ** (e.g., เกาะ, เฉพาะ, เหมาะ) contain multiple consecutive following vowels (`า` + `ะ`). `findThaiClusterEnd` consumes all consecutive following vowels into the syllable cluster to prevent illegal wraps such as `เกา|ะ`.
 4. **Right-Attaching Marks** (U+0E2F PAIYANNOI ฯ, U+0E46 MAI YAMOK ๆ): Width 1.
 5. **Combining Marks** (SARA U ◌ุ, MAI EK ◌่, SARA I ◌ิ, etc.): Stored directly inside the cell attributes of the base or following vowel, occupying 0 additional cells.
 
@@ -70,20 +71,26 @@ The function [findThaiClusterEnd](../src/thai.zig) identifies these boundary rul
 
 ---
 
-## 4. Thai Syllable Break Look-Ahead & Backtracking
+## 4. Two-Tier Thai Word & Syllable Breaking
 
-Even if clusters are kept whole, breaking a line immediately after a consonant when it is followed by a leading vowel can split a word awkwardly. For example, in the word **"เที่ยวไป" (travel to)**:
+Thai orthography does not insert spaces between words. To keep words readable without awkward hyphenation or mid-word splits, `szn` implements a two-tier line-breaking architecture:
 
-* **Syllables**: "เที่ยว" (travel) + "ไป" (go).
-* **The Orphan Consonant Problem**: If the line boundary falls right after "เที่ย", the consonant "ว" is forced onto the next line, resulting in `เที่ย` on Line 1, and `วไป` on Line 2. Since "ว" cannot start a Thai syllable before a leading vowel like "ไ", this is visually incorrect.
+### Tier 1: Dictionary-Based Word Breaking via `libthai`
+When Thai characters are detected in a logical line, `szn` consults `libthai` (dynamically loaded at runtime from standard system paths like `/opt/homebrew/lib/` or `/usr/lib/` via [`getLibThai`](../src/thai.zig)):
+1. [`thai.findWordBreaks`](../src/thai.zig) maps the logical line's UTF-32 codepoints into `libthai`'s word-breaking engine (`th_brk_wc_find_breaks`).
+2. The break positions returned by `libthai` are translated back to terminal cell indices.
+3. During rewrapping in [`src/grid.zig`](../src/grid.zig), the algorithm prioritizes breaking at these dictionary-confirmed word boundaries whenever a line overflows `new_width`.
+4. Spaces bordering Thai words are also recognized as valid word break boundaries.
 
-### The $O(1)$ Backtracking Heuristic
-During the wrapping phase, `szn` implements a look-ahead mechanism:
-1. When about to break a line, if the next character is a single Thai consonant (like "ว") immediately followed by a Thai leading vowel (เ, แ, โ, ใ, ไ), the algorithm detects that the consonant belongs to the preceding syllable.
-2. It walks backward on the current line to find the start of the syllable (typically a leading vowel, e.g., the "เ" in "เที่ยว").
-3. It backtracks the wrap boundary to that index, wrapping the entire syllable ("เที่ยว") cleanly to the next line.
-
-Because the backtrack only scans up to the beginning of the current syllable (a maximum of 5-6 cells), the lookup runs in $O(1)$ amortized time.
+### Tier 2: Fallback Syllable Look-Ahead & Backtracking Heuristic
+If `libthai` is not installed on the host system or a token is absent from the dictionary, `szn` falls back to phonetic syllable boundary detection to prevent orphan consonants:
+* **The Orphan Consonant Problem**: In words like **"เที่ยวไป"** (travel to = "เที่ยว" + "ไป"), if the line wraps right after "เที่ย", the consonant "ว" is forced onto the next line as `วไป`. Since "ว" cannot start a Thai syllable before a leading vowel like "ไ", this is visually corrupt.
+* **The `O(1)` Backtracking Heuristic**:
+  1. When about to break a line, if the next character is a single Thai consonant (like "ว") immediately followed by a Thai leading vowel (เ, แ, โ, ใ, ไ), the algorithm detects that the consonant belongs to the preceding syllable.
+  2. It walks backward on the current line to find the syllable start. If a leading vowel is found (e.g. the "เ" in "เที่ยว"), it backtracks the wrap boundary to that vowel.
+  3. If no leading vowel exists in the preceding syllable (e.g., syllables with implicit vowels like "คน" in "คนไป"), the scan stops at `first_thai_idx` (the start of the contiguous Thai word/token), cleanly wrapping the entire word to the next line.
+  4. Because the backtrack only scans up to the beginning of the syllable or word run, the check runs in `O(1)` amortized time.
+* **MAI HAN AKAT Protection**: If the cluster immediately preceding the wrap point contains MAI HAN AKAT (◌ั), breaking right after it is prohibited; the wrap boundary backtracks to before that cluster.
 
 ---
 
@@ -99,9 +106,13 @@ Instead of separate grow and shrink logic, `szn` runs a unified, lossless, three
 ### Step 2: Rewrapping
 * The flat array of cells is re-wrapped into physical rows fitting the `new_width`.
 * Wrap boundaries are calculated by checking:
-    * Thai cluster endings ([findThaiClusterEnd](../src/thai.zig)).
+  * Number breaking rules (short numbers ≤6 characters wrap whole; long numbers break on last comma).
+  * `libthai` dictionary word boundaries ([`findWordBreaks`](../src/thai.zig)).
+  * Inter-word space boundaries bordering Thai text.
+  * MAI HAN AKAT cluster protection ([`cellHasMaiHanAkat`](../src/thai.zig)).
+  * Syllable look-ahead boundaries and backtracking.
+  * Thai cluster endings ([`findThaiClusterEnd`](../src/thai.zig)).
   * CJK wide character pairs (`is_padding` matches).
-  * Syllable look-ahead boundaries.
 * If a line wraps, its physical row is marked `wrapped = true`, and padded with empty `char = 0` cells to the new width.
 
 ### Step 3: Layout Reconstruction

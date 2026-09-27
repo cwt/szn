@@ -240,6 +240,10 @@ pub fn charWidth(cp: u21) u2 {
     // terminal, which is bug #206.
     if (searchTable(cp, &emoji_presentation_ranges)) return 2;
 
+    // Fall through: width 1 default.
+    // Note: Thai SARA AM (U+0E33 ำ) is intentionally width 1 (matching standard Unicode
+    // East-Asian-Width Neutral and Alacritty). For terminals treating U+0E33 as width 2 (e.g. Kitty 0.49+),
+    // operators can configure `set-option -g codepoint-widths "U+0E33=2"` via bug #206.
     return 1;
 }
 
@@ -720,9 +724,7 @@ test "charWidth: Thai combining marks are zero-width" {
 
 test "charWidth: Thai base characters are width 1" {
     try std.testing.expectEqual(@as(u2, 1), charWidth(0x0E01)); // ko kai
-    try std.testing.expectEqual(@as(u2, 1), charWidth(0x0E01)); // ko kai
-    try std.testing.expectEqual(@as(u2, 1), charWidth(0x0E01)); // ko kai
-    try std.testing.expectEqual(@as(u2, 1), charWidth(0x0E01)); // ko kai
+    try std.testing.expectEqual(@as(u2, 1), charWidth(0x0E33)); // sara am (width 1, matches Alacritty)
 }
 
 test "charWidth: combining diacritical marks are zero-width" {
