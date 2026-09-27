@@ -150,7 +150,14 @@ calls `exec(server)` and returns a `DispatchResult`
 ## Design principles (from `AGENTS.md`)
 
 - Arena allocation per session/pane lifecycle; never `allocator.destroy`.
-- No global state — context passed explicitly through `Server`/`Screen`/`Pane`.
+- Global state minimized — context passed explicitly through
+  `Server`/`Screen`/`Pane`. Three exceptions are documented and deliberate:
+  the async-signal handler flags (`sigchldFlag`, `sigwinchFlag`, `sighupFlag`),
+  which a POSIX signal handler cannot avoid; the lazily-loaded `libthai` handle
+  (`thai.zig`); and the logger's fd/level state (`log.zig`). Terminal-width
+  tables in `char_width.zig` are process-wide by design and are declared
+  server-scoped rather than per-session — see `options.isServerScoped`.
+  Run `rg -n '^var ' src/` before assuming a subsystem is context-free.
 - Protocols over inheritance; IPC is a simple packet protocol, not imsg.
 - Comptime command/key-binding/option tables; hardcode modern terminal
   behaviour (no terminfo, SGR mouse 1006, kitty keyboard).

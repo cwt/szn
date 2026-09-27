@@ -219,6 +219,22 @@ fn freeValue(allocator: std.mem.Allocator, value: OptionValue) void {
     }
 }
 
+// ── Option Scope ──
+
+/// True for options whose effect is process-wide, so they are stored in the
+/// server's global option store and never in a per-session one.
+///
+/// tmux scopes these at `OPTIONS_TABLE_SERVER`, and the tables they drive
+/// (`char_width.overrides`, `char_width.variation_selector_always_wide`) are
+/// module globals. Writing a session-scoped copy would advertise a per-session
+/// setting that the shared table cannot honour, and because a session clones
+/// the global store at creation (`Session.init`) that copy would also go
+/// permanently stale — bug #506.
+pub fn isServerScoped(name: []const u8) bool {
+    return std.mem.eql(u8, name, "codepoint-widths") or
+        std.mem.eql(u8, name, "variation-selector-always-wide");
+}
+
 // ── Option Tables ──
 
 pub const SESSION_OPTIONS = &[_]OptionDef{
@@ -256,6 +272,9 @@ pub const SESSION_OPTIONS = &[_]OptionDef{
     // that renders ambiguous emoji/symbols at a width szn does not assume
     // by default (bug #206). Setting the option rebuilds the override
     // table from scratch; e.g. `set -g codepoint-widths "U+2705=1"`.
+    // SERVER-SCOPED (see `isServerScoped`): the override table is a module
+    // global, so a `-t`/`-s` write is redirected to the global store rather
+    // than stored per session (bug #506).
     .{ .name = "codepoint-widths", .type = .string, .default = OptionValue{ .string = "" } },
     // Variation selector-16 (U+FE0F) emoji presentation width handling,
     // mirroring tmux `variation-selector-always-wide`.
@@ -263,6 +282,7 @@ pub const SESSION_OPTIONS = &[_]OptionDef{
     // promoted to width 2 (with a padding cell), matching terminals that
     // expand emoji presentation sequences (e.g. Kitty or custom Alacritty).
     // When disabled (default), standard POSIX 1-cell width is preserved.
+    // SERVER-SCOPED, as above (bug #506).
     .{ .name = "variation-selector-always-wide", .type = .flag, .default = OptionValue{ .flag = false } },
 };
 
@@ -432,4 +452,37 @@ test "Options.freeValue frees choice strings — bug #116" {
 
     // If choice was not cloned, this would be use-after-free.
     try testing.expectEqualStrings("off", opts.get("status").?.choice);
+}
+
+test "isServerScoped: width options are server-scoped, everything else is not — bug #506" {
+    try testing.expect(isServerScoped("codepoint-widths"));
+    try testing.expect(isServerScoped("variation-selector-always-wide"));
+
+    // Session-scoped options must not be captured by the redirect.
+    try testing.expect(!isServerScoped("status"));
+    try testing.expect(!isServerScoped("history-limit"));
+    try testing.expect(!isServerScoped("mouse"));
+    try testing.expect(!isServerScoped("prefix"));
+    // Near-misses: prefix matching would be wrong here.
+    try testing.expect(!isServerScoped("codepoint-width"));
+    try testing.expect(!isServerScoped("codepoint-widths-extra"));
+    try testing.expect(!isServerScoped(""));
+}
+
+test "both server-scoped options are registered in SESSION_OPTIONS — bug #506" {
+    // A server-scoped name missing from SESSION_OPTIONS would make the `set -g`
+    // write fail with UnknownOption, so keep the two in sync.
+    var saw_widths = false;
+    var saw_vs = false;
+    for (SESSION_OPTIONS) |def| {
+        if (std.mem.eql(u8, def.name, "codepoint-widths")) {
+            saw_widths = true;
+            try testing.expectEqual(OptionType.string, def.type);
+        } else if (std.mem.eql(u8, def.name, "variation-selector-always-wide")) {
+            saw_vs = true;
+            try testing.expectEqual(OptionType.flag, def.type);
+        }
+    }
+    try testing.expect(saw_widths);
+    try testing.expect(saw_vs);
 }

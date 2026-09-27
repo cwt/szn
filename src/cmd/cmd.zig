@@ -6,6 +6,7 @@ const Pane = @import("../window.zig").Pane;
 const Window = @import("../window.zig").Window;
 const ChooseItem = @import("../choose.zig").ChooseItem;
 const char_width = @import("../char_width.zig");
+const options_mod = @import("../options.zig");
 
 /// Upper bound for a pane dimension set through `resize-pane`. Keeps a
 /// saturated relative adjustment from attempting an absurd grid allocation,
@@ -949,6 +950,14 @@ fn setOptionInternal(server: *Server, args: []const []const u8, default_window: 
     if (args.len - opt_idx < 2) return .err;
     const option_name = args[opt_idx];
     const value_str = args[opt_idx + 1];
+
+    // Width options are server-scoped (bug #506): the tables they drive are
+    // module globals, and a session clones the global store at creation, so a
+    // session-scoped copy would both over-promise per-session behaviour and go
+    // permanently stale. Redirect to the global store so the stored value and
+    // the applied effect agree, matching tmux's OPTIONS_TABLE_SERVER and the
+    // config-loading path (Server.applyDirectives), which already writes here.
+    if (options_mod.isServerScoped(option_name)) is_global = true;
 
     const cfg_mod = @import("../cfg.zig");
     const parsed_val = cfg_mod.parseValue(server.allocator, value_str) catch return .err;
@@ -3198,4 +3207,82 @@ test "window navigation commands invalidate status_dirty cache — bug #440" {
     defer c2.deinit(testing.allocator);
     try testing.expectEqual(CmdResult.ok, c2.exec(&server));
     try testing.expect(server.status_dirty);
+}
+
+test "set-option without -g stores width options in the server store — bug #506" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+    const session_a = try server.newSession("alpha", 80, 24);
+    const session_b = try server.newSession("beta", 80, 24);
+    defer char_width.clearOverrides();
+
+    // These options are server-scoped, so a bare `set-option` (no -g) must
+    // land in the server store rather than only in the active session. Before
+    // the fix the value went to session.options while still being applied to
+    // the process-wide width table, so every session rendered the override but
+    // only the active session's store reported it, and there was no way to set
+    // it server-wide except -g.
+    var c = try parse("set-option codepoint-widths \"U+2705=1\"", testing.allocator);
+    defer c.deinit(testing.allocator);
+    try testing.expectEqual(CmdResult.ok, c.exec(&server));
+
+    try testing.expectEqualStrings("U+2705=1", server.global_options.asString("codepoint-widths").?);
+    // The active session mirrors the server value (pre-existing -g
+    // propagation), so both agree.
+    try testing.expectEqualStrings("U+2705=1", session_a.options.asString("codepoint-widths").?);
+    // And the shared width table the renderer actually consults matches.
+    try testing.expectEqual(@as(u2, 1), char_width.charWidth(0x2705));
+    // A session that was never active keeps its creation-time snapshot; that is
+    // the general snapshot-inheritance model for all options, and it does not
+    // affect rendering because the width table is process-wide.
+    try testing.expectEqualStrings("", session_b.options.asString("codepoint-widths").?);
+}
+
+test "set-option width overrides have a single server-scoped value — bug #506" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+    const session = try server.newSession("alpha", 80, 24);
+    defer char_width.clearOverrides();
+
+    // Default: U+2705 is width 2 (emoji presentation).
+    try testing.expectEqual(@as(u2, 2), char_width.charWidth(0x2705));
+
+    var c = try parse("set-option codepoint-widths \"U+2705=1\"", testing.allocator);
+    defer c.deinit(testing.allocator);
+    try testing.expectEqual(CmdResult.ok, c.exec(&server));
+    try testing.expectEqual(@as(u2, 1), char_width.charWidth(0x2705));
+
+    // The server store is the single authority: the active session's copy and
+    // the applied width table can never disagree, because all three are written
+    // from the same `set-option` call.
+    try testing.expectEqualStrings(
+        server.global_options.asString("codepoint-widths").?,
+        session.options.asString("codepoint-widths").?,
+    );
+
+    // Clearing restores the default for the whole process.
+    var c2 = try parse("set-option -g codepoint-widths \"\"", testing.allocator);
+    defer c2.deinit(testing.allocator);
+    try testing.expectEqual(CmdResult.ok, c2.exec(&server));
+    try testing.expectEqual(@as(u2, 2), char_width.charWidth(0x2705));
+    try testing.expectEqualStrings("", server.global_options.asString("codepoint-widths").?);
+}
+
+test "set-option variation-selector-always-wide is server-scoped — bug #506" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+    _ = try server.newSession("alpha", 80, 24);
+    defer char_width.setVariationSelectorAlwaysWide(false);
+
+    try testing.expect(!char_width.getVariationSelectorAlwaysWide());
+
+    var c = try parse("set-option variation-selector-always-wide on", testing.allocator);
+    defer c.deinit(testing.allocator);
+    try testing.expectEqual(CmdResult.ok, c.exec(&server));
+
+    try testing.expect(char_width.getVariationSelectorAlwaysWide());
+    try testing.expectEqual(
+        @as(bool, true),
+        server.global_options.get("variation-selector-always-wide").?.flag,
+    );
 }

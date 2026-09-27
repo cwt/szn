@@ -56,8 +56,26 @@ Target Zig 0.16.0 (latest stable). Use `std.zig` style.
 3. **Protocols over inheritance.** Client-server IPC uses a simple packet
    protocol (not imsg). Define it using plain structs with manual serialization
    to guarantee byte-exact layout.
-4. **No global state.** Pass context explicitly. Use build-time dependency
-   injection for testing.
+4. **Minimize global state.** Pass context explicitly. Use build-time dependency
+   injection for testing. There are three documented exceptions, all
+   deliberate:
+   * **Async-signal handler flags** — `sigchldFlag` (`src/server/server.zig`),
+     `sigwinchFlag` and `sighupFlag` (`src/main.zig`). A POSIX signal handler
+     may only touch `volatile sig_atomic_t` objects, so these *cannot* be
+     threaded through context.
+   * **The lazily-loaded `libthai` handle** — `libthai_instance` and
+     `libthai_state` (`src/thai.zig`), initialized once behind an atomic
+     state machine (bug #504).
+   * **Logger state** — `log_fd`, `log_fd_failed`, `log_enabled`,
+     `runtime_log_level` (`src/log.zig`). The fd is atomic so the guard and the
+     guarded value share a discipline (bug #510); folding the rest into a
+     `Logger` passed by pointer is the intended follow-up.
+
+   `char_width`'s override tables are also module globals, but they are now
+   *honestly* server-scoped rather than pretending to be per-session: see
+   `options.isServerScoped` and bug #506. Treat "no global state" as a
+   default to defend, not an invariant to assume — check `rg -n '^var ' src/`
+   before concluding a subsystem is context-free.
 5. **Don't abstract the terminal.** Hardcode modern behaviour. If a feature
    isn't universal on xterm-256color+ terminals, it doesn't ship.
 6. **Single-session attachment.** The IPC protocol and display client connection design are deliberately simple. A connected client always attaches to the global active session (the first session in the list), and there is no protocol support for specifying a target session to attach to. This matches the single active session architecture.

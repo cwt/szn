@@ -17,7 +17,7 @@ timestamp: 2026-09-27T09:45:00Z
 Track progress toward a fully functional tmux clone.
 Based on code audit as of 2026-06-21.
 
-## Current State: 1,035 tests, v0.10.0 release. Hot-path performance architecture overhaul (batch chunk parser `advanceBatch`, fast-path ASCII streaming in `writeStr`, O(1) pane validity tracking `isPaneValid`, batched SGR and render output, arena format string allocations). Configurable Unicode VS16 emoji presentation width option (`variation-selector-always-wide`). Hardened Sixel graphics subsystem (containment verification, scroll-region bound anchor shifting, surviving marker cell purging, transactional placement error rollback). Stable display client pointer lifetimes (`ArrayList(*DisplayClient)`), bounded OSC 52 clipboard and IPC frame limits, race-free PTY child reaping before SIGKILL, Kitty extended keyboard release filtering, raw terminal diagnostics, and a 65-bug stability sweep (#441–#505).
+## Current State: 1,041 tests, v0.10.0 release. Hot-path performance architecture overhaul (batch chunk parser `advanceBatch`, fast-path ASCII streaming in `writeStr`, O(1) pane validity tracking `isPaneValid`, batched SGR and render output, arena format string allocations). Configurable Unicode VS16 emoji presentation width option (`variation-selector-always-wide`). Hardened Sixel graphics subsystem (containment verification, scroll-region bound anchor shifting, surviving marker cell purging, transactional placement error rollback). Stable display client pointer lifetimes (`ArrayList(*DisplayClient)`), bounded OSC 52 clipboard and IPC frame limits, race-free PTY child reaping before SIGKILL, Kitty extended keyboard release filtering, raw terminal diagnostics, and a 70-bug stability sweep (#441–#510). Bugs #506–#510 filed and fixed in the 2026-09-27 whole-project review: server-scoping of `codepoint-widths`/`variation-selector-always-wide`, an honest global-state inventory, an atomic log descriptor, a `.gitignore` gap, and this count.
 
 Thai text reflow correctness sweep (#502–#505): compound-vowel cluster integrity (`เ-าะ` patterns no longer split at reflow boundaries), removal of a dead raw-codepoint check in `cellHasMaiHanAkat`, and atomic state transitions for runtime `libthai` loading in `src/thai.zig`.
 
@@ -40,7 +40,7 @@ Thai text reflow correctness sweep (#502–#505): compound-vowel cluster integri
 | 10 | Commands | ✅ Done | ~74 | All 49 commands registered in `CMD_TABLE` (including set-window-option / setw, copy-mode, paste-buffer, find-window, show-messages, and list-keys) |
 | 11 | Full Integration | ✅ Done | ~30 | integration.zig integration test suite complete |
 
-**Total: 1,034 / 1,035 tests passing (1 skipped; verified 2026-09-27, Zig 0.16.0). All Phases 0–11 fully complete.**
+**Total: 1,040 / 1,041 tests passing (1 skipped; verified 2026-09-27, Zig 0.16.0, `-Doptimize=ReleaseFast`). All Phases 0–11 fully complete.**
 
 > The per-phase **Tests** column above is a snapshot taken when each phase
 > landed, not a partition of the current total — later phases and audit sweeps

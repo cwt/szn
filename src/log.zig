@@ -33,9 +33,35 @@ const O_APPEND = switch (builtin.os.tag) {
     else => 0x0400,
 };
 
-var log_fd: ?std.posix.fd_t = null;
+/// Sentinel stored in `log_fd` when no log file is open. An `std.posix.fd_t` is
+/// only ever a valid descriptor when >= 0, so -1 is unambiguous and avoids the
+/// optional payload that a plain `?fd_t` would need.
+const NO_LOG_FD: std.posix.fd_t = -1;
+
+// The fd is atomic for the same reason the two flags beside it are: it is the
+// value those flags guard. A plain global would be read by `logFn` while
+// `enable`/`disable` swap it, which is a data race under the Zig memory model
+// and could let a writer reach a descriptor that has already been closed (and
+// possibly recycled). Making the guarded value atomic gives it the same
+// discipline as the guard. See bug #510 for the residual ordering window and
+// why it is unreachable today.
+var log_fd: std.atomic.Value(std.posix.fd_t) = std.atomic.Value(std.posix.fd_t).init(NO_LOG_FD);
 var log_fd_failed: std.atomic.Value(bool) = std.atomic.Value(bool).init(false);
 var log_enabled: std.atomic.Value(bool) = std.atomic.Value(bool).init(false);
+
+/// True when `fd` no longer refers to an open descriptor.
+///
+/// Probes with F_GETFD rather than calling close() on an already-closed fd:
+/// a second close can land on a descriptor the OS has already recycled.
+fn isClosed(fd: std.posix.fd_t) bool {
+    return std.c.fcntl(fd, std.posix.F.GETFD, @as(c_int, 0)) < 0;
+}
+
+/// Read the current log descriptor, or `null` when logging has no file open.
+fn currentLogFd() ?std.posix.fd_t {
+    const fd = log_fd.load(.seq_cst);
+    return if (fd == NO_LOG_FD) null else fd;
+}
 
 fn resolveLogPath(buf: []u8) Error![:0]const u8 {
     if (std.c.getenv("XDG_STATE_HOME")) |xdg_raw| {
@@ -111,7 +137,7 @@ fn writeAllRaw(fd: std.posix.fd_t, bytes: []const u8) void {
 
 var runtime_log_level: Level = .info;
 
-/// Called once from enable() / enableClientLog() after log_fd is set.
+/// Called once from enable() / enableClientLog() after the fd is published.
 /// Reads SZN_LOG env var (values: "debug", "info", "warn", "err") and sets
 /// runtime_log_level accordingly so callers can override without recompiling.
 fn applyEnvLogLevel() void {
@@ -146,7 +172,7 @@ pub fn logFn(
         .err => .err,
     };
     if (@intFromEnum(my_level) < @intFromEnum(runtime_log_level)) return;
-    if (log_fd == null) {
+    if (log_fd.load(.seq_cst) == NO_LOG_FD) {
         if (log_fd_failed.load(.seq_cst)) return;
         var path_buf: [256]u8 = undefined;
         const path = resolveLogPath(&path_buf) catch {
@@ -158,9 +184,12 @@ pub fn logFn(
             log_fd_failed.store(true, .seq_cst);
             return;
         }
-        log_fd = fd;
+        // Publish before the write so a concurrent reader never sees a null fd
+        // while logging is enabled.
+        log_fd.store(fd, .seq_cst);
     }
-    const fd = log_fd.?;
+    const fd = log_fd.load(.seq_cst);
+    if (fd == NO_LOG_FD) return;
     var buf: [4096]u8 = undefined;
     const prefix = std.fmt.bufPrint(&buf, "[{s}] ", .{@tagName(level)}) catch return;
     const msg = std.fmt.bufPrint(buf[prefix.len..], format, args) catch {
@@ -191,20 +220,19 @@ pub fn enable(path_or_default: []const u8) void {
     };
     if (fd < 0) return;
     _ = fchmod(fd, 0o600);
-    if (log_fd) |old| _ = c.close(old);
-    log_fd = fd;
+    const old = log_fd.swap(fd, .seq_cst);
+    if (old != NO_LOG_FD) _ = c.close(old);
     log_fd_failed.store(false, .seq_cst);
     log_enabled.store(true, .seq_cst);
     applyEnvLogLevel();
 }
 
 pub fn disable() void {
-    if (log_fd) |fd| {
-        _ = c.close(fd);
-    }
-    log_fd = null;
-    log_fd_failed.store(false, .seq_cst);
+    // Clear the gate before closing, so no writer can start after the close.
     log_enabled.store(false, .seq_cst);
+    const old = log_fd.swap(NO_LOG_FD, .seq_cst);
+    if (old != NO_LOG_FD) _ = c.close(old);
+    log_fd_failed.store(false, .seq_cst);
 }
 
 /// Enable the interactive client's log. Mirrors `enable` but resolves the
@@ -226,8 +254,8 @@ pub fn enableClientLog(path_or_default: []const u8) void {
     };
     if (fd < 0) return;
     _ = fchmod(fd, 0o600);
-    if (log_fd) |old| _ = c.close(old);
-    log_fd = fd;
+    const old = log_fd.swap(fd, .seq_cst);
+    if (old != NO_LOG_FD) _ = c.close(old);
     log_fd_failed.store(false, .seq_cst);
     log_enabled.store(true, .seq_cst);
     applyEnvLogLevel();
@@ -274,13 +302,13 @@ test "logFn writes single line atomically" {
     defer _ = std.c.close(fd);
     defer _ = std.c.unlink(sub_path);
 
-    const old_log_fd = log_fd;
+    const old_log_fd = log_fd.load(.seq_cst);
     const old_enabled = log_enabled.load(.seq_cst);
     defer {
-        log_fd = old_log_fd;
+        log_fd.store(old_log_fd, .seq_cst);
         log_enabled.store(old_enabled, .seq_cst);
     }
-    log_fd = fd;
+    log_fd.store(fd, .seq_cst);
     log_enabled.store(true, .seq_cst);
 
     logFn(.info, .default, "Test formatted log: {d} + {d} = {d}", .{ 1, 2, 3 });
@@ -303,13 +331,13 @@ test "logFn handles buffer overflow without writing garbage" {
     defer _ = std.c.close(fd);
     defer _ = std.c.unlink(sub_path);
 
-    const old_log_fd = log_fd;
+    const old_log_fd = log_fd.load(.seq_cst);
     const old_enabled = log_enabled.load(.seq_cst);
     defer {
-        log_fd = old_log_fd;
+        log_fd.store(old_log_fd, .seq_cst);
         log_enabled.store(old_enabled, .seq_cst);
     }
-    log_fd = fd;
+    log_fd.store(fd, .seq_cst);
     log_enabled.store(true, .seq_cst);
 
     var big_buf: [5000]u8 = undefined;
@@ -327,20 +355,20 @@ test "logFn handles buffer overflow without writing garbage" {
 }
 
 test "logFn does not retry open after failure" {
-    const old_log_fd = log_fd;
+    const old_log_fd = log_fd.load(.seq_cst);
     const old_log_fd_failed = log_fd_failed.load(.seq_cst);
     const old_enabled = log_enabled.load(.seq_cst);
     defer {
-        log_fd = old_log_fd;
+        log_fd.store(old_log_fd, .seq_cst);
         log_fd_failed.store(old_log_fd_failed, .seq_cst);
         log_enabled.store(old_enabled, .seq_cst);
     }
-    log_fd = null;
+    log_fd.store(NO_LOG_FD, .seq_cst);
     log_fd_failed.store(true, .seq_cst);
     log_enabled.store(true, .seq_cst);
 
     logFn(.info, .default, "should not retry", .{});
-    try std.testing.expect(log_fd == null);
+    try std.testing.expect(currentLogFd() == null);
     try std.testing.expect(log_fd_failed.load(.seq_cst));
 }
 
@@ -348,20 +376,20 @@ test "logFn silently discards when not enabled" {
     const sub_path = "/tmp/szn_test_log_disabled.log";
     _ = std.c.unlink(sub_path);
 
-    const old_log_fd = log_fd;
+    const old_log_fd = log_fd.load(.seq_cst);
     const old_log_fd_failed = log_fd_failed.load(.seq_cst);
     const old_enabled = log_enabled.load(.seq_cst);
     defer {
-        log_fd = old_log_fd;
+        log_fd.store(old_log_fd, .seq_cst);
         log_fd_failed.store(old_log_fd_failed, .seq_cst);
         log_enabled.store(old_enabled, .seq_cst);
     }
-    log_fd = null;
+    log_fd.store(NO_LOG_FD, .seq_cst);
     log_fd_failed.store(false, .seq_cst);
     log_enabled.store(false, .seq_cst);
 
     logFn(.info, .default, "this should not appear", .{});
-    try std.testing.expect(log_fd == null);
+    try std.testing.expect(currentLogFd() == null);
 
     const fd = std.c.open(sub_path, std.c.O{ .ACCMODE = .RDONLY }, @as(c.mode_t, 0));
     try std.testing.expect(fd < 0);
@@ -393,25 +421,82 @@ test "enable and disable cycle" {
     const sub_path = "/tmp/szn_test_log_enable.log";
     defer _ = std.c.unlink(sub_path);
 
-    const old_log_fd = log_fd;
+    const old_log_fd = log_fd.load(.seq_cst);
     const old_log_fd_failed = log_fd_failed.load(.seq_cst);
     const old_enabled = log_enabled.load(.seq_cst);
     defer {
-        log_fd = old_log_fd;
+        log_fd.store(old_log_fd, .seq_cst);
         log_fd_failed.store(old_log_fd_failed, .seq_cst);
         log_enabled.store(old_enabled, .seq_cst);
     }
-    log_fd = null;
+    log_fd.store(NO_LOG_FD, .seq_cst);
     log_fd_failed.store(false, .seq_cst);
     log_enabled.store(false, .seq_cst);
 
     enable(sub_path);
     try std.testing.expect(isEnabled());
-    try std.testing.expect(log_fd != null);
+    try std.testing.expect(currentLogFd() != null);
 
     logFn(.info, .default, "enabled log", .{});
 
     disable();
     try std.testing.expect(!isEnabled());
-    try std.testing.expect(log_fd == null);
+    try std.testing.expect(currentLogFd() == null);
+}
+
+test "enable/disable swap the fd exactly once and disable is idempotent — bug #510" {
+    const path_a = "/tmp/szn_test_log_swap_a.log";
+    const path_b = "/tmp/szn_test_log_swap_b.log";
+    defer _ = std.c.unlink(path_a);
+    defer _ = std.c.unlink(path_b);
+
+    const old_log_fd = log_fd.load(.seq_cst);
+    const old_log_fd_failed = log_fd_failed.load(.seq_cst);
+    const old_enabled = log_enabled.load(.seq_cst);
+    defer {
+        if (currentLogFd()) |fd| _ = c.close(fd);
+        log_fd.store(old_log_fd, .seq_cst);
+        log_fd_failed.store(old_log_fd_failed, .seq_cst);
+        log_enabled.store(old_enabled, .seq_cst);
+    }
+    log_fd.store(NO_LOG_FD, .seq_cst);
+    log_fd_failed.store(false, .seq_cst);
+    log_enabled.store(false, .seq_cst);
+
+    // First enable publishes an fd.
+    enable(path_a);
+    try std.testing.expect(isEnabled());
+    const fd_a = currentLogFd().?;
+    try std.testing.expect(!isClosed(fd_a));
+
+    // Re-enabling replaces it, and the retired descriptor is closed exactly
+    // once -- so no double-close can land on an unrelated, recycled fd.
+    enable(path_b);
+    try std.testing.expect(isEnabled());
+    const fd_b = currentLogFd().?;
+    try std.testing.expect(fd_b != fd_a);
+    try std.testing.expect(isClosed(fd_a));
+    try std.testing.expect(!isClosed(fd_b));
+
+    // The write goes to the currently published descriptor. `enable` opens
+    // O_WRONLY, so read the file back through a separate descriptor.
+    logFn(.info, .default, "after re-enable", .{});
+    const rfd = std.c.open(path_b, std.c.O{ .ACCMODE = .RDONLY }, @as(c.mode_t, 0));
+    try std.testing.expect(rfd >= 0);
+    defer _ = std.c.close(rfd);
+    var buf: [512]u8 = undefined;
+    const n = std.c.pread(rfd, &buf, buf.len, 0);
+    try std.testing.expect(n > 0);
+    try std.testing.expect(std.mem.indexOf(u8, buf[0..@intCast(n)], "after re-enable") != null);
+
+    // disable() clears the gate before retiring the fd.
+    disable();
+    try std.testing.expect(!isEnabled());
+    try std.testing.expect(currentLogFd() == null);
+    try std.testing.expect(isClosed(fd_b));
+
+    // Idempotent: a second disable must not close an already-closed fd.
+    disable();
+    try std.testing.expect(!isEnabled());
+    try std.testing.expect(currentLogFd() == null);
 }
