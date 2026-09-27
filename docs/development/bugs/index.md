@@ -7,14 +7,14 @@ sources:
   - docs/development/bugs/
 verified: human-reviewed
 tags: [bugs, tracker, index, issues]
-timestamp: 2026-09-26T12:35:00Z
+timestamp: 2026-09-27T01:30:00Z
 ---
 
 # Bugs — szn
 
 Sorted by number. See individual bug files for details.
 
-> **Note:** Bugs **#301** and **#302** were never filed (MIA). The #300–#310 performance sweep skipped straight from #300 to #303. Bugs **#349–#394** were filed by the 2026-08-23 deep-audit sweep (full-codebase review; 46 bugs, all since resolved). Bugs **#395–#427** were filed by the 2026-08-30 deep-audit sweep (memory safety, IPC integrity, sixel accounting, config/command surface, dead code, perf, alt-screen mouse wheel; 33 bugs, all since resolved). Bugs **#428–#439** were filed by the 2026-08-31 re-validation sweep (12 confirmed findings from the audit report, re-checked line-by-line against live source; pending fix). Bugs **#448–#450** were filed by the 2026-09-02 stale-pointer bug-class extrapolation audit. Bugs **#451–#453** were filed by the 2026-09-03 scrollback truncation and pane resize audit (open). Bugs **#478–#483** were filed by the 2026-09-22 hot-path performance review (6 performance findings, all fixed 2026-09-22: parser byte-by-byte dispatch, isPaneValid/tree-walk regression, per-cell SGR formatting, full-grid diff, per-frame heap copy, per-space writes). Bugs **#484–#501** were filed by the 2026-09-26 external code review (Muse deep review: full read of main.zig plus 5 parallel reviewer passes over the remaining source, with empirical verification under Zig 0.16.0 — `zig build` clean, 1012/1012 tests pass on Linux, clean cross-compile for aarch64-macos; 18 findings, open). The tracker covers #1–#300, #303–#453, #478–#501 — **475 entries** in total.
+> **Note:** Bugs **#301** and **#302** were never filed (MIA). The #300–#310 performance sweep skipped straight from #300 to #303. Bugs **#349–#394** were filed by the 2026-08-23 deep-audit sweep (full-codebase review; 46 bugs, all since resolved). Bugs **#395–#427** were filed by the 2026-08-30 deep-audit sweep (memory safety, IPC integrity, sixel accounting, config/command surface, dead code, perf, alt-screen mouse wheel; 33 bugs, all since resolved). Bugs **#428–#439** were filed by the 2026-08-31 re-validation sweep (12 confirmed findings from the audit report, re-checked line-by-line against live source; all since resolved). Bugs **#448–#450** were filed by the 2026-09-02 stale-pointer bug-class extrapolation audit. Bugs **#451–#453** were filed by the 2026-09-03 scrollback truncation and pane resize audit (all since resolved). Bugs **#454–#477** were filed by the 2026-09-13 deep-audit sweep (memory safety, DCS sixel ownership, history compaction double-free, buffer-list leaks, layout float/bounds traps, copy-mode coordinate clamps, IPC frame caps, and perf/dead-code clusters; 24 bugs, all since resolved). Bugs **#478–#483** were filed by the 2026-09-22 hot-path performance review (6 performance findings, all fixed 2026-09-22: parser byte-by-byte dispatch, isPaneValid/tree-walk regression, per-cell SGR formatting, full-grid diff, per-frame heap copy, per-space writes). Bugs **#484–#501** were filed by the 2026-09-26 external code review (Muse deep review: full read of main.zig plus 5 parallel reviewer passes over the remaining source; 18 findings, all fixed 2026-09-27). The tracker covers #1–#300, #303–#501 — **499 entries** in total.
 
 Both summary tables below are generated from the `severity` and `status` fields in each bug's frontmatter. Regenerate them rather than editing by hand.
 
@@ -23,29 +23,29 @@ Both summary tables below are generated from the `severity` and `status` fields 
 | Severity | Count |
 |---|---:|
 | CRITICAL | 53 |
-| HIGH | 114 |
-| MEDIUM | 170 |
+| HIGH | 116 |
+| MEDIUM | 183 |
 | MEDIUM-HIGH | 3 |
-| LOW | 114 |
+| MEDIUM (performance) | 4 |
+| MEDIUM (dead code / refcount drift) | 1 |
+| LOW | 126 |
 | LOW (architecture) | 3 |
 | LOW (code quality) | 5 |
-| LOW (correctness) | 1 |
-| LOW (cosmetic) | 1 |
-| LOW (performance) | 4 |
+| LOW (performance) | 1 |
 | LOW (performance) → MEDIUM (correctness regression in original fix) | 1 |
 | LOW (safety) | 1 |
-| MEDIUM (dead code / refcount drift) | 1 |
-| MEDIUM (performance) | 4 |
-| **Total** | **475** |
+| LOW (correctness) | 1 |
+| LOW (cosmetic) | 1 |
+| **Total** | **499** |
 
 ## Summary by Status
 
 | Status | Count |
 |---|---:|
-| Fixed / Resolved | 443 |
-| False Positive | 26 |
-| Open | 6 |
-| **Total** | **475** |
+| Fixed / Resolved | 477 |
+| False Positive | 22 |
+| Open | 0 |
+| **Total** | **499** |
 
 ## All Bugs
 
@@ -391,7 +391,7 @@ Both summary tables below are generated from the `severity` and `status` fields 
 | [340](340.md) | `std.StringHashMap` / `std.AutoHashMap` managed — false positive, still exists | HIGH | False Positive |
 | [341](341.md) | `initCapacity` not deprecated but code modernized to `.empty` + `ensureTotalCapacity` | HIGH | Fixed |
 | [342](342.md) | `std.ArrayList.toOwnedSlice()` removed — false positive, still exists | HIGH | False Positive |
-| [343](343.md) | `std.c.getenv()` in main.zig → `init.environ_map` (partial fix) | MEDIUM | Fixed (partial) |
+| [343](343.md) | `std.c.getenv()` in main.zig → `init.environ_map` (partial fix) | MEDIUM | Fixed |
 | [344](344.md) | `main()` returns `void` instead of `!void` (Zig 0.16 rule #1) | LOW | Fixed |
 | [345](345.md) | `std.process.Args.Iterator` is pre-0.16; should use `toSlice(arena)` | MEDIUM | Fixed |
 | [346](346.md) | Missing `io` param — false positive, raw POSIX syscall codebase | MEDIUM | False Positive |
@@ -434,7 +434,7 @@ Both summary tables below are generated from the `severity` and `status` fields 
 | [383](383.md) | Bright colour names encode index+90 as palette index — renders cube colours | MEDIUM | Fixed |
 | [384](384.md) | mode-keys option ignored: emacs copy-mode unreachable, default disagrees with behaviour | MEDIUM | Fixed |
 | [385](385.md) | Small unbounded arena accumulators: Pane.cwd was write-only (deleted), Session.rename uses inline buffer | LOW | Fixed |
-| [386](386.md) | Grid/screen hygiene cluster: :720 guarded + contracts documented (shiftDown/cursor/dirty-flags deferred with notes) | LOW | Resolved |
+| [386](386.md) | Grid/screen hygiene cluster: :720 guarded + contracts documented (shiftDown/cursor/dirty-flags deferred with notes) | LOW | Fixed |
 | [387](387.md) | Sixel overlay tracking: render cap raised to 32; SU shifts anchors by n; SD shifts too | LOW | Fixed |
 | [388](388.md) | Parser fidelity cluster: 8-bit C1 misroutes, ESC ESC \ in sixel, CSI param cap 16, XTSMGRAPHICS over-claim | LOW | Fixed |
 | [389](389.md) | IPC/tty hygiene cluster: client socket not cloexec, packetType enumFromInt panic, Packet.make desync, setRaw parity | LOW | Fixed |
@@ -502,6 +502,30 @@ Both summary tables below are generated from the `severity` and `status` fields 
 | [451](451.md) | DECSTBM full-screen scroll region trap in Screen.setScrollRegion discards scrolled-off lines instead of pushing to history | HIGH | Fixed |
 | [452](452.md) | Grid.resize drops bottom rows via pop() on height reduction instead of scrolling top rows into history | MEDIUM | Fixed |
 | [453](453.md) | reflowCursorInternal trims trailing screen rows on width change, stealing history lines into visible screen | MEDIUM | False Positive |
+| [454](454.md) | Screen.flushPendingSixel leaks pending sixel data when cell size unknown | MEDIUM | Fixed |
+| [455](455.md) | Grid.setHistoryLimit double-frees history lines on compaction OOM | HIGH | Fixed |
+| [456](456.md) | BufferList.pushOwned leaks name and data on insert OOM | MEDIUM | Fixed |
+| [457](457.md) | Dead errdefer in set-buffer path leaks generated name on OOM | MEDIUM | Fixed |
+| [458](458.md) | Cmd.parse leaks current token when arg_list.append fails | LOW | Fixed |
+| [459](459.md) | Grid.initWithLimit leaks lines buffer when resize fails | LOW | Fixed |
+| [460](460.md) | Dead errdefers in paneClipboardCallback (void function) | LOW | Fixed |
+| [461](461.md) | cmdJoinPane placeholder pane never deinited (arena bloat) | MEDIUM | Fixed |
+| [462](462.md) | Grid.insertChars/clearArea width-1 underflows when width is 0 | MEDIUM | Fixed |
+| [463](463.md) | Screen TAB handling underflows on zero width and can divide by zero | MEDIUM | Fixed |
+| [464](464.md) | Sixel placement ceil-div wraps and bypasses the oversize drop | MEDIUM | Fixed |
+| [465](465.md) | SGR 38;2/48;2 wraps out-of-range RGB with mod 256 instead of ignoring | LOW | False Positive |
+| [466](466.md) | modifyOtherKeys extkeys truncates wire value despite no-truncate comment | MEDIUM | False Positive |
+| [467](467.md) | Unvalidated layout proportion reaches @intFromFloat and can panic | HIGH | Fixed |
+| [468](468.md) | Layout bounds math exceeds parent on tiny panes | MEDIUM | Fixed |
+| [469](469.md) | Copy-mode placeCursorAtLogical leaves cursor_y unclamped with unchecked casts | MEDIUM | Fixed |
+| [470](470.md) | Copy-mode getCellAtY_i64 can overflow on extreme offsets | LOW | Fixed |
+| [471](471.md) | Loop.pollOnce returns address of stack temporary for empty poll | LOW | Fixed |
+| [472](472.md) | Dispatch write loops slice with @intCast(n) without clamping to remaining | LOW | Fixed |
+| [473](473.md) | Screen sixel geometry casts u32 height to i32 and can panic | LOW | Fixed |
+| [474](474.md) | SGR mouse parser accepts trailing fields and unclamped coordinates | MEDIUM | Fixed |
+| [475](475.md) | Uncapped server-to-client frame can exceed the client packet cap | MEDIUM | Fixed |
+| [476](476.md) | Performance cluster 3: per-frame O(cells) taxes, quadratic reflow, per-frame allocs | MEDIUM | Fixed |
+| [477](477.md) | Duplication and dead-code cluster 3: mirrored handlers, triplicated split math, write-only dirty flags | LOW | Fixed |
 | [478](478.md) | feedPty feeds the input parser byte-by-byte: 4096 state-machine dispatches per PTY read | MEDIUM | Fixed |
 | [479](479.md) | isPaneValid regression: O(N·M·P) tree walk per PTY event, plus full-tree scans in pumpPaneInput and tickSixelWait every loop tick | MEDIUM | Fixed |
 | [480](480.md) | Render diff loop formats SGR escape sequences per changed cell with std.fmt.bufPrint | LOW | Fixed |
