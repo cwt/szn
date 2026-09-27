@@ -7,7 +7,7 @@ sources:
   - docs/
 verified: human-reviewed
 tags: [index, okf, bundle]
-timestamp: 2026-09-27T09:58:00Z
+timestamp: 2026-09-27T10:12:00Z
 ---
 
 # szn Docs
@@ -31,7 +31,7 @@ timestamp: 2026-09-27T09:58:00Z
 
 ## Metadata conventions
 
-This bundle follows [OKF v0.2](https://github.com/google/okf). Every concept
+This bundle follows [OKF v0.2](https://github.com/GoogleCloudPlatform/open-knowledge-format/blob/main/SPEC.md). Every concept
 document carries `type`, `title`, `description`, `timestamp`, `status`,
 `sources`, `verified`, `stale_after`, and `tags`. Two deliberate exemptions:
 
@@ -50,3 +50,19 @@ entries use `stale_after: 2026-12-31T00:00:00Z`; living design documents use
 architecture description. Bug `status` is a closed vocabulary of
 `resolved` / `false_positive` / `open`; the resolution narrative lives in each
 document's body.
+
+## Link conventions
+
+This bundle is published as a standalone GitHub Pages site, so link targets are
+split by origin:
+
+* **Intra-bundle concept links stay relative** — `[Architecture](architecture.md)`,
+  `[bugs/502](development/bugs/502.md)`. OKF v0.2 §2.5 requires relative paths
+  between concept documents, and they resolve correctly under Pages.
+* **Links to repository assets are absolute** — source files, `build.zig.zon`,
+  and the root `README.md` are published on github.com, not inside the Pages
+  bundle, so they use
+  `https://github.com/cwt/szn/blob/main/src/grid.zig#L560-L566`.
+
+A relative path that climbs out of `docs/` (`../../../src/…`) is always a bug:
+it resolves against the Pages origin rather than the repository root.

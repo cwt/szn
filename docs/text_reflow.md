@@ -52,7 +52,7 @@ Unlike Latin-based scripts where characters are rendered sequentially side-by-si
 Splitting a Thai cluster across line boundaries makes the text unreadable and corrupts the script.
 
 ### Anatomy of a Thai Cluster
-A single Thai character cell is defined as a base consonant that may contain up to two combining marks (stored inside `comb1` and `comb2` of the [Cell](../src/grid.zig) struct). A cluster spans across a sequence of cells matching this syntax:
+A single Thai character cell is defined as a base consonant that may contain up to two combining marks (stored inside `comb1` and `comb2` of the [Cell](https://github.com/cwt/szn/blob/main/src/grid.zig) struct). A cluster spans across a sequence of cells matching this syntax:
 
 ```
 [Leading Vowel]? ➔ Base Consonant [รร]? ➔ [Following Vowels]* ➔ [Right-Attaching Marks]*
@@ -67,7 +67,7 @@ A single Thai character cell is defined as a base consonant that may contain up 
 4. **Right-Attaching Marks** (U+0E2F PAIYANNOI ฯ, U+0E46 MAI YAMOK ๆ): Width 1.
 5. **Combining Marks** (SARA U ◌ุ, MAI EK ◌่, SARA I ◌ิ, etc.): Stored directly inside the cell attributes of the base or following vowel, occupying 0 additional cells.
 
-The function [findThaiClusterEnd](../src/thai.zig) identifies these boundary rules to ensure that a cluster is treated as an indivisible unit during wrapping.
+The function [findThaiClusterEnd](https://github.com/cwt/szn/blob/main/src/thai.zig) identifies these boundary rules to ensure that a cluster is treated as an indivisible unit during wrapping.
 
 ---
 
@@ -76,10 +76,10 @@ The function [findThaiClusterEnd](../src/thai.zig) identifies these boundary rul
 Thai orthography does not insert spaces between words. To keep words readable without awkward hyphenation or mid-word splits, `szn` implements a two-tier line-breaking architecture:
 
 ### Tier 1: Dictionary-Based Word Breaking via `libthai`
-When Thai characters are detected in a logical line, `szn` consults `libthai` (dynamically loaded at runtime from standard system paths like `/opt/homebrew/lib/` or `/usr/lib/` via [`getLibThai`](../src/thai.zig)):
-1. [`thai.findWordBreaks`](../src/thai.zig) maps the logical line's UTF-32 codepoints into `libthai`'s word-breaking engine (`th_brk_wc_find_breaks`).
+When Thai characters are detected in a logical line, `szn` consults `libthai` (dynamically loaded at runtime from standard system paths like `/opt/homebrew/lib/` or `/usr/lib/` via [`getLibThai`](https://github.com/cwt/szn/blob/main/src/thai.zig)):
+1. [`thai.findWordBreaks`](https://github.com/cwt/szn/blob/main/src/thai.zig) maps the logical line's UTF-32 codepoints into `libthai`'s word-breaking engine (`th_brk_wc_find_breaks`).
 2. The break positions returned by `libthai` are translated back to terminal cell indices.
-3. During rewrapping in [`src/grid.zig`](../src/grid.zig), the algorithm prioritizes breaking at these dictionary-confirmed word boundaries whenever a line overflows `new_width`.
+3. During rewrapping in [`src/grid.zig`](https://github.com/cwt/szn/blob/main/src/grid.zig), the algorithm prioritizes breaking at these dictionary-confirmed word boundaries whenever a line overflows `new_width`.
 4. Spaces bordering Thai words are also recognized as valid word break boundaries.
 
 ### Tier 2: Fallback Syllable Look-Ahead & Backtracking Heuristic
@@ -107,11 +107,11 @@ Instead of separate grow and shrink logic, `szn` runs a unified, lossless, three
 * The flat array of cells is re-wrapped into physical rows fitting the `new_width`.
 * Wrap boundaries are calculated by checking:
   * Number breaking rules (short numbers ≤6 characters wrap whole; long numbers break on last comma).
-  * `libthai` dictionary word boundaries ([`findWordBreaks`](../src/thai.zig)).
+  * `libthai` dictionary word boundaries ([`findWordBreaks`](https://github.com/cwt/szn/blob/main/src/thai.zig)).
   * Inter-word space boundaries bordering Thai text.
-  * MAI HAN AKAT cluster protection ([`cellHasMaiHanAkat`](../src/thai.zig)).
+  * MAI HAN AKAT cluster protection ([`cellHasMaiHanAkat`](https://github.com/cwt/szn/blob/main/src/thai.zig)).
   * Syllable look-ahead boundaries and backtracking.
-  * Thai cluster endings ([`findThaiClusterEnd`](../src/thai.zig)).
+  * Thai cluster endings ([`findThaiClusterEnd`](https://github.com/cwt/szn/blob/main/src/thai.zig)).
   * CJK wide character pairs (`is_padding` matches).
 * If a line wraps, its physical row is marked `wrapped = true`, and padded with empty `char = 0` cells to the new width.
 
