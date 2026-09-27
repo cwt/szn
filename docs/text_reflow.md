@@ -10,7 +10,7 @@ sources:
 verified: human-reviewed
 stale_after: 2027-01-01T00:00:00Z
 tags: [reflow, algorithms, terminal-emulation, cjk, thai]
-timestamp: 2026-09-27T16:13:00Z
+timestamp: 2026-09-27T09:15:49Z
 ---
 
 # Text Reflow in szn

@@ -6,6 +6,7 @@ status: stable
 sources:
   - docs/development/
 verified: human-reviewed
+tags: [index, development, okf]
 timestamp: 2026-09-04T09:18:00Z
 ---
 

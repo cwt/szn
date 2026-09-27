@@ -6,7 +6,8 @@ status: stable
 sources:
   - docs/
 verified: human-reviewed
-timestamp: 2026-09-27T09:45:00Z
+tags: [log, changelog, okf]
+timestamp: 2026-09-27T09:58:00Z
 ---
 
 # Documentation Bundle Log
@@ -14,21 +15,28 @@ timestamp: 2026-09-27T09:45:00Z
 This file tracks all modifications, extensions, and updates to the `szn` documentation bundle in chronological order.
 
 | Timestamp | Document | Action | Description |
+| 2026-09-27T09:58:00Z | [bugs/*.md](development/bugs/) | Updated | Backfilled `stale_after` on 451 bug entries and normalized 4 outliers to the directory majority `2026-12-31T00:00:00Z`; all 503 bug entries now carry the freshness signal. |
+| 2026-09-27T09:58:00Z | [bugs/*.md](development/bugs/), [releases/v*.md](releases/) | Updated | Backfilled `tags` on 503 bug entries (`[bugs, tracker]`) and 16 release notes (`[releases, changelog]`). |
+| 2026-09-27T09:58:00Z | [bugs/502-505](development/bugs/), [text_reflow.md](../text_reflow.md) | Updated | Corrected 5 `timestamp` values that recorded local +07:00 time under a `Z` suffix, making them future-dated; rewritten to the true UTC instant of the commit that authored them. 10 log rows corrected the same way. |
+| 2026-09-27T09:58:00Z | 52 docs | Updated | Normalized `verified` quoting — the value was quoted in 52 files and unquoted in 483; unquoted wins so frontmatter parsers see one form. |
+| 2026-09-27T09:58:00Z | [improvements.md](development/improvements.md) | Updated | `type: improvements` was a one-off archetype; mapped to the standard `project_priority` that progress.md already uses for the same document shape (a catalog sorted by effort-to-impact). |
+| 2026-09-27T09:58:00Z | [szn-audit-2026-08-31.md](development/szn-audit-2026-08-31.md) | Updated | Added missing `stale_after` to the audit report. |
+| 2026-09-27T09:58:00Z | [index.md](index.md) | Updated | Recorded the bundle's metadata conventions, including the two deliberate exemptions (reserved `index.md`/`log.md` filenames, and immutable release notes carry no `stale_after`). |
 | 2026-09-27T09:52:00Z | [bugs/*.md](development/bugs/) | Updated | Normalized `status:` frontmatter across all 503 bug docs to the closed slug vocabulary `resolved` / `false_positive` / `open` (OKF v0.2 machine-parseable lifecycle value). Resolution prose was already carried in each body, so no detail was lost. |
 | 2026-09-27T09:52:00Z | [bugs/306-310, 349, 391, 454-477](development/bugs/) | Updated | Repaired 29 body `**Status:**` lines still reading "Open" while their frontmatter and this index recorded the bug as closed — the #306–#310 and #454–#477 batches were reconciled in the index but not in the individual files. |
 | 2026-09-27T09:52:00Z | [bugs/347, 359, 362, 427, 441-444](development/bugs/) | Updated | Replaced 24 absolute `file:///` links with repo-relative paths (OKF rule 2.5); they leaked the authoring machine's filesystem layout and resolved nowhere else. Prose mentions of the scheme in `releases/v0.8.0.md` left intact as historical record. |
 | 2026-09-27T09:52:00Z | [BUGS.md](development/bugs/index.md) | Updated | Aligned both summary tables and the All Bugs status column to the new slug vocabulary; documented the closed value set. |
 | 2026-09-27T09:45:00Z | [progress.md](development/progress.md) | Updated | Refreshed `timestamp`; corrected test count to 1,035 total (1,034 passing, 1 skipped); added the #502–#505 Thai reflow sweep and extended the stability sweep range to #441–#505. |
-| 2026-09-27T16:13:00Z | [505.md](development/bugs/505.md) | Resolved | Corrected text_reflow.md sources, documented two-tier libthai architecture and fallback backtracking, and added Sara Am width-1 rationale (bug #505). |
-| 2026-09-27T16:13:00Z | [BUGS.md](development/bugs/index.md) | Updated | Marked #505 Fixed, bumped Fixed/Resolved total (481 entries, 0 open). |
-| 2026-09-27T16:11:00Z | [504.md](development/bugs/504.md) | Resolved | Synchronized LibThai loading and deinitialization with atomic state transitions and documented server-thread lifecycle (bug #504). |
-| 2026-09-27T16:11:00Z | [BUGS.md](development/bugs/index.md) | Updated | Marked #504 Fixed, bumped Fixed/Resolved total (480 entries). |
-| 2026-09-27T16:08:00Z | [503.md](development/bugs/503.md) | Resolved | Simplified cellHasMaiHanAkat to strictly test combiningCodepoint on table indices, eliminating dead raw-codepoint check (bug #503). |
-| 2026-09-27T16:08:00Z | [BUGS.md](development/bugs/index.md) | Updated | Marked #503 Fixed, bumped Fixed/Resolved total (479 entries). |
-| 2026-09-27T16:05:00Z | [502.md](development/bugs/502.md) | Resolved | Fixed Thai cluster segmentation in findThaiClusterEnd to consume consecutive following vowels in compound syllables like เ-าะ (bug #502). |
-| 2026-09-27T16:05:00Z | [BUGS.md](development/bugs/index.md) | Updated | Marked #502 Fixed, bumped Fixed/Resolved total (478 entries). |
-| 2026-09-27T15:45:00Z | [bugs 502-505](development/bugs/) | Created | Filed 4 bug entries (#502–#505) from Thai reflow and text architecture review: 1 MEDIUM (#502: เ-าะ compound vowel cluster split), 3 LOW (#503: cellHasMaiHanAkat dead raw-codepoint check, #504: libthai unsynchronized globals, #505: text_reflow.md stale references and omitted libthai docs). |
-| 2026-09-27T15:45:00Z | [BUGS.md](development/bugs/index.md) | Updated | Added #502–#505 rows, bumped severity totals and open count (503 entries). |
+| 2026-09-27T09:15:49Z | [505.md](development/bugs/505.md) | Resolved | Corrected text_reflow.md sources, documented two-tier libthai architecture and fallback backtracking, and added Sara Am width-1 rationale (bug #505). |
+| 2026-09-27T09:15:49Z | [BUGS.md](development/bugs/index.md) | Updated | Marked #505 Fixed, bumped Fixed/Resolved total (481 entries, 0 open). |
+| 2026-09-27T09:13:24Z | [504.md](development/bugs/504.md) | Resolved | Synchronized LibThai loading and deinitialization with atomic state transitions and documented server-thread lifecycle (bug #504). |
+| 2026-09-27T09:13:24Z | [BUGS.md](development/bugs/index.md) | Updated | Marked #504 Fixed, bumped Fixed/Resolved total (480 entries). |
+| 2026-09-27T09:10:28Z | [503.md](development/bugs/503.md) | Resolved | Simplified cellHasMaiHanAkat to strictly test combiningCodepoint on table indices, eliminating dead raw-codepoint check (bug #503). |
+| 2026-09-27T09:10:28Z | [BUGS.md](development/bugs/index.md) | Updated | Marked #503 Fixed, bumped Fixed/Resolved total (479 entries). |
+| 2026-09-27T09:08:20Z | [502.md](development/bugs/502.md) | Resolved | Fixed Thai cluster segmentation in findThaiClusterEnd to consume consecutive following vowels in compound syllables like เ-าะ (bug #502). |
+| 2026-09-27T09:08:20Z | [BUGS.md](development/bugs/index.md) | Updated | Marked #502 Fixed, bumped Fixed/Resolved total (478 entries). |
+| 2026-09-27T09:02:13Z | [bugs 502-505](development/bugs/) | Created | Filed 4 bug entries (#502–#505) from Thai reflow and text architecture review: 1 MEDIUM (#502: เ-าะ compound vowel cluster split), 3 LOW (#503: cellHasMaiHanAkat dead raw-codepoint check, #504: libthai unsynchronized globals, #505: text_reflow.md stale references and omitted libthai docs). |
+| 2026-09-27T09:02:13Z | [BUGS.md](development/bugs/index.md) | Updated | Added #502–#505 rows, bumped severity totals and open count (503 entries). |
 | 2026-09-27T01:20:00Z | [v0.10.0.md](releases/v0.10.0.md) | Created | Created release notes for v0.10.0 (hot-path performance architecture, VS16 emoji promotion, hardened sixel graphics engine, and 61-bug stability sweep). |
 | 2026-09-27T01:20:00Z | [index.md](releases/index.md), [README.md](../README.md) | Updated | Added v0.10.0 to releases index, documented variation-selector-always-wide option, and updated test count to 1,032. |
 | 2026-09-27T01:20:00Z | [progress.md](development/progress.md) | Updated | Updated test count to 1,032; documented v0.10.0 release milestone. |

@@ -1,5 +1,5 @@
 ---
-type: improvements
+type: project_priority
 title: "Performance & Optimization Opportunities — szn"
 description: "Catalog of performance bottlenecks, memory churn, and optimization targets sorted by effort-to-impact."
 status: stable
