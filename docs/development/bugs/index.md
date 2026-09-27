@@ -14,7 +14,7 @@ timestamp: 2026-09-27T01:30:00Z
 
 Sorted by number. See individual bug files for details.
 
-> **Note:** Bugs **#301** and **#302** were never filed (MIA). The #300–#310 performance sweep skipped straight from #300 to #303. Bugs **#349–#394** were filed by the 2026-08-23 deep-audit sweep (full-codebase review; 46 bugs, all since resolved). Bugs **#395–#427** were filed by the 2026-08-30 deep-audit sweep (memory safety, IPC integrity, sixel accounting, config/command surface, dead code, perf, alt-screen mouse wheel; 33 bugs, all since resolved). Bugs **#428–#439** were filed by the 2026-08-31 re-validation sweep (12 confirmed findings from the audit report, re-checked line-by-line against live source; all since resolved). Bugs **#448–#450** were filed by the 2026-09-02 stale-pointer bug-class extrapolation audit. Bugs **#451–#453** were filed by the 2026-09-03 scrollback truncation and pane resize audit (all since resolved). Bugs **#454–#477** were filed by the 2026-09-13 deep-audit sweep (memory safety, DCS sixel ownership, history compaction double-free, buffer-list leaks, layout float/bounds traps, copy-mode coordinate clamps, IPC frame caps, and perf/dead-code clusters; 24 bugs, all since resolved). Bugs **#478–#483** were filed by the 2026-09-22 hot-path performance review (6 performance findings, all fixed 2026-09-22: parser byte-by-byte dispatch, isPaneValid/tree-walk regression, per-cell SGR formatting, full-grid diff, per-frame heap copy, per-space writes). Bugs **#484–#501** were filed by the 2026-09-26 external code review (Muse deep review: full read of main.zig plus 5 parallel reviewer passes over the remaining source; 18 findings, all fixed 2026-09-27). The tracker covers #1–#300, #303–#501 — **499 entries** in total.
+> **Note:** Bugs **#301** and **#302** were never filed (MIA). The #300–#310 performance sweep skipped straight from #300 to #303. Bugs **#349–#394** were filed by the 2026-08-23 deep-audit sweep (full-codebase review; 46 bugs, all since resolved). Bugs **#395–#427** were filed by the 2026-08-30 deep-audit sweep (memory safety, IPC integrity, sixel accounting, config/command surface, dead code, perf, alt-screen mouse wheel; 33 bugs, all since resolved). Bugs **#428–#439** were filed by the 2026-08-31 re-validation sweep (12 confirmed findings from the audit report, re-checked line-by-line against live source; all since resolved). Bugs **#448–#450** were filed by the 2026-09-02 stale-pointer bug-class extrapolation audit. Bugs **#451–#453** were filed by the 2026-09-03 scrollback truncation and pane resize audit (all since resolved). Bugs **#454–#477** were filed by the 2026-09-13 deep-audit sweep (memory safety, DCS sixel ownership, history compaction double-free, buffer-list leaks, layout float/bounds traps, copy-mode coordinate clamps, IPC frame caps, and perf/dead-code clusters; 24 bugs, all since resolved). Bugs **#478–#483** were filed by the 2026-09-22 hot-path performance review (6 performance findings, all fixed 2026-09-22: parser byte-by-byte dispatch, isPaneValid/tree-walk regression, per-cell SGR formatting, full-grid diff, per-frame heap copy, per-space writes). Bugs **#484–#501** were filed by the 2026-09-26 external code review (Muse deep review: full read of main.zig plus 5 parallel reviewer passes over the remaining source; 18 findings, all fixed 2026-09-27). Bugs **#502–#505** were filed by the 2026-09-27 Thai reflow and text architecture review (4 findings: เ-าะ compound vowel cluster split, dead raw-codepoint check in cellHasMaiHanAkat, libthai unsynchronized globals, and text_reflow.md stale references/libthai documentation omission). The tracker covers #1–#300, #303–#505 — **503 entries** in total.
 
 Both summary tables below are generated from the `severity` and `status` fields in each bug's frontmatter. Regenerate them rather than editing by hand.
 
@@ -24,11 +24,11 @@ Both summary tables below are generated from the `severity` and `status` fields 
 |---|---:|
 | CRITICAL | 53 |
 | HIGH | 116 |
-| MEDIUM | 183 |
+| MEDIUM | 184 |
 | MEDIUM-HIGH | 3 |
 | MEDIUM (performance) | 4 |
 | MEDIUM (dead code / refcount drift) | 1 |
-| LOW | 126 |
+| LOW | 129 |
 | LOW (architecture) | 3 |
 | LOW (code quality) | 5 |
 | LOW (performance) | 1 |
@@ -36,7 +36,7 @@ Both summary tables below are generated from the `severity` and `status` fields 
 | LOW (safety) | 1 |
 | LOW (correctness) | 1 |
 | LOW (cosmetic) | 1 |
-| **Total** | **499** |
+| **Total** | **503** |
 
 ## Summary by Status
 
@@ -44,8 +44,8 @@ Both summary tables below are generated from the `severity` and `status` fields 
 |---|---:|
 | Fixed / Resolved | 477 |
 | False Positive | 22 |
-| Open | 0 |
-| **Total** | **499** |
+| Open | 4 |
+| **Total** | **503** |
 
 ## All Bugs
 
@@ -550,3 +550,7 @@ Both summary tables below are generated from the `severity` and `status` fields 
 | [499](499.md) | InputParser.deinit takes an arbitrary allocator but every allocation uses screen.allocator | LOW | Fixed |
 | [500](500.md) | tty.Term.setAttributes emits a bare SGR reset on sixel-bit-only change without nulling fg/bg (latent) | LOW | Fixed |
 | [501](501.md) | placeSixelImage errdefer drops the slot without freeing image bytes (latent ownership trap) | LOW | Fixed |
+| [502](502.md) | findThaiClusterEnd splits เ-าะ compound vowel syllables (leaves ะ as orphaned cluster) | MEDIUM | Open |
+| [503](503.md) | cellHasMaiHanAkat raw-codepoint check compares table index to raw codepoint | LOW | Open |
+| [504](504.md) | libthai loader and break context lack thread-safety synchronization (latent) | LOW | Open |
+| [505](505.md) | text_reflow.md references non-existent src/reflow.zig and omits libthai integration | LOW | Open |
