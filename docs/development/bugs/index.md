@@ -14,7 +14,7 @@ timestamp: 2026-09-27T01:30:00Z
 
 Sorted by number. See individual bug files for details.
 
-> **Note:** Bugs **#301** and **#302** were never filed (MIA). The #300–#310 performance sweep skipped straight from #300 to #303. Bugs **#349–#394** were filed by the 2026-08-23 deep-audit sweep (full-codebase review; 46 bugs, all since resolved). Bugs **#395–#427** were filed by the 2026-08-30 deep-audit sweep (memory safety, IPC integrity, sixel accounting, config/command surface, dead code, perf, alt-screen mouse wheel; 33 bugs, all since resolved). Bugs **#428–#439** were filed by the 2026-08-31 re-validation sweep (12 confirmed findings from the audit report, re-checked line-by-line against live source; all since resolved). Bugs **#448–#450** were filed by the 2026-09-02 stale-pointer bug-class extrapolation audit. Bugs **#451–#453** were filed by the 2026-09-03 scrollback truncation and pane resize audit (all since resolved). Bugs **#454–#477** were filed by the 2026-09-13 deep-audit sweep (memory safety, DCS sixel ownership, history compaction double-free, buffer-list leaks, layout float/bounds traps, copy-mode coordinate clamps, IPC frame caps, and perf/dead-code clusters; 24 bugs, all since resolved). Bugs **#478–#483** were filed by the 2026-09-22 hot-path performance review (6 performance findings, all fixed 2026-09-22: parser byte-by-byte dispatch, isPaneValid/tree-walk regression, per-cell SGR formatting, full-grid diff, per-frame heap copy, per-space writes). Bugs **#484–#501** were filed by the 2026-09-26 external code review (Muse deep review: full read of main.zig plus 5 parallel reviewer passes over the remaining source; 18 findings, all fixed 2026-09-27). Bugs **#502–#505** were filed by the 2026-09-27 Thai reflow and text architecture review (4 findings: เ-าะ compound vowel cluster split, dead raw-codepoint check in cellHasMaiHanAkat, libthai unsynchronized globals, and text_reflow.md stale references/libthai documentation omission). The tracker covers #1–#300, #303–#505 — **503 entries** in total.
+> **Note:** Bugs **#301** and **#302** were never filed (MIA). The #300–#310 performance sweep skipped straight from #300 to #303. Bugs **#349–#394** were filed by the 2026-08-23 deep-audit sweep (full-codebase review; 46 bugs, all since resolved). Bugs **#395–#427** were filed by the 2026-08-30 deep-audit sweep (memory safety, IPC integrity, sixel accounting, config/command surface, dead code, perf, alt-screen mouse wheel; 33 bugs, all since resolved). Bugs **#428–#439** were filed by the 2026-08-31 re-validation sweep (12 confirmed findings from the audit report, re-checked line-by-line against live source; all since resolved). Bugs **#448–#450** were filed by the 2026-09-02 stale-pointer bug-class extrapolation audit. Bugs **#451–#453** were filed by the 2026-09-03 scrollback truncation and pane resize audit (all since resolved). Bugs **#454–#477** were filed by the 2026-09-13 deep-audit sweep (memory safety, DCS sixel ownership, history compaction double-free, buffer-list leaks, layout float/bounds traps, copy-mode coordinate clamps, IPC frame caps, and perf/dead-code clusters; 24 bugs, all since resolved). Bugs **#478–#483** were filed by the 2026-09-22 hot-path performance review (6 performance findings, all fixed 2026-09-22: parser byte-by-byte dispatch, isPaneValid/tree-walk regression, per-cell SGR formatting, full-grid diff, per-frame heap copy, per-space writes). Bugs **#484–#501** were filed by the 2026-09-26 external code review (Muse deep review: full read of main.zig plus 5 parallel reviewer passes over the remaining source; 18 findings, all fixed 2026-09-27). Bugs **#502–#505** were filed by the 2026-09-27 Thai reflow and text architecture review (4 findings: เ-าะ compound vowel cluster split, dead raw-codepoint check in cellHasMaiHanAkat, libthai unsynchronized globals, and text_reflow.md stale references/libthai documentation omission). Bugs **#506–#510** were filed by the 2026-09-27 whole-project review (5 findings, all open): `codepoint-widths` registered as a session option but implemented as a process-global table, so one session's override mutates every session; the "No global state" claim in AGENTS.md and architecture.md contradicted by eleven mutable module globals; a stale test count in README.md; `.workbuddy-ai/` absent from .gitignore; and a non-atomic log fd guarded by an atomic flag rather than a lock. The tracker covers #1–#300, #303–#510 — **508 entries** in total, 5 open.
 
 Both summary tables below are generated from the `severity` and `status` fields in each bug's frontmatter. Regenerate them rather than editing by hand. `status` uses the closed slug vocabulary `resolved` / `false_positive` / `open` documented under [Summary by Status](#summary-by-status).
 
@@ -23,20 +23,20 @@ Both summary tables below are generated from the `severity` and `status` fields 
 | Severity | Count |
 |---|---:|
 | CRITICAL | 53 |
-| HIGH | 116 |
+| HIGH | 117 |
 | MEDIUM | 184 |
 | MEDIUM-HIGH | 3 |
 | MEDIUM (performance) | 4 |
 | MEDIUM (dead code / refcount drift) | 1 |
 | LOW | 129 |
-| LOW (architecture) | 3 |
+| LOW (architecture) | 4 |
 | LOW (code quality) | 5 |
 | LOW (performance) | 1 |
 | LOW (performance) → MEDIUM (correctness regression in original fix) | 1 |
-| LOW (safety) | 1 |
-| LOW (correctness) | 1 |
+| LOW (safety) | 3 |
+| LOW (correctness) | 2 |
 | LOW (cosmetic) | 1 |
-| **Total** | **503** |
+| **Total** | **508** |
 
 ## Summary by Status
 
@@ -44,8 +44,8 @@ Both summary tables below are generated from the `severity` and `status` fields 
 |---|---:|
 | `resolved` | 481 |
 | `false_positive` | 22 |
-| `open` | 0 |
-| **Total** | **503** |
+| `open` | 5 |
+| **Total** | **508** |
 
 The `status` frontmatter field is a closed vocabulary of three slugs —
 `resolved`, `false_positive`, `open` — so both summary tables and the status
@@ -560,3 +560,8 @@ frontmatter. The resolution narrative for each bug lives in its body
 | [503](503.md) | cellHasMaiHanAkat raw-codepoint check compares table index to raw codepoint | LOW | resolved |
 | [504](504.md) | libthai loader and break context lack thread-safety synchronization (latent) | LOW | resolved |
 | [505](505.md) | text_reflow.md references non-existent src/reflow.zig and omits libthai integration | LOW | resolved |
+| [506](506.md) | `codepoint-widths` is process-global but registered as a session option; one session's override mutates all sessions and a second session's assignment erases the first's | HIGH | open |
+| [507](507.md) | AGENTS.md and architecture.md assert "No global state" while eleven mutable module globals exist | LOW (architecture) | open |
+| [508](508.md) | README.md claims 1,032 tests passing; the suite is 1,035 (1,034 passing, 1 skipped) | LOW (correctness) | open |
+| [509](509.md) | `.workbuddy-ai/` agent memory files are untracked but absent from .gitignore | LOW (safety) | open |
+| [510](510.md) | log.zig gates a non-atomic `log_fd` global with an atomic flag rather than a lock (fd-reuse hazard, latent) | LOW (safety) | open |

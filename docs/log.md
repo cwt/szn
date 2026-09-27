@@ -7,7 +7,7 @@ sources:
   - docs/
 verified: human-reviewed
 tags: [log, changelog, okf]
-timestamp: 2026-09-27T10:12:00Z
+timestamp: 2026-09-27T10:46:00Z
 ---
 
 # Documentation Bundle Log
@@ -15,6 +15,8 @@ timestamp: 2026-09-27T10:12:00Z
 This file tracks all modifications, extensions, and updates to the `szn` documentation bundle in chronological order.
 
 | Timestamp | Document | Action | Description |
+| 2026-09-27T10:46:00Z | [bugs/506-510](development/bugs/) | Created | Filed 5 findings from the 2026-09-27 whole-project review, all open: `codepoint-widths` session-scoped but process-global (HIGH), the "No global state" claim contradicted by 11 module globals, stale README test count, `.workbuddy-ai/` missing from .gitignore, and a non-atomic log fd behind an atomic gate. |
+| 2026-09-27T10:46:00Z | [BUGS.md](development/bugs/index.md) | Updated | Added #506–#510 rows, updated severity and status tables, coverage note now reads #1–#300, #303–#510 / 508 entries with 5 open. |
 | 2026-09-27T10:12:00Z | 66 docs | Updated | Rewrote 226 links that escaped the `docs/` bundle to absolute `https://github.com/cwt/szn/blob/main/...` URLs (217 source files, 66 carrying `#L` line anchors, plus `build.zig.zon` and the repo `README.md`). docs/ is published as a standalone GitHub Pages site, so `../../../src/grid.zig` resolved against the Pages origin and 404'd. |
 | 2026-09-27T10:12:00Z | bundle-wide | Updated | Documented the split convention: intra-bundle concept links stay relative (OKF 2.5, and they resolve correctly under Pages), while links to repository assets outside the bundle are absolute. Links escaping docs/ now 227 -> 0. |
 | 2026-09-27T10:12:00Z | [index.md](index.md) | Fixed | Corrected the OKF specification link to the canonical `GoogleCloudPlatform/open-knowledge-format` repo; the previously recorded `github.com/google/okf` returned 404. |
