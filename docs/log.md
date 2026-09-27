@@ -6,7 +6,7 @@ status: stable
 sources:
   - docs/
 verified: human-reviewed
-timestamp: 2026-09-04T09:18:00Z
+timestamp: 2026-09-27T09:45:00Z
 ---
 
 # Documentation Bundle Log
@@ -14,6 +14,11 @@ timestamp: 2026-09-04T09:18:00Z
 This file tracks all modifications, extensions, and updates to the `szn` documentation bundle in chronological order.
 
 | Timestamp | Document | Action | Description |
+| 2026-09-27T09:52:00Z | [bugs/*.md](development/bugs/) | Updated | Normalized `status:` frontmatter across all 503 bug docs to the closed slug vocabulary `resolved` / `false_positive` / `open` (OKF v0.2 machine-parseable lifecycle value). Resolution prose was already carried in each body, so no detail was lost. |
+| 2026-09-27T09:52:00Z | [bugs/306-310, 349, 391, 454-477](development/bugs/) | Updated | Repaired 29 body `**Status:**` lines still reading "Open" while their frontmatter and this index recorded the bug as closed — the #306–#310 and #454–#477 batches were reconciled in the index but not in the individual files. |
+| 2026-09-27T09:52:00Z | [bugs/347, 359, 362, 427, 441-444](development/bugs/) | Updated | Replaced 24 absolute `file:///` links with repo-relative paths (OKF rule 2.5); they leaked the authoring machine's filesystem layout and resolved nowhere else. Prose mentions of the scheme in `releases/v0.8.0.md` left intact as historical record. |
+| 2026-09-27T09:52:00Z | [BUGS.md](development/bugs/index.md) | Updated | Aligned both summary tables and the All Bugs status column to the new slug vocabulary; documented the closed value set. |
+| 2026-09-27T09:45:00Z | [progress.md](development/progress.md) | Updated | Refreshed `timestamp`; corrected test count to 1,035 total (1,034 passing, 1 skipped); added the #502–#505 Thai reflow sweep and extended the stability sweep range to #441–#505. |
 | 2026-09-27T16:13:00Z | [505.md](development/bugs/505.md) | Resolved | Corrected text_reflow.md sources, documented two-tier libthai architecture and fallback backtracking, and added Sara Am width-1 rationale (bug #505). |
 | 2026-09-27T16:13:00Z | [BUGS.md](development/bugs/index.md) | Updated | Marked #505 Fixed, bumped Fixed/Resolved total (481 entries, 0 open). |
 | 2026-09-27T16:11:00Z | [504.md](development/bugs/504.md) | Resolved | Synchronized LibThai loading and deinitialization with atomic state transitions and documented server-thread lifecycle (bug #504). |

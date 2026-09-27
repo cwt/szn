@@ -9,7 +9,7 @@ sources:
 verified: human-reviewed
 stale_after: 2026-12-31T00:00:00Z
 tags: [progress, roadmap, parity, milestones]
-timestamp: 2026-09-27T01:20:00Z
+timestamp: 2026-09-27T09:45:00Z
 ---
 
 # szn — Functional Clone Progress
@@ -17,7 +17,9 @@ timestamp: 2026-09-27T01:20:00Z
 Track progress toward a fully functional tmux clone.
 Based on code audit as of 2026-06-21.
 
-## Current State: 1,032 tests passing, v0.10.0 release. Hot-path performance architecture overhaul (batch chunk parser `advanceBatch`, fast-path ASCII streaming in `writeStr`, O(1) pane validity tracking `isPaneValid`, batched SGR and render output, arena format string allocations). Configurable Unicode VS16 emoji presentation width option (`variation-selector-always-wide`). Hardened Sixel graphics subsystem (containment verification, scroll-region bound anchor shifting, surviving marker cell purging, transactional placement error rollback). Stable display client pointer lifetimes (`ArrayList(*DisplayClient)`), bounded OSC 52 clipboard and IPC frame limits, race-free PTY child reaping before SIGKILL, Kitty extended keyboard release filtering, raw terminal diagnostics, and a 61-bug stability sweep (#441–#501).
+## Current State: 1,035 tests, v0.10.0 release. Hot-path performance architecture overhaul (batch chunk parser `advanceBatch`, fast-path ASCII streaming in `writeStr`, O(1) pane validity tracking `isPaneValid`, batched SGR and render output, arena format string allocations). Configurable Unicode VS16 emoji presentation width option (`variation-selector-always-wide`). Hardened Sixel graphics subsystem (containment verification, scroll-region bound anchor shifting, surviving marker cell purging, transactional placement error rollback). Stable display client pointer lifetimes (`ArrayList(*DisplayClient)`), bounded OSC 52 clipboard and IPC frame limits, race-free PTY child reaping before SIGKILL, Kitty extended keyboard release filtering, raw terminal diagnostics, and a 65-bug stability sweep (#441–#505).
+
+Thai text reflow correctness sweep (#502–#505): compound-vowel cluster integrity (`เ-าะ` patterns no longer split at reflow boundaries), removal of a dead raw-codepoint check in `cellHasMaiHanAkat`, and atomic state transitions for runtime `libthai` loading in `src/thai.zig`.
 
 ---
 
@@ -38,7 +40,7 @@ Based on code audit as of 2026-06-21.
 | 10 | Commands | ✅ Done | ~74 | All 49 commands registered in `CMD_TABLE` (including set-window-option / setw, copy-mode, paste-buffer, find-window, show-messages, and list-keys) |
 | 11 | Full Integration | ✅ Done | ~30 | integration.zig integration test suite complete |
 
-**Total: 1,032 / 1,032 tests passing (verified 2026-09-27). All Phases 0–11 fully complete.**
+**Total: 1,034 / 1,035 tests passing (1 skipped; verified 2026-09-27, Zig 0.16.0). All Phases 0–11 fully complete.**
 
 > The per-phase **Tests** column above is a snapshot taken when each phase
 > landed, not a partition of the current total — later phases and audit sweeps
