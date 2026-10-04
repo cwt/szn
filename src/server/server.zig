@@ -143,6 +143,12 @@ pub const Server = struct {
     global_options: @import("../options.zig").Options,
     global_window_options: @import("../options.zig").Options,
     response_buf: std.ArrayList(u8),
+    /// Stable copy of the packet body currently being dispatched (bug #521).
+    /// `pkt.data` aliases the `MessageReader`'s inline buffer, and a handler
+    /// reached from that packet can remove this client — freeing the reader
+    /// while the body is still being read. Reused across packets so the copy
+    /// costs no allocation after warmup.
+    packet_scratch: std.ArrayList(u8) = .empty,
     display_clients: std.ArrayList(*DisplayClient) = .empty,
     current_client_fd: ?i32 = null,
     render_buf: std.ArrayList(u8),
@@ -356,6 +362,7 @@ pub const Server = struct {
         self.window_status_cur_cache.deinit(self.allocator);
         self.status_win_infos.deinit(self.allocator);
         self.status_click_ranges.deinit(self.allocator);
+        self.packet_scratch.deinit(self.allocator);
         if (self.host_name.len > 0) self.allocator.free(self.host_name);
         if (self.host_short.len > 0) self.allocator.free(self.host_short);
         @import("../thai.zig").deinitLibThai();
@@ -2476,6 +2483,15 @@ pub const Server = struct {
         _ = try self.addDisplayClient(.{ .fd = fd });
     }
 
+    /// Copy a client packet body into server-owned storage so a handler that
+    /// removes this client cannot leave the body pointing at freed memory
+    /// (bug #521). The buffer is reused, so steady-state costs no allocation.
+    fn stablePacketBody(self: *Server, body: []const u8) ![]const u8 {
+        self.packet_scratch.clearRetainingCapacity();
+        try self.packet_scratch.appendSlice(self.allocator, body);
+        return self.packet_scratch.items;
+    }
+
     fn handleClient(self: *Server, fd: i32) ServerError!void {
         var buf: [4096]u8 = undefined;
         const n = std.posix.read(fd, &buf) catch |err| {
@@ -2494,6 +2510,13 @@ pub const Server = struct {
         try reader.feed(buf[0..n]);
 
         while (try reader.tryParse()) |pkt| {
+            // bug #521: pkt.data aliases the MessageReader's inline buffer, and
+            // a handler reached from this packet can remove this client,
+            // freeing the reader while the body is still being read — a detach
+            // keybinding inside the same stdin packet is the easy case. Work on
+            // a server-owned copy so no handler can read freed memory.
+            const data = try self.stablePacketBody(pkt.data);
+
             const msg_type = protocol.MessageType.fromByte(pkt.header.msg_type) orelse {
                 if (!self.ignore_unknown_msg_warn) {
                     std.log.warn("server received unknown message type byte: {}", .{pkt.header.msg_type});
@@ -2504,7 +2527,7 @@ pub const Server = struct {
             switch (msg_type) {
                 .command => {
                     const dispatch = @import("dispatch.zig");
-                    var result = dispatch.dispatchCommand(self.allocator, self, pkt.data);
+                    var result = dispatch.dispatchCommand(self.allocator, self, data);
                     self.dirty = true;
                     defer result.deinit();
 
@@ -2588,14 +2611,14 @@ pub const Server = struct {
                 },
                 .stdin_data => {
                     self.current_client_fd = fd;
-                    self.processInput(pkt.data) catch |err| {
+                    self.processInput(data) catch |err| {
                         std.log.err("stdin processing error: {any}", .{err});
                     };
                 },
                 .resize => {
-                    if (pkt.data.len >= 8) {
-                        const new_w = std.mem.readInt(u32, pkt.data[0..4], .little);
-                        const new_h = std.mem.readInt(u32, pkt.data[4..8], .little);
+                    if (data.len >= 8) {
+                        const new_w = std.mem.readInt(u32, data[0..4], .little);
+                        const new_h = std.mem.readInt(u32, data[4..8], .little);
                         for (self.display_clients.items) |dc| {
                             if (dc.fd == fd) {
                                 dc.sx = std.math.clamp(new_w, 2, 4096);
@@ -2607,9 +2630,9 @@ pub const Server = struct {
                     }
                 },
                 .cell_size => {
-                    if (pkt.data.len >= 8) {
-                        const raw_h = std.mem.readInt(u32, pkt.data[0..4], .little);
-                        const raw_w = std.mem.readInt(u32, pkt.data[4..8], .little);
+                    if (data.len >= 8) {
+                        const raw_h = std.mem.readInt(u32, data[0..4], .little);
+                        const raw_w = std.mem.readInt(u32, data[4..8], .little);
                         if (raw_h > 0 and raw_w > 0) {
                             const height_px = std.math.clamp(raw_h, 1, 1024);
                             const width_px = std.math.clamp(raw_w, 1, 1024);
@@ -5824,6 +5847,33 @@ test "render caches status line across frames without reallocation — bug #425"
 
     const ptr2 = server.display_clients.items[0].status_line.?.ptr;
     try testing.expectEqual(ptr1, ptr2);
+}
+
+test "packet body is copied out of the reader before dispatch — bug #521" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    const reader = try server.allocator.create(MessageReader);
+    reader.* = .{};
+
+    const body = "trailing bytes that must not be read from freed memory";
+    const total = 5 + body.len;
+    std.mem.writeInt(u32, reader.buf[0..4], @intCast(total), .little);
+    reader.buf[4] = 0x08; // stdin_data
+    @memcpy(reader.buf[5..][0..body.len], body);
+    reader.pos = total;
+
+    const pkt = (try reader.tryParse()).?;
+    try testing.expectEqualStrings(body, pkt.data);
+
+    // The stable copy must live in server-owned storage, not in the reader.
+    const stable = try server.stablePacketBody(pkt.data);
+    try testing.expect(stable.ptr != pkt.data.ptr);
+
+    // A detach keybinding inside the packet frees the reader mid-dispatch;
+    // the copy must survive that untouched.
+    server.allocator.destroy(reader);
+    try testing.expectEqualStrings(body, stable);
 }
 
 test "mouse wheel in alternate screen forwards arrow keys instead of entering copy-mode — bug #427" {
