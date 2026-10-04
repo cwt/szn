@@ -205,7 +205,13 @@ pub const InputParser = struct {
             0x7F => {},
             0x20...0x7E => try self.screen.writeChar(byte),
             0x84 => try self.screen.index(), // IND
-            0x85 => try self.screen.index(), // NEL (same down-move here)
+            0x85 => {
+                // bug #524: NEL is CR + LF, so it returns to column 0 before
+                // moving down. Treating it as a bare IND stair-steps any
+                // application that uses 8-bit NEL for line breaks.
+                self.screen.cursor.x = 0;
+                try self.screen.index();
+            },
             0x88 => {}, // HTS: no configurable tab stops to record
             0x8D => try self.screen.reverseIndex(), // RI
             0x8E, 0x8F => {}, // SS2/SS3 single-shift: next char prints as-is
@@ -1078,6 +1084,26 @@ test "tab character" {
     var parser = InputParser.init(&screen);
     try parser.feed("\t");
     try testing.expectEqual(@as(u32, 8), screen.cursor.x);
+}
+
+test "NEL (0x85) resets the column before moving down — bug #524" {
+    var screen = try Screen.init(testing.allocator, 10, 3);
+    defer screen.deinit();
+    var parser = InputParser.init(&screen);
+
+    try parser.feed("abc");
+    try testing.expectEqual(@as(u32, 3), screen.cursor.x);
+
+    // ECMA-48 defines NEL as CR + LF: column 0 of the next line.
+    try parser.feed("\x85");
+    try testing.expectEqual(@as(u32, 0), screen.cursor.x);
+    try testing.expectEqual(@as(u32, 1), screen.cursor.y);
+
+    // IND (0x84) still preserves the column.
+    try parser.feed("xy");
+    try parser.feed("\x84");
+    try testing.expectEqual(@as(u32, 2), screen.cursor.x);
+    try testing.expectEqual(@as(u32, 2), screen.cursor.y);
 }
 
 test "CUU cursor up" {
