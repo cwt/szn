@@ -9,13 +9,17 @@ pub const Error = error{
 const VMIN: u6 = switch (@import("builtin").os.tag) {
     .linux => 6,
     .macos, .ios => 16,
-    .freebsd => 4,
+    // FreeBSD uses the traditional BSD termios layout: VMIN 16, VTIME 17
+    // (sys/_termios.h). Indices 4 and 5 are VWERASE and VKILL, so the old
+    // mapping wrote the wrong control characters and left raw reads able to
+    // block (bug #527).
+    .freebsd => 16,
     else => 6,
 };
 const VTIME: u6 = switch (@import("builtin").os.tag) {
     .linux => 5,
     .macos, .ios => 17,
-    .freebsd => 5,
+    .freebsd => 17,
     else => 5,
 };
 
@@ -64,8 +68,8 @@ test "VMIN and VTIME match the target platform" {
             try testing.expectEqual(@as(u6, 17), VTIME);
         },
         .freebsd => {
-            try testing.expectEqual(@as(u6, 4), VMIN);
-            try testing.expectEqual(@as(u6, 5), VTIME);
+            try testing.expectEqual(@as(u6, 16), VMIN);
+            try testing.expectEqual(@as(u6, 17), VTIME);
         },
         else => {},
     }
