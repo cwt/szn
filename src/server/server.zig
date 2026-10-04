@@ -1172,30 +1172,10 @@ pub const Server = struct {
             },
             .swap_pane_up => swapPaneRelative(window, pane, -1),
             .swap_pane_down => swapPaneRelative(window, pane, 1),
-            .resize_left => {
-                const current_w = pane.screen.grid.width;
-                const current_h = pane.screen.grid.height;
-                const target_w = @as(u32, @intCast(@max(1, @as(i32, @intCast(current_w)) - 1)));
-                pane.resizeTerminal(target_w, current_h) catch |err| std.log.warn("resizeTerminal failed: {any}", .{err});
-            },
-            .resize_right => {
-                const current_w = pane.screen.grid.width;
-                const current_h = pane.screen.grid.height;
-                const target_w = current_w +| 1;
-                pane.resizeTerminal(target_w, current_h) catch |err| std.log.warn("resizeTerminal failed: {any}", .{err});
-            },
-            .resize_up => {
-                const current_w = pane.screen.grid.width;
-                const current_h = pane.screen.grid.height;
-                const target_h = @as(u32, @intCast(@max(1, @as(i32, @intCast(current_h)) - 1)));
-                pane.resizeTerminal(current_w, target_h) catch |err| std.log.warn("resizeTerminal failed: {any}", .{err});
-            },
-            .resize_down => {
-                const current_w = pane.screen.grid.width;
-                const current_h = pane.screen.grid.height;
-                const target_h = current_h +| 1;
-                pane.resizeTerminal(current_w, target_h) catch |err| std.log.warn("resizeTerminal failed: {any}", .{err});
-            },
+            .resize_left => resizePaneBy(window, pane, -1, 0),
+            .resize_right => resizePaneBy(window, pane, 1, 0),
+            .resize_up => resizePaneBy(window, pane, 0, -1),
+            .resize_down => resizePaneBy(window, pane, 0, 1),
             .send_prefix => {
                 const prefix_key = self.dispatcher.prefix;
                 writeKeyToPty(pane, prefix_key);
@@ -1382,6 +1362,23 @@ pub const Server = struct {
         };
         const bounds = layout_tree.findPaneBounds(target_pane) orelse return;
         _ = pane.resizeTerminal(bounds.w, bounds.h) catch |err| std.log.warn("resizeTerminal failed: {any}", .{err});
+    }
+
+    /// Grow or shrink `pane` by (dw, dh) cells (bug #511). Prefers moving the
+    /// layout tree so the change renders and survives later resizes; falls back
+    /// to a direct grid resize when the window has no split on that axis.
+    fn resizePaneBy(window: *Window, pane: *Pane, dw: i32, dh: i32) void {
+        if (window.layout.resizePane(pane, dw, dh)) {
+            window.resize(window.width, window.height) catch |err|
+                std.log.warn("window resize failed: {any}", .{err});
+            return;
+        }
+        const cw: i32 = @intCast(pane.screen.grid.width);
+        const ch: i32 = @intCast(pane.screen.grid.height);
+        const tw: u32 = @intCast(@max(1, cw +| dw));
+        const th: u32 = @intCast(@max(1, ch +| dh));
+        pane.resizeTerminal(tw, th) catch |err|
+            std.log.warn("resizeTerminal failed: {any}", .{err});
     }
 
     fn swapPaneRelative(window: *Window, pane: *Pane, dir: i2) void {

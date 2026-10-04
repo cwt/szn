@@ -1197,6 +1197,28 @@ fn cmdResizePane(server: *Server, args: []const []const u8) CmdResult {
     const current_w = pane.screen.grid.width;
     const current_h = pane.screen.grid.height;
 
+    // bug #511: a pane resize must move the layout tree, not just the pane
+    // grid. The renderer derives every pane rectangle from the tree
+    // (render.zig collectPaneBounds) and Window.resize recomputes panes from
+    // split proportions, so a grid-only resize is clipped when growing and
+    // reverted by the next resize. Translate the request into a delta and let
+    // the tree absorb it; the direct grid path below stays as the fallback for
+    // a window with no split on the requested axis (a single pane).
+    const dw: i32 = if (exact_w) |ew|
+        @as(i32, @intCast(ew)) -| @as(i32, @intCast(current_w))
+    else
+        adjust_w;
+    const dh: i32 = if (exact_h) |eh|
+        @as(i32, @intCast(eh)) -| @as(i32, @intCast(current_h))
+    else
+        adjust_h;
+
+    if (window.layout.resizePane(pane, dw, dh)) {
+        window.resize(window.width, window.height) catch return .err;
+        window.invalidateBorderFormat();
+        return .ok;
+    }
+
     // bug #289: use saturating arithmetic so huge -U/-D/-L/-R adjustments
     // cannot overflow i32 (panic in Debug, silent wrap in ReleaseFast), and
     // clamp the relative result to a sane ceiling so a saturated value can't
@@ -3129,6 +3151,48 @@ test "resize-pane explicit -x/-y wins over invalid relative adjust — bug #391"
     defer c.deinit(testing.allocator);
     try testing.expectEqual(CmdResult.ok, c.exec(&server));
     try testing.expectEqual(@as(u32, 100), pane.screen.grid.width);
+}
+
+test "resize-pane moves the layout tree, not just the pane grid — bug #511" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+    const session = try server.newSession("test", 80, 24);
+    const win = session.active_window.?;
+
+    {
+        var c = try parse("split-window -h", testing.allocator);
+        defer c.deinit(testing.allocator);
+        try testing.expectEqual(CmdResult.ok, c.exec(&server));
+    }
+    try testing.expectEqual(@as(usize, 2), win.panes.items.len);
+
+    const pane = win.active_pane.?;
+    const sibling = win.layout.findSiblingPane(pane).?;
+    const before = win.layout.findPaneBounds(pane).?;
+    const sibling_before = win.layout.findPaneBounds(sibling).?;
+
+    {
+        var c = try parse("resize-pane -R 4", testing.allocator);
+        defer c.deinit(testing.allocator);
+        try testing.expectEqual(CmdResult.ok, c.exec(&server));
+    }
+
+    const after = win.layout.findPaneBounds(pane).?;
+    const sibling_after = win.layout.findPaneBounds(sibling).?;
+
+    // The tree moved: this pane gained 4 columns and the sibling lost 4.
+    try testing.expectEqual(before.w + 4, after.w);
+    try testing.expectEqual(sibling_before.w - 4, sibling_after.w);
+    // The grid agrees with the rectangle, so the renderer — which clips every
+    // pane to its tree-derived bounds — shows the whole resize.
+    try testing.expectEqual(after.w, pane.screen.grid.width);
+
+    // And it survives a recompute. The old grid-only resize was silently
+    // reverted by the next Window.resize because it was derived from the
+    // unchanged split proportion.
+    try win.resize(win.width, win.height);
+    try testing.expectEqual(after.w, win.layout.findPaneBounds(pane).?.w);
+    try testing.expectEqual(after.w, pane.screen.grid.width);
 }
 
 test "kill-window on last window destroys the session — bug #407" {

@@ -55,6 +55,14 @@ pub fn splitSizes(available: u32, proportion: f64) SplitSizes {
     return .{ .first = first, .second = available - first };
 }
 
+/// Whether `target` appears anywhere in the subtree rooted at `node`.
+fn nodeContains(node: *const Node, target: *const Pane) bool {
+    return switch (node.*) {
+        .leaf => |p| p == target,
+        .split => |s| nodeContains(s.a, target) or nodeContains(s.b, target),
+    };
+}
+
 pub const Layout = struct {
     allocator: std.mem.Allocator,
     root: *Node,
@@ -290,6 +298,67 @@ pub const Layout = struct {
                 try self.collectLeafNodes(s.b, out);
             },
         }
+    }
+
+    /// Grow or shrink `pane` by `dw`/`dh` cells by adjusting the deepest
+    /// ancestor split on the path to it whose direction matches the axis
+    /// (bug #511). Returns true when a split proportion changed, so the caller
+    /// knows to recompute pane sizes via `Window.resize`. Returns false when
+    /// the window has no split on that axis (a single-pane window has nothing
+    /// to adjust), leaving the caller free to fall back to a direct resize.
+    pub fn resizePane(self: *Layout, pane: *Pane, dw: i32, dh: i32) bool {
+        var changed = false;
+        if (dw != 0 and self.adjustAxis(self.root, pane, .horizontal, dw, self.width, self.height))
+            changed = true;
+        if (dh != 0 and self.adjustAxis(self.root, pane, .vertical, dh, self.width, self.height))
+            changed = true;
+        return changed;
+    }
+
+    /// Walk towards `target`, preferring the deepest split on the path, and
+    /// move the first child of the chosen split by `delta` cells (negated when
+    /// the target lives on the second side).
+    fn adjustAxis(self: *Layout, node: *Node, target: *Pane, dir: SplitDir, delta: i32, lw: u32, lh: u32) bool {
+        const s = switch (node.*) {
+            .leaf => return false,
+            .split => |sp| sp,
+        };
+
+        const on_a = nodeContains(s.a, target);
+        if (!on_a and !nodeContains(s.b, target)) return false;
+
+        const sizes = if (s.direction == .horizontal)
+            splitSizes(lw -| 1, s.proportion)
+        else
+            splitSizes(lh -| 1, s.proportion);
+
+        const child = if (on_a) s.a else s.b;
+        const child_lw = if (s.direction == .horizontal)
+            (if (on_a) sizes.first else sizes.second)
+        else
+            lw;
+        const child_lh = if (s.direction == .horizontal)
+            lh
+        else
+            (if (on_a) sizes.first else sizes.second);
+
+        // Prefer the deepest split on the path to the target.
+        if (self.adjustAxis(child, target, dir, delta, child_lw, child_lh)) return true;
+
+        if (s.direction != dir) return false;
+
+        const avail = if (dir == .horizontal) lw -| 1 else lh -| 1;
+        if (avail < 2) return false;
+
+        const cur_first: i64 = sizes.first;
+        const signed: i64 = if (on_a) delta else -delta;
+        const want = std.math.clamp(cur_first + signed, 1, @as(i64, avail) - 1);
+        if (want == cur_first) return false;
+
+        // splitSizes truncates `avail * proportion`, so bias by half a cell to
+        // make the recomputed first-child size land exactly on `want`.
+        s.proportion = (@as(f64, @floatFromInt(want)) + 0.5) / @as(f64, @floatFromInt(avail));
+        return true;
     }
 
     pub fn removePane(self: *Layout, pane: *Pane) void {
