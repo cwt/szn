@@ -227,7 +227,11 @@ pub fn charWidth(cp: u21) u2 {
 
     // Fast path: ASCII printable + Latin-1 Supplement
     if (cp < 0x0300) {
-        if (cp < 0x20 or (cp >= 0x7F and cp <= 0xA0)) return 0;
+        // The zero-width run is the C0 controls plus the C1 block 0x80..0x9F.
+        // The upper bound must be 0x9F, not 0xA0: U+00A0 NO-BREAK SPACE is a
+        // printable width-1 character, and treating it as zero-width routes it
+        // down the combining path where it is dropped (bug #514).
+        if (cp < 0x20 or (cp >= 0x7F and cp <= 0x9F)) return 0;
         return 1;
     }
     // Binary search in the non-trivial ranges table
@@ -710,6 +714,16 @@ test "charWidth: control characters are zero-width" {
     try std.testing.expectEqual(@as(u2, 0), charWidth(0x1F));
     try std.testing.expectEqual(@as(u2, 0), charWidth(0x7F));
     try std.testing.expectEqual(@as(u2, 0), charWidth(0x9F));
+}
+
+test "charWidth: NO-BREAK SPACE is width 1, not zero-width — bug #514" {
+    // The zero-width run is the C0 controls plus the C1 block 0x80..0x9F.
+    // U+00A0 is a printable space; classifying it as zero-width sent it down
+    // the combining path, where it was silently dropped.
+    try std.testing.expectEqual(@as(u2, 1), charWidth(0xA0));
+    // The boundaries either side are unchanged.
+    try std.testing.expectEqual(@as(u2, 0), charWidth(0x9F));
+    try std.testing.expectEqual(@as(u2, 1), charWidth(0xA1));
 }
 
 test "charWidth: Thai combining marks are zero-width" {
