@@ -7,14 +7,14 @@ sources:
   - docs/development/bugs/
 verified: human-reviewed
 tags: [bugs, tracker, index, issues]
-timestamp: 2026-09-27T01:30:00Z
+timestamp: 2026-10-04T17:46:00Z
 ---
 
 # Bugs — szn
 
 Sorted by number. See individual bug files for details.
 
-> **Note:** Bugs **#301** and **#302** were never filed (MIA). The #300–#310 performance sweep skipped straight from #300 to #303. Bugs **#349–#394** were filed by the 2026-08-23 deep-audit sweep (full-codebase review; 46 bugs, all since resolved). Bugs **#395–#427** were filed by the 2026-08-30 deep-audit sweep (memory safety, IPC integrity, sixel accounting, config/command surface, dead code, perf, alt-screen mouse wheel; 33 bugs, all since resolved). Bugs **#428–#439** were filed by the 2026-08-31 re-validation sweep (12 confirmed findings from the audit report, re-checked line-by-line against live source; all since resolved). Bugs **#448–#450** were filed by the 2026-09-02 stale-pointer bug-class extrapolation audit. Bugs **#451–#453** were filed by the 2026-09-03 scrollback truncation and pane resize audit (all since resolved). Bugs **#454–#477** were filed by the 2026-09-13 deep-audit sweep (memory safety, DCS sixel ownership, history compaction double-free, buffer-list leaks, layout float/bounds traps, copy-mode coordinate clamps, IPC frame caps, and perf/dead-code clusters; 24 bugs, all since resolved). Bugs **#478–#483** were filed by the 2026-09-22 hot-path performance review (6 performance findings, all fixed 2026-09-22: parser byte-by-byte dispatch, isPaneValid/tree-walk regression, per-cell SGR formatting, full-grid diff, per-frame heap copy, per-space writes). Bugs **#484–#501** were filed by the 2026-09-26 external code review (Muse deep review: full read of main.zig plus 5 parallel reviewer passes over the remaining source; 18 findings, all fixed 2026-09-27). Bugs **#502–#505** were filed by the 2026-09-27 Thai reflow and text architecture review (4 findings: เ-าะ compound vowel cluster split, dead raw-codepoint check in cellHasMaiHanAkat, libthai unsynchronized globals, and text_reflow.md stale references/libthai documentation omission). Bugs **#506–#510** were filed by the 2026-09-27 whole-project review (5 findings, all open): `codepoint-widths` registered as a session option but implemented as a process-global table, so one session's override mutates every session; the "No global state" claim in AGENTS.md and architecture.md contradicted by eleven mutable module globals; a stale test count in README.md; `.workbuddy-ai/` absent from .gitignore; and a non-atomic log fd guarded by an atomic flag rather than a lock. All five were fixed the same day: `codepoint-widths` and `variation-selector-always-wide` are now declared server-scoped via `options.isServerScoped` and redirected to the server store, so a bare `set-option` no longer writes a per-session copy of a process-wide value; the "no global state" claim in AGENTS.md and architecture.md is now qualified with its three exception groups; the log descriptor is an atomic and `disable` clears the gate before closing it; `.workbuddy-ai/` is declared in .gitignore; and the README test count is 1,041. The tracker covers #1–#300, #303–#510 — **508 entries** in total, 0 open.
+> **Note:** Bugs **#301** and **#302** were never filed (MIA). The #300–#310 performance sweep skipped straight from #300 to #303. Bugs **#349–#394** were filed by the 2026-08-23 deep-audit sweep (full-codebase review; 46 bugs, all since resolved). Bugs **#395–#427** were filed by the 2026-08-30 deep-audit sweep (memory safety, IPC integrity, sixel accounting, config/command surface, dead code, perf, alt-screen mouse wheel; 33 bugs, all since resolved). Bugs **#428–#439** were filed by the 2026-08-31 re-validation sweep (12 confirmed findings from the audit report, re-checked line-by-line against live source; all since resolved). Bugs **#448–#450** were filed by the 2026-09-02 stale-pointer bug-class extrapolation audit. Bugs **#451–#453** were filed by the 2026-09-03 scrollback truncation and pane resize audit (all since resolved). Bugs **#454–#477** were filed by the 2026-09-13 deep-audit sweep (memory safety, DCS sixel ownership, history compaction double-free, buffer-list leaks, layout float/bounds traps, copy-mode coordinate clamps, IPC frame caps, and perf/dead-code clusters; 24 bugs, all since resolved). Bugs **#478–#483** were filed by the 2026-09-22 hot-path performance review (6 performance findings, all fixed 2026-09-22: parser byte-by-byte dispatch, isPaneValid/tree-walk regression, per-cell SGR formatting, full-grid diff, per-frame heap copy, per-space writes). Bugs **#484–#501** were filed by the 2026-09-26 external code review (Muse deep review: full read of main.zig plus 5 parallel reviewer passes over the remaining source; 18 findings, all fixed 2026-09-27). Bugs **#502–#505** were filed by the 2026-09-27 Thai reflow and text architecture review (4 findings: เ-าะ compound vowel cluster split, dead raw-codepoint check in cellHasMaiHanAkat, libthai unsynchronized globals, and text_reflow.md stale references/libthai documentation omission). Bugs **#506–#510** were filed by the 2026-09-27 whole-project review (5 findings, all open): `codepoint-widths` registered as a session option but implemented as a process-global table, so one session's override mutates every session; the "No global state" claim in AGENTS.md and architecture.md contradicted by eleven mutable module globals; a stale test count in README.md; `.workbuddy-ai/` absent from .gitignore; and a non-atomic log fd guarded by an atomic flag rather than a lock. All five were fixed the same day: `codepoint-widths` and `variation-selector-always-wide` are now declared server-scoped via `options.isServerScoped` and redirected to the server store, so a bare `set-option` no longer writes a per-session copy of a process-wide value; the "no global state" claim in AGENTS.md and architecture.md is now qualified with its three exception groups; the log descriptor is an atomic and `disable` clears the gate before closing it; `.workbuddy-ai/` is declared in .gitignore; and the README test count is 1,041. Bugs **#511–#529** were filed by the 2026-10-05 dual-toolchain deep audit (5 parallel subsystem passes plus line-by-line re-verification by the auditor; 19 findings — **11 confirmed by reading live source, 8 recorded as unverified leads**). The sweep covers `resize-pane` never updating the layout tree, `capture-pane` emitting NUL bytes, an IRM sixel refcount under-count that **reverses the 2026-08-31 audit's H2 false-positive verdict**, a `pushOwned` double-free regression introduced by the #456 fix, NBSP classified as zero-width, numeric choice options being unsettable, non-round-trippable `list-keys` output, inert option-table entries, drifted SGR attribute tables, a duplication cluster, and a latent DECOM / NEL / CBT / origin-overflow cluster. The tracker covers #1–#300, #303–#529 — **527 entries** in total, 18 open.
 
 Both summary tables below are generated from the `severity` and `status` fields in each bug's frontmatter. Regenerate them rather than editing by hand. `status` uses the closed slug vocabulary `resolved` / `false_positive` / `open` documented under [Summary by Status](#summary-by-status).
 
@@ -22,36 +22,42 @@ Both summary tables below are generated from the `severity` and `status` fields 
 
 | Severity | Count |
 |---|---:|
+| MEDIUM | 193 |
+| LOW | 134 |
+| HIGH | 120 |
 | CRITICAL | 53 |
-| HIGH | 117 |
-| MEDIUM | 184 |
-| MEDIUM-HIGH | 3 |
-| MEDIUM (performance) | 4 |
-| MEDIUM (dead code / refcount drift) | 1 |
-| LOW | 129 |
+| LOW (code quality) | 6 |
 | LOW (architecture) | 4 |
-| LOW (code quality) | 5 |
-| LOW (performance) | 1 |
-| LOW (performance) → MEDIUM (correctness regression in original fix) | 1 |
+| MEDIUM (performance) | 4 |
+| LOW (correctness) | 3 |
 | LOW (safety) | 3 |
-| LOW (correctness) | 2 |
+| MEDIUM-HIGH | 3 |
 | LOW (cosmetic) | 1 |
-| **Total** | **508** |
+| LOW (performance) | 1 |
+| LOW (performance) → **MEDIUM** (correctness regression in original fix) | 1 |
+| MEDIUM (dead code / refcount drift) | 1 |
+| **Total** | **527** |
 
 ## Summary by Status
 
 | Status | Count |
 |---|---:|
-| `resolved` | 481 |
+| `resolved` | 487 |
 | `false_positive` | 22 |
-| `open` | 0 |
-| **Total** | **508** |
+| `open` | 18 |
+| **Total** | **527** |
 
 The `status` frontmatter field is a closed vocabulary of three slugs —
 `resolved`, `false_positive`, `open` — so both summary tables and the status
 column of the table below are mechanically derivable from the per-bug
 frontmatter. The resolution narrative for each bug lives in its body
 (`**Status:**` line), not in the frontmatter field.
+
+The `verified` field is a separate vocabulary — `human-reviewed`,
+`machine-confirmed`, and, since the 2026-10-05 sweep, `unverified` for findings
+recorded from static analysis that have not been reproduced at runtime. It is
+not tabulated here; an `open` bug whose body carries a
+*Verification status* note is a lead, not a confirmed defect.
 
 ## All Bugs
 
@@ -565,3 +571,22 @@ frontmatter. The resolution narrative for each bug lives in its body
 | [508](508.md) | README.md claims 1,032 tests passing; the suite is 1,035 (1,034 passing, 1 skipped) | LOW (correctness) | resolved |
 | [509](509.md) | `.workbuddy-ai/` agent memory files are untracked but absent from .gitignore | LOW (safety) | resolved |
 | [510](510.md) | log.zig gates a non-atomic `log_fd` global with an atomic flag rather than a lock (fd-reuse hazard, latent) | LOW (safety) | resolved |
+| [511](511.md) | resize-pane mutates only the pane grid, never the layout tree, so the resize is clipped and reverted | HIGH | open |
+| [512](512.md) | capture-pane emits NUL bytes for every blank and wide-char padding cell | HIGH | open |
+| [513](513.md) | IRM (insert mode) shift decrements sixel refcounts for moved markers without re-incrementing them | MEDIUM | open |
+| [514](514.md) | char_width classifies U+00A0 (NO-BREAK SPACE) as zero-width, silently dropping it | MEDIUM | open |
+| [515](515.md) | BufferList.pushOwned's #456 errdefer double-frees against the caller's own errdefers | MEDIUM | open |
+| [516](516.md) | numeric-valued choice options cannot be set: `set -g status 2` fails, clock-mode-style is unusable | MEDIUM | open |
+| [517](517.md) | list-keys prints enum tag names, so its output is not a valid config and cannot be re-sourced | MEDIUM | open |
+| [518](518.md) | thirteen option-table entries are inert: accepted, stored, and listed by show-options but read by nothing | LOW | open |
+| [519](519.md) | the two SGR attribute tables disagree on double-underline: tty.zig emits 21, render.zig emits 4:2 | LOW | open |
+| [520](520.md) | duplication cluster 4: five hand-rolled non-blocking write loops, byte-identical Layout.removePane/extractPane, mirrored vi/emacs copy-mode keymaps, and 30 copies of the active-target prologue | LOW (code quality) | open |
+| [521](521.md) | processInput keeps reading MessageReader.buf after a detach keybinding frees the reader (the #428 fix covers the consume path but not the read path) | HIGH | open |
+| [522](522.md) | the display client `behind` flag is never cleared when the out-buffer backlog is force-dropped, permanently starving that client | MEDIUM | open |
+| [523](523.md) | DECSET/DECRST 6 (DECOM, origin mode) is not wired, so all origin-mode handling is unreachable | MEDIUM | open |
+| [524](524.md) | NEL (0x85) performs IND only, so it does not reset the column to 0 | MEDIUM | open |
+| [525](525.md) | cursorPosition's origin-mode row addition is non-saturating, unlike its sibling cursorLine | LOW | open |
+| [526](526.md) | CBT (`CSI Z`) divides by tab_stop without the zero guard added for bug #463 | LOW | open |
+| [527](527.md) | client/raw.zig uses macOS VMIN/VTIME indices on FreeBSD (16/17), where 4/5 are VWERASE/VKILL | LOW | open |
+| [528](528.md) | Window.splitPane mutates the layout tree before appending to window.panes, so an OOM append desyncs them | MEDIUM | open |
+| [529](529.md) | AGENTS.md claimed version @hasField gates live only in build.zig, contradicted by four OS-ABI gates in the tree | LOW (correctness) | resolved |

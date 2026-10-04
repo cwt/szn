@@ -56,9 +56,12 @@ szn builds on Zig 0.16.0 **and** 0.17.0 from one source tree. Two rules:
 
 1. **Prefer APIs present in both releases.** Do not adopt a 0.17-only
    replacement for something 0.16 also needs.
-2. **Confine version branches.** Comptime `@hasField` gates live only in
-   `build.zig`; runtime-visible shims live only in `src/compat.zig`. Never
-   scatter `@hasField` checks through the rest of the source.
+2. **Confine version branches.** Zig-version gates live only in `build.zig`
+   (comptime `@hasField`); runtime-visible shims live only in `src/compat.zig`.
+   Never scatter *version* checks through the rest of the source. (The
+   `@hasField(c.sockaddr.un, "len")` checks in `client/connect.zig`,
+   `server/socket.zig` and `server/server.zig` are pre-existing **OS-ABI**
+   gates, not version gates — leave them where they are.)
 
 Portable spellings already in use:
 
