@@ -1371,6 +1371,18 @@ pub const Server = struct {
         _ = pane.resizeTerminal(bounds.w, bounds.h) catch |err| std.log.warn("resizeTerminal failed: {any}", .{err});
     }
 
+    /// Move a yanked selection into the buffer list (bug #515). Ownership of
+    /// `data` transfers on entry: on success `pushOwned` has taken it, and on
+    /// failure it has been freed. The caller must not free it again — that was
+    /// the double-free this helper removes.
+    fn yankToBuffer(buffers: *buffer_mod.BufferList, allocator: std.mem.Allocator, data: []const u8) !void {
+        const name = buffers.generateName() catch |err| {
+            allocator.free(data);
+            return err;
+        };
+        try buffers.pushOwned(name, data);
+    }
+
     /// Grow or shrink `pane` by (dw, dh) cells (bug #511). Prefers moving the
     /// layout tree so the change renders and survives later resizes; falls back
     /// to a direct grid resize when the window has no split on that axis.
@@ -1720,10 +1732,7 @@ pub const Server = struct {
                                 if (is_yank and cm.selection.active) {
                                     const data = cm.yankSelection(self.allocator, &pane.screen.grid) catch null;
                                     if (data) |d| {
-                                        errdefer self.allocator.free(d);
-                                        const name = try self.buffers.generateName();
-                                        errdefer self.allocator.free(name);
-                                        try self.buffers.pushOwned(name, d);
+                                        try yankToBuffer(&self.buffers, self.allocator, d);
                                     }
                                     pane.screen.copy_mode = null;
                                     pane.dirty = true;
@@ -1838,10 +1847,7 @@ pub const Server = struct {
                                     if (cm.selection.active and moved) {
                                         const data = cm.yankSelection(self.allocator, &pane.screen.grid) catch null;
                                         if (data) |d| {
-                                            errdefer self.allocator.free(d);
-                                            const name = try self.buffers.generateName();
-                                            errdefer self.allocator.free(name);
-                                            try self.buffers.pushOwned(name, d);
+                                            try yankToBuffer(&self.buffers, self.allocator, d);
                                         }
                                         pane.screen.copy_mode = null;
                                         pane.dirty = true;
@@ -2007,10 +2013,7 @@ pub const Server = struct {
                                                         if (cm.selection.active) {
                                                             const data = cm.yankSelection(self.allocator, &press_pane.screen.grid) catch null;
                                                             if (data) |d| {
-                                                                errdefer self.allocator.free(d);
-                                                                const name = try self.buffers.generateName();
-                                                                errdefer self.allocator.free(name);
-                                                                try self.buffers.pushOwned(name, d);
+                                                                try yankToBuffer(&self.buffers, self.allocator, d);
                                                             }
                                                             press_pane.screen.copy_mode = null;
                                                             press_pane.dirty = true;
@@ -3816,6 +3819,28 @@ test "newSession frees session internals when append fails — bug #296" {
             // On any failure, including one after session.init's arena was
             // built (i.e. the sessions.append step), nothing may remain.
             try testing.expectEqual(@as(usize, 0), server.sessions.items.len);
+        }
+    }
+}
+
+test "yankToBuffer frees the selection exactly once on any failure — bug #515" {
+    // Sweep the fail index so both the generateName and the pushOwned-insert
+    // failure paths are exercised.
+    var i: usize = 0;
+    while (i < 8) : (i += 1) {
+        var failing = std.testing.FailingAllocator.init(testing.allocator, .{ .fail_index = i });
+        var bl = buffer_mod.BufferList.init(failing.allocator());
+        defer bl.deinit();
+
+        const data = try testing.allocator.dupe(u8, "payload");
+        if (Server.yankToBuffer(&bl, failing.allocator(), data)) |_| {
+            // Success: the buffer list owns `data` now.
+            try testing.expectEqual(@as(usize, 1), bl.items.items.len);
+        } else |_| {
+            // Failure: `yankToBuffer` freed `data` exactly once. The pre-#515
+            // shape also freed it at the call site, which trips the testing
+            // allocator's double-free detection here.
+            try testing.expectEqual(@as(usize, 0), bl.items.items.len);
         }
     }
 }
