@@ -766,8 +766,15 @@ fn cmdCapturePane(server: *Server, _: []const []const u8) CmdResult {
         var x: u32 = 0;
         while (x < pane.screen.grid.width) : (x += 1) {
             const cell = pane.screen.grid.getCell(x, y);
+            // bug #512: blank cells carry char = 0, and the trailing half of a
+            // wide character is a padding cell (char = 0, is_padding = true).
+            // Encoding those verbatim emitted literal NUL bytes — one per blank
+            // cell, plus one after every wide character. Emit a space for a
+            // blank and nothing at all for the padding half.
+            if (cell.is_padding) continue;
+            const cp: u21 = if (cell.char == 0) ' ' else cell.char;
             var utf8_buf: [4]u8 = undefined;
-            const len = std.unicode.utf8Encode(cell.char, &utf8_buf) catch blk: {
+            const len = std.unicode.utf8Encode(cp, &utf8_buf) catch blk: {
                 utf8_buf[0] = ' ';
                 break :blk 1;
             };
@@ -3193,6 +3200,41 @@ test "resize-pane moves the layout tree, not just the pane grid — bug #511" {
     try win.resize(win.width, win.height);
     try testing.expectEqual(after.w, win.layout.findPaneBounds(pane).?.w);
     try testing.expectEqual(after.w, pane.screen.grid.width);
+}
+
+test "capture-pane emits spaces, not NUL bytes, for blank and padding cells — bug #512" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+    const session = try server.newSession("test", 20, 2);
+    const pane = session.active_window.?.active_pane.?;
+
+    // A wide character leaves a padding cell (char = 0, is_padding = true)
+    // immediately behind it; every other cell is blank (char = 0).
+    try pane.screen.writeChar('世');
+
+    server.response_buf.clearRetainingCapacity();
+    var c = try parse("capture-pane", testing.allocator);
+    defer c.deinit(testing.allocator);
+    try testing.expectEqual(CmdResult.ok, c.exec(&server));
+
+    const out = server.response_buf.items;
+
+    // No cell may encode as U+0000.
+    try testing.expect(std.mem.indexOfScalar(u8, out, 0) == null);
+
+    // Row 0 is the wide character followed by 18 blank cells. The padding half
+    // of the wide character emits nothing, so the row is 20 columns wide.
+    var row0: [22]u8 = undefined;
+    @memcpy(row0[0..3], "世");
+    @memset(row0[3..21], ' ');
+    row0[21] = '\n';
+    try testing.expect(std.mem.startsWith(u8, out, &row0));
+
+    // Row 1 is entirely blank, so a full row of spaces.
+    var row1: [21]u8 = undefined;
+    @memset(row1[0..20], ' ');
+    row1[20] = '\n';
+    try testing.expect(std.mem.endsWith(u8, out, &row1));
 }
 
 test "kill-window on last window destroys the session — bug #407" {
