@@ -1,4 +1,5 @@
 const std = @import("std");
+const compat = @import("../compat.zig");
 const testing = std.testing;
 const server_mod = @import("../server/server.zig");
 const Server = server_mod.Server;
@@ -551,7 +552,7 @@ fn cmdDeleteBuffer(server: *Server, args: []const []const u8) CmdResult {
 
 fn cmdSaveBuffer(server: *Server, args: []const []const u8) CmdResult {
     const path = if (args.len > 1) args[1] else return .err;
-    const path_z = server.allocator.dupeZ(u8, path) catch return .err;
+    const path_z = compat.dupeZ(server.allocator, path) catch return .err;
     defer server.allocator.free(path_z);
     const data = server.buffers.get(null) orelse return .err;
     const fd = std.c.open(path_z, std.c.O{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true }, @as(std.c.mode_t, 0o644));
@@ -573,7 +574,7 @@ fn cmdSaveBuffer(server: *Server, args: []const []const u8) CmdResult {
 
 fn cmdLoadBuffer(server: *Server, args: []const []const u8) CmdResult {
     const path = if (args.len > 1) args[1] else return .err;
-    const path_z = server.allocator.dupeZ(u8, path) catch return .err;
+    const path_z = compat.dupeZ(server.allocator, path) catch return .err;
     defer server.allocator.free(path_z);
     const fd = std.c.open(path_z, std.c.O{ .ACCMODE = .RDONLY }, @as(std.c.mode_t, 0));
     if (fd < 0) return .err;
@@ -696,7 +697,7 @@ fn cmdFindWindow(server: *Server, args: []const []const u8) CmdResult {
 
     for (session.windows.items) |w| {
         // Single use; call stdlib directly (bug #477: removed one-line wrapper).
-        if (std.ascii.indexOfIgnoreCase(w.name, query) != null) {
+        if (compat.indexOfIgnoreCase(w.name, query) != null) {
             session.setActiveWindow(w);
             return .ok;
         }
@@ -2819,7 +2820,7 @@ test "load-buffer enforces MAX_PASTE_SIZE — bug #382" {
     {
         const fd = std.c.open(path, std.c.O{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true }, @as(std.c.mode_t, 0o644));
         try testing.expect(fd >= 0);
-        const chunk = [_]u8{'x'} ** 4096;
+        const chunk = blk: { var a: [4096]u8 = undefined; @memset(&a, 'x'); break :blk a; };
         var written: usize = 0;
         while (written <= Server.MAX_PASTE_SIZE) : (written += chunk.len) {
             _ = std.c.write(fd, &chunk, chunk.len);

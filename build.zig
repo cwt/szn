@@ -3,9 +3,15 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const OptimizeMode = @TypeOf(optimize);
+    const debug_mode: OptimizeMode = if (@hasField(OptimizeMode, "debug")) .debug else .Debug;
 
     const version = blk: {
-        const zon_content = b.build_root.handle.readFileAlloc(b.graph.io, "build.zig.zon", b.allocator, @enumFromInt(1024 * 1024)) catch break :blk "unknown";
+        const root_handle = if (@hasField(std.Build, "build_root"))
+            b.build_root.handle
+        else
+            b.root.root_dir.handle;
+        const zon_content = root_handle.readFileAlloc(b.graph.io, "build.zig.zon", b.allocator, @enumFromInt(1024 * 1024)) catch break :blk "unknown";
         const needle = ".version = \"";
         const start_idx = std.mem.indexOf(u8, zon_content, needle) orelse break :blk "unknown";
         const start = start_idx + needle.len;
@@ -29,11 +35,11 @@ pub fn build(b: *std.Build) void {
         .root_module = exe_module,
     });
     const is_darwin = target.result.os.tag.isDarwin();
-    if (optimize != .Debug and !is_darwin) {
+    if (optimize != debug_mode and !is_darwin) {
         exe.lto = .thin;
         exe.use_lld = true;
     }
-    if (optimize != .Debug) exe.root_module.strip = true;
+    if (optimize != debug_mode) exe.root_module.strip = true;
     b.installArtifact(exe);
 
     const run_cmd = b.addRunArtifact(exe);
@@ -52,7 +58,7 @@ pub fn build(b: *std.Build) void {
     const test_exe = b.addTest(.{
         .root_module = test_module,
     });
-    if (optimize != .Debug and !is_darwin) {
+    if (optimize != debug_mode and !is_darwin) {
         test_exe.lto = .thin;
         test_exe.use_lld = true;
     }

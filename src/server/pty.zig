@@ -1,4 +1,5 @@
 const std = @import("std");
+const compat = @import("../compat.zig");
 const testing = std.testing;
 
 pub const Error = error{
@@ -164,17 +165,17 @@ pub const Pty = struct {
             allocator.free(argv_z);
         }
         for (args, 0..) |arg, i| {
-            argv_z[i] = try allocator.dupeZ(u8, arg);
+            argv_z[i] = try compat.dupeZ(allocator, arg);
         }
         argv_z[args.len] = null;
 
-        const szn_env_z = try allocator.dupeZ(u8, szn_env);
+        const szn_env_z = try compat.dupeZ(allocator, szn_env);
         defer allocator.free(szn_env_z);
 
-        const szn_pane_z = try allocator.dupeZ(u8, szn_pane);
+        const szn_pane_z = try compat.dupeZ(allocator, szn_pane);
         defer allocator.free(szn_pane_z);
 
-        const cwd_z: ?[:0]const u8 = if (cwd) |c| try allocator.dupeZ(u8, c) else null;
+        const cwd_z: ?[:0]const u8 = if (cwd) |c| try compat.dupeZ(allocator, c) else null;
         defer if (cwd_z) |c| allocator.free(c);
 
         const pid = fork();
@@ -232,7 +233,7 @@ pub const Pty = struct {
             return try allocator.dupe(u8, path_bytes[0..path_end]);
         } else if (builtin.os.tag == .linux) {
             var proc_path_buf: [64]u8 = undefined;
-            const proc_path_z = std.fmt.bufPrintZ(&proc_path_buf, "/proc/{d}/cwd", .{pgrp}) catch return error.ProcessExited;
+            const proc_path_z = std.fmt.bufPrintSentinel(&proc_path_buf, "/proc/{d}/cwd", .{pgrp}, 0) catch return error.ProcessExited;
 
             var path_buf: [MAXPATHLEN]u8 = undefined;
             const n = readlink(proc_path_z, &path_buf, path_buf.len);
@@ -364,7 +365,7 @@ pub const Pty = struct {
             return buf[0..len];
         } else if (builtin.os.tag == .linux) {
             var path_buf: [64]u8 = undefined;
-            const path = std.fmt.bufPrintZ(&path_buf, "/proc/{d}/comm", .{pgid}) catch return error.ReadFailed;
+            const path = std.fmt.bufPrintSentinel(&path_buf, "/proc/{d}/comm", .{pgid}, 0) catch return error.ReadFailed;
             const fd = std.c.open(path, std.c.O{ .ACCMODE = .RDONLY }, @as(std.c.mode_t, 0));
             if (fd < 0) return error.ReadFailed;
             defer _ = std.c.close(fd);

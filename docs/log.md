@@ -7,7 +7,7 @@ sources:
   - docs/
 verified: human-reviewed
 tags: [log, changelog, okf]
-timestamp: 2026-09-27T11:06:00Z
+timestamp: 2026-10-04T17:20:00Z
 ---
 
 # Documentation Bundle Log
@@ -15,6 +15,7 @@ timestamp: 2026-09-27T11:06:00Z
 This file tracks all modifications, extensions, and updates to the `szn` documentation bundle in chronological order.
 
 | Timestamp | Document | Action | Description |
+| 2026-10-04T17:20:00Z | [compat.zig](https://github.com/cwt/szn/blob/main/src/compat.zig), [README.md](https://github.com/cwt/szn/blob/main/README.md), [AGENTS.md](https://github.com/cwt/szn/blob/main/AGENTS.md), [build-run.md](build-run.md), [architecture.md](architecture.md), [progress.md](development/progress.md) | Updated | Added **dual-toolchain support**: szn now compiles on Zig 0.16.0 *and* 0.17.0 from one source tree. Replaced the APIs 0.17 removed or renamed (`Allocator.dupeZ`, `std.fmt.bufPrintZ`, `std.meta.fields`, `std.ascii.indexOfIgnoreCase`, the `**` array-repetition operator, the `OptimizeMode.Debug` tag, `Build.build_root`) with spellings that exist in both releases; added `src/compat.zig` for the three shims with no shared form; confined all version branching to two comptime `@hasField` gates in `build.zig`. Documented the rule in AGENTS.md, corrected the toolchain prerequisite and the stale 944 test count in build-run.md, and fixed a stale `src/cmd/mod.zig` source citation in architecture.md. Verified 1042/1042 tests passing on both toolchains. |
 | 2026-09-27T11:06:00Z | [506-510](development/bugs/) | Resolved | All five findings from the whole-project review fixed, with 6 new regression tests (1,035 → 1,041). #506: `codepoint-widths`/`variation-selector-always-wide` declared server-scoped via `options.isServerScoped` and redirected to the server store, so a bare `set-option` no longer writes a per-session copy of a process-wide value. #507: the "no global state" claim in AGENTS.md and architecture.md qualified with its three exception groups. #510: `log_fd` made atomic, and `disable` now clears the gate before closing the descriptor. #509: `.workbuddy-ai/` (and `.claude/`) declared in .gitignore. #508: README and progress.md test counts corrected to 1,041. |
 | 2026-09-27T10:46:00Z | [bugs/506-510](development/bugs/) | Created | Filed 5 findings from the 2026-09-27 whole-project review, all open: `codepoint-widths` session-scoped but process-global (HIGH), the "No global state" claim contradicted by 11 module globals, stale README test count, `.workbuddy-ai/` missing from .gitignore, and a non-atomic log fd behind an atomic gate. |
 | 2026-09-27T10:46:00Z | [BUGS.md](development/bugs/index.md) | Updated | Added #506–#510 rows, updated severity and status tables, coverage note now reads #1–#300, #303–#510 / 508 entries with 5 open. |

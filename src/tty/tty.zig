@@ -14,7 +14,7 @@ const Writer = std.Io.Writer;
 pub const Error = fd_writer.Error;
 
 const attrFields = blk: {
-    const all = std.meta.fields(Attr);
+    const all = std.meta.fieldNames(Attr);
     break :blk all[0 .. all.len - 2]; // exclude sixel and _padding
 };
 const attrCodes = [_][]const u8{ "1", "2", "3", "4", "5", "7", "8", "9", "53", "21", "4:3" };
@@ -26,9 +26,9 @@ comptime {
 
 const SGR_ATTR_MASK: u16 = blk: {
     var mask: u16 = 0;
-    for (attrFields) |field| {
+    for (attrFields) |field_name| {
         var a: Attr = .{};
-        @field(a, field.name) = true;
+        @field(a, field_name) = true;
         mask |= @as(u16, @bitCast(a));
     }
     break :blk mask;
@@ -177,8 +177,8 @@ pub const Term = struct {
 
         try self.write("\x1b[");
         var first = true;
-        inline for (attrFields, 0..) |field, i| {
-            if (@field(attrs, field.name)) {
+        inline for (attrFields, 0..) |field_name, i| {
+            if (@field(attrs, field_name)) {
                 if (!first) try self.writeByte(';');
                 try self.write(attrCodes[i]);
                 first = false;

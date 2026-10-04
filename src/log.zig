@@ -67,7 +67,7 @@ fn resolveLogPath(buf: []u8) Error![:0]const u8 {
     if (std.c.getenv("XDG_STATE_HOME")) |xdg_raw| {
         const xdg = std.mem.span(xdg_raw);
         var dir_buf: [256]u8 = undefined;
-        const dir_z = std.fmt.bufPrintZ(&dir_buf, "{s}/szn", .{xdg}) catch
+        const dir_z = std.fmt.bufPrintSentinel(&dir_buf, "{s}/szn", .{xdg}, 0) catch
             return try resolveHomeOrTmp(buf);
         const rc = c.mkdir(dir_z.ptr, 0o755);
         if (rc < 0) {
@@ -76,7 +76,7 @@ fn resolveLogPath(buf: []u8) Error![:0]const u8 {
                 return try resolveHomeOrTmp(buf);
             }
         }
-        return std.fmt.bufPrintZ(buf, "{s}/szn/szn.log", .{xdg}) catch
+        return std.fmt.bufPrintSentinel(buf, "{s}/szn/szn.log", .{xdg}, 0) catch
             return try resolveHomeOrTmp(buf);
     }
     return try resolveHomeOrTmp(buf);
@@ -86,7 +86,7 @@ fn resolveHomeOrTmp(buf: []u8) Error![:0]const u8 {
     if (std.c.getenv("HOME")) |home| {
         const home_str = std.mem.span(home);
         var dir_path: [256]u8 = undefined;
-        const dir_z = std.fmt.bufPrintZ(&dir_path, "{s}/.szn", .{home_str}) catch
+        const dir_z = std.fmt.bufPrintSentinel(&dir_path, "{s}/.szn", .{home_str}, 0) catch
             return try resolveTmp(buf);
         const rc = c.mkdir(dir_z.ptr, 0o700);
         if (rc < 0) {
@@ -95,14 +95,14 @@ fn resolveHomeOrTmp(buf: []u8) Error![:0]const u8 {
                 return try resolveTmp(buf);
             }
         }
-        return std.fmt.bufPrintZ(buf, "{s}/.szn/szn.log", .{home_str}) catch
+        return std.fmt.bufPrintSentinel(buf, "{s}/.szn/szn.log", .{home_str}, 0) catch
             return try resolveTmp(buf);
     }
     return try resolveTmp(buf);
 }
 
 fn resolveTmp(buf: []u8) Error![:0]const u8 {
-    return std.fmt.bufPrintZ(buf, "/tmp/szn-{d}.log", .{getuid()});
+    return std.fmt.bufPrintSentinel(buf, "/tmp/szn-{d}.log", .{getuid()}, 0);
 }
 
 /// Dedicated log path for the interactive client (the "default" target of
@@ -112,18 +112,18 @@ fn resolveClientPath(buf: []u8) Error![:0]const u8 {
     if (std.c.getenv("HOME")) |home| {
         const home_str = std.mem.span(home);
         var dir_path: [256]u8 = undefined;
-        const dir_z = std.fmt.bufPrintZ(&dir_path, "{s}/.szn", .{home_str}) catch
-            return std.fmt.bufPrintZ(buf, "/tmp/szn-client-{d}.log", .{getuid()}) catch error.NoSpaceLeft;
+        const dir_z = std.fmt.bufPrintSentinel(&dir_path, "{s}/.szn", .{home_str}, 0) catch
+            return std.fmt.bufPrintSentinel(buf, "/tmp/szn-client-{d}.log", .{getuid()}, 0) catch error.NoSpaceLeft;
         const rc = c.mkdir(dir_z.ptr, 0o700);
         if (rc < 0) {
             const err = std.c.errno(rc);
             if (err != .EXIST) {
-                return std.fmt.bufPrintZ(buf, "/tmp/szn-client-{d}.log", .{getuid()}) catch error.NoSpaceLeft;
+                return std.fmt.bufPrintSentinel(buf, "/tmp/szn-client-{d}.log", .{getuid()}, 0) catch error.NoSpaceLeft;
             }
         }
-        return std.fmt.bufPrintZ(buf, "{s}/.szn/szn-client.log", .{home_str}) catch error.NoSpaceLeft;
+        return std.fmt.bufPrintSentinel(buf, "{s}/.szn/szn-client.log", .{home_str}, 0) catch error.NoSpaceLeft;
     }
-    return std.fmt.bufPrintZ(buf, "/tmp/szn-client-{d}.log", .{getuid()}) catch error.NoSpaceLeft;
+    return std.fmt.bufPrintSentinel(buf, "/tmp/szn-client-{d}.log", .{getuid()}, 0) catch error.NoSpaceLeft;
 }
 
 fn writeAllRaw(fd: std.posix.fd_t, bytes: []const u8) void {
@@ -215,7 +215,7 @@ pub fn enable(path_or_default: []const u8) void {
         break :blk open(resolved, O_WRONLY | O_CREAT | O_APPEND, 0o600);
     } else blk2: {
         var path_buf: [256]u8 = undefined;
-        const path_z = std.fmt.bufPrintZ(&path_buf, "{s}", .{path_or_default}) catch return;
+        const path_z = std.fmt.bufPrintSentinel(&path_buf, "{s}", .{path_or_default}, 0) catch return;
         break :blk2 open(path_z.ptr, O_WRONLY | O_CREAT | O_APPEND, 0o600);
     };
     if (fd < 0) return;
@@ -249,7 +249,7 @@ pub fn enableClientLog(path_or_default: []const u8) void {
         break :blk open(resolved, O_WRONLY | O_CREAT | O_APPEND, 0o600);
     } else blk2: {
         var path_buf: [256]u8 = undefined;
-        const path_z = std.fmt.bufPrintZ(&path_buf, "{s}", .{path_or_default}) catch return;
+        const path_z = std.fmt.bufPrintSentinel(&path_buf, "{s}", .{path_or_default}, 0) catch return;
         break :blk2 open(path_z.ptr, O_WRONLY | O_CREAT | O_APPEND, 0o600);
     };
     if (fd < 0) return;

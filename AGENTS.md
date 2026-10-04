@@ -9,7 +9,10 @@ the repository root as Zig source files.
 ## Zig Coding Standards
 
 ### Version
-Target Zig 0.16.0 (latest stable). Use `std.zig` style.
+Target **Zig 0.16.0 and Zig 0.17.0** — the source must compile on both. Use
+`std.zig` style. Zig 0.17 removed several std APIs, so prefer the subset that
+exists in both releases, and put anything genuinely version-specific in
+`src/compat.zig` (see *Cross-version compatibility* below).
 
 ### Naming
 - Types: `PascalCase` — `Session`, `Window`, `Pane`
@@ -46,6 +49,31 @@ Target Zig 0.16.0 (latest stable). Use `std.zig` style.
 - Subsystems in directories: `src/tty/`, `src/server/`, `src/client/`, `src/cmd/`.
 - Core modules at `src/` root: `grid.zig`, `input.zig`, `screen.zig`, `session.zig`, `window.zig`, etc.
 - `src/main.zig` entry point.
+- `src/compat.zig` — cross-toolchain shims only (see below).
+
+### Cross-version compatibility
+szn builds on Zig 0.16.0 **and** 0.17.0 from one source tree. Two rules:
+
+1. **Prefer APIs present in both releases.** Do not adopt a 0.17-only
+   replacement for something 0.16 also needs.
+2. **Confine version branches.** Comptime `@hasField` gates live only in
+   `build.zig`; runtime-visible shims live only in `src/compat.zig`. Never
+   scatter `@hasField` checks through the rest of the source.
+
+Portable spellings already in use:
+
+| Removed / changed in 0.17 | Use instead |
+|---|---|
+| `Allocator.dupeZ` | `compat.dupeZ` |
+| `std.fmt.bufPrintZ` | `std.fmt.bufPrintSentinel(..., 0)` |
+| `std.meta.fields(T)[i].name` | `std.meta.fieldNames(T)` |
+| `std.ascii.indexOfIgnoreCase` | `compat.indexOfIgnoreCase` |
+| `[_]T{v} ** N` array repetition | `std.mem.zeroes` / comptime `@memset` |
+| `.Debug` optimize tag | `compat.is_debug_build` |
+
+`zig build test` must pass on both toolchains (1042 tests). The `.Debug` /
+`OptimizeMode` spellings are deprecated in 0.17 and slated for removal after
+0.18.0 — expect to revisit the `build.zig` gates at that point.
 
 ## Design Principles
 

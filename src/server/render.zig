@@ -745,12 +745,12 @@ pub const Display = struct {
                         sgr_pos += appendFrag(sgr_buf[sgr_pos..], "\x1b[m");
 
                         const attrFields = comptime blk: {
-                            const all = std.meta.fields(Attr);
+                            const all = std.meta.fieldNames(Attr);
                             break :blk all[0 .. all.len - 2];
                         };
                         comptime std.debug.assert(attrFields.len == attr_sgr.len);
-                        inline for (attrFields, 0..) |field, idx| {
-                            if (@field(cell.attr, field.name)) {
+                        inline for (attrFields, 0..) |field_name, idx| {
+                            if (@field(cell.attr, field_name)) {
                                 sgr_pos += appendFrag(sgr_buf[sgr_pos..], attr_sgr[idx].slice());
                             }
                         }
@@ -988,8 +988,8 @@ pub const Display = struct {
     /// All erases happen before all draws so a redraw always restores any
     /// overlay pixels the erase may have cleared.
     const PerPaneSixelState = struct {
-        anchors: [64]?SixelAnchor = [_]?SixelAnchor{null} ** 64,
-        ids: [64]?u32 = [_]?u32{null} ** 64,
+        anchors: [64]?SixelAnchor = std.mem.zeroes([64]?SixelAnchor),
+        ids: [64]?u32 = std.mem.zeroes([64]?u32),
     };
 
     fn computeSixelState(screen: *const Screen, pb: PaneBounds) PerPaneSixelState {

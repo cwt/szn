@@ -12,7 +12,7 @@ sources:
   - src/screen.zig
   - src/grid.zig
   - src/input.zig
-  - src/cmd/mod.zig
+  - src/cmd/cmd.zig
 verified: human-reviewed
 stale_after: 2027-01-01T00:00:00Z
 tags: [architecture, overview, server, client, process-model]
@@ -21,10 +21,10 @@ timestamp: 2026-08-30T16:20:00Z
 
 # Architecture Overview
 
-szn is a from-scratch rewrite of tmux in Zig 0.16.0. It keeps tmux's
-client/server shape but replaces imsg with a tiny length-prefixed packet
-protocol and uses arena allocation per session/pane instead of reference
-counting.
+szn is a from-scratch rewrite of tmux in Zig, targeting **Zig 0.16.0 and
+0.17.0**. It keeps tmux's client/server shape but replaces imsg with a tiny
+length-prefixed packet protocol and uses arena allocation per session/pane
+instead of reference counting.
 
 > **Referencing convention:** this document names **symbols and files**, not
 > line numbers. Line citations drift every time a file is edited — an earlier
@@ -141,7 +141,9 @@ calls `exec(server)` and returns a `DispatchResult`
 - `src/` root — core modules: `main`, `session`, `window`, `screen`, `grid`,
   `input`, `colour`, `char_width`, `key`, `key_binding`, `options`, `cfg`,
   `layout`, `choose`, `mode_copy`, `clock`, `buffer`, `format`, `status`,
-  `thai`, `socket_path`, `log`, `integration`.
+  `thai`, `socket_path`, `log`, `integration`, `compat` (cross-toolchain
+  shims for Zig 0.16/0.17 — see
+  [Zig version compatibility](https://github.com/cwt/szn/blob/main/README.md#zig-version-compatibility)).
 - `src/server/` — `server`, `loop`, `protocol`, `socket`, `pty`,
   `message_reader`, `dispatch`, `render`.
 - `src/client/` — `client`, `connect`, `raw` (termios raw mode).

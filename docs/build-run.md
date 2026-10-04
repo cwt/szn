@@ -18,9 +18,10 @@ timestamp: 2026-08-30T16:20:00Z
 
 ## Prerequisites
 
-- **Zig 0.16.0** (documented target; no `.zig-version` pin and
-  `build.zig.zon` has no `minimum_zig_version`, so a 0.16.x toolchain is the
-  safe bet).
+- **Zig 0.16.0 or Zig 0.17.0** — the source compiles on both (see
+  [Zig version compatibility](https://github.com/cwt/szn/blob/main/README.md#zig-version-compatibility)).
+  There is no `.zig-version` pin and `build.zig.zon` has no
+  `minimum_zig_version`, so either 0.16.x or 0.17.x works.
 - **libc** required — both the executable module and the test module set
   `link_libc = true`. Uses `fork`/`setsid`/`ioctl`/`tcsetattr` etc.
 - **OS**: macOS and Linux both supported.
@@ -75,8 +76,8 @@ Nested szn is blocked (env `SZN` set → `detectNested` returns true).
 `src/test.zig` is a **comptime aggregator** that `@import`s every module so
 their top-level `test {}` blocks compile into one test binary (see the
 `b.addTest` call in `build.zig`). There is no separate `tests/` directory —
-tests live next to the code they cover. As of 2026-08-30 the suite is
-**944 tests**, all passing on a clean tree.
+tests live next to the code they cover. As of 2026-10-05 the suite is
+**1042 tests**, all passing on a clean tree under both Zig 0.16.0 and 0.17.0.
 
 ```bash
 zig build test
@@ -95,7 +96,7 @@ Notes:
 `zig build test` binds a listener at the default socket path
 (`$TMPDIR/szn.sock`, resolved by `socket_path.resolve`) and does **not**
 remove it afterwards. On the next run, three tests that share that global
-path then interfere with each other and report 941/944:
+path then interfere with each other and report 1039/1042:
 
 ```
 server.server.test.server listen creates socket
@@ -103,7 +104,7 @@ server.socket.test.listener creates and closes
 client.connect.test.connectToServer fails gracefully when no server running
 ```
 
-Remove the leftover socket before testing for a clean 944/944:
+Remove the leftover socket before testing for a clean 1042/1042:
 
 ```bash
 rm -f "$TMPDIR/szn.sock" && zig build test

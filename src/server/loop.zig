@@ -173,7 +173,7 @@ test "loop init" {
 }
 
 test "loop handles more than 64 fds without stack overflow" {
-    var pipes = std.ArrayList([2]i32){ .items = &.{}, .capacity = 0 };
+    var pipes: std.ArrayList([2]i32) = .empty;
     defer pipes.deinit(testing.allocator);
 
     var loop = Loop.init();

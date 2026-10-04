@@ -121,23 +121,23 @@ pub const Screen = struct {
     clock_utc: bool = false,
     tab_stop: u32 = 8,
     /// Sixel images received from child processes, stored in a ring buffer registry.
-    sixel_images: [64]?SixelImage = [_]?SixelImage{null} ** 64,
+    sixel_images: [64]?SixelImage = std.mem.zeroes([64]?SixelImage),
     next_sixel_id: u32 = 0,
     /// Per-slot reference count: number of grid cells currently referencing
     /// this sixel image (bug #225). Replaces the O(n) cell-scan in
     /// `isImageReferenced` with an O(1) array lookup.
-    sixel_refcounts: [64]usize = [_]usize{0} ** 64,
+    sixel_refcounts: [64]usize = std.mem.zeroes([64]usize),
     /// Anchor (pane-relative top-left cell, clamped to >= 0) each registry
     /// slot's sixel image was last drawn at during the previous render frame.
     /// The renderer uses this to erase a moved/removed image's overlay pixels
     /// (bug #195): the terminal's separate sixel layer is not cleared by `ECH`,
     /// so without tracking the last anchor a scrolling image leaves a smear
     /// trail, and a removed image leaves a permanent ghost.
-    sixel_last_anchor: [64]?SixelAnchor = [_]?SixelAnchor{null} ** 64,
+    sixel_last_anchor: [64]?SixelAnchor = std.mem.zeroes([64]?SixelAnchor),
     /// Image id each slot was last drawn with, so a replacement at the same
     /// anchor (e.g. a preview thumbnail swapping content) is detected as a
     /// change even though the position didn't move (bug #298).
-    sixel_last_id: [64]?u32 = [_]?u32{null} ** 64,
+    sixel_last_id: [64]?u32 = std.mem.zeroes([64]?u32),
     /// Terminal cell size in pixels, used to convert sixel pixel dimensions into
     /// character-cell extents (bug #199). Defaults match the common 10×20 metrics
     /// but should be set from the real terminal (e.g. DECSLPP / font metrics).
@@ -158,7 +158,7 @@ pub const Screen = struct {
     last_char: ?u21 = null,
     extkeys: u8 = 0,
     kitty_kbd_flags: u32 = 0,
-    kitty_kbd_stack: [8]u32 = [_]u32{0} ** 8,
+    kitty_kbd_stack: [8]u32 = std.mem.zeroes([8]u32),
     kitty_kbd_stack_len: u8 = 0,
 
     pub fn init(allocator: std.mem.Allocator, width: u32, height: u32) Error!Screen {

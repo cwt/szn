@@ -21,6 +21,16 @@ Based on code audit as of 2026-06-21.
 
 Thai text reflow correctness sweep (#502–#505): compound-vowel cluster integrity (`เ-าะ` patterns no longer split at reflow boundaries), removal of a dead raw-codepoint check in `cellHasMaiHanAkat`, and atomic state transitions for runtime `libthai` loading in `src/thai.zig`.
 
+**Dual-toolchain support (2026-10-05):** szn now compiles on **both Zig 0.16.0
+and 0.17.0** from one source tree. Zig 0.17 removed or renamed a number of std
+APIs; each was replaced with a spelling that exists in *both* releases
+(`bufPrintSentinel`, `meta.fieldNames`, `mem.zeroes`, `allocSentinel`,
+`ascii.eqlIgnoreCase`, `= .empty`), and the two cases with no shared form
+(`Allocator.dupeZ`, `std.ascii.indexOfIgnoreCase`) plus the optimize-tag check
+were routed through a new `src/compat.zig`. The only comptime version branches
+are two `@hasField` gates in `build.zig` (`Build.build_root`, `.Debug` tag).
+`zig build test` passes **1042/1042 on 0.16.0 and on 0.17.0**.
+
 ---
 
 ## Migration Phase Audit
@@ -44,7 +54,8 @@ Thai text reflow correctness sweep (#502–#505): compound-vowel cluster integri
 
 > The per-phase **Tests** column above is a snapshot taken when each phase
 > landed, not a partition of the current total — later phases and audit sweeps
-> added tests to earlier modules, so those figures no longer sum to 944.
+> added tests to earlier modules, so those figures do not sum to the current
+> total.
 
 ---
 

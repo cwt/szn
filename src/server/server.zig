@@ -1,4 +1,5 @@
 const std = @import("std");
+const compat = @import("../compat.zig");
 const c = std.c;
 const testing = std.testing;
 const session_mod = @import("../session.zig");
@@ -1868,7 +1869,7 @@ pub const Server = struct {
                         switch (event) {
                             .key => |k| {
                                 // Diagnostic logging of parsed keys
-                                if (comptime @import("builtin").mode == .Debug) {
+                                if (comptime compat.is_debug_build) {
                                     var key_name_buf: [64]u8 = undefined;
                                     const key_str = @import("../key.zig").format(k, &key_name_buf);
                                     var log_msg_buf: [128]u8 = undefined;
@@ -2048,7 +2049,7 @@ pub const Server = struct {
                             switch (event) {
                                 .key => |k| {
                                     // Diagnostic logging of parsed keys
-                                    if (comptime @import("builtin").mode == .Debug) {
+                                    if (comptime compat.is_debug_build) {
                                         var key_name_buf: [64]u8 = undefined;
                                         const key_str = @import("../key.zig").format(k, &key_name_buf);
                                         var log_msg_buf: [128]u8 = undefined;
@@ -3589,10 +3590,10 @@ pub const Server = struct {
                         extern "c" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
                         extern "c" fn unsetenv(name: [*:0]const u8) c_int;
                     };
-                    const name_z = self.allocator.dupeZ(u8, e.name) catch return;
+                    const name_z = compat.dupeZ(self.allocator, e.name) catch return;
                     defer self.allocator.free(name_z);
                     if (e.value) |val| {
-                        const val_z = self.allocator.dupeZ(u8, val) catch return;
+                        const val_z = compat.dupeZ(self.allocator, val) catch return;
                         defer self.allocator.free(val_z);
                         _ = c_env.setenv(name_z, val_z, 1);
                     } else {
@@ -3606,7 +3607,7 @@ pub const Server = struct {
                     const c_sys = struct {
                         extern "c" fn system(command: [*:0]const u8) c_int;
                     };
-                    const cmd_c = self.allocator.dupeZ(u8, i.condition) catch continue;
+                    const cmd_c = compat.dupeZ(self.allocator, i.condition) catch continue;
                     defer self.allocator.free(cmd_c);
                     const rc = c_sys.system(cmd_c);
                     if (rc == 0) {
@@ -3644,7 +3645,7 @@ pub const Server = struct {
         }
         defer if (free_path) self.allocator.free(resolved_path);
 
-        const resolved_path_z = try self.allocator.dupeZ(u8, resolved_path);
+        const resolved_path_z = try compat.dupeZ(self.allocator, resolved_path);
         defer self.allocator.free(resolved_path_z);
 
         const f = fopen(resolved_path_z.ptr, "r") orelse return;
@@ -3683,7 +3684,7 @@ pub const Server = struct {
                 const path = try std.fs.path.join(self.allocator, &[_][]const u8{ home, sub_path });
                 defer self.allocator.free(path);
 
-                const path_z = try self.allocator.dupeZ(u8, path);
+                const path_z = try compat.dupeZ(self.allocator, path);
                 defer self.allocator.free(path_z);
 
                 if (access(path_z.ptr, 0) == 0) {

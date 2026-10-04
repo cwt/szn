@@ -160,6 +160,10 @@ Check out [progress.md](docs/development/progress.md) for the full migration and
 
 ## Building & Installation
 
+szn builds with **either Zig 0.16.0 or Zig 0.17.0** — the source is kept
+compatible with both toolchains. See
+[Zig version compatibility](#zig-version-compatibility).
+
 To build and run tests:
 
 ```bash
@@ -172,6 +176,32 @@ To install the output binary to a specific path (for example, `~/.local/bin`):
 ```bash
 zig build -Doptimize=ReleaseFast --prefix ~/.local
 ```
+
+## Zig version compatibility
+
+szn compiles on **Zig 0.16.0** and **Zig 0.17.0** from the same source. Zig
+0.17 renamed or removed a number of standard-library APIs, so the port sticks
+to the subset that exists in *both* releases and confines the unavoidable
+version branches to two places: comptime `@hasField` gates in `build.zig`, and
+a small shim module at `src/compat.zig`.
+
+| Removed / changed in 0.17 | Portable form used here |
+|---|---|
+| `Allocator.dupeZ` | `compat.dupeZ` (backed by `allocSentinel`) |
+| `std.fmt.bufPrintZ` | `std.fmt.bufPrintSentinel(..., 0)` |
+| `std.meta.fields(T)[i].name` | `std.meta.fieldNames(T)` |
+| `std.ascii.indexOfIgnoreCase` | `compat.indexOfIgnoreCase` |
+| `[_]T{v} ** N` array repetition | `std.mem.zeroes` / comptime `@memset` |
+| `.Debug` optimize tag | `compat.is_debug_build` |
+| `Build.build_root` | `Build.root` (selected via `@hasField`) |
+
+Both toolchains are verified locally: `zig build test` reports **1042/1042
+passing on 0.16.0 and on 0.17.0**.
+
+> **Maintenance note.** Zig 0.17 marks the old `.Debug` / `OptimizeMode`
+> spellings as deprecated ("to be removed after 0.18.0"), so a future 0.18 bump
+> will need the two `@hasField` gates in `build.zig` revisited.
+> `src/compat.zig` is the single place to extend for the next toolchain.
 
 ## Usage
 
