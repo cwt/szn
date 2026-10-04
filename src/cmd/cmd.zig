@@ -3262,6 +3262,34 @@ test "bare kill-session kills active session only — bug #407" {
     try testing.expectEqualStrings("s2", server.sessions.items[0].name);
 }
 
+test "numeric-valued choice options are settable — bug #516" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+    _ = try server.newSession("test", 80, 24);
+
+    // A bare digit parses as .number, so the choice coercion must match it
+    // against the definition's choices as a decimal string. Before the fix
+    // both of these returned .err — and clock-mode-style, whose choices are
+    // "12"/"24", was unsettable through any path at all.
+    {
+        var c = try parse("set-option -g status 2", testing.allocator);
+        defer c.deinit(testing.allocator);
+        try testing.expectEqual(CmdResult.ok, c.exec(&server));
+    }
+    {
+        var c = try parse("set-option -g clock-mode-style 24", testing.allocator);
+        defer c.deinit(testing.allocator);
+        try testing.expectEqual(CmdResult.ok, c.exec(&server));
+    }
+
+    // A value outside the choice set is still rejected.
+    {
+        var c = try parse("set-option -g status 9", testing.allocator);
+        defer c.deinit(testing.allocator);
+        try testing.expectEqual(CmdResult.err, c.exec(&server));
+    }
+}
+
 test "set-option -g history-limit configures ring buffer size across panes" {
     var server = try Server.init(testing.allocator);
     defer server.deinit();

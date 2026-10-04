@@ -162,6 +162,21 @@ fn coerceValue(def: OptionDef, value: OptionValue) Error!OptionValue {
                     }
                     return value;
                 },
+                .number => |n| {
+                    // bug #516: the config parser turns any bare digit into a
+                    // .number, so numeric choices — status 2|3|4|5, and
+                    // clock-mode-style "12"/"24" which is *only* expressible as
+                    // digits — must be matched as their decimal string.
+                    // Falling through unchanged made validateType reject them.
+                    var buf: [24]u8 = undefined;
+                    const s = std.fmt.bufPrint(&buf, "{d}", .{n}) catch return value;
+                    if (def.choices) |choices| {
+                        for (choices) |c| {
+                            if (std.mem.eql(u8, s, c)) return OptionValue{ .choice = s };
+                        }
+                    }
+                    return value;
+                },
                 else => return value,
             }
         },
