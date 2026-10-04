@@ -958,6 +958,12 @@ pub const Screen = struct {
                 self.decrementMainGridRef(x, self.cursor.y);
                 const prev = self.grid.getCell(x - 1, self.cursor.y);
                 self.grid.setCell(x, self.cursor.y, prev);
+                // bug #513: the marker that just moved here was not destroyed —
+                // it was relocated — so re-increment it. This is the
+                // decrement-then-re-increment pairing bug #491 established for
+                // a moved marker; without it every shifted marker lost a
+                // refcount and the image could be freed while markers remained.
+                self.incrementCellRef(prev);
             }
         }
 
@@ -3200,6 +3206,45 @@ test "insertChars releases refcounts of markers shifted off the right edge — b
 
     try testing.expectEqual(@as(usize, 1), screen.sixel_refcounts[0]);
     try testing.expect(screen.grid.getCell(4, 0).attr.sixel);
+}
+
+test "insert mode re-increments refcounts of markers it shifts — bug #513" {
+    const allocator = std.testing.allocator;
+    var screen = try Screen.init(allocator, 5, 5);
+    defer screen.deinit();
+
+    // Seed an image in slot 0 with marker cells at (0,0) and (2,0).
+    screen.sixel_images[0] = .{
+        .data = try allocator.dupe(u8, "\x1bPqX\x1b\\"),
+        .col = 0,
+        .row = 0,
+        .px_width = 5,
+        .px_height = 20,
+        .id = 1,
+    };
+    screen.sixel_refcounts[0] = 2;
+    var m1 = Cell.empty();
+    m1.attr.sixel = true;
+    m1.char = 1;
+    screen.grid.getLineMut(0).cells.items[0] = m1;
+    var m2 = Cell.empty();
+    m2.attr.sixel = true;
+    m2.char = 1;
+    screen.grid.getLineMut(0).cells.items[2] = m2;
+
+    // Insert mode: writing at x=0 shifts the tail right by one. The marker at
+    // col 2 relocates to col 3, the marker at col 0 relocates to col 1, and the
+    // new character overwrites col 0. Two markers remain on the grid, so the
+    // refcount must be unchanged. Before the fix the two relocated markers were
+    // decremented but never re-incremented, driving the count to 0.
+    screen.mode.insert = true;
+    screen.cursor.x = 0;
+    screen.cursor.y = 0;
+    try screen.writeChar('X');
+
+    try testing.expectEqual(@as(usize, 2), screen.sixel_refcounts[0]);
+    try testing.expect(screen.grid.getCell(1, 0).attr.sixel);
+    try testing.expect(screen.grid.getCell(3, 0).attr.sixel);
 }
 
 test "deleteChars releases refcounts of markers shifted off the left edge — bug #292" {
