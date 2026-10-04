@@ -2784,6 +2784,19 @@ pub const Server = struct {
     /// behind/flow-control drop. Used for request/response packets (command
     /// replies) that the client is explicitly waiting on — dropping those left
     /// it hanging forever (bug #376). The hard cap still applies.
+    /// Clear a display client's backpressure flag after its backlog has been
+    /// dropped (bug #522). Without this the flag can never clear: the emptied
+    /// `out_buf` skips the flush at the top of the render, and
+    /// `writeFrameToClient` short-circuits on `behind`, so the client is
+    /// starved forever and `dirty` is never cleared. The event loop resumes
+    /// pane reads once `behind_count` reaches zero.
+    fn clearBehind(self: *Server, dc: *DisplayClient) void {
+        if (dc.behind) {
+            dc.behind = false;
+            self.behind_count -|= 1;
+        }
+    }
+
     fn appendClientOutUrgent(self: *Server, dc: *DisplayClient, data: []const u8) bool {
         if (data.len == 0) return true;
         if (dc.out_buf.items.len + data.len > MAX_OUT_BUF) {
@@ -2791,6 +2804,7 @@ pub const Server = struct {
             if (dc.out_buf.items.len + data.len > MAX_OUT_BUF) {
                 dc.out_buf.clearRetainingCapacity();
                 dc.last_cells.clearRetainingCapacity();
+                self.clearBehind(dc); // bug #522
             }
         }
         dc.out_buf.appendSlice(self.allocator, data) catch return false;
@@ -2856,6 +2870,7 @@ pub const Server = struct {
             if (dc.out_buf.items.len + total_len > MAX_OUT_BUF) {
                 dc.out_buf.clearRetainingCapacity();
                 dc.last_cells.clearRetainingCapacity();
+                self.clearBehind(dc); // bug #522
                 return false;
             }
         }
@@ -5640,6 +5655,26 @@ test "handleClient .redraw resets display client diff state for a full repaint �
     try testing.expectEqual(@as(u32, 0), dc.last_sx);
     try testing.expectEqual(@as(u32, 0), dc.last_sy);
     try testing.expect(server.dirty);
+}
+
+test "clearBehind resets the flag and the counter — bug #522" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+    const dc = try server.addDisplayClient(.{ .fd = 100, .sx = 80, .sy = 24 });
+
+    // Both backlog-drop sites call this after emptying out_buf. Without it the
+    // client stays marked behind forever: the empty out_buf skips the flush and
+    // writeFrameToClient short-circuits on `behind`.
+    dc.behind = true;
+    server.behind_count = 1;
+    server.clearBehind(dc);
+    try testing.expect(!dc.behind);
+    try testing.expectEqual(@as(u32, 0), server.behind_count);
+
+    // Idempotent: clearing a client that is not behind must not underflow the
+    // counter, which would make anyDisplayClientBehind() lie.
+    server.clearBehind(dc);
+    try testing.expectEqual(@as(u32, 0), server.behind_count);
 }
 
 test "appendClientOut marks display client behind on watermark and skips frames — bug #298 flow control" {
