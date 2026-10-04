@@ -451,7 +451,21 @@ pub const Window = struct {
     pub fn splitPane(self: *Window, allocator: std.mem.Allocator, pane: *Pane, vertical: bool, proportion: f64) !*Pane {
         _ = allocator;
         const dir = if (vertical) layout.SplitDir.vertical else layout.SplitDir.horizontal;
+        // bug #528: once layout.splitPane returns, the tree already holds
+        // new_pane and `pane` has been shrunk. If anything after this fails,
+        // roll the split back — otherwise the pane is live in the tree (drawn,
+        // walked by collectPaneBounds, rotated by rotatePanes) but absent from
+        // window.panes, which breaks pane indexing and the ownership invariant.
+        const old_w = pane.screen.grid.width;
+        const old_h = pane.screen.grid.height;
         const new_pane = try self.layout.splitPane(self.allocator, pane, dir, proportion);
+        errdefer {
+            self.layout.removePane(new_pane);
+            pane.resizeTerminal(old_w, old_h) catch |err|
+                std.log.warn("resizeTerminal failed: {any}", .{err});
+            new_pane.deinit();
+            self.allocator.destroy(new_pane);
+        }
         new_pane.id = self.next_pane_id;
         self.next_pane_id += 1;
         new_pane.screen.grid.setHistoryLimit(pane.screen.grid.history_limit);
@@ -554,6 +568,38 @@ test "create window with initial pane" {
     try testing.expectEqualStrings("test", window.name);
     try testing.expectEqual(@as(usize, 1), window.panes.items.len);
     try testing.expect(window.active_pane != null);
+}
+
+test "splitPane rolls the layout tree back when the pane append fails — bug #528" {
+    var i: usize = 0;
+    while (i < 12) : (i += 1) {
+        var failing = std.testing.FailingAllocator.init(testing.allocator, .{ .fail_index = i });
+        var window = try Window.init(testing.allocator, 1, "test", 80, 24, null, null);
+        defer window.deinit(testing.allocator);
+
+        const first = window.panes.items[0];
+        const panes_before = window.panes.items.len;
+        const leaves_before = window.layout.countLeaves();
+
+        // layout.splitPane uses the Layout's own allocator, so injecting the
+        // failing one into the Window targets the panes.append step — exactly
+        // the failure that used to leave the tree and the pane list disagreeing.
+        const saved = window.allocator;
+        window.allocator = failing.allocator();
+        const res = window.splitPane(failing.allocator(), first, false, 0.5);
+        window.allocator = saved;
+
+        if (res) |_| {
+            try testing.expectEqual(panes_before + 1, window.panes.items.len);
+            try testing.expectEqual(leaves_before + 1, window.layout.countLeaves());
+        } else |_| {
+            try testing.expectEqual(panes_before, window.panes.items.len);
+            try testing.expectEqual(leaves_before, window.layout.countLeaves());
+        }
+        // The invariant must hold on every path: every pane in the tree is a
+        // pane the window owns, and vice versa.
+        try testing.expectEqual(window.panes.items.len, window.layout.countLeaves());
+    }
 }
 
 test "add pane to window" {
