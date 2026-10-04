@@ -1148,7 +1148,7 @@ pub const Screen = struct {
     pub fn cursorPosition(self: *Screen, col: u32, row: u32) void {
         const y: u32 = if (self.mode.origin) blk: {
             if (self.scroll_region) |r| {
-                break :blk @min(row + r[0], r[1]);
+                break :blk @min(row +| r[0], r[1]);
             }
             break :blk @min(row, self.grid.height -| 1);
         } else @min(row, self.grid.height -| 1);

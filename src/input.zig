@@ -898,6 +898,7 @@ pub const InputParser = struct {
                     if (self.private_marker == '?') {
                         status = switch (mode) {
                             1 => if (self.screen.mode.keypad) @as(u8, 1) else @as(u8, 2),
+                            6 => if (self.screen.mode.origin) @as(u8, 1) else @as(u8, 2),
                             7 => if (self.screen.mode.line_wrap) @as(u8, 1) else @as(u8, 2),
                             25 => if (self.screen.mode.cursor) @as(u8, 1) else @as(u8, 2),
                             1000 => if (self.screen.mode.mouse_standard) @as(u8, 1) else @as(u8, 2),
@@ -942,6 +943,7 @@ pub const InputParser = struct {
         while (i < self.param_count) : (i += 1) {
             switch (self.params[i]) {
                 1 => self.screen.mode.keypad = enable,
+                6 => self.screen.setOriginMode(enable), // DECOM (bug #523)
                 7 => self.screen.mode.line_wrap = enable,
                 12 => {}, // cursor blink — not implemented
                 25 => self.screen.mode.cursor = enable,
@@ -1122,6 +1124,36 @@ test "CBT (CSI Z) survives a zero tab_stop — bug #526" {
     screen.tab_stop = 0;
     try parser.feed("\x1b[1Z");
     try testing.expectEqual(@as(u32, 3), screen.cursor.x);
+}
+
+test "DECSET/DECRST 6 toggles origin mode — bug #523" {
+    var screen = try Screen.init(testing.allocator, 20, 5);
+    defer screen.deinit();
+    var parser = InputParser.init(&screen);
+
+    try parser.feed("\x1b[2;4r"); // scroll region = rows 1..3 (0-based)
+    try parser.feed("\x1b[?6h"); // DECOM on
+    try testing.expect(screen.mode.origin);
+    // Origin mode homes the cursor to the region's top-left.
+    try testing.expectEqual(@as(u32, 0), screen.cursor.x);
+    try testing.expectEqual(@as(u32, 1), screen.cursor.y);
+
+    try parser.feed("\x1b[?6l"); // DECOM off
+    try testing.expect(!screen.mode.origin);
+    try testing.expectEqual(@as(u32, 0), screen.cursor.y);
+}
+
+test "origin-mode CUP with a saturated row clamps instead of overflowing — bug #525" {
+    var screen = try Screen.init(testing.allocator, 20, 5);
+    defer screen.deinit();
+    var parser = InputParser.init(&screen);
+
+    try parser.feed("\x1b[2;4r");
+    try parser.feed("\x1b[?6h");
+    // The row parameter saturates at maxInt(u32)-1, so `row + region_top`
+    // would trap in Debug/ReleaseSafe without the saturating add.
+    try parser.feed("\x1b[4294967295;1H");
+    try testing.expect(screen.cursor.y <= 3);
 }
 
 test "CUU cursor up" {
