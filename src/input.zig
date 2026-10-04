@@ -699,6 +699,11 @@ pub const InputParser = struct {
                 while (i < count) : (i += 1) {
                     if (self.screen.cursor.x > 0) {
                         const ts = self.screen.tab_stop;
+                        // bug #526: guard the modulo the same way the TAB path
+                        // does (bug #463). tab_stop is never zero in production
+                        // today, but the two handlers of the same concept must
+                        // agree that it can be.
+                        if (ts == 0) break;
                         const remainder = self.screen.cursor.x % ts;
                         if (remainder > 0) {
                             self.screen.cursor.x -= remainder;
@@ -1104,6 +1109,19 @@ test "NEL (0x85) resets the column before moving down — bug #524" {
     try parser.feed("\x84");
     try testing.expectEqual(@as(u32, 2), screen.cursor.x);
     try testing.expectEqual(@as(u32, 2), screen.cursor.y);
+}
+
+test "CBT (CSI Z) survives a zero tab_stop — bug #526" {
+    var screen = try Screen.init(testing.allocator, 20, 3);
+    defer screen.deinit();
+    var parser = InputParser.init(&screen);
+
+    try parser.feed("abc");
+    // tab_stop is only ever zeroed by tests today, but the guard must hold:
+    // the TAB path gained one for bug #463 and CBT must agree.
+    screen.tab_stop = 0;
+    try parser.feed("\x1b[1Z");
+    try testing.expectEqual(@as(u32, 3), screen.cursor.x);
 }
 
 test "CUU cursor up" {
