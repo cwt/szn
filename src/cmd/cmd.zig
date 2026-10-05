@@ -1281,18 +1281,69 @@ fn cmdBindKey(server: *Server, args: []const []const u8) CmdResult {
     if (args.len < 3) return .err;
     var is_root = false;
     var opt_idx: usize = 1;
-    while (opt_idx < args.len and std.mem.startsWith(u8, args[opt_idx], "-")) {
-        if (std.mem.eql(u8, args[opt_idx], "-n")) {
-            is_root = true;
+    while (opt_idx < args.len) {
+        const arg = args[opt_idx];
+        if (!std.mem.startsWith(u8, arg, "-") or std.mem.eql(u8, arg, "-")) {
+            break;
         }
-        opt_idx += 1;
+        if (std.mem.eql(u8, arg, "--")) {
+            opt_idx += 1;
+            break;
+        }
+        if (std.mem.eql(u8, arg, "-n")) {
+            is_root = true;
+            opt_idx += 1;
+        } else if (std.mem.eql(u8, arg, "-T")) {
+            opt_idx += 1;
+            if (opt_idx >= args.len) return .err;
+            const table_name = args[opt_idx];
+            if (std.mem.eql(u8, table_name, "root")) {
+                is_root = true;
+            } else if (std.mem.eql(u8, table_name, "prefix")) {
+                is_root = false;
+            } else {
+                return .err;
+            }
+            opt_idx += 1;
+        } else if (std.mem.startsWith(u8, arg, "-T")) {
+            const table_name = arg[2..];
+            if (std.mem.eql(u8, table_name, "root")) {
+                is_root = true;
+            } else if (std.mem.eql(u8, table_name, "prefix")) {
+                is_root = false;
+            } else {
+                return .err;
+            }
+            opt_idx += 1;
+        } else if (std.mem.eql(u8, arg, "-r")) {
+            opt_idx += 1;
+        } else {
+            opt_idx += 1;
+        }
     }
     if (args.len - opt_idx < 2) return .err;
     const key_name = args[opt_idx];
-    const cmd_str = args[opt_idx + 1];
 
     const key_mod = @import("../key.zig");
     const parsed_key = key_mod.parseKeyName(key_name) catch return .err;
+
+    var buf: [1024]u8 = undefined;
+    const cmd_args = args[opt_idx + 1 ..];
+    const cmd_str = blk: {
+        if (cmd_args.len == 1) break :blk cmd_args[0];
+        var pos: usize = 0;
+        for (cmd_args, 0..) |part, i| {
+            if (i > 0) {
+                if (pos >= buf.len) return .err;
+                buf[pos] = ' ';
+                pos += 1;
+            }
+            if (pos + part.len > buf.len) return .err;
+            @memcpy(buf[pos .. pos + part.len], part);
+            pos += part.len;
+        }
+        break :blk buf[0..pos];
+    };
 
     const key_binding = @import("../key_binding.zig");
     const action = key_binding.mapCommandToAction(cmd_str) orelse return .err;
@@ -1306,11 +1357,45 @@ fn cmdUnbindKey(server: *Server, args: []const []const u8) CmdResult {
     if (args.len < 2) return .err;
     var is_root = false;
     var opt_idx: usize = 1;
-    while (opt_idx < args.len and std.mem.startsWith(u8, args[opt_idx], "-")) {
-        if (std.mem.eql(u8, args[opt_idx], "-n")) {
-            is_root = true;
+    while (opt_idx < args.len) {
+        const arg = args[opt_idx];
+        if (!std.mem.startsWith(u8, arg, "-") or std.mem.eql(u8, arg, "-")) {
+            break;
         }
-        opt_idx += 1;
+        if (std.mem.eql(u8, arg, "--")) {
+            opt_idx += 1;
+            break;
+        }
+        if (std.mem.eql(u8, arg, "-n")) {
+            is_root = true;
+            opt_idx += 1;
+        } else if (std.mem.eql(u8, arg, "-T")) {
+            opt_idx += 1;
+            if (opt_idx >= args.len) return .err;
+            const table_name = args[opt_idx];
+            if (std.mem.eql(u8, table_name, "root")) {
+                is_root = true;
+            } else if (std.mem.eql(u8, table_name, "prefix")) {
+                is_root = false;
+            } else {
+                return .err;
+            }
+            opt_idx += 1;
+        } else if (std.mem.startsWith(u8, arg, "-T")) {
+            const table_name = arg[2..];
+            if (std.mem.eql(u8, table_name, "root")) {
+                is_root = true;
+            } else if (std.mem.eql(u8, table_name, "prefix")) {
+                is_root = false;
+            } else {
+                return .err;
+            }
+            opt_idx += 1;
+        } else if (std.mem.eql(u8, arg, "-r")) {
+            opt_idx += 1;
+        } else {
+            opt_idx += 1;
+        }
     }
     if (args.len - opt_idx < 1) return .err;
     const key_name = args[opt_idx];
@@ -1800,6 +1885,32 @@ pub fn formatHelp(allocator: std.mem.Allocator, command_name: ?[]const u8) Parse
     return try buf.toOwnedSlice(allocator);
 }
 
+fn hasMatchingDoubleQuote(s: []const u8, start: usize) bool {
+    var escaped = false;
+    var i = start + 1;
+    while (i < s.len) : (i += 1) {
+        const c = s[i];
+        if (escaped) {
+            escaped = false;
+            continue;
+        }
+        if (c == '\\') {
+            escaped = true;
+            continue;
+        }
+        if (c == '"') return true;
+    }
+    return false;
+}
+
+fn hasMatchingSingleQuote(s: []const u8, start: usize) bool {
+    var i = start + 1;
+    while (i < s.len) : (i += 1) {
+        if (s[i] == '\'') return true;
+    }
+    return false;
+}
+
 pub fn parse(input: []const u8, allocator: std.mem.Allocator) !CmdArgs {
     var arg_list: std.ArrayList([]const u8) = .empty;
     errdefer {
@@ -1853,11 +1964,21 @@ pub fn parse(input: []const u8, allocator: std.mem.Allocator) !CmdArgs {
                 if (ch == ' ' or ch == '\t') {
                     break;
                 } else if (ch == '\'') {
-                    in_single_quotes = true;
-                    i += 1;
+                    if (hasMatchingSingleQuote(input, i)) {
+                        in_single_quotes = true;
+                        i += 1;
+                    } else {
+                        try token_buf.append(allocator, ch);
+                        i += 1;
+                    }
                 } else if (ch == '"') {
-                    in_double_quotes = true;
-                    i += 1;
+                    if (hasMatchingDoubleQuote(input, i)) {
+                        in_double_quotes = true;
+                        i += 1;
+                    } else {
+                        try token_buf.append(allocator, ch);
+                        i += 1;
+                    }
                 } else if (ch == '\\' and i + 1 < input.len) {
                     try token_buf.append(allocator, input[i + 1]);
                     i += 2;
@@ -3298,6 +3419,93 @@ test "list-keys emits re-bindable command names, not enum tags — bug #517" {
     try testing.expect(std.mem.indexOf(u8, out, "split_horizontal") == null);
     try testing.expect(std.mem.indexOf(u8, out, "select_window_") == null);
     try testing.expect(std.mem.indexOf(u8, out, "select_pane_") == null);
+}
+
+test "bind-key preserves command arguments and -T flags — bug #517 follow-up" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+    _ = try server.newSession("test", 80, 24);
+
+    // 1. Multi-token command: split-window -v must bind .split_vertical, NOT .split_horizontal
+    {
+        var c = try parse("bind-key C-x split-window -v", testing.allocator);
+        defer c.deinit(testing.allocator);
+        try testing.expectEqual(CmdResult.ok, c.exec(&server));
+
+        const k = try @import("../key.zig").parseKeyName("C-x");
+        const act = server.dispatcher.prefix_table.lookup(k);
+        try testing.expectEqual(@import("../key_binding.zig").Action.split_vertical, act.?);
+    }
+
+    // 2. -T prefix flag
+    {
+        var c = try parse("bind-key -T prefix % split-window -h", testing.allocator);
+        defer c.deinit(testing.allocator);
+        try testing.expectEqual(CmdResult.ok, c.exec(&server));
+
+        const k = try @import("../key.zig").parseKeyName("%");
+        const act = server.dispatcher.prefix_table.lookup(k);
+        try testing.expectEqual(@import("../key_binding.zig").Action.split_horizontal, act.?);
+    }
+
+    // 3. -T root flag with multi-token command
+    {
+        var c = try parse("bind-key -T root F1 split-window -v", testing.allocator);
+        defer c.deinit(testing.allocator);
+        try testing.expectEqual(CmdResult.ok, c.exec(&server));
+
+        const k = try @import("../key.zig").parseKeyName("F1");
+        const act = server.dispatcher.root_table.lookup(k);
+        try testing.expectEqual(@import("../key_binding.zig").Action.split_vertical, act.?);
+    }
+
+    // 4. unbind-key -T root
+    {
+        var c = try parse("unbind-key -T root F1", testing.allocator);
+        defer c.deinit(testing.allocator);
+        try testing.expectEqual(CmdResult.ok, c.exec(&server));
+
+        const k = try @import("../key.zig").parseKeyName("F1");
+        try testing.expectEqual(@as(?@import("../key_binding.zig").Action, null), server.dispatcher.root_table.lookup(k));
+    }
+
+    // 5. commands with options like select-pane -L, select-window -t 2
+    {
+        var c1 = try parse("bind-key -T prefix Left select-pane -L", testing.allocator);
+        defer c1.deinit(testing.allocator);
+        try testing.expectEqual(CmdResult.ok, c1.exec(&server));
+
+        const k1 = try @import("../key.zig").parseKeyName("Left");
+        try testing.expectEqual(@import("../key_binding.zig").Action.select_pane_left, server.dispatcher.prefix_table.lookup(k1).?);
+
+        var c2 = try parse("bind-key -T prefix 2 select-window -t 2", testing.allocator);
+        defer c2.deinit(testing.allocator);
+        try testing.expectEqual(CmdResult.ok, c2.exec(&server));
+
+        const k2 = try @import("../key.zig").parseKeyName("2");
+        try testing.expectEqual(@import("../key_binding.zig").Action.select_window_2, server.dispatcher.prefix_table.lookup(k2).?);
+    }
+
+    // 6. Every line emitted by list-keys can be re-sourced via parse + exec
+    {
+        server.response_buf.clearRetainingCapacity();
+        var lk = try parse("list-keys", testing.allocator);
+        defer lk.deinit(testing.allocator);
+        try testing.expectEqual(CmdResult.ok, lk.exec(&server));
+
+        var lines_it = std.mem.splitScalar(u8, server.response_buf.items, '\n');
+        while (lines_it.next()) |line| {
+            const trimmed = std.mem.trim(u8, line, " \t\r");
+            if (trimmed.len == 0) continue;
+            var re_cmd = try parse(trimmed, testing.allocator);
+            defer re_cmd.deinit(testing.allocator);
+            try testing.expectEqual(CmdResult.ok, re_cmd.exec(&server));
+        }
+
+        // Re-sourcing must have kept " bound to split_vertical, not split_horizontal
+        const quote_key = try @import("../key.zig").parseKeyName("\"");
+        try testing.expectEqual(@import("../key_binding.zig").Action.split_vertical, server.dispatcher.prefix_table.lookup(quote_key).?);
+    }
 }
 
 test "numeric-valued choice options are settable — bug #516" {
