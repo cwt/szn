@@ -3295,15 +3295,17 @@ test "numeric-valued choice options are settable — bug #516" {
 
     // A bare digit parses as .number, so the choice coercion must match it
     // against the definition's choices as a decimal string. Before the fix
-    // both of these returned .err — and clock-mode-style, whose choices are
-    // "12"/"24", was unsettable through any path at all.
+    // these returned .err. `status` is the canonical numeric-choice option;
+    // `clock-mode-style` (choices "12"/"24") was an inert option and was
+    // removed in bug #518, so its coverage is carried here by a second
+    // numeric-choice value instead.
     {
         var c = try parse("set-option -g status 2", testing.allocator);
         defer c.deinit(testing.allocator);
         try testing.expectEqual(CmdResult.ok, c.exec(&server));
     }
     {
-        var c = try parse("set-option -g clock-mode-style 24", testing.allocator);
+        var c = try parse("set-option -g status 3", testing.allocator);
         defer c.deinit(testing.allocator);
         try testing.expectEqual(CmdResult.ok, c.exec(&server));
     }

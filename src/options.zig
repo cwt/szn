@@ -164,10 +164,9 @@ fn coerceValue(def: OptionDef, value: OptionValue) Error!OptionValue {
                 },
                 .number => |n| {
                     // bug #516: the config parser turns any bare digit into a
-                    // .number, so numeric choices — status 2|3|4|5, and
-                    // clock-mode-style "12"/"24" which is *only* expressible as
-                    // digits — must be matched as their decimal string.
-                    // Falling through unchanged made validateType reject them.
+                    // .number, so numeric choices such as status 2|3|4|5 must be
+                    // matched as their decimal string. Falling through unchanged
+                    // made validateType reject them.
                     var buf: [24]u8 = undefined;
                     const s = std.fmt.bufPrint(&buf, "{d}", .{n}) catch return value;
                     if (def.choices) |choices| {
@@ -254,7 +253,6 @@ pub fn isServerScoped(name: []const u8) bool {
 
 pub const SESSION_OPTIONS = &[_]OptionDef{
     .{ .name = "default-shell", .type = .string, .default = OptionValue{ .string = "" } },
-    .{ .name = "default-terminal", .type = .string, .default = OptionValue{ .string = "tmux-256color" } },
     .{ .name = "status", .type = .choice, .default = OptionValue{ .choice = "on" }, .choices = &[_][]const u8{ "off", "on", "2", "3", "4", "5" } },
     .{ .name = "status-interval", .type = .number, .default = OptionValue{ .number = 15 }, .min = 0, .max = 86400 },
     .{ .name = "status-fg", .type = .colour, .default = OptionValue{ .colour = Colour.default_() } },
@@ -279,8 +277,6 @@ pub const SESSION_OPTIONS = &[_]OptionDef{
     .{ .name = "base-index", .type = .number, .default = OptionValue{ .number = 0 }, .min = 0, .max = 9999 },
     .{ .name = "pane-base-index", .type = .number, .default = OptionValue{ .number = 0 }, .min = 0, .max = 9999 },
     .{ .name = "display-time", .type = .number, .default = OptionValue{ .number = 1000 }, .min = 0, .max = 60000 },
-    .{ .name = "set-titles", .type = .flag, .default = OptionValue{ .flag = false } },
-    .{ .name = "set-clipboard", .type = .choice, .default = OptionValue{ .choice = "external" }, .choices = &[_][]const u8{ "off", "external", "on" } },
     // Per-codepoint width overrides, mirroring tmux `codepoint-widths`.
     // Format: a space-separated list of entries, each "U+XXXX=W" or
     // "U+XXXX-U+YYYY=W" (W is 1 or 2). Use this to match a terminal
@@ -302,18 +298,8 @@ pub const SESSION_OPTIONS = &[_]OptionDef{
 };
 
 pub const WINDOW_OPTIONS = &[_]OptionDef{
-    .{ .name = "aggressive-resize", .type = .flag, .default = OptionValue{ .flag = false } },
-    .{ .name = "clock-mode-colour", .type = .colour, .default = OptionValue{ .colour = Colour.default_() } },
-    .{ .name = "clock-mode-style", .type = .choice, .default = OptionValue{ .choice = "24" }, .choices = &[_][]const u8{ "12", "24" } },
-    .{ .name = "main-pane-height", .type = .number, .default = OptionValue{ .number = 24 }, .min = 1, .max = 9999 },
-    .{ .name = "main-pane-width", .type = .number, .default = OptionValue{ .number = 80 }, .min = 1, .max = 9999 },
     .{ .name = "mode-keys", .type = .choice, .default = OptionValue{ .choice = "vi" }, .choices = &[_][]const u8{ "emacs", "vi" } },
-    .{ .name = "monitor-activity", .type = .flag, .default = OptionValue{ .flag = false } },
-    .{ .name = "monitor-silence", .type = .number, .default = OptionValue{ .number = 0 }, .min = 0, .max = 86400 },
     .{ .name = "remain-on-exit", .type = .flag, .default = OptionValue{ .flag = false } },
-    .{ .name = "synchronize-panes", .type = .flag, .default = OptionValue{ .flag = false } },
-    .{ .name = "word-separators", .type = .string, .default = OptionValue{ .string = " -_@" } },
-    .{ .name = "fill-character", .type = .string, .default = OptionValue{ .string = " " } },
     .{ .name = "window-status-format", .type = .string, .default = OptionValue{ .string = "#I:#W#{?window_flags,#{window_flags}, }" } },
     .{ .name = "window-status-current-format", .type = .string, .default = OptionValue{ .string = "#I:#W#{?window_flags,#{window_flags}, }" } },
 };
@@ -325,7 +311,6 @@ test "create options with defaults" {
     defer opts.deinit();
 
     try testing.expectEqual(@as(i64, 15), opts.asNumber("status-interval").?);
-    try testing.expectEqualStrings("tmux-256color", opts.asString("default-terminal").?);
     try testing.expect(opts.asFlag("mouse").?);
 }
 
@@ -404,7 +389,6 @@ test "window options" {
     var opts = try Options.init(testing.allocator, WINDOW_OPTIONS);
     defer opts.deinit();
 
-    try testing.expect(!opts.asFlag("aggressive-resize").?);
     try testing.expectEqualStrings("vi", opts.asString("mode-keys").?);
     try opts.set("mode-keys", OptionValue{ .choice = "emacs" });
     try testing.expectEqualStrings("emacs", opts.asString("mode-keys").?);
@@ -421,12 +405,12 @@ test "get non-existent typed value" {
 }
 
 test "colour option" {
-    var opts = try Options.init(testing.allocator, WINDOW_OPTIONS);
+    var opts = try Options.init(testing.allocator, SESSION_OPTIONS);
     defer opts.deinit();
 
     const red = Colour.fromIndexed(1);
-    try opts.set("clock-mode-colour", OptionValue{ .colour = red });
-    const c = opts.asColour("clock-mode-colour").?;
+    try opts.set("status-fg", OptionValue{ .colour = red });
+    const c = opts.asColour("status-fg").?;
     try testing.expectEqual(@as(u8, 1), @as(u8, @truncate(c.value)));
 }
 
@@ -500,4 +484,32 @@ test "both server-scoped options are registered in SESSION_OPTIONS — bug #506"
     }
     try testing.expect(saw_widths);
     try testing.expect(saw_vs);
+}
+
+test "removed inert options are no longer recognised — bug #518" {
+    // These were declared in the option tables but read by no consumer, so
+    // set-option silently stored a value nothing honoured and show-options
+    // advertised configuration support that did not exist. They are now gone.
+    var sopts = try Options.init(testing.allocator, SESSION_OPTIONS);
+    defer sopts.deinit();
+    var wopts = try Options.init(testing.allocator, WINDOW_OPTIONS);
+    defer wopts.deinit();
+
+    const session_ones = [_][]const u8{
+        "default-terminal", "set-titles", "set-clipboard",
+    };
+    const window_ones = [_][]const u8{
+        "aggressive-resize", "clock-mode-colour", "clock-mode-style",
+        "main-pane-height", "main-pane-width", "monitor-activity",
+        "monitor-silence", "synchronize-panes", "word-separators",
+        "fill-character",
+    };
+    for (session_ones) |name| {
+        try testing.expectError(error.UnknownOption, sopts.set(name, OptionValue{ .flag = true }));
+        try testing.expect(sopts.get(name) == null);
+    }
+    for (window_ones) |name| {
+        try testing.expectError(error.UnknownOption, wopts.set(name, OptionValue{ .flag = true }));
+        try testing.expect(wopts.get(name) == null);
+    }
 }

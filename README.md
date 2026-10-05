@@ -39,9 +39,9 @@ the two. Less code, fewer surprises, and nothing left over from 1978.
 - **Pragmatic mouse forwarding** — szn speaks SGR mouse (1006) natively, but
   also forwards legacy `\x1b[M` 3-byte format when a program only enables basic
   mouse mode (1000/1002). This keeps SGR as the default while tolerating
-  programs whose terminfo lacks the `XM` capability. Use
-  `set -g default-terminal xterm-256color` in your config if you need the old
-  behaviour.
+    programs whose terminfo lacks the `XM` capability. Legacy 3-byte mouse
+    forwarding (`ESC[M`) is performed automatically when a program enables basic
+    mouse mode (1000/1002); no configuration is required.
 - **Clean architecture** — Zig's comptime, error unions, tagged unions, arena
   allocators, and slices replace C macros, `goto`-based cleanup, and manual
   memory management.
