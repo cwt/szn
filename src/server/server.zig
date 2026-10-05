@@ -209,6 +209,11 @@ pub const Server = struct {
     mouse_autoscroll_pane: ?*Pane = null,
     ignore_unknown_msg_warn: bool = false,
     test_after_command_dispatch_hook: ?*const fn (*Server, i32) void = null,
+    /// Test-only pin for the wall-clock second used as part of the status-line
+    /// cache key. The cache is invalidated whenever the second changes, so a
+    /// test asserting pointer reuse must be able to stop the clock — otherwise
+    /// it fails intermittently whenever a render straddles a second boundary.
+    test_clock_sec: ?i64 = null,
 
     /// Cell pixel dimensions, learned from the display client's XTWINOPS
     /// response. A terminal property, so the same value applies to every pane.
@@ -3317,7 +3322,7 @@ pub const Server = struct {
             defer if (status_line_new) |sl| self.allocator.free(sl);
             var status_line_slice: ?[]const u8 = null;
 
-            const current_sec = time(null);
+            const current_sec: i64 = self.test_clock_sec orelse @intCast(time(null));
             if (status_enabled and self.message == null and !self.command_mode) {
                 // Use cached status line when valid (bug #309, #425).
                 const use_cache = !self.status_dirty and dc.status_line_width == dc.sx and dc.status_line != null and dc.status_line_copy_mode == pane_in_copy_mode and dc.status_line_time == current_sec;
@@ -5894,13 +5899,19 @@ test "render caches status line across frames without reallocation — bug #425"
 
     _ = try server.addDisplayClient(.{ .fd = 100, .sx = 80, .sy = 24 });
 
+    // The status-line cache key includes the wall-clock second
+    // (`dc.status_line_time == current_sec`), so pin it. Without this the test
+    // fails intermittently: whenever the two renders below straddle a second
+    // boundary the line is legitimately rebuilt and the pointer changes.
+    server.test_clock_sec = 1_000_000;
     server.renderToDisplayClient();
 
     const cached_line = server.display_clients.items[0].status_line;
     try testing.expect(cached_line != null);
     const ptr1 = cached_line.?.ptr;
 
-    // Second render with status_dirty == false should reuse the same pointer without reallocating
+    // Second render, same second, status_dirty == false: the cached line must
+    // be reused rather than reallocated.
     server.dirty = true;
     server.status_dirty = false;
     server.renderToDisplayClient();
