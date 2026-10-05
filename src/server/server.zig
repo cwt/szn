@@ -2704,10 +2704,7 @@ pub const Server = struct {
         _ = c.close(fd);
         for (self.display_clients.items, 0..) |dc, idx| {
             if (dc.fd == fd) {
-                if (dc.behind) {
-                    dc.behind = false;
-                    self.behind_count -|= 1;
-                }
+                self.clearBehind(dc);
                 dc.deinit(self.allocator);
                 self.allocator.destroy(dc);
                 _ = self.display_clients.swapRemove(idx);
@@ -2797,22 +2794,25 @@ pub const Server = struct {
     /// output buffer and flush. Used for out-of-band output (clipboard paste,
     /// command responses) that is not part of the per-frame render path but
     /// must still survive a momentarily unwritable non-blocking socket.
-    /// Queue an already-serialized packet for a display client, bypassing the
-    /// behind/flow-control drop. Used for request/response packets (command
-    /// replies) that the client is explicitly waiting on — dropping those left
-    /// it hanging forever (bug #376). The hard cap still applies.
-    /// Clear a display client's backpressure flag after its backlog has been
-    /// dropped (bug #522). Without this the flag can never clear: the emptied
-    /// `out_buf` skips the flush at the top of the render, and
-    /// `writeFrameToClient` short-circuits on `behind`, so the client is
-    /// starved forever and `dirty` is never cleared. The event loop resumes
-    /// pane reads once `behind_count` reaches zero.
+    /// Clear a display client's backpressure flag (bug #522). Used when its
+    /// backlog is force-dropped, when it catches up during flush, on a fatal
+    /// write failure, or on client disconnect. If no other display client
+    /// remains behind, resumes pane reads immediately so stalled child
+    /// processes unblock.
     fn clearBehind(self: *Server, dc: *DisplayClient) void {
         if (dc.behind) {
             dc.behind = false;
             self.behind_count -|= 1;
+            if (!self.anyDisplayClientBehind()) {
+                self.resumePaneReads();
+            }
         }
     }
+
+    /// Queue an already-serialized packet for a display client, bypassing the
+    /// behind/flow-control drop. Used for request/response packets (command
+    /// replies) that the client is explicitly waiting on — dropping those left
+    /// it hanging forever (bug #376). The hard cap still applies.
 
     fn appendClientOutUrgent(self: *Server, dc: *DisplayClient, data: []const u8) bool {
         if (data.len == 0) return true;
@@ -2959,10 +2959,7 @@ pub const Server = struct {
                 .failed => {
                     // Broken pipe / fatal — mirror flushDisplayClient: give up on
                     // this client's backlog; the reader notices the hangup.
-                    if (dc.behind) {
-                        dc.behind = false;
-                        self.behind_count -|= 1;
-                    }
+                    self.clearBehind(dc);
                     self.loop.removeFdEvents(dc.fd, std.posix.POLL.OUT);
                     return true;
                 },
@@ -3012,10 +3009,7 @@ pub const Server = struct {
                 .failed => {
                     // Broken pipe / fatal — give up on this client's backlog.
                     dc.out_buf.clearRetainingCapacity();
-                    if (dc.behind) {
-                        dc.behind = false;
-                        self.behind_count -|= 1;
-                    }
+                    self.clearBehind(dc);
                     self.loop.removeFdEvents(dc.fd, std.posix.POLL.OUT);
                     return true;
                 },
@@ -3025,16 +3019,8 @@ pub const Server = struct {
             dc.out_buf.clearRetainingCapacity();
             // Client has caught up — clear the flow-control flag so pane reads
             // (and thus the child) resume at full speed.
-            if (dc.behind) {
-                dc.behind = false;
-                // Saturating like every other behind_count site: a stale
-                // behind flag must never underflow the count.
-                self.behind_count -|= 1;
-            }
+            self.clearBehind(dc);
             self.loop.removeFdEvents(dc.fd, std.posix.POLL.OUT);
-            if (!self.anyDisplayClientBehind()) {
-                self.resumePaneReads();
-            }
             return true;
         }
         if (off > 0) {
@@ -3073,7 +3059,9 @@ pub const Server = struct {
             for (session.windows.items) |win| {
                 for (win.panes.items) |p| {
                     if (p.pty) |pty| {
-                        self.loop.addFdEvents(pty.master, std.posix.POLL.IN);
+                        if (p.screen.pending_sixel == null) {
+                            self.loop.addFdEvents(pty.master, std.posix.POLL.IN);
+                        }
                     }
                 }
             }
@@ -5691,6 +5679,56 @@ test "clearBehind resets the flag and the counter — bug #522" {
     // counter, which would make anyDisplayClientBehind() lie.
     server.clearBehind(dc);
     try testing.expectEqual(@as(u32, 0), server.behind_count);
+}
+
+test "clearBehind resumes pane reads when behind_count reaches zero — bug #522 follow-up" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    const session = try server.newSession("test", 80, 24);
+    const win = session.active_window orelse return error.TestExpectedNotNull;
+    const pane = win.active_pane orelse return error.TestExpectedNotNull;
+
+    var pty_fds: [2]c_int = undefined;
+    if (std.c.pipe(&pty_fds) != 0) return error.Unexpected;
+    pane.pty = .{
+        .master = pty_fds[0],
+        .slave = pty_fds[1],
+        .pid = -1,
+    };
+    try server.loop.addFd(server.allocator, pty_fds[0], 0, null);
+
+    const dc1 = try server.addDisplayClient(.{ .fd = 100, .sx = 80, .sy = 24 });
+    const dc2 = try server.addDisplayClient(.{ .fd = 101, .sx = 80, .sy = 24 });
+
+    // Two clients behind: clearing one must NOT re-arm pane reads while dc2 is still behind.
+    dc1.behind = true;
+    dc2.behind = true;
+    server.behind_count = 2;
+
+    server.clearBehind(dc1);
+    try testing.expect(!dc1.behind);
+    try testing.expectEqual(@as(u32, 1), server.behind_count);
+
+    for (server.loop.fds.items) |f| {
+        if (f.fd == pty_fds[0]) {
+            try testing.expectEqual(@as(i16, 0), f.events & std.posix.POLL.IN);
+        }
+    }
+
+    // Clearing dc2 brings behind_count to 0: pane reads must resume immediately.
+    server.clearBehind(dc2);
+    try testing.expect(!dc2.behind);
+    try testing.expectEqual(@as(u32, 0), server.behind_count);
+
+    var has_in = false;
+    for (server.loop.fds.items) |f| {
+        if (f.fd == pty_fds[0] and (f.events & std.posix.POLL.IN) != 0) {
+            has_in = true;
+            break;
+        }
+    }
+    try testing.expect(has_in);
 }
 
 test "appendClientOut marks display client behind on watermark and skips frames — bug #298 flow control" {
