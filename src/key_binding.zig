@@ -471,6 +471,65 @@ test "dispatcher two prefixes in sequence" {
     try testing.expectEqual(Action.new_window, result.?);
 }
 
+/// The canonical command string for an action. `list-keys` emits this rather
+/// than the Zig enum tag, so its output is valid configuration that
+/// `mapCommandToAction` accepts — the round trip tmux guarantees (bug #517).
+pub fn actionToCommand(action: Action) []const u8 {
+    return switch (action) {
+        .new_window => "new-window",
+        .split_horizontal => "split-window -h",
+        .split_vertical => "split-window -v",
+        .select_pane_left => "select-pane -L",
+        .select_pane_right => "select-pane -R",
+        .select_pane_up => "select-pane -U",
+        .select_pane_down => "select-pane -D",
+        .kill_pane => "kill-pane",
+        .select_window_0,
+        .select_window_1,
+        .select_window_2,
+        .select_window_3,
+        .select_window_4,
+        .select_window_5,
+        .select_window_6,
+        .select_window_7,
+        .select_window_8,
+        .select_window_9,
+        => SELECT_WINDOW_COMMANDS[@intFromEnum(action) - @intFromEnum(Action.select_window_0)],
+        .next_window => "next-window",
+        .prev_window => "previous-window",
+        .copy_mode => "copy-mode",
+        .paste_buffer => "paste-buffer",
+        .detach => "detach-client",
+        .clock_mode => "clock-mode",
+        .last_window => "last-window",
+        .resize_left => "resize-pane -L",
+        .resize_right => "resize-pane -R",
+        .resize_up => "resize-pane -U",
+        .resize_down => "resize-pane -D",
+        .swap_pane_up => "swap-pane -U",
+        .swap_pane_down => "swap-pane -D",
+        .rotate_window => "rotate-window",
+        .rename_window => "rename-window",
+        .command_prompt => "command-prompt",
+        .send_prefix => "send-prefix",
+        .reflow_pane => "reflow-pane",
+    };
+}
+
+/// One entry per `select_window_*` variant, in enum order.
+const SELECT_WINDOW_COMMANDS = [10][]const u8{
+    "select-window -t 0",
+    "select-window -t 1",
+    "select-window -t 2",
+    "select-window -t 3",
+    "select-window -t 4",
+    "select-window -t 5",
+    "select-window -t 6",
+    "select-window -t 7",
+    "select-window -t 8",
+    "select-window -t 9",
+};
+
 pub fn mapCommandToAction(cmd: []const u8) ?Action {
     const trimmed = std.mem.trim(u8, cmd, " \t\"");
     var it = std.mem.tokenizeAny(u8, trimmed, " \t");
@@ -512,6 +571,35 @@ pub fn mapCommandToAction(cmd: []const u8) ?Action {
     if (std.mem.eql(u8, name, "rename-window")) return .rename_window;
     if (std.mem.eql(u8, name, "command-prompt")) return .command_prompt;
 
+    // bug #517: these were bindable only through the built-in defaults; without
+    // a mapping here they could not be expressed in a config file at all, and
+    // list-keys output could never be re-sourced.
+    if (std.mem.eql(u8, name, "rotate-window") or std.mem.eql(u8, name, "rotatew")) return .rotate_window;
+    if (std.mem.eql(u8, name, "send-prefix")) return .send_prefix;
+    if (std.mem.eql(u8, name, "reflow-pane") or std.mem.eql(u8, name, "reflowp")) return .reflow_pane;
+
+    if (std.mem.eql(u8, name, "resize-pane") or std.mem.eql(u8, name, "resizep")) {
+        while (it.next()) |token| {
+            if (token.len > 1 and token[0] == '-') {
+                if (std.mem.indexOfScalar(u8, token[1..], 'L') != null) return .resize_left;
+                if (std.mem.indexOfScalar(u8, token[1..], 'R') != null) return .resize_right;
+                if (std.mem.indexOfScalar(u8, token[1..], 'U') != null) return .resize_up;
+                if (std.mem.indexOfScalar(u8, token[1..], 'D') != null) return .resize_down;
+            }
+        }
+        return null;
+    }
+
+    if (std.mem.eql(u8, name, "swap-pane") or std.mem.eql(u8, name, "swapp")) {
+        while (it.next()) |token| {
+            if (token.len > 1 and token[0] == '-') {
+                if (std.mem.indexOfScalar(u8, token[1..], 'U') != null) return .swap_pane_up;
+                if (std.mem.indexOfScalar(u8, token[1..], 'D') != null) return .swap_pane_down;
+            }
+        }
+        return null;
+    }
+
     // select-window can have a target index after "-t"; keep the original logic.
     if (std.mem.startsWith(u8, trimmed, "select-window -t ") or std.mem.startsWith(u8, trimmed, "selectw -t ")) {
         const last_space = std.mem.lastIndexOfScalar(u8, trimmed, ' ') orelse return null;
@@ -523,6 +611,23 @@ pub fn mapCommandToAction(cmd: []const u8) ?Action {
         } else |_| {}
     }
     return null;
+}
+
+test "every action round-trips through actionToCommand and mapCommandToAction — bug #517" {
+    // `list-keys` emits actionToCommand(); re-sourcing that output must
+    // reproduce the same binding. Iterate by ordinal so a newly added variant is
+    // covered automatically.
+    var i: u8 = 0;
+    const last = @intFromEnum(Action.reflow_pane);
+    while (i <= last) : (i += 1) {
+        const action: Action = @enumFromInt(i);
+        const cmd = actionToCommand(action);
+        const mapped = mapCommandToAction(cmd) orelse {
+            std.debug.print("actionToCommand({s}) = \"{s}\" did not map back\n", .{ @tagName(action), cmd });
+            return error.RoundTripFailed;
+        };
+        try testing.expectEqual(action, mapped);
+    }
 }
 
 test "mapCommandToAction with arguments" {

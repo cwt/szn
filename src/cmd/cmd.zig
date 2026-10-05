@@ -717,13 +717,16 @@ fn cmdShowMessages(server: *Server, args: []const []const u8) CmdResult {
 fn cmdListKeys(server: *Server, args: []const []const u8) CmdResult {
     _ = args;
     const key_mod = @import("../key.zig");
+    const key_binding_mod = @import("../key_binding.zig");
 
     // List prefix bindings
     for (server.dispatcher.prefix_table.bindings.items) |b| {
         var key_buf: [64]u8 = undefined;
         const key_str = key_mod.format(b.key, &key_buf);
         var line_buf: [256]u8 = undefined;
-        const line = std.fmt.bufPrint(&line_buf, "bind-key -T prefix {s} {s}\n", .{ key_str, @tagName(b.action) }) catch return .err;
+        // bug #517: emit the canonical command, not the Zig enum tag, so the
+        // output can be re-sourced.
+        const line = std.fmt.bufPrint(&line_buf, "bind-key -T prefix {s} {s}\n", .{ key_str, key_binding_mod.actionToCommand(b.action) }) catch return .err;
         server.response_buf.appendSlice(server.allocator, line) catch return .err;
     }
 
@@ -732,7 +735,7 @@ fn cmdListKeys(server: *Server, args: []const []const u8) CmdResult {
         var key_buf: [64]u8 = undefined;
         const key_str = key_mod.format(b.key, &key_buf);
         var line_buf: [256]u8 = undefined;
-        const line = std.fmt.bufPrint(&line_buf, "bind-key -T root {s} {s}\n", .{ key_str, @tagName(b.action) }) catch return .err;
+        const line = std.fmt.bufPrint(&line_buf, "bind-key -T root {s} {s}\n", .{ key_str, key_binding_mod.actionToCommand(b.action) }) catch return .err;
         server.response_buf.appendSlice(server.allocator, line) catch return .err;
     }
 
@@ -3260,6 +3263,29 @@ test "bare kill-session kills active session only — bug #407" {
     try testing.expectEqual(CmdResult.ok, c.exec(&server));
     try testing.expectEqual(@as(usize, 1), server.sessions.items.len);
     try testing.expectEqualStrings("s2", server.sessions.items[0].name);
+}
+
+test "list-keys emits re-bindable command names, not enum tags — bug #517" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+    _ = try server.newSession("test", 80, 24);
+
+    server.response_buf.clearRetainingCapacity();
+    var c = try parse("list-keys", testing.allocator);
+    defer c.deinit(testing.allocator);
+    try testing.expectEqual(CmdResult.ok, c.exec(&server));
+
+    const out = server.response_buf.items;
+    try testing.expect(out.len > 0);
+    try testing.expect(std.mem.indexOf(u8, out, "bind-key") != null);
+
+    // No Zig enum tag may leak into the output — tags are not re-bindable, so
+    // re-sourcing them failed with "bind-key: unknown command".
+    try testing.expect(std.mem.indexOf(u8, out, "new_window") == null);
+    try testing.expect(std.mem.indexOf(u8, out, "split_vertical") == null);
+    try testing.expect(std.mem.indexOf(u8, out, "split_horizontal") == null);
+    try testing.expect(std.mem.indexOf(u8, out, "select_window_") == null);
+    try testing.expect(std.mem.indexOf(u8, out, "select_pane_") == null);
 }
 
 test "numeric-valued choice options are settable — bug #516" {
