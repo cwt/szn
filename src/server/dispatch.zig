@@ -1,4 +1,5 @@
 const std = @import("std");
+const io = @import("../io.zig");
 const testing = std.testing;
 const server_mod = @import("server.zig");
 const Server = server_mod.Server;
@@ -141,20 +142,17 @@ pub fn sendResponse(fd: i32, result: *const DispatchResult) Error!void {
     var hdr_remaining: []const u8 = hdr_buf[0..];
     var retries: usize = 0;
     while (hdr_remaining.len > 0) {
-        const n = std.c.write(fd, hdr_remaining.ptr, hdr_remaining.len);
-        if (n < 0) {
-            const err = std.c.errno(n);
-            if (err == .INTR) continue;
-            if (err == .AGAIN) {
+        switch (io.writeOnce(fd, hdr_remaining)) {
+            .wrote => |w| hdr_remaining = try advanceWritten(hdr_remaining, @intCast(w)),
+            .would_block => {
                 retries += 1;
                 if (retries > 50) return error.WriteFailed;
                 _ = c_usleep(100);
                 continue;
-            }
-            return error.WriteFailed;
+            },
+            .closed => return error.ConnectionClosed,
+            .failed => return error.WriteFailed,
         }
-        if (n == 0) return error.ConnectionClosed;
-        hdr_remaining = try advanceWritten(hdr_remaining, n);
     }
 
     // Write data body — retry partial writes up to bounded attempts
@@ -162,20 +160,17 @@ pub fn sendResponse(fd: i32, result: *const DispatchResult) Error!void {
         var body_remaining: []const u8 = result.data;
         retries = 0;
         while (body_remaining.len > 0) {
-            const n = std.c.write(fd, body_remaining.ptr, body_remaining.len);
-            if (n < 0) {
-                const err = std.c.errno(n);
-                if (err == .INTR) continue;
-                if (err == .AGAIN) {
+            switch (io.writeOnce(fd, body_remaining)) {
+                .wrote => |w| body_remaining = try advanceWritten(body_remaining, @intCast(w)),
+                .would_block => {
                     retries += 1;
                     if (retries > 50) return error.WriteFailed;
                     _ = c_usleep(100);
                     continue;
-                }
-                return error.WriteFailed;
+                },
+                .closed => return error.ConnectionClosed,
+                .failed => return error.WriteFailed,
             }
-            if (n == 0) return error.ConnectionClosed;
-            body_remaining = try advanceWritten(body_remaining, n);
         }
     }
 }

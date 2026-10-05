@@ -707,6 +707,35 @@ pub const CopyMode = struct {
         return self.handleEmacsKey(k, grid);
     }
 
+    // Shared movement dispatch for both copy-mode keymaps (bug #520): arrow keys
+    // and the page/home/end specials move the cursor and (re)establish the
+    // selection. Returns true when it consumed the key so the caller can return
+    // early; escape and other keys are left to the keymap-specific handling.
+    fn applyMovement(self: *CopyMode, k: Key, grid: *const Grid) bool {
+        if (k == .arrow) {
+            switch (k.arrow.key) {
+                .left => self.moveLeft(),
+                .right => self.moveRight(grid),
+                .up => self.moveUp(grid),
+                .down => self.moveDown(grid),
+            }
+            self.updateSelection();
+            return true;
+        }
+        if (k == .special) {
+            switch (k.special.key) {
+                .page_up => self.pageUp(grid),
+                .page_down => self.pageDown(grid),
+                .home => self.moveToLineStart(),
+                .end => self.moveToLineEnd(grid),
+                else => return false,
+            }
+            self.updateSelection();
+            return true;
+        }
+        return false;
+    }
+
     fn handleViKey(self: *CopyMode, k: Key, grid: *const Grid) KeyResult {
         if (k == .char) {
             const c = k.char;
@@ -766,80 +795,14 @@ pub const CopyMode = struct {
             }
         }
 
-        if (k == .arrow) {
-            switch (k.arrow.key) {
-                .left => {
-                    self.moveLeft();
-                    self.updateSelection();
-                },
-                .right => {
-                    self.moveRight(grid);
-                    self.updateSelection();
-                },
-                .up => {
-                    self.moveUp(grid);
-                    self.updateSelection();
-                },
-                .down => {
-                    self.moveDown(grid);
-                    self.updateSelection();
-                },
-            }
-            return .consumed;
-        }
-
-        if (k == .special) {
-            switch (k.special.key) {
-                .page_up => {
-                    self.pageUp(grid);
-                    self.updateSelection();
-                    return .consumed;
-                },
-                .page_down => {
-                    self.pageDown(grid);
-                    self.updateSelection();
-                    return .consumed;
-                },
-                .home => {
-                    self.moveToLineStart();
-                    self.updateSelection();
-                    return .consumed;
-                },
-                .end => {
-                    self.moveToLineEnd(grid);
-                    self.updateSelection();
-                    return .consumed;
-                },
-                .escape => return .exit_mode,
-                else => return .ignored,
-            }
-        }
+        if (self.applyMovement(k, grid)) return .consumed;
+        if (k == .special and k.special.key == .escape) return .exit_mode;
 
         return .ignored;
     }
 
     fn handleEmacsKey(self: *CopyMode, k: Key, grid: *const Grid) KeyResult {
-        if (k == .arrow) {
-            switch (k.arrow.key) {
-                .left => {
-                    self.moveLeft();
-                    self.updateSelection();
-                },
-                .right => {
-                    self.moveRight(grid);
-                    self.updateSelection();
-                },
-                .up => {
-                    self.moveUp(grid);
-                    self.updateSelection();
-                },
-                .down => {
-                    self.moveDown(grid);
-                    self.updateSelection();
-                },
-            }
-            return .consumed;
-        }
+        if (self.applyMovement(k, grid)) return .consumed;
 
         if (k == .char) {
             const c = k.char;
@@ -895,32 +858,7 @@ pub const CopyMode = struct {
             }
         }
 
-        if (k == .special) {
-            switch (k.special.key) {
-                .page_up => {
-                    self.pageUp(grid);
-                    self.updateSelection();
-                    return .consumed;
-                },
-                .page_down => {
-                    self.pageDown(grid);
-                    self.updateSelection();
-                    return .consumed;
-                },
-                .home => {
-                    self.moveToLineStart();
-                    self.updateSelection();
-                    return .consumed;
-                },
-                .end => {
-                    self.moveToLineEnd(grid);
-                    self.updateSelection();
-                    return .consumed;
-                },
-                .escape => return .exit_mode,
-                else => return .ignored,
-            }
-        }
+        if (k == .special and k.special.key == .escape) return .exit_mode;
 
         // tmux 3.x binds plain `q` to cancel in its unified copy-mode table
         // for both keymaps.

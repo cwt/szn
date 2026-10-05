@@ -3,6 +3,7 @@ const compat = @import("../compat.zig");
 const testing = std.testing;
 const server_mod = @import("../server/server.zig");
 const Server = server_mod.Server;
+const Session = @import("../session.zig").Session;
 const Pane = @import("../window.zig").Pane;
 const Window = @import("../window.zig").Window;
 const ChooseItem = @import("../choose.zig").ChooseItem;
@@ -30,6 +31,22 @@ pub const CmdEntry = struct {
     description: []const u8 = "",
     exec: *const fn (server: *Server, args: []const []const u8) CmdResult,
 };
+
+const ActiveTarget = struct {
+    session: *Session,
+    window: *Window,
+    pane: *Pane,
+};
+
+/// Single source of truth for the active session → window → pane chain
+/// (bug #520). Every command handler reached for the same three locals; this
+/// collapses the repeated `orelse return .err` prologue into one call.
+fn activeTarget(server: *Server) ?ActiveTarget {
+    const session = server.activeSession() orelse return null;
+    const window = session.active_window orelse return null;
+    const pane = window.active_pane orelse return null;
+    return .{ .session = session, .window = window, .pane = pane };
+}
 
 fn cmdNewSession(server: *Server, args: []const []const u8) CmdResult {
     const name = if (args.len > 1) args[1] else "default";
@@ -147,9 +164,8 @@ fn cmdKillWindow(server: *Server, args: []const []const u8) CmdResult {
 
 fn cmdSendKeys(server: *Server, args: []const []const u8) CmdResult {
     if (args.len < 2) return .err;
-    const session = server.activeSession() orelse return .err;
-    const window = session.active_window orelse return .err;
-    const pane = window.active_pane orelse return .err;
+    const t = activeTarget(server) orelse return .err;
+    const pane = t.pane;
     var i: u32 = 1;
     while (i < args.len) : (i += 1) {
         pane.writeInput(args[i]) catch return .err;
@@ -158,9 +174,10 @@ fn cmdSendKeys(server: *Server, args: []const []const u8) CmdResult {
 }
 
 fn cmdSplitWindow(server: *Server, args: []const []const u8) CmdResult {
-    const session = server.activeSession() orelse return .err;
-    const window = session.active_window orelse return .err;
-    const pane = window.active_pane orelse return .err;
+    const t = activeTarget(server) orelse return .err;
+    const session = t.session;
+    const window = t.window;
+    const pane = t.pane;
 
     var direction: enum { horizontal, vertical } = .horizontal;
     var prop_arg: ?[]const u8 = null;
@@ -309,9 +326,9 @@ fn cmdSelectPane(server: *Server, args: []const []const u8) CmdResult {
 }
 
 fn cmdKillPane(server: *Server, _: []const []const u8) CmdResult {
-    const session = server.activeSession() orelse return .err;
-    const window = session.active_window orelse return .err;
-    const pane = window.active_pane orelse return .err;
+    const t = activeTarget(server) orelse return .err;
+    const window = t.window;
+    const pane = t.pane;
     if (window.panes.items.len <= 1) return .err;
     server.destroyPane(pane);
     return .ok;
@@ -475,9 +492,10 @@ fn undoSplit(win: *Window, allocator: std.mem.Allocator, pane: *Pane) void {
 
 fn cmdBreakPane(server: *Server, args: []const []const u8) CmdResult {
     _ = args;
-    const session = server.activeSession() orelse return .err;
-    const window = session.active_window orelse return .err;
-    const pane = window.active_pane orelse return .err;
+    const t = activeTarget(server) orelse return .err;
+    const session = t.session;
+    const window = t.window;
+    const pane = t.pane;
 
     if (window.panes.items.len <= 1) return .err;
 
@@ -508,9 +526,8 @@ fn cmdBreakPane(server: *Server, args: []const []const u8) CmdResult {
 }
 
 fn cmdPasteBuffer(server: *Server, args: []const []const u8) CmdResult {
-    const session = server.activeSession() orelse return .err;
-    const window = session.active_window orelse return .err;
-    const pane = window.active_pane orelse return .err;
+    const t = activeTarget(server) orelse return .err;
+    const pane = t.pane;
 
     var buf_name: ?[]const u8 = null;
     var i: usize = 1;
@@ -619,9 +636,8 @@ fn cmdLoadBuffer(server: *Server, args: []const []const u8) CmdResult {
 
 fn cmdChooseBuffer(server: *Server, args: []const []const u8) CmdResult {
     _ = args;
-    const session = server.activeSession() orelse return .err;
-    const window = session.active_window orelse return .err;
-    const pane = window.active_pane orelse return .err;
+    const t = activeTarget(server) orelse return .err;
+    const pane = t.pane;
 
     var items: std.ArrayList(ChooseItem) = .empty;
     defer items.deinit(server.allocator);
@@ -639,9 +655,8 @@ fn cmdChooseBuffer(server: *Server, args: []const []const u8) CmdResult {
 }
 
 fn cmdClockMode(server: *Server, args: []const []const u8) CmdResult {
-    const session = server.activeSession() orelse return .err;
-    const window = session.active_window orelse return .err;
-    const pane = window.active_pane orelse return .err;
+    const t = activeTarget(server) orelse return .err;
+    const pane = t.pane;
 
     pane.saveGrid() catch return .err;
 
@@ -683,9 +698,8 @@ fn cmdDisplayMessage(server: *Server, args: []const []const u8) CmdResult {
 
 fn cmdCopyMode(server: *Server, args: []const []const u8) CmdResult {
     _ = args;
-    const session = server.activeSession() orelse return .err;
-    const window = session.active_window orelse return .err;
-    const pane = window.active_pane orelse return .err;
+    const t = activeTarget(server) orelse return .err;
+    const pane = t.pane;
     pane.enterCopyMode() catch return .err;
     return .ok;
 }
@@ -753,9 +767,8 @@ fn cmdRotateWindow(server: *Server, _: []const []const u8) CmdResult {
 }
 
 fn cmdCapturePane(server: *Server, _: []const []const u8) CmdResult {
-    const session = server.activeSession() orelse return .err;
-    const window = session.active_window orelse return .err;
-    const pane = window.active_pane orelse return .err;
+    const t = activeTarget(server) orelse return .err;
+    const pane = t.pane;
 
     // Pre-size the output (capped): one row is width cells plus a newline.
     // Perf: avoids repeated reallocs on large panes (bug #476). The cap
@@ -1140,9 +1153,9 @@ fn cmdShowOptions(server: *Server, args: []const []const u8) CmdResult {
 }
 
 fn cmdResizePane(server: *Server, args: []const []const u8) CmdResult {
-    const session = server.activeSession() orelse return .err;
-    const window = session.active_window orelse return .err;
-    const pane = window.active_pane orelse return .err;
+    const t = activeTarget(server) orelse return .err;
+    const window = t.window;
+    const pane = t.pane;
 
     var adjust_w: i32 = 0;
     var adjust_h: i32 = 0;
@@ -1257,9 +1270,8 @@ fn cmdResizePane(server: *Server, args: []const []const u8) CmdResult {
 
 fn cmdReflowPane(server: *Server, args: []const []const u8) CmdResult {
     _ = args;
-    const session = server.activeSession() orelse return .err;
-    const window = session.active_window orelse return .err;
-    const pane = window.active_pane orelse return .err;
+    const t = activeTarget(server) orelse return .err;
+    const pane = t.pane;
 
     pane.forceReflow() catch return .err;
     return .ok;

@@ -1,5 +1,6 @@
 const std = @import("std");
 const compat = @import("../compat.zig");
+const io = @import("../io.zig");
 const testing = std.testing;
 
 pub const Error = error{
@@ -294,15 +295,13 @@ pub const Pty = struct {
         // the child reads its stdin again (see flushInput / POLLOUT).
         var off: usize = 0;
         while (off < data.len) {
-            const n = write(self.master, data.ptr + off, data.len - off);
-            if (n < 0) {
-                const err = std.c.errno(n);
-                if (err == .INTR) continue;
-                if (err == .AGAIN) break;
-                return error.WriteFailed;
+            const chunk = data[off..];
+            switch (io.writeOnce(self.master, chunk)) {
+                .wrote => |w| off += w,
+                .would_block => break,
+                .closed => return error.WriteFailed,
+                .failed => return error.WriteFailed,
             }
-            if (n == 0) return error.WriteFailed;
-            off += @as(usize, @intCast(n));
         }
         if (off >= data.len) return;
         // Pty input buffer is full (child isn't reading stdin, e.g. it is
@@ -323,16 +322,16 @@ pub const Pty = struct {
         if (self.input_buf.items.len == 0) return true;
         var off: usize = 0;
         while (off < self.input_buf.items.len) {
-            const n = write(self.master, self.input_buf.items.ptr + off, self.input_buf.items.len - off);
-            if (n < 0) {
-                const err = std.c.errno(n);
-                if (err == .INTR) continue;
-                if (err == .AGAIN) break;
-                self.input_buf.clearRetainingCapacity();
-                return true;
+            const chunk = self.input_buf.items[off..];
+            switch (io.writeOnce(self.master, chunk)) {
+                .wrote => |w| off += w,
+                .would_block => break,
+                .closed => break,
+                .failed => {
+                    self.input_buf.clearRetainingCapacity();
+                    return true;
+                },
             }
-            if (n == 0) break;
-            off += @as(usize, @intCast(n));
         }
         if (off >= self.input_buf.items.len) {
             self.input_buf.clearRetainingCapacity();

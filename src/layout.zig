@@ -367,8 +367,7 @@ pub const Layout = struct {
     }
 
     pub fn extractPane(self: *Layout, pane: *Pane) void {
-        if (self.root.* == .leaf) return;
-        _ = self.extractFromNode(self.root, null, pane);
+        self.removePane(pane);
     }
 
     fn extractFromNode(self: *Layout, node: *Node, parent_split: ?*Split, target: *Pane) bool {

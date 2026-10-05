@@ -1,5 +1,6 @@
 const std = @import("std");
 const compat = @import("../compat.zig");
+const io = @import("../io.zig");
 const c = std.c;
 const testing = std.testing;
 const session_mod = @import("../session.zig");
@@ -2764,19 +2765,30 @@ pub const Server = struct {
                 }
                 continue;
             }
-            const n = c.write(dc.fd, hdr_slice.ptr, hdr_slice.len);
-            if (n < 0) {
-                if (std.c.errno(n) == .AGAIN) {
+            switch (io.writeOnce(dc.fd, hdr_slice)) {
+                .wrote => |w| {
+                    if (w < hdr_slice.len) {
+                        if (self.appendClientOut(dc, hdr_slice[w..])) {
+                            self.loop.addFdEvents(dc.fd, std.posix.POLL.OUT);
+                        }
+                    }
+                },
+                .would_block => {
                     if (self.appendClientOut(dc, hdr_slice)) {
                         self.loop.addFdEvents(dc.fd, std.posix.POLL.OUT);
                     }
-                }
-            } else if (@as(usize, @intCast(n)) < hdr_slice.len) {
-                // Partial write — queue remaining bytes.
-                const written = @as(usize, @intCast(n));
-                if (self.appendClientOut(dc, hdr_slice[written..])) {
-                    self.loop.addFdEvents(dc.fd, std.posix.POLL.OUT);
-                }
+                },
+                .closed => {
+                    // n == 0: the original code fell through to the partial-write
+                    // branch (0 < len) and queued the whole slice; preserve that.
+                    if (self.appendClientOut(dc, hdr_slice)) {
+                        self.loop.addFdEvents(dc.fd, std.posix.POLL.OUT);
+                    }
+                },
+                .failed => {
+                    // The original code only inspected AGAIN and silently ignored
+                    // any other errno; keep that policy, just de-duplicated.
+                },
             }
         }
     }
@@ -2940,22 +2952,21 @@ pub const Server = struct {
         var off: usize = 0;
         while (off < total_len) {
             const chunk: []const u8 = if (off < hdr.len) hdr[off..] else body[off - hdr.len ..];
-            const n = c.write(dc.fd, chunk.ptr, chunk.len);
-            if (n < 0) {
-                const err = std.c.errno(n);
-                if (err == .INTR) continue;
-                if (err == .AGAIN) break;
-                // Broken pipe / fatal — mirror flushDisplayClient: give up on
-                // this client's backlog; the reader notices the hangup.
-                if (dc.behind) {
-                    dc.behind = false;
-                    self.behind_count -|= 1;
-                }
-                self.loop.removeFdEvents(dc.fd, std.posix.POLL.OUT);
-                return true;
+            switch (io.writeOnce(dc.fd, chunk)) {
+                .wrote => |w| off += w,
+                .would_block => break,
+                .closed => break,
+                .failed => {
+                    // Broken pipe / fatal — mirror flushDisplayClient: give up on
+                    // this client's backlog; the reader notices the hangup.
+                    if (dc.behind) {
+                        dc.behind = false;
+                        self.behind_count -|= 1;
+                    }
+                    self.loop.removeFdEvents(dc.fd, std.posix.POLL.OUT);
+                    return true;
+                },
             }
-            if (n == 0) break;
-            off += @as(usize, @intCast(n));
         }
 
         if (off < total_len) {
@@ -2993,22 +3004,22 @@ pub const Server = struct {
         if (dc.out_buf.items.len == 0) return true;
         var off: usize = 0;
         while (off < dc.out_buf.items.len) {
-            const n = c.write(dc.fd, dc.out_buf.items.ptr + off, dc.out_buf.items.len - off);
-            if (n < 0) {
-                const err = std.c.errno(n);
-                if (err == .INTR) continue;
-                if (err == .AGAIN) break;
-                // Broken pipe / fatal — give up on this client's backlog.
-                dc.out_buf.clearRetainingCapacity();
-                if (dc.behind) {
-                    dc.behind = false;
-                    self.behind_count -|= 1;
-                }
-                self.loop.removeFdEvents(dc.fd, std.posix.POLL.OUT);
-                return true;
+            const chunk = dc.out_buf.items[off..];
+            switch (io.writeOnce(dc.fd, chunk)) {
+                .wrote => |w| off += w,
+                .would_block => break,
+                .closed => break,
+                .failed => {
+                    // Broken pipe / fatal — give up on this client's backlog.
+                    dc.out_buf.clearRetainingCapacity();
+                    if (dc.behind) {
+                        dc.behind = false;
+                        self.behind_count -|= 1;
+                    }
+                    self.loop.removeFdEvents(dc.fd, std.posix.POLL.OUT);
+                    return true;
+                },
             }
-            if (n == 0) break;
-            off += @as(usize, @intCast(n));
         }
         if (off >= dc.out_buf.items.len) {
             dc.out_buf.clearRetainingCapacity();
