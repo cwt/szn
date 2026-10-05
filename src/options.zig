@@ -171,7 +171,10 @@ fn coerceValue(def: OptionDef, value: OptionValue) Error!OptionValue {
                     const s = std.fmt.bufPrint(&buf, "{d}", .{n}) catch return value;
                     if (def.choices) |choices| {
                         for (choices) |c| {
-                            if (std.mem.eql(u8, s, c)) return OptionValue{ .choice = s };
+                            // bug #531: return the static candidate `c` from
+                            // `def.choices`, NOT `s` which aliases the local
+                            // stack array `buf`.
+                            if (std.mem.eql(u8, s, c)) return OptionValue{ .choice = c };
                         }
                     }
                     return value;
@@ -500,8 +503,8 @@ test "removed inert options are no longer recognised — bug #518" {
     };
     const window_ones = [_][]const u8{
         "aggressive-resize", "clock-mode-colour", "clock-mode-style",
-        "main-pane-height", "main-pane-width", "monitor-activity",
-        "monitor-silence", "synchronize-panes", "word-separators",
+        "main-pane-height",  "main-pane-width",   "monitor-activity",
+        "monitor-silence",   "synchronize-panes", "word-separators",
         "fill-character",
     };
     for (session_ones) |name| {
@@ -512,4 +515,12 @@ test "removed inert options are no longer recognised — bug #518" {
         try testing.expectError(error.UnknownOption, wopts.set(name, OptionValue{ .flag = true }));
         try testing.expect(wopts.get(name) == null);
     }
+}
+
+test "numeric choice coercion returns static string from def.choices — bug #531" {
+    const def = SESSION_OPTIONS[1]; // status: choices = "off", "on", "2", "3", "4", "5"
+    const coerced = try coerceValue(def, OptionValue{ .number = 2 });
+    try testing.expect(coerced == .choice);
+    // The slice pointer must point to the static choice literal, not a stack address.
+    try testing.expectEqual(def.choices.?[2].ptr, coerced.choice.ptr);
 }
