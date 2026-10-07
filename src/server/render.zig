@@ -11,6 +11,7 @@ const Pane = @import("../window.zig").Pane;
 const tty = @import("../tty/tty.zig");
 const char_width = @import("../char_width.zig");
 const status_mod = @import("../status.zig");
+const thai = @import("../thai.zig");
 
 pub const PaneBounds = struct {
     pane: *Pane,
@@ -507,6 +508,29 @@ pub const Display = struct {
         }
     }
 
+    /// Invalid Unicode scalar used in last_cells diff cache as a poison sentinel.
+    /// Outside the valid Unicode range 0x000000..0x10FFFF, so it will never match
+    /// any real character cell and guarantees a redraw in the emit loop.
+    const REDRAW_POISON_CHAR: u21 = 0x1FFFFF;
+
+    fn poisonCell() Cell {
+        var inv = Cell.empty();
+        inv.char = REDRAW_POISON_CHAR;
+        return inv;
+    }
+
+    /// Resolve a single cell from a row, applying copy-mode selection reverse video.
+    /// Centralized to eliminate divergence risk across the pre-pass and emit loops.
+    fn resolveCell(screen: *const Screen, row_cells: []const Cell, x: u32, y: usize) Cell {
+        var cell = if (x < row_cells.len) row_cells[x] else Cell.empty();
+        if (screen.copy_mode) |cm| {
+            if (cm.isSelected(x, @intCast(y))) {
+                cell.attr.reverse = !cell.attr.reverse;
+            }
+        }
+        return cell;
+    }
+
     /// Resolve a display row to its backing cell list, honoring copy-mode
     /// scroll. Shared by the merge stage and the single-pane content path so
     /// the history/visible mapping cannot drift between them (bug #477).
@@ -557,9 +581,7 @@ pub const Display = struct {
                 if (self.capture_allocator) |alloc| {
                     lc.clearRetainingCapacity();
                     lc.resize(alloc, expected_len) catch |err| std.log.warn("resize failed: {any}", .{err});
-                    var inv = Cell.empty();
-                    inv.char = 0x1FFFFF; // invalid Unicode to force redraw
-                    @memset(lc.items, inv);
+                    @memset(lc.items, poisonCell());
                 }
                 self.last_sx.?.* = self.sx;
                 self.last_sy.?.* = self.sy;
@@ -573,9 +595,7 @@ pub const Display = struct {
             screen.force_clear = false;
             try self.writeBytes("\x1b[2J");
             if (self.last_cells) |lc| {
-                var inv = Cell.empty();
-                inv.char = 0x1FFFFF; // invalid Unicode to force redraw
-                @memset(lc.items, inv);
+                @memset(lc.items, poisonCell());
             }
             for (screen.grid.lines.items) |*line| line.dirty = true;
         }
@@ -655,40 +675,19 @@ pub const Display = struct {
                     const idx = row_base + check_x;
                     const prev_idx = row_base + (check_x - 1);
                     if (idx < lc.items.len) {
-                        const last_has_am = (lc.items[idx].char == 0x0E33 or lc.items[idx].char == 0x0EB3);
-                        const cur_cell = blk: {
-                            var cl = if (check_x < row_cells.len) row_cells[check_x] else Cell.empty();
-                            if (screen.copy_mode) |cm| {
-                                if (cm.isSelected(@intCast(check_x), @intCast(y))) {
-                                    cl.attr.reverse = !cl.attr.reverse;
-                                }
-                            }
-                            break :blk cl;
-                        };
-                        const cur_has_am = (cur_cell.char == 0x0E33 or cur_cell.char == 0x0EB3);
+                        const last_has_am = thai.isSaraAm(lc.items[idx].char);
+                        const cur_cell = resolveCell(screen, row_cells, check_x, y);
+                        const cur_has_am = thai.isSaraAm(cur_cell.char);
 
                         if (last_has_am or cur_has_am) {
-                            const cur_prev = blk: {
-                                const px = check_x - 1;
-                                var cl = if (px < row_cells.len) row_cells[px] else Cell.empty();
-                                if (screen.copy_mode) |cm| {
-                                    if (cm.isSelected(@intCast(px), @intCast(y))) {
-                                        cl.attr.reverse = !cl.attr.reverse;
-                                    }
-                                }
-                                break :blk cl;
-                            };
+                            const cur_prev = resolveCell(screen, row_cells, check_x - 1, y);
                             const prev_changed = !cur_prev.eql(lc.items[prev_idx]);
                             const cur_changed = !cur_cell.eql(lc.items[idx]);
 
                             if (cur_changed and !prev_changed) {
-                                var inv = Cell.empty();
-                                inv.char = 0x1FFFFF;
-                                lc.items[prev_idx] = inv;
+                                lc.items[prev_idx] = poisonCell();
                             } else if (prev_changed and !cur_changed) {
-                                var inv = Cell.empty();
-                                inv.char = 0x1FFFFF;
-                                lc.items[idx] = inv;
+                                lc.items[idx] = poisonCell();
                             }
                         }
                     }
@@ -697,12 +696,7 @@ pub const Display = struct {
 
             var x: u32 = 0;
             while (x < w) : (x += 1) {
-                var cell = if (x < row_cells.len) row_cells[x] else Cell.empty();
-                if (screen.copy_mode) |cm| {
-                    if (cm.isSelected(@intCast(x), @intCast(y))) {
-                        cell.attr.reverse = !cell.attr.reverse;
-                    }
-                }
+                var cell = resolveCell(screen, row_cells, x, y);
 
                 var force_erase = false;
                 if (self.last_cells) |lc| {
@@ -2469,4 +2463,91 @@ test "renderContent re-emits preceding cell when SARA AM is deleted" {
 
     // Verify col 0 'ก' was re-emitted in Frame 2
     try testing.expect(std.mem.indexOf(u8, capture_buf.items, thai_ko) != null);
+}
+
+test "renderContent re-emits SARA AM when preceding consonant changes" {
+    const allocator = testing.allocator;
+    var capture_buf: std.ArrayList(u8) = .empty;
+    defer capture_buf.deinit(allocator);
+
+    var last_cells: std.ArrayList(Cell) = .empty;
+    defer last_cells.deinit(allocator);
+    var last_sx: u32 = 0;
+    var last_sy: u32 = 0;
+
+    var display = Display{
+        .fd = -1,
+        .sx = 4,
+        .sy = 1,
+        .capture = &capture_buf,
+        .capture_allocator = allocator,
+        .last_cells = &last_cells,
+        .last_sx = &last_sx,
+        .last_sy = &last_sy,
+    };
+
+    var screen = try Screen.init(allocator, 4, 1);
+    defer screen.deinit();
+
+    // Frame 1: col 0 has 'ก' (0x0E01), col 1 has 'ำ' (0x0E33 SARA AM)
+    screen.grid.setCell(0, 0, Cell.withChar(0x0E01));
+    screen.grid.setCell(1, 0, Cell.withChar(0x0E33));
+    try display.renderContent(&screen);
+
+    capture_buf.clearRetainingCapacity();
+
+    // Frame 2: col 0 changes to 'ข' (0x0E02), col 1 ('ำ') is unchanged in screen.grid.
+    // SARA AM must be re-emitted so it projects its mark onto the new consonant.
+    screen.grid.setCell(0, 0, Cell.withChar(0x0E02));
+    try display.renderContent(&screen);
+
+    var buf: [4]u8 = undefined;
+    const len = try std.unicode.utf8Encode(0x0E33, &buf);
+    const thai_sara_am = buf[0..len];
+
+    // Verify col 1 'ำ' was re-emitted in Frame 2
+    try testing.expect(std.mem.indexOf(u8, capture_buf.items, thai_sara_am) != null);
+}
+
+test "renderContent re-emits preceding cell when Lao SARA AM is deleted" {
+    const allocator = testing.allocator;
+    var capture_buf: std.ArrayList(u8) = .empty;
+    defer capture_buf.deinit(allocator);
+
+    var last_cells: std.ArrayList(Cell) = .empty;
+    defer last_cells.deinit(allocator);
+    var last_sx: u32 = 0;
+    var last_sy: u32 = 0;
+
+    var display = Display{
+        .fd = -1,
+        .sx = 4,
+        .sy = 1,
+        .capture = &capture_buf,
+        .capture_allocator = allocator,
+        .last_cells = &last_cells,
+        .last_sx = &last_sx,
+        .last_sy = &last_sy,
+    };
+
+    var screen = try Screen.init(allocator, 4, 1);
+    defer screen.deinit();
+
+    // Frame 1: col 0 has Lao KO (0x0E81), col 1 has Lao SARA AM (0x0EB3)
+    screen.grid.setCell(0, 0, Cell.withChar(0x0E81));
+    screen.grid.setCell(1, 0, Cell.withChar(0x0EB3));
+    try display.renderContent(&screen);
+
+    capture_buf.clearRetainingCapacity();
+
+    // Frame 2: Lao SARA AM is deleted at col 1
+    screen.grid.setCell(1, 0, Cell.empty());
+    try display.renderContent(&screen);
+
+    var buf: [4]u8 = undefined;
+    const len = try std.unicode.utf8Encode(0x0E81, &buf);
+    const lao_ko = buf[0..len];
+
+    // Verify col 0 Lao 'ກ' was re-emitted in Frame 2
+    try testing.expect(std.mem.indexOf(u8, capture_buf.items, lao_ko) != null);
 }

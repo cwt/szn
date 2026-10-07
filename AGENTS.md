@@ -74,7 +74,7 @@ Portable spellings already in use:
 | `[_]T{v} ** N` array repetition | `std.mem.zeroes` / comptime `@memset` |
 | `.Debug` optimize tag | `compat.is_debug_build` |
 
-`zig build test` must pass on both toolchains (1042 tests). The `.Debug` /
+`zig build test` must pass on both toolchains (1064 tests). The `.Debug` /
 `OptimizeMode` spellings are deprecated in 0.17 and slated for removal after
 0.18.0 — expect to revisit the `build.zig` gates at that point.
 

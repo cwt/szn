@@ -64,6 +64,7 @@ A single Thai character cell is defined as a base consonant that may contain up 
    * U+0E30 SARA A, U+0E32 SARA AA, U+0E33 SARA AM, U+0E45 LAKKHANGYAO: Width 1.
    * U+0E31 MAI HAN AKAT: Width 0 (combining mark functionally acting as a following vowel to ensure correct cluster integrity).
    * **Compound Vowels**: Compound vowels such as **เ-าะ** (e.g., เกาะ, เฉพาะ, เหมาะ) contain multiple consecutive following vowels (`า` + `ะ`). `findThaiClusterEnd` consumes all consecutive following vowels into the syllable cluster to prevent illegal wraps such as `เกา|ะ`.
+   * **SARA AM Display Coherence**: SARA AM occupies its own width-1 cell in the grid, but terminal font shapers (HarfBuzz) visually project its upper circle onto the preceding consonant. Terminal rendering diff coherence for this shaped pair is maintained by `Display.renderContent`'s row pre-pass ([`src/server/render.zig`](https://github.com/cwt/szn/blob/main/src/server/render.zig)).
 4. **Right-Attaching Marks** (U+0E2F PAIYANNOI ฯ, U+0E46 MAI YAMOK ๆ): Width 1.
 5. **Combining Marks** (SARA U ◌ุ, MAI EK ◌่, SARA I ◌ิ, etc.): Stored directly inside the cell attributes of the base or following vowel, occupying 0 additional cells.
 

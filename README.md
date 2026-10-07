@@ -87,12 +87,15 @@ terminal is likely expanding VS16 sequences to 2 cells while szn is in standard
 set -g variation-selector-always-wide on
 ```
 
-### Thai Script & SARA AM (ำ) Display Recommendations
+### Thai & Lao Script: SARA AM (ำ / ຳ) Display Recommendations
 
-Thai typography in terminal emulators presents unique challenges, particularly with the spacing vowel **SARA AM** (`U+0E33` ำ) whose upper circle (NIKKAHIT ํ) visually attaches over the preceding base consonant:
+Thai and Lao typography in terminal emulators presents unique challenges, particularly with the spacing vowels **Thai SARA AM** (`U+0E33` ำ) and **Lao SARA AM** (`U+0EB3` ຳ), whose upper circle (NIKKAHIT / NIKHAHIT ํ / ໍ) visually attaches backward over the preceding base consonant:
 
 - **Kitty 0.49.1+ with `Tlwg Typo`**:
-  Using Kitty 0.49.1 (or newer) with the **`Tlwg Typo`** font from [fonts-tlwg](https://github.com/tlwg/fonts-tlwg) combined with `szn` provides proper Thai text shaping and fixes the Sara-Am display problem (where deleting Sara-Am would previously leave the preceding consonant invisible). `szn` automatically re-emits and repaints the base consonant cleanly when Sara-Am is removed.
+  Using Kitty 0.49.1 (or newer) with the **`Tlwg Typo`** font from [fonts-tlwg](https://github.com/tlwg/fonts-tlwg) combined with `szn` provides proper Thai and Lao text shaping and eliminates font shaper cluster teardown:
+  - When Sara-Am is deleted or modified, `szn` automatically re-emits and repaints the preceding base consonant cleanly (preventing invisible consonant remnants).
+  - When the preceding base consonant is edited or replaced while Sara-Am remains, `szn` re-emits Sara-Am so it re-projects its mark onto the updated consonant.
+  - In either case, `szn` invalidates the diff cache and re-emits both cells in ascending column order, ensuring clean HarfBuzz font reshaping.
 - **Alacritty with `Tlwg Typist`**:
   If using Alacritty, the **`Tlwg Typist`** font from [fonts-tlwg](https://github.com/tlwg/fonts-tlwg) is recommended instead. Alacritty never had a problem with Sara-Am, but it cannot render `Tlwg Typo` correctly.
 
@@ -139,7 +142,7 @@ All core development phases (Phases 0 to 11) are fully implemented and complete.
 - Standard VT100 wrap-pending and Background Color Erase (BCE) support for accurate rendering.
 - Full multi-pane layouts, interactive copy mode, status bars, and config parsing (`.szn.conf`).
 - **Advanced Text Reflow** — automatically rewraps text on pane resizing, respecting CJK characters, combining marks, and Thai cluster integrity (including an $O(1)$ syllable backtracking algorithm). See [docs/text_reflow.md](docs/text_reflow.md) for full design details.
-- **1,042 unit and integration tests (1,041 passing, 1 skipped).**
+- **1,064 unit and integration tests (1,063 passing, 1 skipped).**
 
 > **Running the suite:** `zig build test` leaves a stale `$TMPDIR/szn.sock`
 > behind, which makes 3 socket tests fail on every *subsequent* run. Delete it

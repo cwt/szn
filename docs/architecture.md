@@ -88,7 +88,13 @@ packet).
   copies each pane's grid (including scrollback, offset by copy-mode scroll),
   draws UTF-8 box borders, and positions the cursor.
 - `renderContent()` keeps `last_cells` per display client and skips unchanged
-  cells (incremental diff).
+  cells (incremental diff). On dirty lines, an O(w) pre-pass detects shaped
+  precomposed vowel pairs (Thai SARA AM `U+0E33` and Lao SARA AM `U+0EB3`): if
+  either the vowel or its preceding base consonant changes, the other half's
+  cache entry in `last_cells` is invalidated with a poison sentinel (`0x1FFFFF`).
+  Both cells are then re-emitted in ascending column order, preventing terminal
+  font shapers (HarfBuzz in Kitty) from tearing down the cluster and leaving
+  either glyph blank.
 - `renderSixelImages()` forwards each pane's raw sixel DCS bytes verbatim, but
   only for images that are *fully contained* in the pane (others are erased).
   Cell↔pixel conversion uses the measured cell size; when a sixel is added

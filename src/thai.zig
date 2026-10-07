@@ -101,6 +101,13 @@ pub fn cellHasMaiHanAkat(cell: Cell) bool {
     return false;
 }
 
+/// Returns true if cp is Thai SARA AM (U+0E33) or Lao SARA AM (U+0EB3).
+/// Both are precomposed vowels that visually project a NIKHAHIT mark onto
+/// the preceding consonant cell (x - 1) during terminal font shaping.
+pub fn isSaraAm(cp: u21) bool {
+    return cp == 0x0E33 or cp == 0x0EB3;
+}
+
 /// Find the end of a Thai visual cluster starting at position `start`.
 ///
 /// A Thai cluster in the grid has the form:
@@ -649,4 +656,12 @@ test "getLibThai: thread-safe concurrent access" {
     for (threads) |t| {
         t.join();
     }
+}
+
+test "isSaraAm: Thai and Lao SARA AM" {
+    try testing.expect(isSaraAm(0x0E33)); // Thai SARA AM
+    try testing.expect(isSaraAm(0x0EB3)); // Lao SARA AM
+    try testing.expect(!isSaraAm(0x0E01)); // Thai KO KAI
+    try testing.expect(!isSaraAm(0x0E32)); // Thai SARA AA
+    try testing.expect(!isSaraAm('A'));
 }
