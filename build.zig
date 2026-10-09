@@ -39,7 +39,11 @@ pub fn build(b: *std.Build) void {
         exe.lto = .thin;
         exe.use_lld = true;
     }
-    if (optimize != debug_mode) exe.root_module.strip = true;
+    const strip = b.option(bool, "strip", "Strip debug symbols from the binary") orelse (optimize != debug_mode);
+    if (strip) exe.root_module.strip = true;
+    if (b.option(bool, "pie", "Build as position-independent executable (PIE)")) |pie| {
+        exe.pie = pie;
+    }
     b.installArtifact(exe);
 
     const run_cmd = b.addRunArtifact(exe);

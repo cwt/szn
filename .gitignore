@@ -7,3 +7,10 @@ tools/unicode_cache/
 # Agent/tooling state — local-only, never belongs in the repo or the Pages bundle
 .workbuddy-ai/
 .claude/
+.trash/
+
+# RPM packaging artifacts
+dist/
+*.tar.gz
+*.rpm
+
