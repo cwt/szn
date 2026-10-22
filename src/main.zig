@@ -113,6 +113,22 @@ fn setNonBlocking(fd: i32) void {
     }
 }
 
+fn setBlocking(fd: i32) void {
+    const c_fcntl = struct {
+        extern "c" fn fcntl(fd: c_int, cmd: c_int, ...) c_int;
+    }.fcntl;
+    const F_GETFL: c_int = 3;
+    const F_SETFL: c_int = 4;
+    const O_NONBLOCK: c_int = comptime switch (@import("builtin").os.tag) {
+        .linux => @as(c_int, 0o4000),
+        else => @as(c_int, 0x0004),
+    };
+    const flags = c_fcntl(fd, F_GETFL, @as(c_int, 0));
+    if (flags >= 0) {
+        _ = c_fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
+    }
+}
+
 /// Queue `data` for stdout. If the pending queue would exceed the cap, the
 /// backlog is dropped and `needs_redraw` is set so the client asks the server
 /// for a full repaint once the pty drains. A single frame larger than the
@@ -669,6 +685,14 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
     _ = tcflush(stdin_fd, TCIFLUSH);
     defer raw.deinit();
 
+    var read_buf: std.ArrayList(u8) = .empty;
+    defer read_buf.deinit(allocator);
+
+    // Pending stdout bytes that couldn't be written while the downstream pty
+    // applied backpressure. Drained whenever POLL.OUT fires on stdout.
+    var out_buf: std.ArrayList(u8) = .empty;
+    defer out_buf.deinit(allocator);
+
     var display = Display{
         .fd = stdout_fd,
         .sx = sx,
@@ -677,13 +701,6 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
     display.enterAltScreen() catch |err| std.log.warn("enterAltScreen failed: {any}", .{err});
     defer display.exitAltScreen() catch |err| std.log.warn("exitAltScreen failed: {any}", .{err});
 
-    var read_buf: std.ArrayList(u8) = .empty;
-    defer read_buf.deinit(allocator);
-
-    // Pending stdout bytes that couldn't be written while the downstream pty
-    // applied backpressure. Drained whenever POLL.OUT fires on stdout.
-    var out_buf: std.ArrayList(u8) = .empty;
-    defer out_buf.deinit(allocator);
     // Set when the out_buf cap was hit and a backlog was dropped: the client's
     // terminal is behind the server's diff state. Cleared once a full repaint
     // is requested after the pty drains.
@@ -1018,6 +1035,15 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
                 writeServer(server_fd, rd_ser);
             }
         }
+    }
+
+    // Restore the terminal to blocking mode and drain any queued output so the
+    // exit-alt-screen sequence (sent by the deferred display.exitAltScreen) is
+    // actually delivered instead of being dropped on a non-blocking stdout.
+    // Without this the last frame, including the status bar, stays on screen.
+    setBlocking(stdout_fd);
+    while (out_buf.items.len > 0) {
+        if (!flushStdout(stdout_fd, &out_buf)) break;
     }
 }
 
