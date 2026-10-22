@@ -700,6 +700,13 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
     };
     display.enterAltScreen() catch |err| std.log.warn("enterAltScreen failed: {any}", .{err});
     defer display.exitAltScreen() catch |err| std.log.warn("exitAltScreen failed: {any}", .{err});
+    defer {
+        setBlocking(stdout_fd);
+        while (out_buf.items.len > 0) {
+            if (!flushStdout(stdout_fd, &out_buf)) break;
+        }
+        display.exitAltScreen() catch {};
+    }
 
     // Set when the out_buf cap was hit and a backlog was dropped: the client's
     // terminal is behind the server's diff state. Cleared once a full repaint
@@ -1037,14 +1044,6 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
         }
     }
 
-    // Restore the terminal to blocking mode and drain any queued output so the
-    // exit-alt-screen sequence (sent by the deferred display.exitAltScreen) is
-    // actually delivered instead of being dropped on a non-blocking stdout.
-    // Without this the last frame, including the status bar, stays on screen.
-    setBlocking(stdout_fd);
-    while (out_buf.items.len > 0) {
-        if (!flushStdout(stdout_fd, &out_buf)) break;
-    }
 }
 
 const testing = std.testing;
