@@ -366,10 +366,6 @@ pub const Layout = struct {
         _ = self.extractFromNode(self.root, null, pane);
     }
 
-    pub fn extractPane(self: *Layout, pane: *Pane) void {
-        self.removePane(pane);
-    }
-
     fn extractFromNode(self: *Layout, node: *Node, parent_split: ?*Split, target: *Pane) bool {
         switch (node.*) {
             .leaf => |p| {

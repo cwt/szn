@@ -454,7 +454,7 @@ fn cmdJoinPane(server: *Server, args: []const []const u8) CmdResult {
         break :blk dummy;
     } else null;
 
-    src_win.extractPane(server.allocator, sp);
+    src_win.removePane(server.allocator, sp);
     if (src_win.panes.items.len == 0) {
         if (placeholder) |dummy| {
             src_win.layout.root.leaf = dummy;
@@ -486,7 +486,7 @@ fn cmdJoinPane(server: *Server, args: []const []const u8) CmdResult {
 /// Roll back a `splitPane` performed as part of a larger operation that later
 /// failed, leaving the window exactly as it was found (bug #287).
 fn undoSplit(win: *Window, allocator: std.mem.Allocator, pane: *Pane) void {
-    win.extractPane(allocator, pane);
+    win.removePane(allocator, pane);
     pane.deinit();
 }
 
@@ -505,7 +505,7 @@ fn cmdBreakPane(server: *Server, args: []const []const u8) CmdResult {
     // fd still registered in the event loop.
     const new_win = session.newWindow(server.allocator, "window") catch return .err;
 
-    window.extractPane(server.allocator, pane);
+    window.removePane(server.allocator, pane);
 
     if (new_win.panes.items.len > 0) {
         var old_pane = new_win.panes.items[0];
@@ -2985,7 +2985,11 @@ test "load-buffer enforces MAX_PASTE_SIZE — bug #382" {
     {
         const fd = std.c.open(path, std.c.O{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true }, @as(std.c.mode_t, 0o644));
         try testing.expect(fd >= 0);
-        const chunk = blk: { var a: [4096]u8 = undefined; @memset(&a, 'x'); break :blk a; };
+        const chunk = blk: {
+            var a: [4096]u8 = undefined;
+            @memset(&a, 'x');
+            break :blk a;
+        };
         var written: usize = 0;
         while (written <= Server.MAX_PASTE_SIZE) : (written += chunk.len) {
             _ = std.c.write(fd, &chunk, chunk.len);

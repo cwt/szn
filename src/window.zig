@@ -499,25 +499,6 @@ pub const Window = struct {
         self.invalidateBorderFormat();
     }
 
-    pub fn extractPane(self: *Window, allocator: std.mem.Allocator, pane: *Pane) void {
-        _ = allocator;
-        const idx = for (self.panes.items, 0..) |p, i| {
-            if (p == pane) break i;
-        } else return;
-
-        const sibling = self.layout.findSiblingPane(pane);
-
-        _ = self.panes.swapRemove(idx);
-        self.layout.extractPane(pane);
-
-        if (self.active_pane == pane) {
-            self.active_pane = sibling orelse (if (self.panes.items.len > 0) self.panes.items[0] else null);
-            if (self.active_pane) |p| p.active = true;
-        }
-        self.resize(self.width, self.height) catch |err| std.log.warn("resize failed: {any}", .{err});
-        self.invalidateBorderFormat();
-    }
-
     pub fn setActivePane(self: *Window, pane: *Pane) void {
         if (self.active_pane == pane) return;
         if (self.active_pane) |prev| prev.active = false;

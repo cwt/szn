@@ -12,7 +12,7 @@ fn fdWrite(fd: i32, buf: []const u8) Error!void {
         if (n < 0) {
             const err = std.c.errno(n);
             if (err == .INTR) continue;
-            std.debug.print("fdWrite failed with errno: {any}\n", .{err});
+            std.log.warn("fdWrite failed with errno: {any}", .{err});
             return error.WriteFailed;
         }
         if (n == 0) return error.WriteFailed;
@@ -26,7 +26,7 @@ fn fdRead(fd: i32, buf: []u8) Error!usize {
         if (n < 0) {
             const err = std.c.errno(n);
             if (err == .INTR) continue;
-            std.debug.print("fdRead failed with errno: {any}\n", .{err});
+            std.log.warn("fdRead failed with errno: {any}", .{err});
             return error.ReadFailed;
         }
         return @as(usize, @intCast(n));

@@ -2813,7 +2813,6 @@ pub const Server = struct {
     /// behind/flow-control drop. Used for request/response packets (command
     /// replies) that the client is explicitly waiting on — dropping those left
     /// it hanging forever (bug #376). The hard cap still applies.
-
     fn appendClientOutUrgent(self: *Server, dc: *DisplayClient, data: []const u8) bool {
         if (data.len == 0) return true;
         if (dc.out_buf.items.len + data.len > MAX_OUT_BUF) {

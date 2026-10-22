@@ -29,7 +29,7 @@ pub const BufferList = struct {
 
     /// Evict the oldest buffer when at capacity, keeping memory bounded.
     fn evictOldestIfFull(self: *BufferList) void {
-        if (self.items.items.len < self.max_buffers) return;
+        if (self.max_buffers == 0 or self.items.items.len < self.max_buffers) return;
         const oldest = self.items.items[self.items.items.len - 1];
         self.items.items.len -= 1;
         var entry = oldest;
@@ -188,6 +188,18 @@ test "buffer list evicts oldest past max_buffers — bug #363" {
     try testing.expect(bl.get("buf2") != null);
     try testing.expect(bl.get("buf1") == null);
     try testing.expect(bl.get("buf0") == null);
+}
+
+test "buffer list with max_buffers=0 does not panic on push — bug #532" {
+    var bl = BufferList.init(testing.allocator);
+    defer bl.deinit();
+    bl.max_buffers = 0;
+
+    const name = try testing.allocator.dupe(u8, "b0");
+    const data = try testing.allocator.dupe(u8, "payload");
+    try bl.pushOwned(name, data);
+
+    try testing.expectEqual(@as(usize, 1), bl.items.items.len);
 }
 
 test "pushOwned frees name and data when insert fails — bug #456" {
