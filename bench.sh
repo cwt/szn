@@ -64,7 +64,7 @@ cleanup_procs
 # =========================================================================
 header "1. Startup time (cold)"
 # -------------------------------------------------------------------------
-hyperfine --warmup 5 --min-runs 20 --export-json "$TMP_STARTUP" \
+hyperfine -S --warmup 5 --min-runs 20 --export-json "$TMP_STARTUP" \
     --prepare "$PREPARE_SZN" \
     -n "szn new -d" \
     "$SZN new-session -d b 2>/dev/null" \
@@ -138,7 +138,7 @@ print_rss "5 windows, ~50 panes" "$MEM_50P_TMUX"
 cleanup_procs
 header "5. Session create/destroy throughput"
 # -------------------------------------------------------------------------
-hyperfine --warmup 5 --min-runs 20 --export-json "$TMP_THROUGHPUT" \
+hyperfine -S --warmup 5 --min-runs 20 --export-json "$TMP_THROUGHPUT" \
     --prepare "$PREPARE_SZN" \
     -n "szn new + kill" \
     "$SZN new-session -d b 2>/dev/null && $SZN kill-session" \
@@ -172,18 +172,29 @@ def load_timing(path):
     try:
         with open(path) as f:
             d = json.load(f)
+        def get_mean(r):
+            if "mean" in r and r["mean"] is not None:
+                return r["mean"]
+            summary = r.get("summary", {})
+            metric = d.get("primary_metric", "time_wall_clock")
+            if metric in summary and summary[metric] and "mean" in summary[metric]:
+                return summary[metric]["mean"]
+            if "time_wall_clock" in summary and summary["time_wall_clock"] and "mean" in summary["time_wall_clock"]:
+                return summary["time_wall_clock"]["mean"]
+            return 0
         szn_ms = None
         tmux_ms = None
         for r in d.get("results", []):
             cmd = r.get("command", "")
+            mean_sec = get_mean(r)
             if "szn" in cmd:
-                szn_ms = r.get("mean", 0) * 1000.0
+                szn_ms = mean_sec * 1000.0
             elif "tmux" in cmd:
-                tmux_ms = r.get("mean", 0) * 1000.0
+                tmux_ms = mean_sec * 1000.0
         if szn_ms is None and len(d.get("results", [])) > 0:
-            szn_ms = d["results"][0].get("mean", 0) * 1000.0
+            szn_ms = get_mean(d["results"][0]) * 1000.0
         if tmux_ms is None and len(d.get("results", [])) > 1:
-            tmux_ms = d["results"][1].get("mean", 0) * 1000.0
+            tmux_ms = get_mean(d["results"][1]) * 1000.0
         return szn_ms, tmux_ms
     except Exception:
         return None, None
