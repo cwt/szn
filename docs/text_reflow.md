@@ -45,30 +45,30 @@ To reconstruct the original stream of text (logical lines) from the grid's raw p
 
 ---
 
-## 3. Thai Text Cluster Integrity
+## 3. Thai & Lao (Tai) Text Cluster Integrity
 
-Unlike Latin-based scripts where characters are rendered sequentially side-by-side, Thai script (U+0E00–U+0E7F) uses vertically and horizontally combining glyphs to form a single visual cluster (or syllable core). 
+Unlike Latin-based scripts where characters are rendered sequentially side-by-side, Tai scripts (Thai U+0E00–U+0E7F and Lao U+0E80–U+0EFF) use vertically and horizontally combining glyphs to form a single visual cluster (or syllable core). 
 
-Splitting a Thai cluster across line boundaries makes the text unreadable and corrupts the script.
+Splitting a Thai or Lao cluster across line boundaries makes the text unreadable and corrupts the script.
 
-### Anatomy of a Thai Cluster
-A single Thai character cell is defined as a base consonant that may contain up to two combining marks (stored inside `comb1` and `comb2` of the [Cell](https://github.com/cwt/szn/blob/main/src/grid.zig) struct). A cluster spans across a sequence of cells matching this syntax:
+### Anatomy of a Tai Cluster
+A single Thai or Lao character cell is defined as a base consonant that may contain up to two combining marks (stored inside `comb1` and `comb2` of the [Cell](https://github.com/cwt/szn/blob/main/src/grid.zig) struct). A cluster spans across a sequence of cells matching this syntax:
 
 ```
 [Leading Vowel]? ➔ Base Consonant [รร]? ➔ [Following Vowels]* ➔ [Right-Attaching Marks]*
 ```
 
-1. **Leading Vowels** (U+0E40–U+0E44): เ, แ, โ, ใ, ไ (Width 1, placed before the base).
-2. **Base Consonant** (U+0E01–U+0E2E): Width 1. Can optionally be followed by **Ro Han (รร)** (two consecutive U+0E23 characters), which function as a vowel sound and are consumed as part of the base consonant's cluster to prevent split lines.
-3. **Following Vowels** (U+0E30, U+0E31, U+0E32, U+0E33, U+0E45):
-   * U+0E30 SARA A, U+0E32 SARA AA, U+0E33 SARA AM, U+0E45 LAKKHANGYAO: Width 1.
-   * U+0E31 MAI HAN AKAT: Width 0 (combining mark functionally acting as a following vowel to ensure correct cluster integrity).
-   * **Compound Vowels**: Compound vowels such as **เ-าะ** (e.g., เกาะ, เฉพาะ, เหมาะ) contain multiple consecutive following vowels (`า` + `ะ`). `findThaiClusterEnd` consumes all consecutive following vowels into the syllable cluster to prevent illegal wraps such as `เกา|ะ`.
-   * **SARA AM Display Coherence**: SARA AM occupies its own width-1 cell in the grid, but terminal font shapers (HarfBuzz) visually project its upper circle onto the preceding consonant. Terminal rendering diff coherence for this shaped pair is maintained by `Display.renderContent`'s row pre-pass ([`src/server/render.zig`](https://github.com/cwt/szn/blob/main/src/server/render.zig)).
-4. **Right-Attaching Marks** (U+0E2F PAIYANNOI ฯ, U+0E46 MAI YAMOK ๆ): Width 1.
-5. **Combining Marks** (SARA U ◌ุ, MAI EK ◌่, SARA I ◌ิ, etc.): Stored directly inside the cell attributes of the base or following vowel, occupying 0 additional cells.
+1. **Leading Vowels** (Thai U+0E40–U+0E44: เ, แ, โ, ใ, ไ; Lao U+0EC0–U+0EC4: ເ, ແ, ໂ, ໃ, ໄ): Width 1, placed before the base.
+2. **Base Consonant** (Thai U+0E01–U+0E2E; Lao U+0E81–U+0EAE): Width 1. Can optionally be followed by **Ro Han (รร)** in Thai (two consecutive U+0E23 characters), which function as a vowel sound and are consumed as part of the base consonant's cluster to prevent split lines.
+3. **Following Vowels**:
+   * Thai U+0E30 SARA A, U+0E32 SARA AA, U+0E33 SARA AM, U+0E45 LAKKHANGYAO; Lao U+0EB0 SARA A, U+0EB2 SARA AA, U+0EB3 SARA AM: Width 1.
+   * Thai U+0E31 MAI HAN AKAT / Lao U+0EB1 MAI KAN: Width 0 (combining mark functionally acting as a following vowel to ensure correct cluster integrity).
+   * **Compound Vowels**: Compound vowels such as **เ-าะ / ເ-າະ** (e.g., เกาะ / ເກາະ, เฉพาะ, เหมาะ) contain multiple consecutive following vowels (`า/າ` + `ะ/ະ`). `findThaiClusterEnd` consumes all consecutive following vowels into the syllable cluster to prevent illegal wraps such as `เกา|ะ` or `ເກາ|ະ`.
+   * **SARA AM Display Coherence**: SARA AM (Thai U+0E33, Lao U+0EB3) occupies its own width-1 cell in the grid, but terminal font shapers (HarfBuzz) visually project its upper circle onto the preceding consonant. Terminal rendering diff coherence for this shaped pair is maintained by `Display.renderContent`'s row pre-pass ([`src/server/render.zig`](https://github.com/cwt/szn/blob/main/src/server/render.zig)).
+4. **Right-Attaching Marks** (Thai U+0E2F PAIYANNOI ฯ, U+0E46 MAI YAMOK ๆ; Lao U+0EAF ELLIPSIS ຯ, U+0EC6 KO LA ໆ): Width 1.
+5. **Combining Marks** (SARA U ◌ุ/◌ຸ, MAI EK ◌่/◌່, SARA I ◌ิ/◌ິ, Lao MAI KON ◌ົ, Thanthakhat ◌์/◌໌, etc.): Stored directly inside the cell attributes of the base or following vowel, occupying 0 additional cells.
 
-The function [findThaiClusterEnd](https://github.com/cwt/szn/blob/main/src/thai.zig) identifies these boundary rules to ensure that a cluster is treated as an indivisible unit during wrapping.
+The function [findThaiClusterEnd](https://github.com/cwt/szn/blob/main/src/thai.zig) identifies these boundary rules to ensure that a cluster is treated as an indivisible unit during wrapping for both Thai and Lao scripts.
 
 ---
 

@@ -8,15 +8,26 @@ pub fn isThai(cp: u21) bool {
     return cp >= 0x0E00 and cp <= 0x0E7F;
 }
 
-/// Returns true if cp is a Thai combining mark (GC=Mn, zero-width).
+/// Returns true if cp is in the Lao block (U+0E80–U+0EFF).
+pub fn isLao(cp: u21) bool {
+    return cp >= 0x0E80 and cp <= 0x0EFF;
+}
+
+/// Returns true if cp is in the Thai or Lao Tai script block (U+0E00–U+0EFF).
+pub fn isThaiOrLao(cp: u21) bool {
+    return cp >= 0x0E00 and cp <= 0x0EFF;
+}
+
+/// Returns true if cp is a Thai or Lao combining mark (GC=Mn, zero-width).
 ///
 /// These marks attach above or below a base character and are stored
 /// in the comb1/comb2 fields of the preceding Cell.
 ///
 /// Note: FONGMAN (U+0E4F) is punctuation (GC=Po), not a combining mark.
-/// SARA AM (U+0E33) is a precomposed vowel (GC=Lo), not a combining mark.
+/// SARA AM (U+0E33 / U+0EB3) is a precomposed vowel (GC=Lo), not a combining mark.
 pub fn isThaiCombining(cp: u21) bool {
     return switch (cp) {
+        // Thai combining marks
         0x0E31, // MAI HAN AKAT      ◌ั
         0x0E34, // SARA I             ◌ิ
         0x0E35, // SARA II            ◌ี
@@ -33,77 +44,115 @@ pub fn isThaiCombining(cp: u21) bool {
         0x0E4C, // THANTHAKHAT        ◌์
         0x0E4D, // NIKHAHIT           ◌ํ
         0x0E4E, // YAMAKKAN           ◌๎
+
+        // Lao combining marks
+        0x0EB1, // MAI KAN            ◌ັ
+        0x0EB4, // SARA I             ◌ິ
+        0x0EB5, // SARA II            ◌ີ
+        0x0EB6, // SARA Y             ◌ຶ
+        0x0EB7, // SARA YY            ◌ື
+        0x0EB8, // SARA U             ◌ຸ
+        0x0EB9, // SARA UU            ◌ູ
+        0x0EBA, // ASR                ◌຺
+        0x0EBB, // MAI KON            ◌ົ
+        0x0EBC, // SEMIVOWEL LO       ◌ຼ
+        0x0EC7, // MAITAIKHU          ◌็
+        0x0EC8, // MAI EK             ◌່
+        0x0EC9, // MAI THO            ◌້
+        0x0ECA, // MAI TI             ◌໊
+        0x0ECB, // MAI CATAWA         ◌໋
+        0x0ECC, // CANCELLATION MARK  ◌໌
+        0x0ECD, // NIKHAHIT           ◌ໍ
+        0x0ECE, // YAMAKKAN           ◌໎
         => true,
         else => false,
     };
 }
+pub const isLaoCombining = isThaiCombining;
 
-/// Returns true if cp is a Thai leading vowel (U+0E40–U+0E44).
+/// Returns true if cp is a Thai or Lao leading vowel.
 ///
 /// These appear before the base consonant in a syllable:
-///   เ(U+0E40) แ(U+0E41) โ(U+0E42) ใ(U+0E43) ไ(U+0E44)
+///   Thai: เ(U+0E40) แ(U+0E41) โ(U+0E42) ใ(U+0E43) ไ(U+0E44)
+///   Lao:  ເ(U+0EC0) ແ(U+0EC1) ໂ(U+0EC2) ໃ(U+0EC3) ໄ(U+0EC4)
 pub fn isThaiLeadingVowel(cp: u21) bool {
-    return cp >= 0x0E40 and cp <= 0x0E44;
+    return (cp >= 0x0E40 and cp <= 0x0E44) or (cp >= 0x0EC0 and cp <= 0x0EC4);
 }
+pub const isLaoLeadingVowel = isThaiLeadingVowel;
 
-/// Returns true if cp is a Thai following vowel.
+/// Returns true if cp is a Thai or Lao following vowel.
 ///
 /// These appear after the base consonant:
-///
-///   U+0E30  SARA A        ◌ะ
-///   U+0E31  MAI HAN AKAT  ◌ั
-///   U+0E32  SARA AA       ◌า
-///   U+0E33  SARA AM       ◌ำ  (precomposed: base + NIKHAHIT)
-///   U+0E45  LAKKHANGYAO   ๅ   (vowel length marker, extends SARA AA)
+///   Thai:
+///     U+0E30  SARA A        ◌ะ
+///     U+0E31  MAI HAN AKAT  ◌ั
+///     U+0E32  SARA AA       ◌า
+///     U+0E33  SARA AM       ◌ำ
+///     U+0E45  LAKKHANGYAO   ๅ
+///   Lao:
+///     U+0EB0  SARA A        ◌ະ
+///     U+0EB1  MAI KAN       ◌ັ
+///     U+0EB2  SARA AA       ◌າ
+///     U+0EB3  SARA AM       ◌ຳ
 pub fn isThaiFollowingVowel(cp: u21) bool {
     return switch (cp) {
-        0x0E30, 0x0E31, 0x0E32, 0x0E33, 0x0E45 => true,
+        0x0E30, 0x0E31, 0x0E32, 0x0E33, 0x0E45, 0x0EB0, 0x0EB1, 0x0EB2, 0x0EB3 => true,
         else => false,
     };
 }
+pub const isLaoFollowingVowel = isThaiFollowingVowel;
 
-/// Returns true if cp is a Thai right-attaching mark.
+/// Returns true if cp is a Thai or Lao right-attaching mark.
 ///
 /// These attach to the preceding base/vowel cell and must never be
 /// split onto a new line. They occupy their own cell (width 1) but
 /// form a single visual cluster with the preceding character:
-///   U+0E2F  PAIYANNOI    ฯ   (abbreviation marker)
-///   U+0E46  MAI YAMOK    ๆ   (repetition mark)
+///   Thai: U+0E2F PAIYANNOI ฯ, U+0E46 MAI YAMOK ๆ
+///   Lao:  U+0EAF ELLIPSIS  ຯ, U+0EC6 KO LA     ໆ
 pub fn isThaiRightAttaching(cp: u21) bool {
     return switch (cp) {
-        0x0E2F, 0x0E46 => true,
+        0x0E2F, 0x0E46, 0x0EAF, 0x0EC6 => true,
         else => false,
     };
 }
+pub const isLaoRightAttaching = isThaiRightAttaching;
 
-/// Returns true if cp is a Thai base character (width 1, non-vowel,
+/// Returns true if cp is a Thai or Lao base character (width 1, non-vowel,
 /// non-combining, non-attaching).
 ///
-/// A base is any Thai codepoint with width 1 that is not a combining mark,
+/// A base is any Thai or Lao codepoint with width 1 that is not a combining mark,
 /// leading vowel, following vowel, or right-attaching mark. This includes
-/// consonants, punctuation (FONGMAN, ANG KHANKHU, KHOMUT), digits,
-/// and the BAHT currency symbol.
+/// consonants, digits, and currency symbols.
 pub fn isThaiBase(cp: u21) bool {
-    return isThai(cp) and
+    return isThaiOrLao(cp) and
         !isThaiCombining(cp) and
         !isThaiLeadingVowel(cp) and
         !isThaiFollowingVowel(cp) and
         !isThaiRightAttaching(cp) and
         char_width.charWidth(cp) == 1;
 }
+pub const isLaoBase = isThaiBase;
 
-/// Returns true if the cell contains MAI HAN AKAT (U+0E31) either as its main
-/// character or as a combining mark in comb1/comb2.
+/// Returns true if the cell contains MAI HAN AKAT (Thai U+0E31) or MAI KAN (Lao U+0EB1)
+/// either as its main character or as a combining mark in comb1/comb2.
 pub fn cellHasMaiHanAkat(cell: Cell) bool {
-    if (cell.char == 0x0E31) return true;
-    if (cell.comb1 != 0 and char_width.combiningCodepoint(cell.comb1) == 0x0E31) return true;
-    if (cell.comb2 != 0 and char_width.combiningCodepoint(cell.comb2) == 0x0E31) return true;
+    if (cell.char == 0x0E31 or cell.char == 0x0EB1) return true;
+    if (cell.comb1 != 0) {
+        const cp = char_width.combiningCodepoint(cell.comb1);
+        if (cp == 0x0E31 or cp == 0x0EB1) return true;
+    }
+    if (cell.comb2 != 0) {
+        const cp = char_width.combiningCodepoint(cell.comb2);
+        if (cp == 0x0E31 or cp == 0x0EB1) return true;
+    }
     return false;
 }
+pub const cellHasMaiKan = cellHasMaiHanAkat;
 
-/// Returns true if cp is an upper or lower Thai vowel mark.
+/// Returns true if cp is an upper or lower Thai or Lao vowel mark.
 pub fn isThaiVowelMark(cp: u21) bool {
     return switch (cp) {
+        // Thai upper/lower vowel marks
         0x0E31, // MAI HAN AKAT      ◌ั
         0x0E34, // SARA I             ◌ิ
         0x0E35, // SARA II            ◌ี
@@ -112,12 +161,24 @@ pub fn isThaiVowelMark(cp: u21) bool {
         0x0E38, // SARA U             ◌ุ
         0x0E39, // SARA UU            ◌ู
         0x0E47, // MAITAIKHU          ◌็
+
+        // Lao upper/lower vowel marks
+        0x0EB1, // MAI KAN            ◌ັ
+        0x0EB4, // SARA I             ◌ິ
+        0x0EB5, // SARA II            ◌ີ
+        0x0EB6, // SARA Y             ◌ຶ
+        0x0EB7, // SARA YY            ◌ື
+        0x0EB8, // SARA U             ◌ຸ
+        0x0EB9, // SARA UU            ◌ູ
+        0x0EBB, // MAI KON            ◌ົ
+        0x0EC7, // MAITAIKHU          ◌็
         => true,
         else => false,
     };
 }
+pub const isLaoVowelMark = isThaiVowelMark;
 
-/// Returns true if the cell contains an upper or lower Thai vowel mark
+/// Returns true if the cell contains an upper or lower Thai or Lao vowel mark
 /// (either as its base character if unattached, or in comb1/comb2).
 pub fn cellHasVowelMark(cell: Cell) bool {
     if (isThaiVowelMark(cell.char)) return true;
@@ -126,53 +187,63 @@ pub fn cellHasVowelMark(cell: Cell) bool {
     return false;
 }
 
-/// Returns true if the cell has THANTHAKHAT (U+0E4C / Garan) either as its
-/// main character or as a combining mark in comb1/comb2.
+/// Returns true if the cell has THANTHAKHAT (Thai U+0E4C / Lao U+0ECC / Garan / Cancellation mark)
+/// either as its main character or as a combining mark in comb1/comb2.
 pub fn cellHasThanthakhat(cell: Cell) bool {
-    if (cell.char == 0x0E4C) return true;
-    if (cell.comb1 != 0 and char_width.combiningCodepoint(cell.comb1) == 0x0E4C) return true;
-    if (cell.comb2 != 0 and char_width.combiningCodepoint(cell.comb2) == 0x0E4C) return true;
+    if (cell.char == 0x0E4C or cell.char == 0x0ECC) return true;
+    if (cell.comb1 != 0) {
+        const cp = char_width.combiningCodepoint(cell.comb1);
+        if (cp == 0x0E4C or cp == 0x0ECC) return true;
+    }
+    if (cell.comb2 != 0) {
+        const cp = char_width.combiningCodepoint(cell.comb2);
+        if (cp == 0x0E4C or cp == 0x0ECC) return true;
+    }
     return false;
 }
 
-/// Given a position in a sequence of Thai cells (e.g. at a Thanthakhat coda or
+/// Given a position in a sequence of Thai or Lao cells (e.g. at a Thanthakhat coda or
 /// right-attaching mark), find the start index of the current syllable or word,
 /// bounded below by `min_idx`.
 pub fn findThaiSyllableStart(cells: []const Cell, pos: usize, min_idx: usize) usize {
     if (pos <= min_idx) return min_idx;
     var j = pos;
-    var first_thai_idx = pos;
+    var first_tai_idx = pos;
 
     while (j > min_idx) {
         j -= 1;
         const c = cells[j];
-        if (!isThai(c.char) or c.char == ' ') {
-            return first_thai_idx;
+        if (!isThaiOrLao(c.char) or c.char == ' ') {
+            return first_tai_idx;
         }
-        first_thai_idx = j;
+        first_tai_idx = j;
 
-        // Leading vowel (เ, แ, โ, ใ, ไ) is an unambiguous syllable start.
+        // Leading vowel (เ, แ, โ, ใ, ไ / ເ, ແ, ໂ, ໃ, ໄ) is an unambiguous syllable start.
         if (isThaiLeadingVowel(c.char)) {
             return j;
         }
 
         // If this cell has a vowel mark, the consonant carrying it is the syllable base.
         if (cellHasVowelMark(c)) {
-            // Check for initial consonant cluster (e.g. ปล, กร, คว, พร, ตร, กล)
+            // Check for initial consonant cluster (e.g. ปล, กร, คว, พร, ตร, กล / ປລ, ກຣ, ຄວ)
             if (j > min_idx and isThaiBase(cells[j - 1].char)) {
-                if (c.char == 0x0E23 or c.char == 0x0E25 or c.char == 0x0E27) { // ร, ล, ว as second consonant
+                if (c.char == 0x0E23 or c.char == 0x0E25 or c.char == 0x0E27 or
+                    c.char == 0x0EA3 or c.char == 0x0EA5 or c.char == 0x0EA7)
+                {
                     return j - 1;
                 }
             }
             return j;
         }
 
-        // If this cell is a following vowel (e.g. า, ะ), the base consonant precedes it.
+        // If this cell is a following vowel (e.g. า, ะ / າ, ະ), the base consonant precedes it.
         if (isThaiFollowingVowel(c.char)) {
             if (j > min_idx and isThaiBase(cells[j - 1].char)) {
                 var base_idx = j - 1;
                 if (base_idx > min_idx and isThaiBase(cells[base_idx - 1].char)) {
-                    if (cells[base_idx].char == 0x0E23 or cells[base_idx].char == 0x0E25 or cells[base_idx].char == 0x0E27) {
+                    if (cells[base_idx].char == 0x0E23 or cells[base_idx].char == 0x0E25 or cells[base_idx].char == 0x0E27 or
+                        cells[base_idx].char == 0x0EA3 or cells[base_idx].char == 0x0EA5 or cells[base_idx].char == 0x0EA7)
+                    {
                         base_idx -= 1;
                     }
                 }
@@ -186,7 +257,7 @@ pub fn findThaiSyllableStart(cells: []const Cell, pos: usize, min_idx: usize) us
             return j;
         }
     }
-    return first_thai_idx;
+    return first_tai_idx;
 }
 
 /// Returns true if cp is Thai SARA AM (U+0E33) or Lao SARA AM (U+0EB3).
@@ -196,26 +267,26 @@ pub fn isSaraAm(cp: u21) bool {
     return cp == 0x0E33 or cp == 0x0EB3;
 }
 
-/// Find the end of a Thai visual cluster starting at position `start`.
+/// Find the end of a Thai or Lao visual cluster starting at position `start`.
 ///
-/// A Thai cluster in the grid has the form:
+/// A Tai (Thai or Lao) cluster in the grid has the form:
 ///   [leading vowel] + base + [following vowels] + [right-attaching marks]
 ///
 /// Combining marks (tone marks, vowel signs) are stored in the comb1/comb2
 /// fields of the base or following-vowel cell, not as separate cells.
 ///
-/// Right-attaching marks (PAIYANNOI, MAI YAMOK) occupy their own cells
+/// Right-attaching marks (PAIYANNOI, MAI YAMOK, Lao ELLIPSIS, Lao KO LA) occupy their own cells
 /// but are consumed into the cluster so they are never split from the
 /// preceding syllable.
 ///
 /// Returns the index after the last cell belonging to the cluster.
-/// If the cell at `start` is not the start of a Thai cluster, returns
+/// If the cell at `start` is not the start of a Thai or Lao cluster, returns
 /// `start + 1`.
 pub fn findThaiClusterEnd(line: []const Cell, start: usize) usize {
     if (start >= line.len) return start;
 
     const cp = line[start].char;
-    if (!isThai(cp)) return start + 1;
+    if (!isThaiOrLao(cp)) return start + 1;
 
     var pos = start;
 
@@ -232,7 +303,7 @@ pub fn findThaiClusterEnd(line: []const Cell, start: usize) usize {
         return start + 1;
     }
 
-    // Check for Ro Han (รร) following the base consonant
+    // Check for Ro Han (รร) following the base consonant (Thai only)
     if (pos + 2 < line.len and line[pos + 1].char == 0x0E23 and line[pos + 2].char == 0x0E23) {
         pos += 3;
     } else {
@@ -241,7 +312,7 @@ pub fn findThaiClusterEnd(line: []const Cell, start: usize) usize {
     }
     if (pos >= line.len) return pos;
 
-    // Check for optional following vowels (may have multiple, e.g. เ-าะ as in เกาะ)
+    // Check for optional following vowels (may have multiple, e.g. เ-าะ / ເ-າະ as in เกาะ / ເກາະ)
     while (pos < line.len and isThaiFollowingVowel(line[pos].char)) {
         pos += 1;
     }
@@ -267,6 +338,17 @@ test "isThai: outside range" {
     try testing.expect(!isThai(0x0DFF));
     try testing.expect(!isThai(0x0E80));
     try testing.expect(!isThai(0x10FF));
+}
+
+test "isLao and isThaiOrLao" {
+    try testing.expect(isLao(0x0E81)); // Lao KO
+    try testing.expect(isLao(0x0ED0)); // Lao digit 0
+    try testing.expect(!isLao(0x0E01)); // Thai KO
+    try testing.expect(!isLao(0x0F00)); // Tibetan
+
+    try testing.expect(isThaiOrLao(0x0E01)); // Thai KO
+    try testing.expect(isThaiOrLao(0x0E81)); // Lao KO
+    try testing.expect(!isThaiOrLao('A'));
 }
 
 test "isThaiCombining: all marks" {
@@ -585,6 +667,27 @@ test "findThaiSyllableStart with Thanthakhat and clusters" {
     mee_sat[1].comb1 = char_width.combiningIndex(0x0E31); // ั
     mee_sat[3].comb1 = char_width.combiningIndex(0x0E4C); // ์
     try testing.expectEqual(@as(usize, 1), findThaiSyllableStart(&mee_sat, 3, 0));
+}
+
+test "Lao clusters and syllable start" {
+    // Lao word: ເກາະ (ເ=0, ກ=1, າ=2, ະ=3) -> single compound cluster of length 4
+    const koh = [_]Cell{
+        Cell.withChar(0x0EC0), // ເ
+        Cell.withChar(0x0E81), // ກ
+        Cell.withChar(0x0EB2), // າ
+        Cell.withChar(0x0EB0), // ະ
+    };
+    try testing.expectEqual(@as(usize, 4), findThaiClusterEnd(&koh, 0));
+
+    // Lao Thanthakhat / Cancellation mark (◌໌ 0x0ECC)
+    var c = Cell.withChar(0x0EA7); // Lao WO
+    c.comb1 = char_width.combiningIndex(0x0ECC);
+    try testing.expect(cellHasThanthakhat(c));
+
+    // Lao Mai Kan (◌ັ 0x0EB1)
+    var mk = Cell.withChar(0x0EA7); // Lao WO
+    mk.comb1 = char_width.combiningIndex(0x0EB1);
+    try testing.expect(cellHasMaiHanAkat(mk));
 }
 
 pub const ThBrk = opaque {};

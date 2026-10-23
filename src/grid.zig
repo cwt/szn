@@ -560,7 +560,7 @@ pub const Grid = struct {
     fn findClusterEnd(cells: []const Cell, start: usize) usize {
         const cp = cells[start].char;
         if (cp == ' ' and cells[start].is_padding) return start + 1;
-        if (thai.isThai(cp)) return thai.findThaiClusterEnd(cells, start);
+        if (thai.isThaiOrLao(cp)) return thai.findThaiClusterEnd(cells, start);
         if (char_width.charWidth(cp) == 2) return @min(start + 2, cells.len);
         return start + 1;
     }
@@ -715,11 +715,11 @@ pub const Grid = struct {
                         }
                     }
 
-                    // A space character bordering a Thai character is also a valid word boundary.
+                    // A space character bordering a Thai or Lao character is also a valid word boundary.
                     var space_wb: ?usize = null;
                     if (cells[i].char == ' ' and !cells[i].is_padding) {
-                        if (i > 0 and thai.isThai(cells[i - 1].char)) {
-                            // If followed immediately by a right-attaching mark (ๆ, ฯ),
+                        if (i > 0 and thai.isThaiOrLao(cells[i - 1].char)) {
+                            // If followed immediately by a right-attaching mark (ๆ, ฯ, ໆ, ຯ),
                             // do not break here because right-attaching marks must never begin a line.
                             if (i + 1 >= cells.len or !thai.isThaiRightAttaching(cells[i + 1].char)) {
                                 space_wb = i;
@@ -731,12 +731,12 @@ pub const Grid = struct {
                             j -= 1;
                             if (cells[j].char == ' ' and !cells[j].is_padding) {
                                 const borders_thai = blk: {
-                                    if (j > 0 and thai.isThai(cells[j - 1].char)) break :blk true;
-                                    if (j + 1 < cells.len and thai.isThai(cells[j + 1].char)) break :blk true;
+                                    if (j > 0 and thai.isThaiOrLao(cells[j - 1].char)) break :blk true;
+                                    if (j + 1 < cells.len and thai.isThaiOrLao(cells[j + 1].char)) break :blk true;
                                     break :blk false;
                                 };
                                 if (borders_thai) {
-                                    // A right-attaching mark (ๆ, ฯ) must never begin a line.
+                                    // A right-attaching mark (ๆ, ฯ, ໆ, ຯ) must never begin a line.
                                     // If j + 1 is right-attaching, do not break at this space;
                                     // continue scanning backward for a prior word break.
                                     if (j + 1 < cells.len and thai.isThaiRightAttaching(cells[j + 1].char)) {
@@ -820,10 +820,10 @@ pub const Grid = struct {
                         break;
                     }
 
-                    // Look-ahead heuristic: if breaking would leave a single Thai consonant
+                    // Look-ahead heuristic: if breaking would leave a single Thai/Lao consonant
                     // at the start of the next line, followed immediately by a leading vowel,
                     // backtrack to the start of the word (the leading vowel of the current syllable).
-                    if (cluster_end == i + 1 and thai.isThai(cells[i].char) and !thai.isThaiLeadingVowel(cells[i].char)) {
+                    if (cluster_end == i + 1 and thai.isThaiOrLao(cells[i].char) and !thai.isThaiLeadingVowel(cells[i].char)) {
                         const next_idx = cluster_end;
                         if (next_idx < cells.len and thai.isThaiLeadingVowel(cells[next_idx].char)) {
                             var j = i;
@@ -832,7 +832,7 @@ pub const Grid = struct {
                             while (j > line_start) {
                                 j -= 1;
                                 const cp = cells[j].char;
-                                if (!thai.isThai(cp)) {
+                                if (!thai.isThaiOrLao(cp)) {
                                     break;
                                 }
                                 first_thai_idx = j;
@@ -1889,6 +1889,36 @@ test "setSize reflow Thai Thanthakhat (์) protection — bug #541" {
     try testing.expectEqual(0x0E15, grid.getCell(1, 1).char); // ต
     try testing.expectEqual(0x0E27, grid.getCell(2, 1).char); // ว
     try testing.expectEqual(char_width.combiningIndex(0x0E4C), grid.getCell(2, 1).comb1); // ์
+}
+
+test "setSize reflow Lao text and Ko La (ๆ) mark" {
+    var grid = try Grid.init(testing.allocator, 15, 24);
+    defer grid.deinit();
+
+    // Write Lao phrase with spaced Ko La: "ດີ ຫຼາຍ ໆ"
+    grid.writeChar(0, 0, 0x0E94); // Lao DO
+    grid.lines.items[0].cells.items[0].comb1 = char_width.combiningIndex(0x0EB5); // Lao SARA II
+    grid.writeChar(1, 0, ' ');
+    grid.writeChar(2, 0, 0x0EAB); // Lao HO
+    grid.writeChar(3, 0, 0x0EB2); // Lao SARA AA
+    grid.writeChar(4, 0, 0x0E8D); // Lao GNO
+    grid.writeChar(5, 0, ' ');
+    grid.writeChar(6, 0, 0x0EC6); // Lao Ko La (ໆ)
+
+    grid.lines.items[0].wrapped = true;
+
+    // Resize to width 4:
+    // Line 0 gets "ດີ", and Line 1 gets "ຫຼາຍ ໆ" (Ko La ໆ never starts at column 0).
+    try grid.setSize(4, 24);
+
+    // Line 0: "ດີ"
+    try testing.expectEqual(0x0E94, grid.getCell(0, 0).char); // ດ
+    try testing.expectEqual(char_width.combiningIndex(0x0EB5), grid.getCell(0, 0).comb1); // ີ
+
+    // Line 1: "ຫາຍ"
+    try testing.expectEqual(0x0EAB, grid.getCell(0, 1).char); // ຫ
+    try testing.expectEqual(0x0EB2, grid.getCell(1, 1).char); // າ
+    try testing.expectEqual(0x0E8D, grid.getCell(2, 1).char); // ຍ
 }
 
 test "reflow cursor tracking" {
