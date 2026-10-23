@@ -193,7 +193,7 @@ pub const Display = struct {
     }
 
     pub fn exitAltScreen(self: Display) Error!void {
-        try self.writeBytes("\x1b[?7h\x1b[<1u\x1b[?1000l\x1b[?1002l\x1b[?1006l\x1b[?2004l\x1b[?25h\x1b[?1049l");
+        try self.writeBytes("\x1b[m\x1b[?2026l\x1b[H\x1b[2J\x1b[?7h\x1b[<1u\x1b[?1000l\x1b[?1002l\x1b[?1006l\x1b[?2004l\x1b[?25h\x1b[?1049l");
     }
 
     pub fn renderAll(
@@ -2550,4 +2550,25 @@ test "renderContent re-emits preceding cell when Lao SARA AM is deleted" {
 
     // Verify col 0 Lao 'ກ' was re-emitted in Frame 2
     try testing.expect(std.mem.indexOf(u8, capture_buf.items, lao_ko) != null);
+}
+
+test "Display enterAltScreen and exitAltScreen sequences — bug #540" {
+    const allocator = testing.allocator;
+    var capture_buf: std.ArrayList(u8) = .empty;
+    defer capture_buf.deinit(allocator);
+
+    const display = Display{
+        .fd = -1,
+        .sx = 80,
+        .sy = 24,
+        .capture = &capture_buf,
+        .capture_allocator = allocator,
+    };
+
+    try display.enterAltScreen();
+    try testing.expectEqualSlices(u8, "\x1b[?1049h\x1b[>1u\x1b[?1000h\x1b[?1002h\x1b[?1006h\x1b[?25l\x1b[?7l", capture_buf.items);
+
+    capture_buf.clearRetainingCapacity();
+    try display.exitAltScreen();
+    try testing.expectEqualSlices(u8, "\x1b[m\x1b[?2026l\x1b[H\x1b[2J\x1b[?7h\x1b[<1u\x1b[?1000l\x1b[?1002l\x1b[?1006l\x1b[?2004l\x1b[?25h\x1b[?1049l", capture_buf.items);
 }

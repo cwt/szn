@@ -657,14 +657,10 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
     const r_ser = resize_pkt.serialize(&r_buf);
     try writeAll(server_fd, r_ser);
 
-    // bug #298: a downstream pty that applies backpressure (e.g. mosh on a slow
-    // link) must not stall the whole client. stdout is made non-blocking and
-    // rendered frames are queued + drained on POLL.OUT instead of blocking in
-    // write(2). The server socket is also made non-blocking: a wedged server
+    // bug #298: The server socket is made non-blocking: a wedged server
     // (busy rendering or logging) that stops reading its backlog must not block
     // the client's small writes (keystrokes / redraws) — writeServer() drops
     // the remainder on EAGAIN instead of freezing the client.
-    setNonBlocking(stdout_fd);
     setNonBlocking(server_fd);
 
     var act: std.posix.Sigaction = .{
@@ -698,15 +694,22 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
         .sx = sx,
         .sy = sy,
     };
+    // Enter alternate screen while stdout is still blocking so the sequence
+    // is reliably delivered without transient EAGAIN drops (bug #540).
     display.enterAltScreen() catch |err| std.log.warn("enterAltScreen failed: {any}", .{err});
-    defer display.exitAltScreen() catch |err| std.log.warn("exitAltScreen failed: {any}", .{err});
     defer {
         setBlocking(stdout_fd);
         while (out_buf.items.len > 0) {
             if (!flushStdout(stdout_fd, &out_buf)) break;
         }
-        display.exitAltScreen() catch {};
+        display.exitAltScreen() catch |err| std.log.warn("exitAltScreen failed: {any}", .{err});
     }
+
+    // bug #298: a downstream pty that applies backpressure (e.g. mosh on a slow
+    // link) must not stall the whole client. stdout is made non-blocking and
+    // rendered frames are queued + drained on POLL.OUT instead of blocking in
+    // write(2).
+    setNonBlocking(stdout_fd);
 
     // Set when the out_buf cap was hit and a backlog was dropped: the client's
     // terminal is behind the server's diff state. Cleared once a full repaint
@@ -1043,7 +1046,6 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
             }
         }
     }
-
 }
 
 const testing = std.testing;
