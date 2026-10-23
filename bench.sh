@@ -15,6 +15,8 @@ TMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/szn-bench.XXXXXX" 2>/dev/null || mktemp -d)
 TMP_STARTUP="$TMP_DIR/startup.json"
 TMP_THROUGHPUT="$TMP_DIR/throughput.json"
 
+ZIG=${ZIG:-"zig"}
+
 cleanup_procs() {
     $SZN kill-session 2>/dev/null || true
     pkill -9 szn 2>/dev/null || true
@@ -55,8 +57,8 @@ PREPARE_SZN="pkill -9 szn 2>/dev/null || true; sleep 0.3"
 PREPARE_TMUX="$TMUX kill-server 2>/dev/null || true; sleep 0.3"
 
 # ── build ──
-echo -e "${DIM}building szn …${RESET}"
-zig build -Doptimize=ReleaseFast 2>&1
+echo -e "${DIM}building szn uzing ${ZIG}…${RESET}"
+${ZIG} build -Doptimize=ReleaseFast 2>&1
 cleanup_procs
 
 # =========================================================================
