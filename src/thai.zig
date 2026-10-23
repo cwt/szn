@@ -101,6 +101,94 @@ pub fn cellHasMaiHanAkat(cell: Cell) bool {
     return false;
 }
 
+/// Returns true if cp is an upper or lower Thai vowel mark.
+pub fn isThaiVowelMark(cp: u21) bool {
+    return switch (cp) {
+        0x0E31, // MAI HAN AKAT      ◌ั
+        0x0E34, // SARA I             ◌ิ
+        0x0E35, // SARA II            ◌ี
+        0x0E36, // SARA UE            ◌ึ
+        0x0E37, // SARA UEE           ◌ื
+        0x0E38, // SARA U             ◌ุ
+        0x0E39, // SARA UU            ◌ู
+        0x0E47, // MAITAIKHU          ◌็
+        => true,
+        else => false,
+    };
+}
+
+/// Returns true if the cell contains an upper or lower Thai vowel mark
+/// (either as its base character if unattached, or in comb1/comb2).
+pub fn cellHasVowelMark(cell: Cell) bool {
+    if (isThaiVowelMark(cell.char)) return true;
+    if (cell.comb1 != 0 and isThaiVowelMark(char_width.combiningCodepoint(cell.comb1))) return true;
+    if (cell.comb2 != 0 and isThaiVowelMark(char_width.combiningCodepoint(cell.comb2))) return true;
+    return false;
+}
+
+/// Returns true if the cell has THANTHAKHAT (U+0E4C / Garan) either as its
+/// main character or as a combining mark in comb1/comb2.
+pub fn cellHasThanthakhat(cell: Cell) bool {
+    if (cell.char == 0x0E4C) return true;
+    if (cell.comb1 != 0 and char_width.combiningCodepoint(cell.comb1) == 0x0E4C) return true;
+    if (cell.comb2 != 0 and char_width.combiningCodepoint(cell.comb2) == 0x0E4C) return true;
+    return false;
+}
+
+/// Given a position in a sequence of Thai cells (e.g. at a Thanthakhat coda or
+/// right-attaching mark), find the start index of the current syllable or word,
+/// bounded below by `min_idx`.
+pub fn findThaiSyllableStart(cells: []const Cell, pos: usize, min_idx: usize) usize {
+    if (pos <= min_idx) return min_idx;
+    var j = pos;
+    var first_thai_idx = pos;
+
+    while (j > min_idx) {
+        j -= 1;
+        const c = cells[j];
+        if (!isThai(c.char) or c.char == ' ') {
+            return first_thai_idx;
+        }
+        first_thai_idx = j;
+
+        // Leading vowel (เ, แ, โ, ใ, ไ) is an unambiguous syllable start.
+        if (isThaiLeadingVowel(c.char)) {
+            return j;
+        }
+
+        // If this cell has a vowel mark, the consonant carrying it is the syllable base.
+        if (cellHasVowelMark(c)) {
+            // Check for initial consonant cluster (e.g. ปล, กร, คว, พร, ตร, กล)
+            if (j > min_idx and isThaiBase(cells[j - 1].char)) {
+                if (c.char == 0x0E23 or c.char == 0x0E25 or c.char == 0x0E27) { // ร, ล, ว as second consonant
+                    return j - 1;
+                }
+            }
+            return j;
+        }
+
+        // If this cell is a following vowel (e.g. า, ะ), the base consonant precedes it.
+        if (isThaiFollowingVowel(c.char)) {
+            if (j > min_idx and isThaiBase(cells[j - 1].char)) {
+                var base_idx = j - 1;
+                if (base_idx > min_idx and isThaiBase(cells[base_idx - 1].char)) {
+                    if (cells[base_idx].char == 0x0E23 or cells[base_idx].char == 0x0E25 or cells[base_idx].char == 0x0E27) {
+                        base_idx -= 1;
+                    }
+                }
+                return base_idx;
+            }
+            return j;
+        }
+
+        // Guard against runaway scan across multiple long words without vowels
+        if (pos - j >= 5) {
+            return j;
+        }
+    }
+    return first_thai_idx;
+}
+
 /// Returns true if cp is Thai SARA AM (U+0E33) or Lao SARA AM (U+0EB3).
 /// Both are precomposed vowels that visually project a NIKHAHIT mark onto
 /// the preceding consonant cell (x - 1) during terminal font shaping.
@@ -446,6 +534,57 @@ test "cellHasMaiHanAkat" {
     c.comb1 = 0;
     c.comb2 = char_width.combiningIndex(0x0E31);
     try testing.expect(cellHasMaiHanAkat(c));
+}
+
+test "cellHasThanthakhat and cellHasVowelMark" {
+    var c = Cell.empty();
+    try testing.expect(!cellHasThanthakhat(c));
+    try testing.expect(!cellHasVowelMark(c));
+
+    c.char = 0x0E4C; // THANTHAKHAT
+    try testing.expect(cellHasThanthakhat(c));
+
+    c = Cell.withChar(0x0E27); // ว
+    c.comb1 = char_width.combiningIndex(0x0E4C);
+    try testing.expect(cellHasThanthakhat(c));
+
+    var v = Cell.withChar(0x0E2A); // ส
+    v.comb1 = char_width.combiningIndex(0x0E35); // SARA II
+    try testing.expect(cellHasVowelMark(v));
+}
+
+test "findThaiSyllableStart with Thanthakhat and clusters" {
+    // Word: สัตว์ (สั=0, ต=1, ว์=2)
+    var sat = [_]Cell{
+        Cell.withChar(0x0E2A), // ส
+        Cell.withChar(0x0E15), // ต
+        Cell.withChar(0x0E27), // ว
+    };
+    sat[0].comb1 = char_width.combiningIndex(0x0E31); // ั
+    sat[2].comb1 = char_width.combiningIndex(0x0E4C); // ์
+    try testing.expectEqual(@as(usize, 0), findThaiSyllableStart(&sat, 2, 0));
+
+    // Word: แพทย์ (แ=0, พ=1, ท=2, ย์=3)
+    var phaet = [_]Cell{
+        Cell.withChar(0x0E41), // แ
+        Cell.withChar(0x0E1E), // พ
+        Cell.withChar(0x0E17), // ท
+        Cell.withChar(0x0E22), // ย
+    };
+    phaet[3].comb1 = char_width.combiningIndex(0x0E4C); // ์
+    try testing.expectEqual(@as(usize, 0), findThaiSyllableStart(&phaet, 3, 0));
+
+    // Compound phrase: มีสัตว์ (มี=0, สั=1, ต=2, ว์=3)
+    var mee_sat = [_]Cell{
+        Cell.withChar(0x0E21), // ม
+        Cell.withChar(0x0E2A), // ส
+        Cell.withChar(0x0E15), // ต
+        Cell.withChar(0x0E27), // ว
+    };
+    mee_sat[0].comb1 = char_width.combiningIndex(0x0E35); // ี
+    mee_sat[1].comb1 = char_width.combiningIndex(0x0E31); // ั
+    mee_sat[3].comb1 = char_width.combiningIndex(0x0E4C); // ์
+    try testing.expectEqual(@as(usize, 1), findThaiSyllableStart(&mee_sat, 3, 0));
 }
 
 pub const ThBrk = opaque {};

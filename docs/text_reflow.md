@@ -92,6 +92,8 @@ If `libthai` is not installed on the host system or a token is absent from the d
   3. If no leading vowel exists in the preceding syllable (e.g., syllables with implicit vowels like "คน" in "คนไป"), the scan stops at `first_thai_idx` (the start of the contiguous Thai word/token), cleanly wrapping the entire word to the next line.
   4. Because the backtrack only scans up to the beginning of the syllable or word run, the check runs in `O(1)` amortized time.
 * **MAI HAN AKAT Protection**: If the cluster immediately preceding the wrap point contains MAI HAN AKAT (◌ั), breaking right after it is prohibited; the wrap boundary backtracks to before that cluster.
+* **Right-Attaching Mark Protection (ๆ, ฯ) — Bug #541**: In Thai typography, `ๆ` (Mai Yamok) and `ฯ` (Paiyannoi) must never appear at the beginning of a line. When spaced according to typographic conventions (e.g. `ต่าง ๆ`), the space scanner rejects breaking before the mark, and fallback logic backtracks to wrap the preceding word along with the mark.
+* **Thanthakhat / Garan (◌์) Protection — Bug #541**: Silent letters marked with Thanthakhat (U+0E4C, e.g. `สัตว์`, `แพทย์`, `ศุกร์`, `จันทร์`) represent the silent coda of a syllable and can never start a line. If a line break would place a Thanthakhat-marked consonant (or its double-consonant cluster like `ทร์`) at column 0, [`findThaiSyllableStart`](https://github.com/cwt/szn/blob/main/src/thai.zig) backtracks to the syllable's initial consonant or leading vowel.
 
 ---
 

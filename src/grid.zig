@@ -719,7 +719,11 @@ pub const Grid = struct {
                     var space_wb: ?usize = null;
                     if (cells[i].char == ' ' and !cells[i].is_padding) {
                         if (i > 0 and thai.isThai(cells[i - 1].char)) {
-                            space_wb = i;
+                            // If followed immediately by a right-attaching mark (ๆ, ฯ),
+                            // do not break here because right-attaching marks must never begin a line.
+                            if (i + 1 >= cells.len or !thai.isThaiRightAttaching(cells[i + 1].char)) {
+                                space_wb = i;
+                            }
                         }
                     } else {
                         var j = i;
@@ -732,6 +736,12 @@ pub const Grid = struct {
                                     break :blk false;
                                 };
                                 if (borders_thai) {
+                                    // A right-attaching mark (ๆ, ฯ) must never begin a line.
+                                    // If j + 1 is right-attaching, do not break at this space;
+                                    // continue scanning backward for a prior word break.
+                                    if (j + 1 < cells.len and thai.isThaiRightAttaching(cells[j + 1].char)) {
+                                        continue;
+                                    }
                                     space_wb = j + 1;
                                     break;
                                 }
@@ -750,6 +760,47 @@ pub const Grid = struct {
                         i = final_wb;
                         line_cells.shrinkRetainingCapacity(final_wb - line_start);
                         break;
+                    }
+
+                    // Right-attaching mark rule: if breaking would leave a right-attaching mark (ๆ, ฯ)
+                    // at the start of the next line, backtrack to before the preceding syllable/word
+                    // so it never begins a line.
+                    var right_attach_pos: ?usize = null;
+                    if (i < cells.len and thai.isThaiRightAttaching(cells[i].char)) {
+                        right_attach_pos = i;
+                    } else if (i + 1 < cells.len and cells[i].char == ' ' and thai.isThaiRightAttaching(cells[i + 1].char)) {
+                        right_attach_pos = i + 1;
+                    }
+                    if (right_attach_pos) |ra_idx| {
+                        var p = ra_idx;
+                        while (p > line_start and cells[p - 1].char == ' ') p -= 1;
+                        if (p > line_start) {
+                            const syl_start = thai.findThaiSyllableStart(cells, p - 1, line_start);
+                            if (syl_start > line_start) {
+                                i = syl_start;
+                                line_cells.shrinkRetainingCapacity(syl_start - line_start);
+                                break;
+                            }
+                        }
+                    }
+
+                    // THANTHAKHAT rule: a consonant marked with Thanthakhat (◌์ / Garan) represents
+                    // the silent coda of a syllable and can never begin a syllable or a line.
+                    // If breaking at i would place a Thanthakhat mark (or its double-consonant cluster)
+                    // at the start of the next line, backtrack to before the syllable start.
+                    var thanthakhat_pos: ?usize = null;
+                    if (i < cells.len and thai.cellHasThanthakhat(cells[i])) {
+                        thanthakhat_pos = i;
+                    } else if (i + 1 < cells.len and thai.cellHasThanthakhat(cells[i + 1]) and !thai.isThaiFollowingVowel(cells[i].char)) {
+                        thanthakhat_pos = i + 1;
+                    }
+                    if (thanthakhat_pos) |th_idx| {
+                        const syl_start = thai.findThaiSyllableStart(cells, th_idx, line_start);
+                        if (syl_start > line_start) {
+                            i = syl_start;
+                            line_cells.shrinkRetainingCapacity(syl_start - line_start);
+                            break;
+                        }
                     }
 
                     // MAI HAN AKAT rule: if the last added cluster contains MAI HAN AKAT,
@@ -1771,6 +1822,73 @@ test "setSize reflow Thai Ro Han (รร) breaking" {
     try testing.expectEqual(0x0E17, grid.getCell(0, 1).char); // ท
     try testing.expectEqual(char_width.combiningIndex(0x0E38), grid.getCell(0, 1).comb1); // ุ
     try testing.expectEqual(0x0E01, grid.getCell(1, 1).char); // ก
+}
+
+test "setSize reflow Thai right-attaching mark (ๆ) with space — bug #541" {
+    var grid = try Grid.init(testing.allocator, 15, 24);
+    defer grid.deinit();
+
+    // Write "ผล ต่าง ๆ" (width 8: ผ=0, ล=1, space=2, ต=3, ่า=4, ง=5, space=6, ๆ=7)
+    grid.writeChar(0, 0, 0x0E1C); // ผ
+    grid.writeChar(1, 0, 0x0E25); // ล
+    grid.writeChar(2, 0, ' ');
+    grid.writeChar(3, 0, 0x0E15); // ต
+    grid.writeChar(4, 0, 0x0E32); // า
+    grid.lines.items[0].cells.items[4].comb1 = char_width.combiningIndex(0x0E48); // ่
+    grid.writeChar(5, 0, 0x0E07); // ง
+    grid.writeChar(6, 0, ' ');
+    grid.writeChar(7, 0, 0x0E46); // ๆ
+
+    grid.lines.items[0].wrapped = true;
+
+    // Resize to width 5:
+    // "ผล ตา" fits 5 cols, but space before ๆ must not wrap ๆ to column 0 alone.
+    // Line 0 should get "ผล", and Line 1 should wrap "ต่าง ๆ".
+    try grid.setSize(5, 24);
+
+    // Line 0: "ผล"
+    try testing.expectEqual(0x0E1C, grid.getCell(0, 0).char); // ผ
+    try testing.expectEqual(0x0E25, grid.getCell(1, 0).char); // ล
+
+    // Line 1: "ต่าง"
+    try testing.expectEqual(0x0E15, grid.getCell(0, 1).char); // ต
+    try testing.expectEqual(0x0E32, grid.getCell(1, 1).char); // า
+    try testing.expectEqual(char_width.combiningIndex(0x0E48), grid.getCell(1, 1).comb1); // ่
+    try testing.expectEqual(0x0E07, grid.getCell(2, 1).char); // ง
+}
+
+test "setSize reflow Thai Thanthakhat (์) protection — bug #541" {
+    var grid = try Grid.init(testing.allocator, 10, 24);
+    defer grid.deinit();
+
+    // Write "ดูสัตว์" (ด=0 with ู, ส=1 with ั, ต=2, ว=3 with ์)
+    grid.writeChar(0, 0, 0x0E14); // ด
+    grid.lines.items[0].cells.items[0].comb1 = char_width.combiningIndex(0x0E39); // ู
+    grid.writeChar(1, 0, 0x0E2A); // ส
+    grid.lines.items[0].cells.items[1].comb1 = char_width.combiningIndex(0x0E31); // ั
+    grid.writeChar(2, 0, 0x0E15); // ต
+    grid.writeChar(3, 0, 0x0E27); // ว
+    grid.lines.items[0].cells.items[3].comb1 = char_width.combiningIndex(0x0E4C); // ์
+
+    grid.lines.items[0].wrapped = true;
+
+    // Resize to width 3:
+    // Without Thanthakhat protection, "ดูสัต" would fit on line 0 (3 cols),
+    // and "ว์" would wrap to column 0 of line 1 alone (illegal in Thai).
+    // With Thanthakhat protection, "สัตว์" backtracks to wrap together to Line 1.
+    try grid.setSize(3, 24);
+
+    // Line 0: "ดู"
+    try testing.expectEqual(0x0E14, grid.getCell(0, 0).char); // ด
+    try testing.expectEqual(char_width.combiningIndex(0x0E39), grid.getCell(0, 0).comb1); // ู
+    try testing.expectEqual(@as(u21, 0), grid.getCell(1, 0).char); // empty/padded
+
+    // Line 1: "สัต" (width 3)
+    try testing.expectEqual(0x0E2A, grid.getCell(0, 1).char); // ส
+    try testing.expectEqual(char_width.combiningIndex(0x0E31), grid.getCell(0, 1).comb1); // ั
+    try testing.expectEqual(0x0E15, grid.getCell(1, 1).char); // ต
+    try testing.expectEqual(0x0E27, grid.getCell(2, 1).char); // ว
+    try testing.expectEqual(char_width.combiningIndex(0x0E4C), grid.getCell(2, 1).comb1); // ์
 }
 
 test "reflow cursor tracking" {
