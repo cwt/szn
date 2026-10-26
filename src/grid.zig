@@ -848,6 +848,52 @@ pub const Grid = struct {
                             }
                         }
                     }
+
+                    // Quote protection: an opening quote must not be stranded at
+                    // the end of a line (e.g. `"word` -> `"` / `word`). If the
+                    // last appended cluster is one of `"`, `'` or backtick and it
+                    // is immediately followed by a non-space character, backtrack
+                    // so the quote travels with the following word. Closing quotes
+                    // (preceded by a word character) are left untouched.
+                    if (last_cluster_start > line_start) {
+                        const quote_cp = cells[last_cluster_start].char;
+                        const is_quote = quote_cp == '"' or quote_cp == '\'' or quote_cp == '`';
+                        if (is_quote and findClusterEnd(cells, last_cluster_start) == last_cluster_start + 1) {
+                            const prev_cp = cells[last_cluster_start - 1].char;
+                            const prev_is_boundary = prev_cp == ' ' or prev_cp == '\t' or
+                                prev_cp == '(' or prev_cp == '[' or prev_cp == '{' or
+                                prev_cp == '<' or prev_cp == ',' or prev_cp == ';' or
+                                prev_cp == ':' or prev_cp == '=' or prev_cp == '+';
+                            if (prev_is_boundary and i < cells.len and cells[i].char != ' ' and cells[i].char != 0) {
+                                i = last_cluster_start;
+                                line_cells.shrinkRetainingCapacity(last_cluster_start - line_start);
+                                break;
+                            }
+                        }
+                    }
+
+                    // Closing-quote protection: a closing quote must not be
+                    // stranded alone at the start of the next line. If the
+                    // cluster that does not fit is a quote attached directly
+                    // to a preceding word, move that word with the quote to the
+                    // next line when it fits there.
+                    if (i < cells.len) {
+                        const q = cells[i].char;
+                        if (q == '"' or q == '\'' or q == '`') {
+                            var word_start = i;
+                            while (word_start > line_start and cells[word_start - 1].char != ' ' and cells[word_start - 1].char != 0) {
+                                word_start -= 1;
+                            }
+                            if (word_start < i and word_start > line_start) {
+                                const run_len = i - word_start + 1;
+                                if (run_len <= new_width) {
+                                    i = word_start;
+                                    line_cells.shrinkRetainingCapacity(word_start - line_start);
+                                }
+                            }
+                        }
+                    }
+
                     break;
                 }
                 last_cluster_start = i;
@@ -2035,6 +2081,124 @@ test "setSize reflow long number wrapping at comma" {
     try testing.expectEqual(@as(u21, '6'), grid.getCell(1, 1).char);
     try testing.expectEqual(@as(u21, '7'), grid.getCell(2, 1).char);
     try testing.expectEqual(@as(u21, '.'), grid.getCell(3, 1).char);
+}
+
+test "setSize reflow opening quote protection" {
+    var grid = try Grid.init(testing.allocator, 25, 5);
+    defer grid.deinit();
+
+    // "echo \"hello\"" (12 chars).
+    // At width 6: cols 0..4 are "echo ", col 5 is '"'.
+    // Opening quote protection backtracks so '"' moves to line 1 with "hello".
+    const text = "echo \"hello\"";
+    for (text, 0..) |c, idx| {
+        grid.writeChar(@intCast(idx), 0, c);
+    }
+    grid.lines.items[0].wrapped = true;
+
+    try grid.setSize(6, 5);
+
+    // Line 0: "echo " (padded at col 5)
+    try testing.expectEqual(@as(u21, 'e'), grid.getCell(0, 0).char);
+    try testing.expectEqual(@as(u21, 'c'), grid.getCell(1, 0).char);
+    try testing.expectEqual(@as(u21, 'h'), grid.getCell(2, 0).char);
+    try testing.expectEqual(@as(u21, 'o'), grid.getCell(3, 0).char);
+    try testing.expectEqual(@as(u21, ' '), grid.getCell(4, 0).char);
+    try testing.expectEqual(@as(u21, 0), grid.getCell(5, 0).char);
+
+    // Line 1: "\"hello"
+    try testing.expectEqual(@as(u21, '"'), grid.getCell(0, 1).char);
+    try testing.expectEqual(@as(u21, 'h'), grid.getCell(1, 1).char);
+    try testing.expectEqual(@as(u21, 'e'), grid.getCell(2, 1).char);
+    try testing.expectEqual(@as(u21, 'l'), grid.getCell(3, 1).char);
+    try testing.expectEqual(@as(u21, 'l'), grid.getCell(4, 1).char);
+    try testing.expectEqual(@as(u21, 'o'), grid.getCell(5, 1).char);
+
+    // Line 2: "\""
+    try testing.expectEqual(@as(u21, '"'), grid.getCell(0, 2).char);
+}
+
+test "setSize reflow opening quote after delimiter does not corrupt prefix" {
+    var grid = try Grid.init(testing.allocator, 25, 5);
+    defer grid.deinit();
+
+    // "call(\"hello\")"
+    // At width 6: cols 0..4 are "call(", col 5 is '"'.
+    // Opening quote must backtrack to before '"', without dragging "call(" into closing-quote logic.
+    const text = "call(\"hello\")";
+    for (text, 0..) |c, idx| {
+        grid.writeChar(@intCast(idx), 0, c);
+    }
+    grid.lines.items[0].wrapped = true;
+
+    try grid.setSize(6, 5);
+
+    // Line 0 should be "call(" (col 5 padded)
+    try testing.expectEqual(@as(u21, 'c'), grid.getCell(0, 0).char);
+    try testing.expectEqual(@as(u21, 'a'), grid.getCell(1, 0).char);
+    try testing.expectEqual(@as(u21, 'l'), grid.getCell(2, 0).char);
+    try testing.expectEqual(@as(u21, 'l'), grid.getCell(3, 0).char);
+    try testing.expectEqual(@as(u21, '('), grid.getCell(4, 0).char);
+    try testing.expectEqual(@as(u21, 0), grid.getCell(5, 0).char);
+
+    // Line 1 starts with "\"hello"
+    try testing.expectEqual(@as(u21, '"'), grid.getCell(0, 1).char);
+    try testing.expectEqual(@as(u21, 'h'), grid.getCell(1, 1).char);
+}
+
+test "setSize reflow closing quote protection" {
+    var grid = try Grid.init(testing.allocator, 25, 5);
+    defer grid.deinit();
+
+    // "result \"ok\"" (11 chars).
+    // At width 10: "result \"ok" fits on line 0, but closing '"' would overflow alone to line 1.
+    // Closing quote protection backtracks so "\"ok\"" moves together to line 1.
+    const text = "result \"ok\"";
+    for (text, 0..) |c, idx| {
+        grid.writeChar(@intCast(idx), 0, c);
+    }
+    grid.lines.items[0].wrapped = true;
+
+    try grid.setSize(10, 5);
+
+    // Line 0 should be "result    " (cols 7..9 padded)
+    try testing.expectEqual(@as(u21, 'r'), grid.getCell(0, 0).char);
+    try testing.expectEqual(@as(u21, 'e'), grid.getCell(1, 0).char);
+    try testing.expectEqual(@as(u21, 's'), grid.getCell(2, 0).char);
+    try testing.expectEqual(@as(u21, 'u'), grid.getCell(3, 0).char);
+    try testing.expectEqual(@as(u21, 'l'), grid.getCell(4, 0).char);
+    try testing.expectEqual(@as(u21, 't'), grid.getCell(5, 0).char);
+    try testing.expectEqual(@as(u21, ' '), grid.getCell(6, 0).char);
+    try testing.expectEqual(@as(u21, 0), grid.getCell(7, 0).char);
+
+    // Line 1 should be "\"ok\""
+    try testing.expectEqual(@as(u21, '"'), grid.getCell(0, 1).char);
+    try testing.expectEqual(@as(u21, 'o'), grid.getCell(1, 1).char);
+    try testing.expectEqual(@as(u21, 'k'), grid.getCell(2, 1).char);
+    try testing.expectEqual(@as(u21, '"'), grid.getCell(3, 1).char);
+}
+
+test "setSize reflow contractions not misclassified as opening quote" {
+    var grid = try Grid.init(testing.allocator, 25, 5);
+    defer grid.deinit();
+
+    // "they don't go"
+    // At width 9: "they don'" (indices 0..8) fits on line 0.
+    // The single quote is preceded by 'n' (not a boundary), so it must not backtrack.
+    const text = "they don't go";
+    for (text, 0..) |c, idx| {
+        grid.writeChar(@intCast(idx), 0, c);
+    }
+    grid.lines.items[0].wrapped = true;
+
+    try grid.setSize(9, 5);
+
+    // Line 0 ends with "'": "they don'"
+    try testing.expectEqual(@as(u21, 'n'), grid.getCell(7, 0).char);
+    try testing.expectEqual(@as(u21, '\''), grid.getCell(8, 0).char);
+
+    // Line 1 starts with "t"
+    try testing.expectEqual(@as(u21, 't'), grid.getCell(0, 1).char);
 }
 
 test "forceReflow at current width" {

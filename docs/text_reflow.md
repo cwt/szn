@@ -146,6 +146,7 @@ In addition to linguistic script clustering, `szn` prevents breaking numbers acr
 
 * **CJK Double-Width Characters**: CJK cells and their trailing padding cells (`is_padding = true`) are wrapped together to prevent halves from splitting onto separate lines.
 * **Combining Marks**: Combining diacritical and tone marks are kept with their base consonant cells.
+* **Quote Protection**: Opening quotes (`"`, `'`, `` ` ``) are not stranded at the end of a line; the wrap backtracks so the quote travels with the following word. Closing quotes are not left stranded alone at the start of the next line; when a closing quote is the cluster that no longer fits and it is attached to a preceding word, that word moves with the quote (when it fits on the new line).
 * **Empty Lines & Paragraph Spacing**: Blank lines between paragraphs (e.g., double newlines) are preserved during reflow.
 * **Lossless Drag Resize**: By distinguishing padding cells (`char = 0`) from typed spaces (`char = ' '`), users can drag-shrink and drag-grow the pane repeatedly without any text degradation.
 
