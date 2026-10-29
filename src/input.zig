@@ -353,11 +353,15 @@ pub const InputParser = struct {
                 try self.dispatchOsc();
                 self.toGround();
             },
+            0x9C => {
+                try self.dispatchOsc();
+                self.toGround();
+            },
             0x1B => {
                 self.state = .osc_esc;
             },
             0x00...0x06, 0x08...0x1A, 0x1C...0x1F => {},
-            0x20...0x7E, 0x7F, 0x80...0xFF => {
+            0x20...0x7E, 0x7F, 0x80...0x9B, 0x9D...0xFF => {
                 // Cap OSC buffer at 1 MiB to prevent unbounded memory growth — bug #261.
                 if (self.osc_buf.items.len < 1024 * 1024) {
                     try self.osc_buf.append(self.screen.allocator, byte);
@@ -390,6 +394,7 @@ pub const InputParser = struct {
         switch (byte) {
             0x07 => self.toGround(),
             0x1B => self.state = .osc_discard_esc,
+            0x9C => self.toGround(),
             else => {},
         }
     }
@@ -397,6 +402,7 @@ pub const InputParser = struct {
     fn advanceOscDiscardEsc(self: *InputParser, byte: u8) void {
         switch (byte) {
             '\\' => self.toGround(),
+            0x1B => {}, // stay pending so ESC ESC \\ terminates (bug #549)
             else => self.state = .osc_discard,
         }
     }
@@ -537,6 +543,8 @@ pub const InputParser = struct {
     fn advanceDcsDiscardEsc(self: *InputParser, byte: u8) void {
         if (byte == '\\') {
             self.toGround();
+        } else if (byte == 0x1B) {
+            // stay pending so ESC ESC \\ terminates (bug #549)
         } else {
             self.state = .dcs_discard;
         }
@@ -632,6 +640,8 @@ pub const InputParser = struct {
     fn advanceSosPmApcEsc(self: *InputParser, byte: u8) void {
         if (byte == '\\') {
             self.toGround();
+        } else if (byte == 0x1B) {
+            // stay pending so ESC ESC \\ terminates (bug #549)
         } else {
             self.state = .sos_pm_apc_string;
         }
