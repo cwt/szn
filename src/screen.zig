@@ -114,6 +114,7 @@ pub const Screen = struct {
     alt_saved_cursor: ?Cursor = null,
     mode: Mode = .{},
     scroll_region: ?[2]u32 = null,
+    alt_scroll_region: ?[2]u32 = null,
     cur_cell: Cell = Cell.empty(),
     dirty: bool = true,
     copy_mode: ?@import("mode_copy.zig").CopyMode = null,
@@ -1680,6 +1681,7 @@ pub const Screen = struct {
         }
         self.alt_cursor = .{};
         self.alt_saved_cursor = null;
+        self.alt_scroll_region = null;
         self.copy_mode = null;
         self.grid.clear();
         // bug #225: zero all refcounts before clearing images.
@@ -1730,6 +1732,7 @@ pub const Screen = struct {
             var opt_saved = self.alt_saved_cursor;
             std.mem.swap(?Cursor, &self.saved_cursor, &opt_saved);
             self.alt_saved_cursor = opt_saved;
+            std.mem.swap(?[2]u32, &self.scroll_region, &self.alt_scroll_region);
         } else if (!enable and self.alt_grid != null) {
             var saved = self.alt_grid.?;
             std.mem.swap(Grid, &self.grid, &saved);
@@ -1747,6 +1750,8 @@ pub const Screen = struct {
             var opt_saved = self.alt_saved_cursor;
             std.mem.swap(?Cursor, &self.saved_cursor, &opt_saved);
             self.alt_saved_cursor = opt_saved;
+            std.mem.swap(?[2]u32, &self.scroll_region, &self.alt_scroll_region);
+            self.alt_scroll_region = null;
 
             self.alt_cursor = .{};
             self.alt_saved_cursor = null;
