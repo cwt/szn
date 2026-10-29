@@ -1035,7 +1035,7 @@ pub const Grid = struct {
         }
 
         // ── Flatten all lines into logical lines ──
-        var scratch_arena = std.heap.ArenaAllocator.init(self.allocator);
+        var scratch_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
         defer scratch_arena.deinit();
         const scratch = scratch_arena.allocator();
 

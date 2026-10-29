@@ -18,7 +18,6 @@ pub const MAX_PANE_DIM: u32 = 10_000;
 pub const CmdResult = enum(u8) {
     ok,
     err,
-    wait,
     stop,
 };
 

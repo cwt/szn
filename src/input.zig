@@ -619,14 +619,9 @@ pub const InputParser = struct {
             px_height = @min(bands *| 6, MAX_SIXEL_DIM);
         }
 
-        // Transfer buffer ownership to Screen.
-        const owned = try self.screen.allocator.dupe(u8, self.dcs_buf.items);
-        if (self.dcs_buf.capacity > 64 * 1024) {
-            self.dcs_buf.deinit(self.screen.allocator);
-            self.dcs_buf = .empty;
-        } else {
-            self.dcs_buf.clearRetainingCapacity();
-        }
+        // Transfer buffer ownership to Screen (bug #542).
+        const owned = try self.dcs_buf.toOwnedSlice(self.screen.allocator);
+        self.dcs_buf = .empty;
         try self.screen.addSixelImage(owned, px_width, px_height);
     }
 

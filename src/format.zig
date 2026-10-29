@@ -374,11 +374,6 @@ fn appendColourSgr(allocator: std.mem.Allocator, out: *std.ArrayList(u8), name: 
     try col.appendSgr(allocator, out, is_fg);
 }
 
-const ExpandResult = struct {
-    value: []const u8,
-    consumed: usize,
-};
-
 fn findClosingBrace(input: []const u8) ?usize {
     var depth: usize = 0;
     var i: usize = 0;
@@ -405,13 +400,6 @@ fn findClosingBrace(input: []const u8) ?usize {
         i += 1;
     }
     return null;
-}
-
-fn expandContent(allocator: std.mem.Allocator, content: []const u8, ctx: *const Context) FormatError![]const u8 {
-    var result: std.ArrayList(u8) = .empty;
-    errdefer result.deinit(allocator);
-    try expandContentInto(allocator, &result, content, ctx);
-    return try result.toOwnedSlice(allocator);
 }
 
 fn expandContentInto(allocator: std.mem.Allocator, out: *std.ArrayList(u8), content: []const u8, ctx: *const Context) FormatError!void {

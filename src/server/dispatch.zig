@@ -83,12 +83,6 @@ pub fn dispatchCommand(allocator: std.mem.Allocator, server: *Server, cmd_line: 
                 .is_owned = duped != null,
             };
         },
-        .wait => .{
-            .response_type = .ready,
-            .data = "waiting",
-            .allocator = allocator,
-            .is_owned = false,
-        },
         .stop => .{
             .response_type = .exit,
             .data = &[1]u8{0},

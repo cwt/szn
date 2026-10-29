@@ -550,6 +550,12 @@ pub const Screen = struct {
 
     /// Clear all marker cells on the main grid that reference the given sixel image ID (bug #493).
     fn clearSixelMarkerCells(self: *Screen, image_id: u32) void {
+        // Fast path: if the image is still registered and no cell references
+        // it, skip the scan (bug #561). If it is no longer registered (e.g.
+        // mid-errdefer), fall through and clear any surviving markers.
+        if (self.findSixelImageSlot(image_id)) |slot| {
+            if (self.sixel_refcounts[slot] == 0) return;
+        }
         const fill = self.eraseCell();
         const id_masked = image_id & 0x1FFFFF;
         var y: u32 = 0;
@@ -1267,10 +1273,10 @@ pub const Screen = struct {
                 };
                 if (remove) {
                     removed_sixel = true;
-                    // bug #225: zero refcount for evicted image.
-                    self.sixel_refcounts[idx] = 0;
                     // bug #493: clear surviving marker cells so dead IDs are not left on the grid.
                     self.clearSixelMarkerCells(img.id);
+                    // bug #225: zero refcount for evicted image.
+                    self.sixel_refcounts[idx] = 0;
                     const slot = &self.sixel_images[idx];
                     if (slot.*) |*img_ptr| {
                         img_ptr.deinit(self.allocator);
@@ -1733,7 +1739,7 @@ pub const Screen = struct {
 
     pub fn useAltScreen(self: *Screen, enable: bool) Error!void {
         if (enable and self.alt_grid == null) {
-            var new_alt = try Grid.init(self.allocator, self.grid.width, self.grid.height);
+            var new_alt = try Grid.initWithLimit(self.allocator, self.grid.width, self.grid.height, 0);
             std.mem.swap(Grid, &self.grid, &new_alt);
             self.alt_grid = new_alt;
             self.setupGridEviction();
