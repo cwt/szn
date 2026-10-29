@@ -57,6 +57,7 @@ pub fn connectProbeUnix(path: [*:0]const u8) Error!ProbeResult {
     var addr = std.mem.zeroes(c.sockaddr.un);
     addr.family = c.AF.UNIX;
     const plen = std.mem.len(path);
+    if (plen >= addr.path.len) return .stale;
     if (@hasField(c.sockaddr.un, "len")) {
         addr.len = @intCast(@offsetOf(c.sockaddr.un, "path") + plen);
     }

@@ -352,7 +352,7 @@ const zero_width_ranges = [_]WidthRange{
     .{ .start = 0x0E47, .end = 0x0E4E, .width = 0 },
     .{ .start = 0x0EB1, .end = 0x0EB1, .width = 0 },
     .{ .start = 0x0EB4, .end = 0x0EBC, .width = 0 },
-    .{ .start = 0x0EC8, .end = 0x0ECD, .width = 0 },
+    .{ .start = 0x0EC8, .end = 0x0ECE, .width = 0 },
     .{ .start = 0x0F18, .end = 0x0F19, .width = 0 },
     .{ .start = 0x0F35, .end = 0x0F35, .width = 0 },
     .{ .start = 0x0F37, .end = 0x0F37, .width = 0 },
