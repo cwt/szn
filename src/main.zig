@@ -1004,7 +1004,8 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
                         // Ask the terminal for its pixel size; consume the
                         // (possibly late) reply in the stdin handler so it can't
                         // leak to the pane as a keystroke (bug #298).
-                        _ = c.write(stdout_fd, "\x1b[14t", 5);
+                        out_buf.appendSlice(allocator, "\x1b[14t") catch {};
+                        _ = flushStdout(stdout_fd, &out_buf);
                         awaiting_cell_size = true;
                         awaiting_cell_size_since_ms = currentMillis();
                         cell_resp_len = 0;
