@@ -393,6 +393,10 @@ fn findClosingBrace(input: []const u8) ?usize {
                 i += 2;
                 continue;
             }
+            if (i + 1 < input.len and input[i + 1] == '}') {
+                i += 2;
+                continue;
+            }
         }
         if (input[i] == '}') {
             if (depth == 0) return i;
@@ -509,21 +513,39 @@ fn freeArgs(allocator: std.mem.Allocator, args: *std.ArrayList([]const u8)) void
 
 fn splitArgs(allocator: std.mem.Allocator, content: []const u8, args: *std.ArrayList([]const u8)) FormatError!void {
     var start: usize = 0;
-    var depth: usize = 0;
+    var brace_depth: usize = 0;
+    var bracket_depth: usize = 0;
     var i: usize = 0;
 
     while (i < content.len) {
-        if (content[i] == '#' and i + 1 < content.len and content[i + 1] == '{') {
-            depth += 1;
-            i += 2;
-            continue;
+        if (content[i] == '#' and i + 1 < content.len) {
+            if (content[i + 1] == '{') {
+                brace_depth += 1;
+                i += 2;
+                continue;
+            }
+            if (content[i + 1] == '[') {
+                bracket_depth += 1;
+                i += 2;
+                continue;
+            }
+            // skip two-byte escapes ##, #}, #,
+            if (content[i + 1] == '#' or content[i + 1] == '}' or content[i + 1] == ',') {
+                i += 2;
+                continue;
+            }
         }
         if (content[i] == '}') {
-            if (depth > 0) depth -= 1;
+            if (brace_depth > 0) brace_depth -= 1;
             i += 1;
             continue;
         }
-        if (content[i] == ',' and depth == 0) {
+        if (content[i] == ']') {
+            if (bracket_depth > 0) bracket_depth -= 1;
+            i += 1;
+            continue;
+        }
+        if (content[i] == ',' and brace_depth == 0 and bracket_depth == 0) {
             try args.append(allocator, content[start..i]);
             start = i + 1;
         }
@@ -625,14 +647,30 @@ fn expandCompareBinaryInto(allocator: std.mem.Allocator, out: *std.ArrayList(u8)
     const right = try expandTemp(allocator, args.items[1], ctx);
     defer allocator.free(right);
 
-    const cmp = std.mem.order(u8, left, right);
-    const result = switch (op) {
-        .eq => cmp == .eq,
-        .neq => cmp != .eq,
-        .lt => cmp == .lt,
-        .gt => cmp == .gt,
-        .le => cmp != .gt,
-        .ge => cmp != .lt,
+    // Numeric comparison when both sides parse as integers (bug #556).
+    const left_int = std.fmt.parseInt(i64, left, 10) catch null;
+    const right_int = std.fmt.parseInt(i64, right, 10) catch null;
+    const result = if (left_int != null and right_int != null) blk: {
+        const l = left_int.?;
+        const r = right_int.?;
+        break :blk switch (op) {
+            .eq => l == r,
+            .neq => l != r,
+            .lt => l < r,
+            .gt => l > r,
+            .le => l <= r,
+            .ge => l >= r,
+        };
+    } else blk: {
+        const cmp = std.mem.order(u8, left, right);
+        break :blk switch (op) {
+            .eq => cmp == .eq,
+            .neq => cmp != .eq,
+            .lt => cmp == .lt,
+            .gt => cmp == .gt,
+            .le => cmp != .gt,
+            .ge => cmp != .lt,
+        };
     };
 
     try out.append(allocator, if (result) '1' else '0');
