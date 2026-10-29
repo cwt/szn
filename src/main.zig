@@ -529,6 +529,10 @@ fn runServerDaemon(allocator: std.mem.Allocator) Error!void {
         const raw_nofile = server.global_options.asNumber("nofile-limit") orelse 1024;
         const min_nofile: u64 = if (raw_nofile > 0) @intCast(raw_nofile) else 0;
         try p.spawn(allocator, &[_][]const u8{shell}, null, min_nofile);
+        errdefer if (p.pty) |*pty| {
+            pty.deinit();
+            p.pty = null;
+        };
         try server.watchPanePty(p);
         p.initPty();
     }

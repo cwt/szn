@@ -1024,6 +1024,10 @@ pub const Server = struct {
         const raw_nofile = self.global_options.asNumber("nofile-limit") orelse 1024;
         const min_nofile: u64 = if (raw_nofile > 0) @intCast(raw_nofile) else 0;
         try pane.spawn(self.allocator, &[_][]const u8{shell}, cwd, min_nofile);
+        errdefer if (pane.pty) |*pty| {
+            pty.deinit();
+            pane.pty = null;
+        };
         try self.watchPanePty(pane);
         pane.drainPty();
     }
@@ -1047,7 +1051,10 @@ pub const Server = struct {
                 defer if (current_cwd) |cwd_ptr| self.allocator.free(cwd_ptr);
                 const win = try session.newWindow(self.allocator, "window");
                 if (win.active_pane) |p| {
-                    try self.setupPane(session, p, current_cwd);
+                    self.setupPane(session, p, current_cwd) catch |err| {
+                        session.killWindow(self.allocator, win);
+                        return err;
+                    };
                 }
                 self.status_dirty = true;
             },
@@ -1055,13 +1062,19 @@ pub const Server = struct {
                 const current_cwd = self.paneCwd(pane);
                 defer if (current_cwd) |cwd_ptr| self.allocator.free(cwd_ptr);
                 const new_pane = try window.splitPane(self.allocator, pane, false, 0.5);
-                try self.setupPane(session, new_pane, current_cwd);
+                self.setupPane(session, new_pane, current_cwd) catch |err| {
+                    window.removePane(self.allocator, new_pane);
+                    return err;
+                };
             },
             .split_vertical => {
                 const current_cwd = self.paneCwd(pane);
                 defer if (current_cwd) |cwd_ptr| self.allocator.free(cwd_ptr);
                 const new_pane = try window.splitPane(self.allocator, pane, true, 0.5);
-                try self.setupPane(session, new_pane, current_cwd);
+                self.setupPane(session, new_pane, current_cwd) catch |err| {
+                    window.removePane(self.allocator, new_pane);
+                    return err;
+                };
             },
             .kill_pane => {
                 if (window.panes.items.len > 1) {
