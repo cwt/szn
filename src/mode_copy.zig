@@ -423,8 +423,19 @@ pub const CopyMode = struct {
         // subtraction.
         const hist_len = grid.historyLen();
         const total = hist_len + grid.height;
-        const cursor_logical = (hist_len -| self.scroll_offset) + self.cursor_y;
-        const start_x: usize = self.cursor_x + 1;
+        const cursor_physical = (hist_len -| self.scroll_offset) + self.cursor_y;
+        // Normalize to the logical line containing the cursor (bug #555).
+        var cursor_logical = cursor_physical;
+        while (cursor_logical > 0) {
+            const prev = if (cursor_logical - 1 < hist_len)
+                grid.getHistoryLine(cursor_logical - 1)
+            else
+                grid.getLine(@intCast(cursor_logical - 1 - hist_len));
+            if (!prev.wrapped) break;
+            cursor_logical -= 1;
+        }
+        const cursor_offset_in_logical = (cursor_physical - cursor_logical) * grid.width + self.cursor_x;
+        const start_x: usize = cursor_offset_in_logical + 1;
 
         var line_buf: std.ArrayList(u8) = .empty;
         defer line_buf.deinit(allocator);
@@ -460,7 +471,7 @@ pub const CopyMode = struct {
         // Pass 2 (cyclic wrap): from the top down to just before the cursor
         // line. Logical lines are disjoint from pass 1, so no re-match.
         li = 0;
-        while (li < cursor_logical) : (li += 1) {
+        while (li <= cursor_logical) : (li += 1) {
             if (searchLogicalLine(grid, allocator, &line_buf, &offsets, li, 0, needle)) |found_x| {
                 self.placeCursorAtLogical(grid, li, found_x);
                 return true;
@@ -520,10 +531,13 @@ pub const CopyMode = struct {
                 ((cursor_logical - li) * grid.width + start_x_cells) -| 1
             else
                 WHOLE_LINE;
+            const skip_cursor_line = at_cursor_line and start_col == 0;
             at_cursor_line = false;
-            if (searchLogicalLineBackward(grid, allocator, &line_buf, &offsets, li, start_col, needle)) |found_x| {
-                self.placeCursorAtLogical(grid, li, found_x);
-                return true;
+            if (!skip_cursor_line) {
+                if (searchLogicalLineBackward(grid, allocator, &line_buf, &offsets, li, start_col, needle)) |found_x| {
+                    self.placeCursorAtLogical(grid, li, found_x);
+                    return true;
+                }
             }
             if (li == 0) break;
             li -= 1;
@@ -655,7 +669,8 @@ pub const CopyMode = struct {
             while (x < line.cells.items.len and x < grid.width) : (x += 1) {
                 const cell = line.cells.items[x];
                 offsets.append(allocator, out.items.len) catch return null;
-                if (cell.char == 0) {
+                if (cell.is_padding) continue;
+                if (cell.char == 0 or cell.attr.sixel) {
                     out.append(allocator, ' ') catch return null;
                     continue;
                 }
