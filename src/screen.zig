@@ -1250,6 +1250,8 @@ pub const Screen = struct {
         var removed_sixel = false;
         for (self.sixel_images, 0..) |opt_img, idx| {
             if (opt_img) |img| {
+                // Only affect images on the active screen buffer (bug #546).
+                if (img.alt_screen != self.mode.alt_screen) continue;
                 const cell_h = if (self.cell_px_height > 0) self.cell_px_height else 20;
                 // Saturating ceil-div, matching placeSixelImage (bug #464).
                 const cell_rows = if (img.px_height > 0) (img.px_height +| cell_h -| 1) / cell_h else 1;
@@ -1258,7 +1260,9 @@ pub const Screen = struct {
                 const remove = switch (mode) {
                     0 => (@as(i64, img.anchor_row) + @as(i64, cell_rows)) > @as(i64, self.cursor.y),
                     1 => @as(i64, img.anchor_row) <= @as(i64, self.cursor.y),
-                    2, 3 => true,
+                    2 => true,
+                    // CSI 3 J clears scrollback only: remove images entirely in scrollback.
+                    3 => (@as(i64, img.anchor_row) + @as(i64, cell_rows)) <= 0,
                     else => false,
                 };
                 if (remove) {
@@ -1662,10 +1666,16 @@ pub const Screen = struct {
                 break;
             }
         }
+        // If currently on the alt screen, leave it first so the saved main
+        // grid is restored rather than destroyed (bug #546).
+        if (self.mode.alt_screen) {
+            self.useAltScreen(false) catch {};
+        }
         self.cursor = .{};
         self.saved_cursor = null;
         self.mode = .{};
         self.scroll_region = null;
+        self.alt_scroll_region = null;
         self.cur_cell = Cell.empty();
         self.last_char = null;
         self.extkeys = 0;
