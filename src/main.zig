@@ -525,7 +525,21 @@ fn runServerDaemon(allocator: std.mem.Allocator) Error!void {
         }
     }
 
-    if (default_pane) |p| {
+    // If another session was created and made active during the startup ticks
+    // (e.g. `szn new-session -s <name>`), the pre-created "default" session
+    // (default_session_id) is now orphaned with an unspawned pane. Destroy it
+    // instead of spawning a stray shell (bug #543).
+    var default_session_orphaned = false;
+    for (server.sessions.items) |s| {
+        if (s.id == default_session_id) continue;
+        // a new session exists and is active
+        default_session_orphaned = true;
+        break;
+    }
+    if (default_session_orphaned) {
+        // destroy the unused default session
+        server.killSession("default") catch {};
+    } else if (default_pane) |p| {
         const raw_nofile = server.global_options.asNumber("nofile-limit") orelse 1024;
         const min_nofile: u64 = if (raw_nofile > 0) @intCast(raw_nofile) else 0;
         try p.spawn(allocator, &[_][]const u8{shell}, null, min_nofile);
