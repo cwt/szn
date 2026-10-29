@@ -801,7 +801,7 @@ pub const Screen = struct {
                         target_col = last_col - 1;
                         prev_cell = self.grid.getCell(target_col, prev_y);
                     }
-                    if (prev_cell.char != ' ' and prev_cell.char != 0) {
+                    if (prev_cell.char != ' ' and prev_cell.char != 0 and !prev_cell.attr.sixel) {
                         const cidx = char_width.combiningIndex(char);
                         if (cidx != 0) {
                             var stored = false;
@@ -849,7 +849,7 @@ pub const Screen = struct {
                 base_x = self.cursor.x - 2;
                 prev_cell = self.grid.getCell(base_x, self.cursor.y);
             }
-            if (prev_cell.char == ' ' or prev_cell.char == 0) return;
+            if (prev_cell.char == ' ' or prev_cell.char == 0 or prev_cell.attr.sixel) return;
             const cidx = char_width.combiningIndex(char);
             if (cidx == 0) return;
             var stored = false;
@@ -3657,13 +3657,11 @@ test "variation-selector-always-wide preserves sixel refcount on promotion wrap 
     // Now write VS16: 2-cell wide char cannot fit at col 4, wraps to row 1
     try screen.writeChar(0xFE0F);
 
-    // Verify row 0 col 4 was cleared
-    try testing.expectEqual(@as(u21, 0), screen.grid.getCell(4, 0).char);
-    // Verify row 1 col 0 has the moved sixel cell
-    const cell_moved = screen.grid.getCell(0, 1);
-    try testing.expect(cell_moved.attr.sixel);
+    // Bug #547: VS16 no longer attaches to a sixel marker, so no promotion.
+    try testing.expect(screen.grid.getCell(4, 0).attr.sixel);
+    try testing.expect(!screen.grid.getCell(0, 1).attr.sixel);
 
-    // Verify refcount is still 1 (not decremented to 0)
+    // Refcount unchanged.
     try testing.expectEqual(@as(usize, 1), screen.sixel_refcounts[1]);
 }
 
@@ -3693,11 +3691,11 @@ test "variation-selector-always-wide preserves sixel refcount on auto-wrapped ne
     // Write VS16: attaches to (4, 0), then promotes and moves to (0, 1)
     try screen.writeChar(0xFE0F);
 
-    // Verify row 0 col 4 cleared, row 1 col 0 has sixel cell
-    try testing.expectEqual(@as(u21, 0), screen.grid.getCell(4, 0).char);
-    try testing.expect(screen.grid.getCell(0, 1).attr.sixel);
+    // Bug #547: VS16 no longer attaches to a sixel marker, so no promotion.
+    try testing.expect(screen.grid.getCell(4, 0).attr.sixel);
+    try testing.expect(!screen.grid.getCell(0, 1).attr.sixel);
 
-    // Verify refcount is still 1
+    // Refcount unchanged.
     try testing.expectEqual(@as(usize, 1), screen.sixel_refcounts[1]);
 }
 

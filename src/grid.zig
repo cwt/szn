@@ -263,7 +263,7 @@ pub const Grid = struct {
         const line = self.getLine(y);
         if (line.wrapped) return true;
         for (line.cells.items) |c| {
-            if (c.char != 0 or c.is_padding or c.comb1 != 0 or c.comb2 != 0) {
+            if (c.char != 0 or c.is_padding or c.comb1 != 0 or c.comb2 != 0 or c.attr.sixel) {
                 return true;
             }
         }
@@ -279,7 +279,18 @@ pub const Grid = struct {
             var row: u32 = self.height;
             while (row > 0) {
                 row -= 1;
-                if (self.lineHasContent(row)) {
+                // Treat a row as content only for non-sixel cells here, so
+                // sixel images beyond the new height are evicted rather than
+                // scrolled into history (bug #435/#547).
+                const line = self.getLine(row);
+                var has_content = false;
+                for (line.cells.items) |c| {
+                    if (c.char != 0 or c.is_padding or c.comb1 != 0 or c.comb2 != 0) {
+                        has_content = true;
+                        break;
+                    }
+                }
+                if (has_content) {
                     last_content_line = row;
                     break;
                 }
@@ -558,6 +569,7 @@ pub const Grid = struct {
     /// Handles Thai clusters (leading vowel + base + following vowel + attaching),
     /// CJK wide char + padding pairs, and regular single cells.
     fn findClusterEnd(cells: []const Cell, start: usize) usize {
+        if (cells[start].attr.sixel) return start + 1;
         const cp = cells[start].char;
         if (cp == ' ' and cells[start].is_padding) return start + 1;
         if (thai.isThaiOrLao(cp)) return thai.findThaiClusterEnd(cells, start);
@@ -570,6 +582,10 @@ pub const Grid = struct {
         var w: u32 = 0;
         for (cells) |c| {
             if (c.is_padding) continue;
+            if (c.attr.sixel) {
+                w += 1;
+                continue;
+            }
             w += if (c.char == ' ') 1 else char_width.charWidth(c.char);
         }
         return w;
@@ -994,7 +1010,7 @@ pub const Grid = struct {
             }
             var has_content = false;
             for (line.cells.items) |c| {
-                if (c.char != 0 or c.is_padding or c.comb1 != 0 or c.comb2 != 0) {
+                if (c.char != 0 or c.is_padding or c.comb1 != 0 or c.comb2 != 0 or c.attr.sixel) {
                     has_content = true;
                     break;
                 }
@@ -1054,7 +1070,7 @@ pub const Grid = struct {
                 // Exclude padding cells (char == 0, is_padding == true) and combining chars — bug #264.
                 while (cells_to_add.len > 0) {
                     const last = cells_to_add[cells_to_add.len - 1];
-                    if (last.char == 0 and !last.is_padding and last.comb1 == 0 and last.comb2 == 0) {
+                    if (last.char == 0 and !last.is_padding and last.comb1 == 0 and last.comb2 == 0 and !last.attr.sixel) {
                         cells_to_add = cells_to_add[0 .. cells_to_add.len - 1];
                     } else break;
                 }
@@ -1076,7 +1092,7 @@ pub const Grid = struct {
             // Final trim of trailing unwritten cells — exclude padding and combining chars — bug #264.
             while (flat_cells.items.len > start_idx) {
                 const last = flat_cells.items[flat_cells.items.len - 1];
-                if (last.char == 0 and !last.is_padding and last.comb1 == 0 and last.comb2 == 0) {
+                if (last.char == 0 and !last.is_padding and last.comb1 == 0 and last.comb2 == 0 and !last.attr.sixel) {
                     _ = flat_cells.pop();
                 } else break;
             }
