@@ -441,21 +441,26 @@ pub const InputParser = struct {
 
     fn advanceDcsParam(self: *InputParser, byte: u8) !void {
         switch (byte) {
-            '0'...'9', ';', ':', '<', '=', '>', '?' => {},
+            '0'...'9', ';', ':', '<', '=', '>', '?' => {
+                // Buffer DCS parameters (P1;P2;P3) so transparency/aspect
+                // settings survive passthrough (bug #548).
+                if (self.dcs_buf.items.len == 0) {
+                    try self.dcs_buf.appendSlice(self.screen.allocator, "\x1bP");
+                }
+                if (self.dcs_buf.items.len < 3 + 16) {
+                    try self.dcs_buf.append(self.screen.allocator, byte);
+                }
+            },
             0x20...0x2F => {
                 self.state = .dcs_intermediate;
             },
             'q' => {
-                // Sixel — collect the params that preceded this 'q'
+                // Sixel — preserve any params captured above.
                 self.dcs_is_sixel = true;
-                self.dcs_buf.clearRetainingCapacity();
-                // Re-emit "ESC P q" — the params are not needed for passthrough
-                // since the receiving terminal will parse them from the raw bytes.
-                // We start fresh: just need ESC P then the params we already
-                // consumed are gone. For passthrough we only need the payload, so
-                // the outer terminal will use its own default parameters.
-                // Prepend ESC P q as the intro.
-                try self.dcs_buf.appendSlice(self.screen.allocator, "\x1bPq");
+                if (self.dcs_buf.items.len == 0) {
+                    try self.dcs_buf.appendSlice(self.screen.allocator, "\x1bP");
+                }
+                try self.dcs_buf.append(self.screen.allocator, 'q');
                 self.state = .dcs_sixel;
             },
             0x40...'p', 'r'...0x7E => {
@@ -611,7 +616,7 @@ pub const InputParser = struct {
             for (self.dcs_buf.items) |b| {
                 if (b == '-') bands += 1;
             }
-            px_height = bands * 6;
+            px_height = @min(bands *| 6, MAX_SIXEL_DIM);
         }
 
         // Transfer buffer ownership to Screen.
