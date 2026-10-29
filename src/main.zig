@@ -349,30 +349,39 @@ fn mainInner(init: std.process.Init) Error!void {
         };
         defer client.deinit();
 
-        var cmd_len: usize = 0;
-        var cmd_count: usize = 0;
-        for (args[1..]) |arg| {
-            if (std.mem.eql(u8, arg, "-d") or std.mem.eql(u8, arg, "--detached")) continue;
-            cmd_len += arg.len;
-            cmd_count += 1;
-        }
-        cmd_len +|= cmd_count -| 1; // n-1 separators for n args
-        var cmd_buf = try allocator.alloc(u8, cmd_len);
-        defer allocator.free(cmd_buf);
+        var cmd_buf: std.ArrayList(u8) = .empty;
+        defer cmd_buf.deinit(allocator);
 
-        var offset: usize = 0;
         var first = true;
         for (args[1..]) |arg| {
-            if (std.mem.eql(u8, arg, "-d") or std.mem.eql(u8, arg, "--detached")) continue;
-            if (!first) {
-                cmd_buf[offset] = ' ';
-                offset += 1;
-            }
+            // Only strip -d/--detached for new-session/new commands (bug #553).
+            if (is_new_cmd and (std.mem.eql(u8, arg, "-d") or std.mem.eql(u8, arg, "--detached"))) continue;
+            if (!first) try cmd_buf.append(allocator, ' ');
             first = false;
-            @memcpy(cmd_buf[offset..][0..arg.len], arg);
-            offset += arg.len;
+
+            // Quote arguments that contain whitespace or special characters so
+            // cmd.parse reconstructs the exact argv token (bug #553).
+            var needs_quote = arg.len == 0;
+            for (arg) |ch| {
+                if (ch == ' ' or ch == '\t' or ch == '"' or ch == '\\' or ch == '\'') {
+                    needs_quote = true;
+                    break;
+                }
+            }
+            if (needs_quote) {
+                try cmd_buf.append(allocator, '"');
+                for (arg) |ch| {
+                    if (ch == '"' or ch == '\\') {
+                        try cmd_buf.append(allocator, '\\');
+                    }
+                    try cmd_buf.append(allocator, ch);
+                }
+                try cmd_buf.append(allocator, '"');
+            } else {
+                try cmd_buf.appendSlice(allocator, arg);
+            }
         }
-        const cmd = cmd_buf[0..offset];
+        const cmd = cmd_buf.items;
 
         try client.sendCommand(cmd);
         var reply = try client.recvPacket();
