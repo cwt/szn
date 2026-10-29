@@ -960,19 +960,71 @@ fn setOptionInternal(server: *Server, args: []const []const u8, default_window: 
     if (args.len < 3) return .err;
     var is_global = false;
     var is_window = default_window;
+    var is_unset = false;
     var opt_idx: usize = 1;
     while (opt_idx < args.len and std.mem.startsWith(u8, args[opt_idx], "-")) {
-        if (std.mem.eql(u8, args[opt_idx], "-g")) {
-            is_global = true;
-        } else if (std.mem.eql(u8, args[opt_idx], "-w")) {
-            is_window = true;
-        } else if (std.mem.eql(u8, args[opt_idx], "-s")) {
-            is_window = false;
+        const flag_str = args[opt_idx];
+        // Support combined flags like -gu, -gw, -q (bug #557).
+        if (flag_str.len > 1 and flag_str[0] == '-') {
+            for (flag_str[1..]) |ch| {
+                switch (ch) {
+                    'g' => is_global = true,
+                    'w' => is_window = true,
+                    's' => is_window = false,
+                    'u' => is_unset = true,
+                    else => {},
+                }
+            }
         }
         opt_idx += 1;
     }
-    if (args.len - opt_idx < 2) return .err;
+    if (args.len - opt_idx < 1) return .err;
     const option_name = args[opt_idx];
+    // is_unset already determined above
+
+    if (is_unset) {
+        // Unset: restore default value.
+        if (is_global) {
+            if (is_window) {
+                server.global_window_options.unset(option_name) catch return .err;
+            } else {
+                server.global_options.unset(option_name) catch {
+                    server.global_window_options.unset(option_name) catch return .err;
+                    is_window = true;
+                };
+            }
+        } else {
+            const session = server.activeSession() orelse return .err;
+            if (is_window) {
+                const window = session.active_window orelse return .err;
+                window.options.unset(option_name) catch return .err;
+            } else {
+                session.options.unset(option_name) catch {
+                    if (session.active_window) |window| {
+                        window.options.unset(option_name) catch return .err;
+                        is_window = true;
+                    } else {
+                        return .err;
+                    }
+                };
+            }
+        }
+        // Propagate global unset to active session/window.
+        if (is_global) {
+            if (server.activeSession()) |session| {
+                if (is_window) {
+                    if (session.active_window) |window| {
+                        window.options.unset(option_name) catch {};
+                    }
+                } else {
+                    session.options.unset(option_name) catch {};
+                }
+            }
+        }
+        return .ok;
+    }
+
+    if (args.len - opt_idx < 2) return .err;
     const value_str = args[opt_idx + 1];
 
     // Width options are server-scoped (bug #506): the tables they drive are
@@ -1062,17 +1114,20 @@ fn setOptionInternal(server: *Server, args: []const []const u8, default_window: 
         server.dirty = true;
         server.status_dirty = true;
     }
-    // -g updates should also land on the active session/window so live config works.
+    // -g updates should also land on the active session's windows so live
+    // config works (bug #557: propagate setw -g to non-active windows).
     if (is_global) {
         if (server.activeSession()) |session| {
             if (is_window) {
-                if (session.active_window) |window| {
+                for (session.windows.items) |window| {
                     window.options.set(option_name, parsed_val) catch |err| std.log.warn("options.set failed: {any}", .{err});
                 }
+                // Also update the session's window_options template.
+                session.window_options.set(option_name, parsed_val) catch |err| std.log.warn("options.set failed: {any}", .{err});
             } else {
                 session.options.set(option_name, parsed_val) catch |err| {
                     if (err == error.UnknownOption) {
-                        if (session.active_window) |window| {
+                        for (session.windows.items) |window| {
                             window.options.set(option_name, parsed_val) catch |err2| std.log.warn("window.options.set failed: {any}", .{err2});
                         }
                     } else {

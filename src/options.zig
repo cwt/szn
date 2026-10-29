@@ -95,7 +95,7 @@ pub const Options = struct {
     pub fn set(self: *Options, name: []const u8, value: OptionValue) Error!void {
         const idx = self.findDef(name) orelse return error.UnknownOption;
         const def = self.table[idx];
-        const coerced = try coerceValue(def, value);
+        const coerced = try coerceValue(self.allocator, def, value);
         try validateType(def, coerced);
 
         const old_value = self.values[idx];
@@ -149,8 +149,56 @@ pub const Options = struct {
     }
 };
 
-fn coerceValue(def: OptionDef, value: OptionValue) Error!OptionValue {
+fn coerceValue(allocator: std.mem.Allocator, def: OptionDef, value: OptionValue) Error!OptionValue {
+    // Cross-type coercion so that values classified by cfg.parseValue (which
+    // turns "on" into .flag, "123" into .number, etc.) can be stored in
+    // options of a different declared type (bug #557).
     switch (def.type) {
+        .string => {
+            return switch (value) {
+                .string => value,
+                .choice => |c| OptionValue{ .string = try allocator.dupe(u8, c) },
+                .flag => |b| OptionValue{ .string = try allocator.dupe(u8, if (b) "on" else "off") },
+                .number => |n| blk: {
+                    var buf: [32]u8 = undefined;
+                    const s = std.fmt.bufPrint(&buf, "{d}", .{n}) catch break :blk value;
+                    break :blk OptionValue{ .string = try allocator.dupe(u8, s) };
+                },
+                .colour => value,
+                .key => |k| blk: {
+                    _ = k;
+                    break :blk value;
+                },
+            };
+        },
+        .key => {
+            return switch (value) {
+                .key => value,
+                .string => |s| if (key.parseKeyName(s)) |k| OptionValue{ .key = k } else |_| value,
+                else => value,
+            };
+        },
+        .flag => {
+            return switch (value) {
+                .flag => value,
+                .string => |s| if (std.mem.eql(u8, s, "on") or std.mem.eql(u8, s, "true")) OptionValue{ .flag = true } else if (std.mem.eql(u8, s, "off") or std.mem.eql(u8, s, "false")) OptionValue{ .flag = false } else value,
+                else => value,
+            };
+        },
+        .number => {
+            return switch (value) {
+                .number => value,
+                .string => |s| if (std.fmt.parseInt(i64, s, 10)) |n| OptionValue{ .number = n } else |_| value,
+                else => value,
+            };
+        },
+        .colour => {
+            return switch (value) {
+                .colour => value,
+                .string => |s| if (colour.parse(s)) |c| OptionValue{ .colour = c } else |_| value,
+                else => value,
+            };
+        },
         .choice => {
             switch (value) {
                 .flag => |b| return OptionValue{ .choice = if (b) "on" else "off" },
@@ -182,15 +230,6 @@ fn coerceValue(def: OptionDef, value: OptionValue) Error!OptionValue {
                 else => return value,
             }
         },
-        .colour => {
-            switch (value) {
-                .string => |s| {
-                    if (colour.parse(s)) |c| return OptionValue{ .colour = c } else |_| return value;
-                },
-                else => return value,
-            }
-        },
-        else => return value,
     }
 }
 
@@ -519,7 +558,7 @@ test "removed inert options are no longer recognised — bug #518" {
 
 test "numeric choice coercion returns static string from def.choices — bug #531" {
     const def = SESSION_OPTIONS[1]; // status: choices = "off", "on", "2", "3", "4", "5"
-    const coerced = try coerceValue(def, OptionValue{ .number = 2 });
+    const coerced = try coerceValue(testing.allocator, def, OptionValue{ .number = 2 });
     try testing.expect(coerced == .choice);
     // The slice pointer must point to the static choice literal, not a stack address.
     try testing.expectEqual(def.choices.?[2].ptr, coerced.choice.ptr);

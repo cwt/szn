@@ -169,7 +169,7 @@ fn stripInlineComment(line: []const u8) []const u8 {
             escaped = false;
             continue;
         }
-        if (c == '\\') {
+        if (c == '\\' and !in_single_quote) {
             escaped = true;
             continue;
         }
@@ -247,7 +247,12 @@ pub fn parseValue(allocator: std.mem.Allocator, s: []const u8) Error!OptionValue
     if (std.mem.eql(u8, s, "false") or std.mem.eql(u8, s, "off")) return OptionValue{ .flag = false };
 
     // Quoted string (double or single quotes)
-    if (s.len >= 2 and ((s[0] == '"' and s[s.len - 1] == '"') or (s[0] == '\'' and s[s.len - 1] == '\''))) {
+    if (s.len >= 2 and s[0] == '"' and s[s.len - 1] == '"') {
+        const inner = s[1 .. s.len - 1];
+        const unescaped = try unescapeQuoted(allocator, inner);
+        return OptionValue{ .string = unescaped };
+    }
+    if (s.len >= 2 and s[0] == '\'' and s[s.len - 1] == '\'') {
         const inner = s[1 .. s.len - 1];
         return OptionValue{ .string = try allocator.dupe(u8, inner) };
     }
@@ -412,10 +417,15 @@ fn unescapeQuoted(allocator: std.mem.Allocator, s: []const u8) Error![]const u8 
 fn findUnescapedQuote(s: []const u8, start: usize) ?usize {
     var i = start;
     while (i < s.len) {
-        if (s[i] == '\\' and i + 1 < s.len and s[i + 1] == '"') {
-            i += 2;
-        } else if (s[i] == '"') {
-            return i;
+        if (s[i] == '"') {
+            // Count preceding backslashes; odd means escaped.
+            var bs: usize = 0;
+            var j = i;
+            while (j > 0 and s[j - 1] == '\\') : (j -= 1) {
+                bs += 1;
+            }
+            if (bs % 2 == 0) return i;
+            i += 1;
         } else {
             i += 1;
         }
