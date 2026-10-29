@@ -37,6 +37,16 @@ pub const BufferList = struct {
     }
 
     pub fn pushOwned(self: *BufferList, name: []const u8, data: []const u8) !void {
+        // Replace existing buffer with same name (bug #558).
+        for (self.items.items) |*entry| {
+            if (std.mem.eql(u8, entry.name, name)) {
+                self.allocator.free(entry.name);
+                self.allocator.free(entry.data);
+                entry.name = name;
+                entry.data = data;
+                return;
+            }
+        }
         self.evictOldestIfFull();
         errdefer {
             self.allocator.free(name);
@@ -46,6 +56,20 @@ pub const BufferList = struct {
     }
 
     pub fn push(self: *BufferList, name: []const u8, data: []const u8) !void {
+        // Replace existing buffer with same name (bug #558).
+        for (self.items.items) |*entry| {
+            if (std.mem.eql(u8, entry.name, name)) {
+                const n = try self.allocator.dupe(u8, name);
+                errdefer self.allocator.free(n);
+                const d = try self.allocator.dupe(u8, data);
+                errdefer self.allocator.free(d);
+                self.allocator.free(entry.name);
+                self.allocator.free(entry.data);
+                entry.name = n;
+                entry.data = d;
+                return;
+            }
+        }
         self.evictOldestIfFull();
         const n = try self.allocator.dupe(u8, name);
         errdefer self.allocator.free(n);

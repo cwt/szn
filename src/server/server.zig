@@ -1153,6 +1153,7 @@ pub const Server = struct {
             },
             .rotate_window => {
                 try window.rotatePanes();
+                window.resize(window.width, window.height) catch |err| std.log.warn("resize failed: {any}", .{err});
             },
             .select_pane_left => {
                 if (window.panes.items.len > 1) {
@@ -1534,7 +1535,7 @@ pub const Server = struct {
 
     /// Resize a pane to match its layout node's dimensions. Used after pane swaps
     /// so each pane fills its new slot (bug #220).
-    fn resizePaneToNode(pane: *Pane, node: *const layout.Node, layout_tree: *const layout.Layout) void {
+    pub fn resizePaneToNode(pane: *Pane, node: *const layout.Node, layout_tree: *const layout.Layout) void {
         const target_pane = switch (node.*) {
             .leaf => |p| p,
             else => return,
@@ -2397,7 +2398,7 @@ pub const Server = struct {
         }
     }
 
-    fn findDirectionalNeighbor(self: *Server, window: *Window, current: *Pane, direction: enum { left, right, up, down }) ServerError!?*Pane {
+    pub fn findDirectionalNeighbor(self: *Server, window: *Window, current: *Pane, direction: enum { left, right, up, down }) ServerError!?*Pane {
         var bounds: std.ArrayList(render.PaneBounds) = .empty;
         defer bounds.deinit(self.allocator);
 

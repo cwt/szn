@@ -1,6 +1,7 @@
 const std = @import("std");
 const testing = std.testing;
 const grid_mod = @import("grid.zig");
+const char_width_mod = @import("char_width.zig");
 const Cell = grid_mod.Cell;
 const Grid = grid_mod.Grid;
 const key_mod = @import("key.zig");
@@ -102,12 +103,15 @@ pub const ChooseMode = struct {
             if (std.unicode.Utf8View.init(item.name)) |u8v| {
                 var it = u8v.iterator();
                 while (it.nextCodepoint()) |cp| {
+                    if (col >= grid.width) break;
+                    const w = char_width_mod.charWidth(cp);
                     const a: grid_mod.Attr = if (item_idx == self.cursor) .{ .reverse = true } else .{};
                     grid.setCell(col, start_y + i, .{ .char = cp, .attr = a, .fg = .default_(), .bg = .default_() });
-                    col += 1;
+                    col += @max(w, 1);
                 }
             } else |_| {
                 for (item.name) |ch| {
+                    if (col >= grid.width) break;
                     const a: grid_mod.Attr = if (item_idx == self.cursor) .{ .reverse = true } else .{};
                     grid.setCell(col, start_y + i, .{ .char = ch, .attr = a, .fg = .default_(), .bg = .default_() });
                     col += 1;

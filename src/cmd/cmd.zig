@@ -50,6 +50,10 @@ fn activeTarget(server: *Server) ?ActiveTarget {
 
 fn cmdNewSession(server: *Server, args: []const []const u8) CmdResult {
     const name = if (args.len > 1) args[1] else "default";
+    // Reject duplicate session names (bug #558).
+    for (server.sessions.items) |s| {
+        if (std.mem.eql(u8, s.name, name)) return .err;
+    }
     const session = server.newSession(name, 80, 24) catch return .err;
     const window = session.active_window orelse {
         server.killSession(session.name) catch {};
@@ -69,6 +73,8 @@ fn cmdNewSession(server: *Server, args: []const []const u8) CmdResult {
         server.sessions.items[idx] = server.sessions.items[0];
         server.sessions.items[0] = target;
         server.dirty = true;
+        server.status_dirty = true;
+        server.recalculateMinimumSize();
     }
     return .ok;
 }
@@ -118,6 +124,9 @@ fn cmdSwitchClient(server: *Server, args: []const []const u8) CmdResult {
             }
             server.sessions.items[0] = s;
         }
+        server.dirty = true;
+        server.status_dirty = true;
+        server.recalculateMinimumSize();
         return .ok;
     }
     return .err;
@@ -182,14 +191,17 @@ fn cmdSplitWindow(server: *Server, args: []const []const u8) CmdResult {
     var direction: enum { horizontal, vertical } = .horizontal;
     var prop_arg: ?[]const u8 = null;
 
-    for (args, 0..) |arg, i| {
-        if (i == 0) continue;
-        if (std.mem.eql(u8, arg, "-v")) {
+    var i: usize = 1;
+    while (i < args.len) : (i += 1) {
+        if (std.mem.eql(u8, args[i], "-v")) {
             direction = .vertical;
-        } else if (std.mem.eql(u8, arg, "-h")) {
+        } else if (std.mem.eql(u8, args[i], "-h")) {
             direction = .horizontal;
+        } else if ((std.mem.eql(u8, args[i], "-p") or std.mem.eql(u8, args[i], "-l")) and i + 1 < args.len) {
+            prop_arg = args[i + 1];
+            i += 1;
         } else if (prop_arg == null) {
-            prop_arg = arg;
+            prop_arg = args[i];
         }
     }
 
@@ -249,9 +261,18 @@ fn cmdRenameWindow(server: *Server, args: []const []const u8) CmdResult {
 }
 
 fn cmdSelectWindow(server: *Server, args: []const []const u8) CmdResult {
-    if (args.len < 2) return .err;
     const session = server.activeSession() orelse return .err;
-    const idx = std.fmt.parseInt(u32, args[1], 10) catch return .err;
+    var target: ?usize = null;
+    var i: usize = 1;
+    while (i < args.len) : (i += 1) {
+        if (std.mem.eql(u8, args[i], "-t") and i + 1 < args.len) {
+            target = std.fmt.parseInt(usize, args[i + 1], 10) catch return .err;
+            i += 1;
+        } else {
+            target = std.fmt.parseInt(usize, args[i], 10) catch return .err;
+        }
+    }
+    const idx = target orelse return .err;
     if (idx >= session.windows.items.len) return .err;
     session.setActiveWindow(session.windows.items[idx]);
     server.dirty = true;
@@ -316,12 +337,48 @@ fn cmdSwapWindow(server: *Server, args: []const []const u8) CmdResult {
 }
 
 fn cmdSelectPane(server: *Server, args: []const []const u8) CmdResult {
-    if (args.len < 2) return .err;
     const session = server.activeSession() orelse return .err;
     const window = session.active_window orelse return .err;
+    const pane = window.active_pane orelse return .err;
+
+    // Directional selection (bug #558).
+    for (args[1..]) |arg| {
+        if (std.mem.eql(u8, arg, "-L")) {
+            if (server.findDirectionalNeighbor(window, pane, .left) catch null) |n| {
+                window.setActivePane(n);
+                server.dirty = true;
+                return .ok;
+            }
+            return .err;
+        } else if (std.mem.eql(u8, arg, "-R")) {
+            if (server.findDirectionalNeighbor(window, pane, .right) catch null) |n| {
+                window.setActivePane(n);
+                server.dirty = true;
+                return .ok;
+            }
+            return .err;
+        } else if (std.mem.eql(u8, arg, "-U")) {
+            if (server.findDirectionalNeighbor(window, pane, .up) catch null) |n| {
+                window.setActivePane(n);
+                server.dirty = true;
+                return .ok;
+            }
+            return .err;
+        } else if (std.mem.eql(u8, arg, "-D")) {
+            if (server.findDirectionalNeighbor(window, pane, .down) catch null) |n| {
+                window.setActivePane(n);
+                server.dirty = true;
+                return .ok;
+            }
+            return .err;
+        }
+    }
+
+    if (args.len < 2) return .err;
     const idx = std.fmt.parseInt(u32, args[1], 10) catch return .err;
     if (idx >= window.panes.items.len) return .err;
     window.setActivePane(window.panes.items[idx]);
+    server.dirty = true;
     return .ok;
 }
 
@@ -347,13 +404,24 @@ fn cmdSwapPane(server: *Server, args: []const []const u8) CmdResult {
         if (p == active) break idx;
     } else return .err;
 
-    if (args.len < 2) {
-        dst_idx = (src_idx + 1) % window.panes.items.len;
-    } else if (args.len == 2) {
-        dst_idx = std.fmt.parseInt(usize, args[1], 10) catch return .err;
+    // Recompute active index (may have been unchanged).
+    src_idx = for (window.panes.items, 0..) |p, idx| {
+        if (p == active) break idx;
+    } else return .err;
+
+    if (args.len >= 2) {
+        if (std.mem.eql(u8, args[1], "-U")) {
+            dst_idx = if (src_idx == 0) window.panes.items.len - 1 else src_idx - 1;
+        } else if (std.mem.eql(u8, args[1], "-D")) {
+            dst_idx = (src_idx + 1) % window.panes.items.len;
+        } else if (args.len == 2) {
+            dst_idx = std.fmt.parseInt(usize, args[1], 10) catch return .err;
+        } else {
+            src_idx = std.fmt.parseInt(usize, args[1], 10) catch return .err;
+            dst_idx = std.fmt.parseInt(usize, args[2], 10) catch return .err;
+        }
     } else {
-        src_idx = std.fmt.parseInt(usize, args[1], 10) catch return .err;
-        dst_idx = std.fmt.parseInt(usize, args[2], 10) catch return .err;
+        dst_idx = (src_idx + 1) % window.panes.items.len;
     }
 
     if (src_idx >= window.panes.items.len or dst_idx >= window.panes.items.len) return .err;
@@ -370,6 +438,10 @@ fn cmdSwapPane(server: *Server, args: []const []const u8) CmdResult {
     window.panes.items[src_idx] = pane2;
     window.panes.items[dst_idx] = pane1;
 
+    Server.resizePaneToNode(pane1, node1, &window.layout);
+    Server.resizePaneToNode(pane2, node2, &window.layout);
+    window.invalidateBorderFormat();
+    server.dirty = true;
     return .ok;
 }
 
@@ -545,7 +617,13 @@ fn cmdPasteBuffer(server: *Server, args: []const []const u8) CmdResult {
             server.setMessage(msg) catch |err| std.log.warn("setMessage failed: {any}", .{err});
             return .err;
         }
-        pane.writeInput(pb) catch return .err;
+        if (pane.screen.mode.paste) {
+            pane.writeInput("\x1b[200~") catch return .err;
+            pane.writeInput(pb) catch return .err;
+            pane.writeInput("\x1b[201~") catch return .err;
+        } else {
+            pane.writeInput(pb) catch return .err;
+        }
     }
     return .ok;
 }
@@ -788,6 +866,10 @@ fn cmdCapturePane(server: *Server, _: []const []const u8) CmdResult {
             // cell, plus one after every wide character. Emit a space for a
             // blank and nothing at all for the padding half.
             if (cell.is_padding) continue;
+            if (cell.attr.sixel) {
+                server.response_buf.append(server.allocator, ' ') catch return .err;
+                continue;
+            }
             const cp: u21 = if (cell.char == 0) ' ' else cell.char;
             var utf8_buf: [4]u8 = undefined;
             const len = std.unicode.utf8Encode(cp, &utf8_buf) catch blk: {
@@ -795,6 +877,21 @@ fn cmdCapturePane(server: *Server, _: []const []const u8) CmdResult {
                 break :blk 1;
             };
             server.response_buf.appendSlice(server.allocator, utf8_buf[0..len]) catch return .err;
+            // Append combining marks (bug #558).
+            if (cell.comb1 != 0) {
+                const cp1 = char_width.combiningCodepoint(cell.comb1);
+                if (cp1 != 0) {
+                    const l1 = std.unicode.utf8Encode(cp1, &utf8_buf) catch 0;
+                    if (l1 > 0) server.response_buf.appendSlice(server.allocator, utf8_buf[0..l1]) catch return .err;
+                }
+            }
+            if (cell.comb2 != 0) {
+                const cp2 = char_width.combiningCodepoint(cell.comb2);
+                if (cp2 != 0) {
+                    const l2 = std.unicode.utf8Encode(cp2, &utf8_buf) catch 0;
+                    if (l2 > 0) server.response_buf.appendSlice(server.allocator, utf8_buf[0..l2]) catch return .err;
+                }
+            }
         }
         server.response_buf.appendSlice(server.allocator, "\n") catch return .err;
     }
