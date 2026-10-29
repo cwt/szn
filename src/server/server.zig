@@ -1366,45 +1366,167 @@ pub const Server = struct {
                 }
             },
             .arrow => |a| {
-                const seq: []const u8 = switch (a.key) {
-                    .up => "\x1bOA",
-                    .down => "\x1bOB",
-                    .right => "\x1bOC",
-                    .left => "\x1bOD",
+                var mod: u8 = 1;
+                if (a.mod.shift) mod += 1;
+                if (a.mod.alt) mod += 2;
+                if (a.mod.ctrl) mod += 4;
+                const letter: u8 = switch (a.key) {
+                    .up => 'A',
+                    .down => 'B',
+                    .right => 'C',
+                    .left => 'D',
                 };
-                pane.writeInput(seq) catch |err| std.log.warn("writeInput failed: {any}", .{err});
+                if (mod != 1) {
+                    var buf: [16]u8 = undefined;
+                    const seq = std.fmt.bufPrint(&buf, "\x1b[1;{d}{c}", .{ mod, letter }) catch return;
+                    pane.writeInput(seq) catch |err| std.log.warn("writeInput failed: {any}", .{err});
+                } else if (pane.screen.mode.keypad) {
+                    var buf: [4]u8 = undefined;
+                    const seq = std.fmt.bufPrint(&buf, "\x1bO{c}", .{letter}) catch return;
+                    pane.writeInput(seq) catch |err| std.log.warn("writeInput failed: {any}", .{err});
+                } else {
+                    var buf: [4]u8 = undefined;
+                    const seq = std.fmt.bufPrint(&buf, "\x1b[{c}", .{letter}) catch return;
+                    pane.writeInput(seq) catch |err| std.log.warn("writeInput failed: {any}", .{err});
+                }
             },
             .special => |s| {
+                var mod: u8 = 1;
+                if (s.mod.shift) mod += 1;
+                if (s.mod.alt) mod += 2;
+                if (s.mod.ctrl) mod += 4;
                 switch (s.key) {
-                    .enter => pane.writeInput("\r") catch |err| std.log.warn("writeInput failed: {any}", .{err}),
-                    .tab => pane.writeInput("\t") catch |err| std.log.warn("writeInput failed: {any}", .{err}),
-                    .backspace => pane.writeInput("\x7f") catch |err| std.log.warn("writeInput failed: {any}", .{err}),
+                    .enter => {
+                        if (s.mod.alt) {
+                            pane.writeInput("\x1b\r") catch |err| std.log.warn("writeInput failed: {any}", .{err});
+                        } else {
+                            pane.writeInput("\r") catch |err| std.log.warn("writeInput failed: {any}", .{err});
+                        }
+                    },
+                    .tab => {
+                        if (s.mod.shift and !s.mod.ctrl and !s.mod.alt) {
+                            pane.writeInput("\x1b[Z") catch |err| std.log.warn("writeInput failed: {any}", .{err});
+                        } else if (s.mod.alt) {
+                            pane.writeInput("\x1b\t") catch |err| std.log.warn("writeInput failed: {any}", .{err});
+                        } else {
+                            pane.writeInput("\t") catch |err| std.log.warn("writeInput failed: {any}", .{err});
+                        }
+                    },
+                    .backspace => {
+                        if (s.mod.alt) {
+                            pane.writeInput("\x1b\x7f") catch |err| std.log.warn("writeInput failed: {any}", .{err});
+                        } else {
+                            pane.writeInput("\x7f") catch |err| std.log.warn("writeInput failed: {any}", .{err});
+                        }
+                    },
                     .escape => pane.writeInput("\x1b") catch |err| std.log.warn("writeInput failed: {any}", .{err}),
-                    .home => pane.writeInput("\x1b[H") catch |err| std.log.warn("writeInput failed: {any}", .{err}),
-                    .end => pane.writeInput("\x1b[F") catch |err| std.log.warn("writeInput failed: {any}", .{err}),
-                    .page_up => pane.writeInput("\x1b[5~") catch |err| std.log.warn("writeInput failed: {any}", .{err}),
-                    .page_down => pane.writeInput("\x1b[6~") catch |err| std.log.warn("writeInput failed: {any}", .{err}),
-                    .insert => pane.writeInput("\x1b[2~") catch |err| std.log.warn("writeInput failed: {any}", .{err}),
-                    .delete_ => pane.writeInput("\x1b[3~") catch |err| std.log.warn("writeInput failed: {any}", .{err}),
+                    .home => {
+                        if (mod != 1) {
+                            var buf: [16]u8 = undefined;
+                            const seq = std.fmt.bufPrint(&buf, "\x1b[1;{d}H", .{mod}) catch return;
+                            pane.writeInput(seq) catch |err| std.log.warn("writeInput failed: {any}", .{err});
+                        } else {
+                            pane.writeInput("\x1b[H") catch |err| std.log.warn("writeInput failed: {any}", .{err});
+                        }
+                    },
+                    .end => {
+                        if (mod != 1) {
+                            var buf: [16]u8 = undefined;
+                            const seq = std.fmt.bufPrint(&buf, "\x1b[1;{d}F", .{mod}) catch return;
+                            pane.writeInput(seq) catch |err| std.log.warn("writeInput failed: {any}", .{err});
+                        } else {
+                            pane.writeInput("\x1b[F") catch |err| std.log.warn("writeInput failed: {any}", .{err});
+                        }
+                    },
+                    .page_up => {
+                        if (mod != 1) {
+                            var buf: [16]u8 = undefined;
+                            const seq = std.fmt.bufPrint(&buf, "\x1b[5;{d}~", .{mod}) catch return;
+                            pane.writeInput(seq) catch |err| std.log.warn("writeInput failed: {any}", .{err});
+                        } else {
+                            pane.writeInput("\x1b[5~") catch |err| std.log.warn("writeInput failed: {any}", .{err});
+                        }
+                    },
+                    .page_down => {
+                        if (mod != 1) {
+                            var buf: [16]u8 = undefined;
+                            const seq = std.fmt.bufPrint(&buf, "\x1b[6;{d}~", .{mod}) catch return;
+                            pane.writeInput(seq) catch |err| std.log.warn("writeInput failed: {any}", .{err});
+                        } else {
+                            pane.writeInput("\x1b[6~") catch |err| std.log.warn("writeInput failed: {any}", .{err});
+                        }
+                    },
+                    .insert => {
+                        if (mod != 1) {
+                            var buf: [16]u8 = undefined;
+                            const seq = std.fmt.bufPrint(&buf, "\x1b[2;{d}~", .{mod}) catch return;
+                            pane.writeInput(seq) catch |err| std.log.warn("writeInput failed: {any}", .{err});
+                        } else {
+                            pane.writeInput("\x1b[2~") catch |err| std.log.warn("writeInput failed: {any}", .{err});
+                        }
+                    },
+                    .delete_ => {
+                        if (mod != 1) {
+                            var buf: [16]u8 = undefined;
+                            const seq = std.fmt.bufPrint(&buf, "\x1b[3;{d}~", .{mod}) catch return;
+                            pane.writeInput(seq) catch |err| std.log.warn("writeInput failed: {any}", .{err});
+                        } else {
+                            pane.writeInput("\x1b[3~") catch |err| std.log.warn("writeInput failed: {any}", .{err});
+                        }
+                    },
                     .btab => pane.writeInput("\x1b[Z") catch |err| std.log.warn("writeInput failed: {any}", .{err}),
                 }
             },
             .function => |f| {
-                const seq: []const u8 = switch (f.key) {
-                    .f1 => "\x1bOP",
-                    .f2 => "\x1bOQ",
-                    .f3 => "\x1bOR",
-                    .f4 => "\x1bOS",
-                    .f5 => "\x1b[15~",
-                    .f6 => "\x1b[17~",
-                    .f7 => "\x1b[18~",
-                    .f8 => "\x1b[19~",
-                    .f9 => "\x1b[20~",
-                    .f10 => "\x1b[21~",
-                    .f11 => "\x1b[23~",
-                    .f12 => "\x1b[24~",
-                };
-                pane.writeInput(seq) catch |err| std.log.warn("writeInput failed: {any}", .{err});
+                var mod: u8 = 1;
+                if (f.mod.shift) mod += 1;
+                if (f.mod.alt) mod += 2;
+                if (f.mod.ctrl) mod += 4;
+                if (mod != 1 and (f.key == .f1 or f.key == .f2 or f.key == .f3 or f.key == .f4)) {
+                    const letter: u8 = switch (f.key) {
+                        .f1 => 'P',
+                        .f2 => 'Q',
+                        .f3 => 'R',
+                        .f4 => 'S',
+                        else => 'P',
+                    };
+                    var buf: [16]u8 = undefined;
+                    const seq = std.fmt.bufPrint(&buf, "\x1b[1;{d}{c}", .{ mod, letter }) catch return;
+                    pane.writeInput(seq) catch |err| std.log.warn("writeInput failed: {any}", .{err});
+                } else if (mod != 1) {
+                    const code: u8 = switch (f.key) {
+                        .f5 => 15,
+                        .f6 => 17,
+                        .f7 => 18,
+                        .f8 => 19,
+                        .f9 => 20,
+                        .f10 => 21,
+                        .f11 => 23,
+                        .f12 => 24,
+                        else => 0,
+                    };
+                    if (code != 0) {
+                        var buf: [16]u8 = undefined;
+                        const seq = std.fmt.bufPrint(&buf, "\x1b[{d};{d}~", .{ code, mod }) catch return;
+                        pane.writeInput(seq) catch |err| std.log.warn("writeInput failed: {any}", .{err});
+                    }
+                } else {
+                    const seq: []const u8 = switch (f.key) {
+                        .f1 => "\x1bOP",
+                        .f2 => "\x1bOQ",
+                        .f3 => "\x1bOR",
+                        .f4 => "\x1bOS",
+                        .f5 => "\x1b[15~",
+                        .f6 => "\x1b[17~",
+                        .f7 => "\x1b[18~",
+                        .f8 => "\x1b[19~",
+                        .f9 => "\x1b[20~",
+                        .f10 => "\x1b[21~",
+                        .f11 => "\x1b[23~",
+                        .f12 => "\x1b[24~",
+                    };
+                    pane.writeInput(seq) catch |err| std.log.warn("writeInput failed: {any}", .{err});
+                }
             },
             else => {},
         }
