@@ -614,11 +614,42 @@ pub const Server = struct {
             self.input_reader.reset();
             self.esc_pending_since_ms = 0;
         }
-        if (self.esc_buf.items.len == 0) return;
+        // Modal states: deliver Escape to the active mode instead of writing
+        // the (possibly empty) esc buffer to the pane PTY (bug #552).
+        if (self.command_mode) {
+            self.command_mode = false;
+            self.command_buf.clearRetainingCapacity();
+            self.dirty = true;
+            return;
+        }
         const session = self.activeSession() orelse return;
         const window = session.active_window orelse return;
         const pane = window.active_pane orelse return;
         if (!self.isPaneValid(pane)) return;
+        if (pane.choose_mode.active) {
+            const escaped = pane.choose_mode.handleKey(.{ .special = .{ .key = .escape } }) catch return;
+            if (escaped == .cancelled) {
+                const is_cmd = (pane.choose_mode.target == .command);
+                pane.choose_mode.clear(pane.screen.grid.allocator);
+                pane.restoreSavedGrid();
+                if (is_cmd) {
+                    self.command_mode = true;
+                }
+            }
+            self.dirty = true;
+            pane.dirty = true;
+            return;
+        }
+        if (pane.screen.copy_mode != null) {
+            if (pane.screen.copy_mode) |*cm| {
+                _ = cm.handleKey(.{ .special = .{ .key = .escape } }, &pane.screen.grid);
+            }
+            pane.screen.copy_mode = null;
+            pane.dirty = true;
+            self.dirty = true;
+            return;
+        }
+        if (self.esc_buf.items.len == 0) return;
         pane.writeInput(self.esc_buf.items) catch |err| std.log.warn("flushPendingEscape writeInput failed: {any}", .{err});
     }
 
@@ -1614,6 +1645,9 @@ pub const Server = struct {
                         else => {},
                     }
                 }
+                if (self.input_reader.state == .esc) {
+                    self.esc_pending_since_ms = currentMillis();
+                }
                 continue;
             }
 
@@ -1693,6 +1727,9 @@ pub const Server = struct {
                         else => {},
                     }
                 }
+                if (self.input_reader.state == .esc) {
+                    self.esc_pending_since_ms = currentMillis();
+                }
                 continue;
             }
 
@@ -1703,7 +1740,11 @@ pub const Server = struct {
             }
 
             if (pane.screen.copy_mode) |*cm| {
-                if (self.input_reader.feed(byte)) |event| {
+                const _feed_res = self.input_reader.feed(byte);
+                if (self.input_reader.state == .esc) {
+                    self.esc_pending_since_ms = currentMillis();
+                }
+                if (_feed_res) |event| {
                     switch (event) {
                         .key => |k| {
                             if (self.dispatcher.prefix_state == .prefix_seen) {
