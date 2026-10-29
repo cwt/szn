@@ -24,11 +24,17 @@ pub const ChooseMode = struct {
     target: ChooseTarget = .buffer,
 
     pub fn deinit(self: *ChooseMode, allocator: std.mem.Allocator) void {
+        self.clear(allocator);
+        self.items.deinit(allocator);
+    }
+
+    pub fn clear(self: *ChooseMode, allocator: std.mem.Allocator) void {
         for (self.items.items) |*item| {
             allocator.free(item.name);
             allocator.free(item.data);
         }
-        self.items.deinit(allocator);
+        self.items.clearRetainingCapacity();
+        self.active = false;
     }
 
     pub fn enter(self: *ChooseMode, allocator: std.mem.Allocator, items: []const ChooseItem) !void {

@@ -1623,7 +1623,7 @@ pub const Server = struct {
                     const escaped = pane.choose_mode.handleKey(.{ .special = .{ .key = .escape } }) catch continue;
                     if (escaped == .cancelled) {
                         const is_cmd = (pane.choose_mode.target == .command);
-                        pane.choose_mode.active = false;
+                        pane.choose_mode.clear(pane.screen.grid.allocator);
 
                         pane.restoreSavedGrid();
                         if (is_cmd) {
@@ -1677,10 +1677,11 @@ pub const Server = struct {
                                             }
                                         }
                                     }
+                                    pane.choose_mode.clear(pane.screen.grid.allocator);
                                 },
                                 .cancelled => {
                                     const is_cmd = (pane.choose_mode.target == .command);
-                                    pane.choose_mode.active = false;
+                                    pane.choose_mode.clear(pane.screen.grid.allocator);
 
                                     pane.restoreSavedGrid();
                                     if (is_cmd) {
@@ -3705,19 +3706,22 @@ pub const Server = struct {
         const f = fopen(resolved_path_z.ptr, "r") orelse return;
         defer _ = fclose(f);
 
-        _ = fseek(f, 0, 2); // SEEK_END = 2
-        const size = ftell(f);
-        if (size < 0) return error.ReadFailed;
-        _ = fseek(f, 0, 0); // SEEK_SET = 0
-
-        const content = try self.allocator.alloc(u8, @as(usize, @intCast(size)));
-        defer self.allocator.free(content);
-
-        const read_bytes = fread(content.ptr, 1, content.len, f);
-        if (read_bytes == 0 and content.len > 0) return error.ReadFailed;
+        // Bounded read: avoid unbounded fseek/ftell allocation and support
+        // non-seekable inputs (bug #545).
+        const MAX_CONFIG_FILE_SIZE: usize = 4 * 1024 * 1024;
+        var content: std.ArrayList(u8) = .empty;
+        defer content.deinit(self.allocator);
+        var buf: [4096]u8 = undefined;
+        while (true) {
+            const n = fread(&buf, 1, buf.len, f);
+            if (n == 0) break;
+            if (content.items.len + n > MAX_CONFIG_FILE_SIZE) return error.ReadFailed;
+            try content.appendSlice(self.allocator, buf[0..n]);
+        }
+        if (content.items.len == 0) return;
 
         const cfg_mod = @import("../cfg.zig");
-        var parsed = try cfg_mod.parseConfig(self.allocator, content[0..read_bytes]);
+        var parsed = try cfg_mod.parseConfig(self.allocator, content.items);
         defer parsed.deinit(self.allocator);
 
         try self.applyDirectives(&parsed);
