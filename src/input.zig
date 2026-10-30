@@ -352,11 +352,11 @@ pub const InputParser = struct {
     fn advanceOsc(self: *InputParser, byte: u8) Error!void {
         switch (byte) {
             0x07 => {
-                try self.dispatchOsc();
+                self.dispatchOsc();
                 self.toGround();
             },
             0x9C => {
-                try self.dispatchOsc();
+                self.dispatchOsc();
                 self.toGround();
             },
             0x1B => {
@@ -378,7 +378,7 @@ pub const InputParser = struct {
     fn advanceOscEsc(self: *InputParser, byte: u8) Error!void {
         if (byte == '\\') {
             // ESC \ = ST — terminate and dispatch the OSC.
-            self.dispatchOsc() catch |err| std.log.warn("dispatchOsc failed: {any}", .{err});
+            self.dispatchOsc();
             self.toGround();
             return;
         }
@@ -993,7 +993,7 @@ pub const InputParser = struct {
         }
     }
 
-    fn dispatchOsc(self: *InputParser) Error!void {
+    fn dispatchOsc(self: *InputParser) void {
         defer {
             if (self.osc_buf.capacity > 64 * 1024) {
                 self.osc_buf.deinit(self.screen.allocator);

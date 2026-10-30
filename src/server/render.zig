@@ -361,7 +361,7 @@ pub const Display = struct {
         }
 
         const mode_border_fg = if (pane_in_copy_mode) Colour.fromIndexed(11) else theme.pane_active_border_fg;
-        try drawLayoutBorders(layout_root, 0, 0, merged_w, merged_h, merged_screen, active_bounds, theme.pane_border_fg, mode_border_fg);
+        drawLayoutBorders(layout_root, 0, 0, merged_w, merged_h, merged_screen, active_bounds, theme.pane_border_fg, mode_border_fg);
 
         for (bounds) |pb| {
             const fmt = pb.border_format;
@@ -459,7 +459,7 @@ pub const Display = struct {
         active_bound: ?PaneBounds,
         border_fg: Colour,
         active_border_fg: Colour,
-    ) !void {
+    ) void {
         switch (node.*) {
             .leaf => {},
             .split => |s| {
@@ -481,8 +481,8 @@ pub const Display = struct {
                             paintBorderCell(cell, 0x2500, 0x2502, border_col);
                         }
                     }
-                    try drawLayoutBorders(s.a, lx, ly, w1, lh, merged_screen, active_bound, border_fg, active_border_fg);
-                    try drawLayoutBorders(s.b, lx + w1 + 1, ly, w2, lh, merged_screen, active_bound, border_fg, active_border_fg);
+                    drawLayoutBorders(s.a, lx, ly, w1, lh, merged_screen, active_bound, border_fg, active_border_fg);
+                    drawLayoutBorders(s.b, lx + w1 + 1, ly, w2, lh, merged_screen, active_bound, border_fg, active_border_fg);
                 } else {
                     const sizes = @import("../layout.zig").splitSizes(lh -| 1, s.proportion);
                     const h1 = sizes.first;
@@ -501,8 +501,8 @@ pub const Display = struct {
                             paintBorderCell(cell, 0x2502, 0x2500, border_col);
                         }
                     }
-                    try drawLayoutBorders(s.a, lx, ly, lw, h1, merged_screen, active_bound, border_fg, active_border_fg);
-                    try drawLayoutBorders(s.b, lx, ly + h1 + 1, lw, h2, merged_screen, active_bound, border_fg, active_border_fg);
+                    drawLayoutBorders(s.a, lx, ly, lw, h1, merged_screen, active_bound, border_fg, active_border_fg);
+                    drawLayoutBorders(s.b, lx, ly + h1 + 1, lw, h2, merged_screen, active_bound, border_fg, active_border_fg);
                 }
             },
         }

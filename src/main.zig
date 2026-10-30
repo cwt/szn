@@ -13,6 +13,7 @@ const connect = @import("client/connect.zig");
 const client_mod = @import("client/client.zig");
 const socket_path = @import("socket_path.zig");
 const log_mod = @import("log.zig");
+const io = @import("io.zig");
 
 pub const Error = server_mod.ServerError || client_mod.Error || raw_mod.Error || connect.Error || socket_path.Error || log_mod.Error || error{ OutOfMemory, SocketNotFound, WriteFailed, ReadFailed };
 
@@ -24,14 +25,7 @@ pub const std_options: std.Options = .{
 extern "c" fn tcflush(fd: c_int, queue_selector: c_int) c_int;
 const TCIFLUSH = 1;
 
-fn currentMillis() i64 {
-    var tv: extern struct {
-        tv_sec: i64,
-        tv_usec: i64,
-    } = undefined;
-    _ = std.c.gettimeofday(@ptrCast(&tv), null);
-    return tv.tv_sec * 1000 + @divFloor(tv.tv_usec, 1000);
-}
+const currentMillis = io.currentMillis;
 
 var sigwinchFlag = std.atomic.Value(bool).init(false);
 // Set when the controlling terminal hangs up (mosh/ssh transport drop). The
@@ -49,16 +43,7 @@ export fn sighup_handler(sig: c.SIG) callconv(.c) void {
 }
 
 fn writeAll(fd: i32, buf: []const u8) Error!void {
-    var off: usize = 0;
-    while (off < buf.len) {
-        const n = c.write(fd, buf.ptr + off, buf.len - off);
-        if (n < 0) {
-            if (std.c.errno(n) == .INTR) continue;
-            return error.WriteFailed;
-        }
-        if (n == 0) return error.WriteFailed;
-        off += @as(usize, @intCast(n));
-    }
+    try io.writeAll(fd, buf);
 }
 
 /// Non-blocking, best-effort write to the server socket. The socket is
@@ -97,37 +82,8 @@ const MAX_CLIENT_OUT_BUF = 16 << 20;
 /// received and drained, while regular frames throttle promptly.
 const CLIENT_OUT_HIGH_WATERMARK = 512 * 1024;
 
-fn setNonBlocking(fd: i32) void {
-    const c_fcntl = struct {
-        extern "c" fn fcntl(fd: c_int, cmd: c_int, ...) c_int;
-    }.fcntl;
-    const F_GETFL: c_int = 3;
-    const F_SETFL: c_int = 4;
-    const O_NONBLOCK: c_int = comptime switch (@import("builtin").os.tag) {
-        .linux => @as(c_int, 0o4000),
-        else => @as(c_int, 0x0004),
-    };
-    const flags = c_fcntl(fd, F_GETFL, @as(c_int, 0));
-    if (flags >= 0) {
-        _ = c_fcntl(fd, F_SETFL, flags | O_NONBLOCK);
-    }
-}
-
-fn setBlocking(fd: i32) void {
-    const c_fcntl = struct {
-        extern "c" fn fcntl(fd: c_int, cmd: c_int, ...) c_int;
-    }.fcntl;
-    const F_GETFL: c_int = 3;
-    const F_SETFL: c_int = 4;
-    const O_NONBLOCK: c_int = comptime switch (@import("builtin").os.tag) {
-        .linux => @as(c_int, 0o4000),
-        else => @as(c_int, 0x0004),
-    };
-    const flags = c_fcntl(fd, F_GETFL, @as(c_int, 0));
-    if (flags >= 0) {
-        _ = c_fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
-    }
-}
+const setNonBlocking = io.setNonBlocking;
+const setBlocking = io.setBlocking;
 
 /// Queue `data` for stdout. If the pending queue would exceed the cap, the
 /// backlog is dropped and `needs_redraw` is set so the client asks the server

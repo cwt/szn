@@ -1,23 +1,13 @@
 const std = @import("std");
 const c = std.c;
+const io = @import("../io.zig");
 const protocol = @import("../server/protocol.zig");
 const connect = @import("connect.zig");
 
 pub const Error = protocol.Error || connect.Error || error{ ConnectionClosed, ReadFailed, WriteFailed, InvalidPacket, TermTooLong, PacketTooLarge };
 
 fn fdWrite(fd: i32, buf: []const u8) Error!void {
-    var off: usize = 0;
-    while (off < buf.len) {
-        const n = std.c.write(fd, buf.ptr + off, buf.len - off);
-        if (n < 0) {
-            const err = std.c.errno(n);
-            if (err == .INTR) continue;
-            std.log.warn("fdWrite failed with errno: {any}", .{err});
-            return error.WriteFailed;
-        }
-        if (n == 0) return error.WriteFailed;
-        off += @as(usize, @intCast(n));
-    }
+    try io.writeAll(fd, buf);
 }
 
 fn fdRead(fd: i32, buf: []u8) Error!usize {

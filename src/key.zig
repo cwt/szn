@@ -267,15 +267,7 @@ pub fn parse(seq: []const u8) ParseError!Key {
     // SS3: ESC O (function keys without modifiers)
     if (seq.len >= 2 and seq[1] == 'O') {
         if (seq.len < 3) return error.InvalidCsi;
-        return switch (seq[2]) {
-            'P' => Key{ .function = .{ .key = .f1 } },
-            'Q' => Key{ .function = .{ .key = .f2 } },
-            'R' => Key{ .function = .{ .key = .f3 } },
-            'S' => Key{ .function = .{ .key = .f4 } },
-            'H' => Key{ .special = .{ .key = .home } },
-            'F' => Key{ .special = .{ .key = .end } },
-            else => error.UnknownKey,
-        };
+        return parseSs3(seq[2]);
     }
 
     // ESC followed by a single char (Alt+char)
@@ -807,4 +799,18 @@ test "parse kitty event types and colon sub-parameters — bug #489" {
     const alt_code_key = try parse("\x1b[97:65;1u");
     try testing.expectEqual(std.meta.activeTag(alt_code_key), .char);
     try testing.expectEqual(@as(u21, 'a'), alt_code_key.char.code);
+}
+
+test "parse delegates SS3 sequences (F1-F4, Home/End, arrows) to parseSs3 — bug #560" {
+    const up = try parse("\x1bOA");
+    try testing.expectEqual(std.meta.activeTag(up), .arrow);
+    try testing.expectEqual(up.arrow.key, .up);
+
+    const home = try parse("\x1bOH");
+    try testing.expectEqual(std.meta.activeTag(home), .special);
+    try testing.expectEqual(home.special.key, .home);
+
+    const end = try parse("\x1bOF");
+    try testing.expectEqual(std.meta.activeTag(end), .special);
+    try testing.expectEqual(end.special.key, .end);
 }

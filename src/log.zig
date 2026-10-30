@@ -207,11 +207,11 @@ pub fn logFn(
     }
 }
 
-pub fn enable(path_or_default: []const u8) void {
+fn enableWithResolver(path_or_default: []const u8, comptime resolveDefault: fn ([]u8) Error![:0]const u8) void {
     if (path_or_default.len == 0) return;
     const fd = if (std.mem.eql(u8, path_or_default, "default")) blk: {
         var buf: [256]u8 = undefined;
-        const resolved = resolveLogPath(&buf) catch return;
+        const resolved = resolveDefault(&buf) catch return;
         break :blk open(resolved, O_WRONLY | O_CREAT | O_APPEND, 0o600);
     } else blk2: {
         var path_buf: [256]u8 = undefined;
@@ -225,6 +225,10 @@ pub fn enable(path_or_default: []const u8) void {
     log_fd_failed.store(false, .seq_cst);
     log_enabled.store(true, .seq_cst);
     applyEnvLogLevel();
+}
+
+pub fn enable(path_or_default: []const u8) void {
+    enableWithResolver(path_or_default, resolveLogPath);
 }
 
 pub fn disable() void {
@@ -242,23 +246,7 @@ pub fn disable() void {
 /// (driven by the `client-log-file` config option), since it never loads the
 /// server config itself (bug #298 diagnostics).
 pub fn enableClientLog(path_or_default: []const u8) void {
-    if (path_or_default.len == 0) return;
-    const fd = if (std.mem.eql(u8, path_or_default, "default")) blk: {
-        var buf: [256]u8 = undefined;
-        const resolved = resolveClientPath(&buf) catch return;
-        break :blk open(resolved, O_WRONLY | O_CREAT | O_APPEND, 0o600);
-    } else blk2: {
-        var path_buf: [256]u8 = undefined;
-        const path_z = std.fmt.bufPrintSentinel(&path_buf, "{s}", .{path_or_default}, 0) catch return;
-        break :blk2 open(path_z.ptr, O_WRONLY | O_CREAT | O_APPEND, 0o600);
-    };
-    if (fd < 0) return;
-    _ = fchmod(fd, 0o600);
-    const old = log_fd.swap(fd, .seq_cst);
-    if (old != NO_LOG_FD) _ = c.close(old);
-    log_fd_failed.store(false, .seq_cst);
-    log_enabled.store(true, .seq_cst);
-    applyEnvLogLevel();
+    enableWithResolver(path_or_default, resolveClientPath);
 }
 
 pub fn isEnabled() bool {

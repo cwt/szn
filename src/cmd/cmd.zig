@@ -403,11 +403,6 @@ fn cmdSwapPane(server: *Server, args: []const []const u8) CmdResult {
         if (p == active) break idx;
     } else return .err;
 
-    // Recompute active index (may have been unchanged).
-    src_idx = for (window.panes.items, 0..) |p, idx| {
-        if (p == active) break idx;
-    } else return .err;
-
     if (args.len >= 2) {
         if (std.mem.eql(u8, args[1], "-U")) {
             dst_idx = if (src_idx == 0) window.panes.items.len - 1 else src_idx - 1;
@@ -423,23 +418,7 @@ fn cmdSwapPane(server: *Server, args: []const []const u8) CmdResult {
         dst_idx = (src_idx + 1) % window.panes.items.len;
     }
 
-    if (src_idx >= window.panes.items.len or dst_idx >= window.panes.items.len) return .err;
-    if (src_idx == dst_idx) return .ok;
-
-    const pane1 = window.panes.items[src_idx];
-    const pane2 = window.panes.items[dst_idx];
-
-    const node1 = window.layout.findLeafParent(window.layout.root, pane1) orelse return .err;
-    const node2 = window.layout.findLeafParent(window.layout.root, pane2) orelse return .err;
-    node1.leaf = pane2;
-    node2.leaf = pane1;
-
-    window.panes.items[src_idx] = pane2;
-    window.panes.items[dst_idx] = pane1;
-
-    Server.resizePaneToNode(pane1, node2, &window.layout);
-    Server.resizePaneToNode(pane2, node1, &window.layout);
-    window.invalidateBorderFormat();
+    if (!Server.swapPanesAt(window, src_idx, dst_idx)) return .err;
     server.dirty = true;
     return .ok;
 }
@@ -1487,8 +1466,7 @@ fn cmdReflowPane(server: *Server, args: []const []const u8) CmdResult {
     return .ok;
 }
 
-fn cmdBindKey(server: *Server, args: []const []const u8) CmdResult {
-    if (args.len < 3) return .err;
+fn parseBindKeyFlags(args: []const []const u8) ?struct { is_root: bool, opt_idx: usize } {
     var is_root = false;
     var opt_idx: usize = 1;
     while (opt_idx < args.len) {
@@ -1505,14 +1483,14 @@ fn cmdBindKey(server: *Server, args: []const []const u8) CmdResult {
             opt_idx += 1;
         } else if (std.mem.eql(u8, arg, "-T")) {
             opt_idx += 1;
-            if (opt_idx >= args.len) return .err;
+            if (opt_idx >= args.len) return null;
             const table_name = args[opt_idx];
             if (std.mem.eql(u8, table_name, "root")) {
                 is_root = true;
             } else if (std.mem.eql(u8, table_name, "prefix")) {
                 is_root = false;
             } else {
-                return .err;
+                return null;
             }
             opt_idx += 1;
         } else if (std.mem.startsWith(u8, arg, "-T")) {
@@ -1522,7 +1500,7 @@ fn cmdBindKey(server: *Server, args: []const []const u8) CmdResult {
             } else if (std.mem.eql(u8, table_name, "prefix")) {
                 is_root = false;
             } else {
-                return .err;
+                return null;
             }
             opt_idx += 1;
         } else if (std.mem.eql(u8, arg, "-r")) {
@@ -1531,6 +1509,14 @@ fn cmdBindKey(server: *Server, args: []const []const u8) CmdResult {
             opt_idx += 1;
         }
     }
+    return .{ .is_root = is_root, .opt_idx = opt_idx };
+}
+
+fn cmdBindKey(server: *Server, args: []const []const u8) CmdResult {
+    if (args.len < 3) return .err;
+    const parsed_flags = parseBindKeyFlags(args) orelse return .err;
+    const is_root = parsed_flags.is_root;
+    const opt_idx = parsed_flags.opt_idx;
     if (args.len - opt_idx < 2) return .err;
     const key_name = args[opt_idx];
 
@@ -1565,48 +1551,9 @@ fn cmdBindKey(server: *Server, args: []const []const u8) CmdResult {
 
 fn cmdUnbindKey(server: *Server, args: []const []const u8) CmdResult {
     if (args.len < 2) return .err;
-    var is_root = false;
-    var opt_idx: usize = 1;
-    while (opt_idx < args.len) {
-        const arg = args[opt_idx];
-        if (!std.mem.startsWith(u8, arg, "-") or std.mem.eql(u8, arg, "-")) {
-            break;
-        }
-        if (std.mem.eql(u8, arg, "--")) {
-            opt_idx += 1;
-            break;
-        }
-        if (std.mem.eql(u8, arg, "-n")) {
-            is_root = true;
-            opt_idx += 1;
-        } else if (std.mem.eql(u8, arg, "-T")) {
-            opt_idx += 1;
-            if (opt_idx >= args.len) return .err;
-            const table_name = args[opt_idx];
-            if (std.mem.eql(u8, table_name, "root")) {
-                is_root = true;
-            } else if (std.mem.eql(u8, table_name, "prefix")) {
-                is_root = false;
-            } else {
-                return .err;
-            }
-            opt_idx += 1;
-        } else if (std.mem.startsWith(u8, arg, "-T")) {
-            const table_name = arg[2..];
-            if (std.mem.eql(u8, table_name, "root")) {
-                is_root = true;
-            } else if (std.mem.eql(u8, table_name, "prefix")) {
-                is_root = false;
-            } else {
-                return .err;
-            }
-            opt_idx += 1;
-        } else if (std.mem.eql(u8, arg, "-r")) {
-            opt_idx += 1;
-        } else {
-            opt_idx += 1;
-        }
-    }
+    const parsed_flags = parseBindKeyFlags(args) orelse return .err;
+    const is_root = parsed_flags.is_root;
+    const opt_idx = parsed_flags.opt_idx;
     if (args.len - opt_idx < 1) return .err;
     const key_name = args[opt_idx];
 

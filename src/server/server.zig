@@ -414,9 +414,7 @@ pub const Server = struct {
     }
 
     fn currentMillis() i64 {
-        var tv: std.c.timeval = undefined;
-        _ = gettimeofday(&tv, null);
-        return @as(i64, @intCast(tv.sec)) * 1000 + @divFloor(@as(i64, @intCast(tv.usec)), 1000);
+        return io.currentMillis();
     }
 
     pub fn setMessage(self: *Server, msg: []const u8) !void {
@@ -753,7 +751,7 @@ pub const Server = struct {
         const pane = window.active_pane orelse return;
         if (!self.isPaneValid(pane)) return;
         if (pane.choose_mode.active) {
-            const escaped = pane.choose_mode.handleKey(.{ .special = .{ .key = .escape } }) catch return;
+            const escaped = pane.choose_mode.handleKey(.{ .special = .{ .key = .escape } });
             if (escaped == .cancelled) {
                 const is_cmd = (pane.choose_mode.target == .command);
                 pane.choose_mode.clear(pane.screen.grid.allocator);
@@ -1426,56 +1424,6 @@ pub const Server = struct {
         const pane = pane_opt orelse return;
         switch (k) {
             .char => |ch| {
-                // Handle Tab variants before the general char path, since
-                // kitty protocol encodes Tab as codepoint 9 with modifiers.
-                if (ch.code == 9) {
-                    if (ch.mod.shift and !ch.mod.ctrl and !ch.mod.alt) {
-                        pane.writeInput("\x1b[Z") catch |err| std.log.warn("writeInput failed: {any}", .{err});
-                        return;
-                    }
-                    if (ch.mod.alt) {
-                        pane.writeInput("\x1b\x09") catch |err| std.log.warn("writeInput failed: {any}", .{err});
-                        return;
-                    }
-                    pane.writeInput("\t") catch |err| std.log.warn("writeInput failed: {any}", .{err});
-                    return;
-                }
-                // Kitty keyboard protocol functional-key codepoints (spec
-                // "Functional" table): ESCAPE=57344 ENTER=57345 TAB=57346
-                // BACKSPACE=57347 INSERT=57348 DELETE=57349 LEFT=57350
-                // RIGHT=57351 UP=57352 DOWN=57353. The old table mapped
-                // 57344-57347 to arrows — those are Escape/Enter/Tab/
-                // Backspace (bug #352).
-                switch (ch.code) {
-                    57344 => {
-                        pane.writeInput("\x1b") catch |err| std.log.warn("writeInput failed: {any}", .{err});
-                        return;
-                    },
-                    57345 => {
-                        pane.writeInput("\r") catch |err| std.log.warn("writeInput failed: {any}", .{err});
-                        return;
-                    },
-                    57346 => {
-                        pane.writeInput("\t") catch |err| std.log.warn("writeInput failed: {any}", .{err});
-                        return;
-                    },
-                    57347 => {
-                        pane.writeInput("\x7f") catch |err| std.log.warn("writeInput failed: {any}", .{err});
-                        return;
-                    },
-                    57350, 57351, 57352, 57353 => {
-                        const seq: []const u8 = switch (ch.code) {
-                            57352 => "\x1bOA", // Up
-                            57353 => "\x1bOB", // Down
-                            57351 => "\x1bOC", // Right
-                            57350 => "\x1bOD", // Left
-                            else => unreachable,
-                        };
-                        pane.writeInput(seq) catch |err| std.log.warn("writeInput failed: {any}", .{err});
-                        return;
-                    },
-                    else => {},
-                }
                 if (ch.mod.ctrl) {
                     const ctrl_byte: u8 = @intCast(ch.code & 0x1F);
                     if (ch.mod.alt) {
@@ -1704,6 +1652,30 @@ pub const Server = struct {
             std.log.warn("resizeTerminal failed: {any}", .{err});
     }
 
+    pub fn swapPanesAt(window: *Window, idx1: usize, idx2: usize) bool {
+        if (idx1 >= window.panes.items.len or idx2 >= window.panes.items.len) return false;
+        if (idx1 == idx2) return true;
+
+        const pane1 = window.panes.items[idx1];
+        const pane2 = window.panes.items[idx2];
+
+        const node1 = window.layout.findLeafParent(window.layout.root, pane1) orelse return false;
+        const node2 = window.layout.findLeafParent(window.layout.root, pane2) orelse return false;
+        node1.leaf = pane2;
+        node2.leaf = pane1;
+
+        window.panes.items[idx1] = pane2;
+        window.panes.items[idx2] = pane1;
+
+        // bug #220 & bug #250: resize panes to their new slot dimensions after swap.
+        // node1 now holds pane2, so node1's bounds are pane2's new slot.
+        // node2 now holds pane1, so node2's bounds are pane1's new slot.
+        resizePaneToNode(pane1, node2, &window.layout);
+        resizePaneToNode(pane2, node1, &window.layout);
+        window.invalidateBorderFormat();
+        return true;
+    }
+
     fn swapPaneRelative(window: *Window, pane: *Pane, dir: i2) void {
         if (window.panes.items.len <= 1) return;
         const active_idx = for (window.panes.items, 0..) |p, idx| {
@@ -1714,21 +1686,7 @@ pub const Server = struct {
             (if (active_idx == 0) count - 1 else active_idx - 1)
         else
             (active_idx + 1) % count;
-        const dest_pane = window.panes.items[dest_idx];
-
-        const node1 = window.layout.findLeafParent(window.layout.root, pane) orelse return;
-        const node2 = window.layout.findLeafParent(window.layout.root, dest_pane) orelse return;
-        node1.leaf = dest_pane;
-        node2.leaf = pane;
-
-        window.panes.items[active_idx] = dest_pane;
-        window.panes.items[dest_idx] = pane;
-
-        // bug #220 & bug #250: resize panes to their new slot dimensions after swap.
-        // node1 now holds dest_pane, so node1's bounds are dest_pane's new slot.
-        // node2 now holds pane, so node2's bounds are pane's new slot.
-        resizePaneToNode(pane, node2, &window.layout);
-        resizePaneToNode(dest_pane, node1, &window.layout);
+        _ = swapPanesAt(window, active_idx, dest_idx);
     }
 
     pub fn processInput(self: *Server, buf: []const u8) ServerError!void {
@@ -1908,7 +1866,7 @@ pub const Server = struct {
             if (pane.choose_mode.active) {
                 if (self.input_reader.state == .esc and byte != '[' and byte != 'O') {
                     self.input_reader.state = .ground;
-                    const escaped = pane.choose_mode.handleKey(.{ .special = .{ .key = .escape } }) catch continue;
+                    const escaped = pane.choose_mode.handleKey(.{ .special = .{ .key = .escape } });
                     if (escaped == .cancelled) {
                         const is_cmd = (pane.choose_mode.target == .command);
                         pane.choose_mode.clear(pane.screen.grid.allocator);
@@ -1924,7 +1882,7 @@ pub const Server = struct {
                 if (self.input_reader.feed(byte)) |event| {
                     switch (event) {
                         .key => |k| {
-                            const res = pane.choose_mode.handleKey(k) catch continue;
+                            const res = pane.choose_mode.handleKey(k);
                             switch (res) {
                                 .consumed => {
                                     pane.choose_mode.renderIntoGrid(&pane.screen.grid);
@@ -2785,19 +2743,7 @@ pub const Server = struct {
     /// non-blocking so that render writes can never stall the event loop when a
     /// slow link (e.g. ssh) cannot keep up with the child's output volume.
     fn registerDisplayClient(self: *Server, fd: i32) !void {
-        const c_fcntl = struct {
-            extern "c" fn fcntl(fd: c_int, cmd: c_int, ...) c_int;
-        }.fcntl;
-        const F_GETFL: c_int = 3;
-        const F_SETFL: c_int = 4;
-        const O_NONBLOCK: c_int = comptime switch (@import("builtin").os.tag) {
-            .linux => @as(c_int, 0o4000),
-            else => @as(c_int, 0x0004),
-        };
-        const flags = c_fcntl(fd, F_GETFL, @as(c_int, 0));
-        if (flags >= 0) {
-            _ = c_fcntl(fd, F_SETFL, flags | O_NONBLOCK);
-        }
+        io.setNonBlocking(fd);
         _ = try self.addDisplayClient(.{ .fd = fd });
     }
 
@@ -5134,6 +5080,7 @@ test "writeKeyToPty maps kitty functional codepoints per spec — bug #352" {
     defer server.deinit();
     const fp = try makeFakePtyPane(&server);
     defer _ = std.c.close(fp.read_fd);
+    fp.pane.screen.mode.keypad = true;
 
     const cases = [_]struct { code: u21, expect: []const u8 }{
         .{ .code = 57344, .expect = "\x1b" }, // Escape
@@ -5146,7 +5093,10 @@ test "writeKeyToPty maps kitty functional codepoints per spec — bug #352" {
         .{ .code = 57350, .expect = "\x1bOD" }, // Left
     };
     for (cases) |case| {
-        Server.writeKeyToPty(fp.pane, Key{ .char = .{ .code = case.code } });
+        var seq_buf: [16]u8 = undefined;
+        const seq = try std.fmt.bufPrint(&seq_buf, "\x1b[{d}u", .{case.code});
+        const k = try key_mod.parse(seq);
+        Server.writeKeyToPty(fp.pane, k);
         var buf: [8]u8 = undefined;
         const n = std.c.read(fp.read_fd, &buf, buf.len);
         try testing.expect(n > 0);
