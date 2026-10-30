@@ -359,6 +359,11 @@ pub const CopyMode = struct {
         var result: std.ArrayList(u8) = .empty;
         errdefer result.deinit(allocator);
 
+        if (ey >= sy) {
+            const est_lines = @as(usize, @intCast(ey - sy + 1));
+            result.ensureTotalCapacity(allocator, est_lines * grid.width) catch {};
+        }
+
         var y_i64 = sy;
         while (y_i64 <= ey) : (y_i64 += 1) {
             const line_start = if (y_i64 == sy) sx else 0;
@@ -441,54 +446,31 @@ pub const CopyMode = struct {
         defer line_buf.deinit(allocator);
         var offsets: std.ArrayList(usize) = .empty;
         defer offsets.deinit(allocator);
+        line_buf.ensureTotalCapacity(allocator, grid.width * 4) catch {};
+        offsets.ensureTotalCapacity(allocator, grid.width) catch {};
 
         // Pass 1: from just past the cursor to the end of the scrollback.
         var li = cursor_logical;
         while (li < total) : (li += 1) {
             const start_col: usize = if (li == cursor_logical) start_x else 0;
-            if (searchLogicalLine(grid, allocator, &line_buf, &offsets, li, start_col, needle)) |found_x| {
+            var end_li: usize = li;
+            if (searchLogicalLine(grid, allocator, &line_buf, &offsets, li, start_col, needle, &end_li)) |found_x| {
                 self.placeCursorAtLogical(grid, li, found_x);
                 return true;
             }
-            // Skip past the physical lines that lineBytes(li) already consumed
-            // (the current line plus any continuations) — bug #276.
-            {
-                var skip = li;
-                while (skip < total) {
-                    const sl = if (skip < hist_len)
-                        grid.getHistoryLine(skip)
-                    else
-                        grid.getLine(@intCast(skip - hist_len));
-                    if (!sl.wrapped) break;
-                    skip += 1;
-                }
-                // `skip` is now the last physical line of this logical line.
-                // The while loop's `li += 1` will advance to `skip + 1`.
-                li = skip;
-            }
+            li = end_li;
         }
 
         // Pass 2 (cyclic wrap): from the top down to just before the cursor
         // line. Logical lines are disjoint from pass 1, so no re-match.
         li = 0;
         while (li <= cursor_logical) : (li += 1) {
-            if (searchLogicalLine(grid, allocator, &line_buf, &offsets, li, 0, needle)) |found_x| {
+            var end_li: usize = li;
+            if (searchLogicalLine(grid, allocator, &line_buf, &offsets, li, 0, needle, &end_li)) |found_x| {
                 self.placeCursorAtLogical(grid, li, found_x);
                 return true;
             }
-            // Skip past continuation lines (same as pass 1).
-            {
-                var skip = li;
-                while (skip < cursor_logical) {
-                    const sl = if (skip < hist_len)
-                        grid.getHistoryLine(skip)
-                    else
-                        grid.getLine(@intCast(skip - hist_len));
-                    if (!sl.wrapped) break;
-                    skip += 1;
-                }
-                li = skip;
-            }
+            li = @min(end_li, cursor_logical);
         }
 
         return false;
@@ -506,6 +488,8 @@ pub const CopyMode = struct {
         defer line_buf.deinit(allocator);
         var offsets: std.ArrayList(usize) = .empty;
         defer offsets.deinit(allocator);
+        line_buf.ensureTotalCapacity(allocator, grid.width * 4) catch {};
+        offsets.ensureTotalCapacity(allocator, grid.width) catch {};
 
         // Pass 1: from just before the cursor back to the start.
         var li = cursor_logical;
@@ -611,9 +595,11 @@ pub const CopyMode = struct {
         li: usize,
         start_col: usize,
         needle: []const u8,
+        out_end_li: ?*usize,
     ) ?usize {
-        const ncell = lineBytes(grid, allocator, out, offsets, li) orelse return null;
-        if (ncell == 0) return null;
+        const res = lineBytes(grid, allocator, out, offsets, li) orelse return null;
+        if (out_end_li) |p| p.* = res.end_li;
+        if (res.ncells == 0) return null;
         const bytes = out.items;
         // Map the start cell column to its byte offset.
         const byte_start = if (start_col < offsets.items.len) offsets.items[start_col] else bytes.len;
@@ -640,21 +626,32 @@ pub const CopyMode = struct {
         start_col: usize,
         needle: []const u8,
     ) ?usize {
-        const ncell = lineBytes(grid, allocator, out, offsets, li) orelse return null;
+        const res = lineBytes(grid, allocator, out, offsets, li) orelse return null;
         const bytes = out.items;
-        if (ncell == 0 or needle.len > bytes.len) return null;
+        if (res.ncells == 0 or needle.len > bytes.len) return null;
         const byte_start = if (start_col < offsets.items.len) offsets.items[start_col] else bytes.len;
         const search_limit = @min(byte_start + needle.len, bytes.len);
         const at = std.mem.lastIndexOf(u8, bytes[0..search_limit], needle) orelse return null;
         return byteToColumn(offsets.items, at);
     }
 
+    const LineBytesResult = struct {
+        ncells: usize,
+        end_li: usize,
+    };
+
     /// Render logical line `li` (history or visible) into `out` as UTF-8,
     /// reusing `out`'s capacity, and fill `offsets` with the byte offset at
     /// which each cell's char starts (so a byte position can be mapped back
     /// to a cell column — needed for 2-width characters). Returns the number
-    /// of cells written.
-    fn lineBytes(grid: *const Grid, allocator: std.mem.Allocator, out: *std.ArrayList(u8), offsets: *std.ArrayList(usize), li: usize) ?usize {
+    /// of cells written and the last physical line index consumed.
+    fn lineBytes(
+        grid: *const Grid,
+        allocator: std.mem.Allocator,
+        out: *std.ArrayList(u8),
+        offsets: *std.ArrayList(usize),
+        li: usize,
+    ) ?LineBytesResult {
         const hist_len = grid.historyLen();
         const total_physical = hist_len + grid.height;
         if (li >= total_physical) return null;
@@ -669,33 +666,38 @@ pub const CopyMode = struct {
             else
                 grid.getLine(@intCast(curr_li - hist_len));
 
+            const max_cells = @min(line.cells.items.len, @as(usize, grid.width));
+            offsets.ensureUnusedCapacity(allocator, max_cells) catch return null;
+            // Each cell emits at most 1 base char (up to 4 bytes) + 2 combining codepoints (up to 4 bytes each) = 12 bytes
+            out.ensureUnusedCapacity(allocator, max_cells * 12) catch return null;
+
             var x: u32 = 0;
-            while (x < line.cells.items.len and x < grid.width) : (x += 1) {
+            while (x < max_cells) : (x += 1) {
                 const cell = line.cells.items[x];
-                offsets.append(allocator, out.items.len) catch return null;
+                offsets.appendAssumeCapacity(out.items.len);
                 if (cell.is_padding) continue;
                 if (cell.char == 0 or cell.attr.sixel) {
-                    out.append(allocator, ' ') catch return null;
+                    out.appendAssumeCapacity(' ');
                     continue;
                 }
                 var buf: [4]u8 = undefined;
                 const len = std.unicode.utf8Encode(cell.char, &buf) catch {
-                    out.append(allocator, ' ') catch return null;
+                    out.appendAssumeCapacity(' ');
                     continue;
                 };
-                out.appendSlice(allocator, buf[0..len]) catch return null;
+                out.appendSliceAssumeCapacity(buf[0..len]);
                 if (cell.comb1 != 0) {
                     const cp1 = char_width.combiningCodepoint(cell.comb1);
                     if (cp1 != 0) {
                         const l1 = std.unicode.utf8Encode(cp1, &buf) catch 0;
-                        if (l1 > 0) out.appendSlice(allocator, buf[0..l1]) catch return null;
+                        if (l1 > 0) out.appendSliceAssumeCapacity(buf[0..l1]);
                     }
                 }
                 if (cell.comb2 != 0) {
                     const cp2 = char_width.combiningCodepoint(cell.comb2);
                     if (cp2 != 0) {
                         const l2 = std.unicode.utf8Encode(cp2, &buf) catch 0;
-                        if (l2 > 0) out.appendSlice(allocator, buf[0..l2]) catch return null;
+                        if (l2 > 0) out.appendSliceAssumeCapacity(buf[0..l2]);
                     }
                 }
             }
@@ -704,7 +706,10 @@ pub const CopyMode = struct {
             curr_li += 1;
         }
 
-        return offsets.items.len;
+        return .{
+            .ncells = offsets.items.len,
+            .end_li = @min(curr_li, total_physical -| 1),
+        };
     }
 
     /// Map a byte offset (into `bytes`) to the cell column it falls in, using

@@ -353,12 +353,12 @@ pub const Screen = struct {
             .alt_screen = self.mode.alt_screen, // bug #219: tag so shiftSixelAnchors filters correctly
         };
         errdefer {
+            self.clearSixelMarkerCells(id);
             if (self.sixel_images[slot]) |*img| {
                 img.deinit(self.allocator);
                 self.sixel_images[slot] = null;
             }
             self.sixel_refcounts[slot] = 0;
-            self.clearSixelMarkerCells(id);
         }
 
         // Saturating ceil-div: absurd wire dimensions must not wrap small and
@@ -386,7 +386,6 @@ pub const Screen = struct {
         // `grid_y >= height` check `break`ed before the others), which desynced
         // the sixel overlay from its cells and produced trailing artifacts
         // (bug: first image with cursor on the last line).
-        var placed_markers: usize = 0;
         const anchor_col = self.cursor.x;
         var y: u32 = 0;
         while (y < cell_rows) : (y += 1) {
@@ -415,7 +414,7 @@ pub const Screen = struct {
                     cell.char = @intCast(id & 0x1FFFFF);
                     cell.comb1 = @intCast(x & 0x1FFF);
                     cell.comb2 = @intCast(y & 0x1FFF);
-                    placed_markers += 1;
+                    self.sixel_refcounts[slot] += 1;
                 }
             }
             self.cursor.y += 1;
@@ -434,9 +433,6 @@ pub const Screen = struct {
         }
 
         self.cursor.x = 0;
-
-        // bug #225: increment refcount for each marker cell placed (bug #406).
-        self.sixel_refcounts[slot] += placed_markers;
 
         self.dirty = true;
     }
@@ -553,7 +549,8 @@ pub const Screen = struct {
         // Fast path: if the image is still registered and no cell references
         // it, skip the scan (bug #561). If it is no longer registered (e.g.
         // mid-errdefer), fall through and clear any surviving markers.
-        if (self.findSixelImageSlot(image_id)) |slot| {
+        const slot_opt = self.findSixelImageSlot(image_id);
+        if (slot_opt) |slot| {
             if (self.sixel_refcounts[slot] == 0) return;
         }
         const fill = self.eraseCell();
@@ -566,6 +563,15 @@ pub const Screen = struct {
                 if (cell.attr.sixel and (cell.char & 0x1FFFFF) == id_masked) {
                     cell.* = fill;
                     had_marker = true;
+                    if (slot_opt) |slot| {
+                        if (self.sixel_refcounts[slot] > 0) {
+                            self.sixel_refcounts[slot] -= 1;
+                            if (self.sixel_refcounts[slot] == 0) {
+                                line.dirty = true;
+                                return;
+                            }
+                        }
+                    }
                 }
             }
             if (had_marker) {

@@ -653,8 +653,7 @@ pub const Display = struct {
                 if (!screen.grid.lines.items[y].dirty) continue;
             }
 
-            const cells = resolveRowCells(screen, y);
-            const row_cells: []const Cell = if (cells) |cls| cls.items else &.{};
+            const row_cells: []const Cell = if (resolveRowCells(screen, y)) |cls| cls.items else &.{};
             const row_base = y * w;
 
             // Track the terminal cursor column within this row.
@@ -805,13 +804,8 @@ pub const Display = struct {
                     // (bug #483): blank cells dominate mostly-empty screens.
                     var run: u32 = 1;
                     while (x + run < w and run < spaces.len) : (run += 1) {
-                        var next = if (cells) |cls| (if (x + run < cls.items.len) cls.items[x + run] else Cell.empty()) else Cell.empty();
+                        const next = resolveCell(screen, row_cells, x + run, y);
                         if (next.is_padding) break;
-                        if (screen.copy_mode) |cm| {
-                            if (cm.isSelected(@intCast(x + run), @intCast(y))) {
-                                next.attr.reverse = !next.attr.reverse;
-                            }
-                        }
                         if (!next.eql(cell)) break;
                         if (self.last_cells) |lc| {
                             const idx = y * w + (x + run);
@@ -836,7 +830,7 @@ pub const Display = struct {
                         (cell.comb2 != 0 and char_width.combiningCodepoint(cell.comb2) == 0xFE0F);
                     var cw: u32 = char_width.charWidth(@intCast(cp));
                     if (has_vs16 and cw == 1 and x + 1 < w) {
-                        const next_cell = if (cells) |cls| (if (x + 1 < cls.items.len) cls.items[x + 1] else Cell.empty()) else Cell.empty();
+                        const next_cell = resolveCell(screen, row_cells, x + 1, y);
                         if (next_cell.is_padding) {
                             cw = 2;
                         }

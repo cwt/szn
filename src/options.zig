@@ -144,6 +144,18 @@ pub const Options = struct {
     }
 
     fn findDef(self: *const Options, name: []const u8) ?usize {
+        if (self.table.ptr == SESSION_OPTIONS.ptr) {
+            inline for (SESSION_OPTIONS, 0..) |def, i| {
+                if (std.mem.eql(u8, def.name, name)) return i;
+            }
+            return null;
+        }
+        if (self.table.ptr == WINDOW_OPTIONS.ptr) {
+            inline for (WINDOW_OPTIONS, 0..) |def, i| {
+                if (std.mem.eql(u8, def.name, name)) return i;
+            }
+            return null;
+        }
         for (self.table, 0..) |def, i| {
             if (std.mem.eql(u8, def.name, name)) return i;
         }
@@ -302,10 +314,10 @@ pub fn isServerScoped(name: []const u8) bool {
 }
 
 pub fn findOptionDef(name: []const u8) ?OptionDef {
-    for (SESSION_OPTIONS) |def| {
+    inline for (SESSION_OPTIONS) |def| {
         if (std.mem.eql(u8, def.name, name)) return def;
     }
-    for (WINDOW_OPTIONS) |def| {
+    inline for (WINDOW_OPTIONS) |def| {
         if (std.mem.eql(u8, def.name, name)) return def;
     }
     return null;
