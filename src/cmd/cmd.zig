@@ -519,6 +519,7 @@ fn cmdJoinPane(server: *Server, args: []const []const u8) CmdResult {
             return .err;
         };
         dummy.* = Pane.init(a, 9999, 1, 1) catch {
+            a.destroy(dummy);
             undoSplit(dst_win, server.allocator, dummy_pane);
             return .err;
         };
@@ -531,9 +532,6 @@ fn cmdJoinPane(server: *Server, args: []const []const u8) CmdResult {
             src_win.layout.root.leaf = dummy;
             server.unregisterWindowFds(src_win);
             session.killWindow(server.allocator, src_win);
-            // killWindow only deinits panes in win.panes (empty here);
-            // release the placeholder's Grid/Screen explicitly (bug #461).
-            dummy.deinit();
         }
     }
 
@@ -547,10 +545,11 @@ fn cmdJoinPane(server: *Server, args: []const []const u8) CmdResult {
         }
     }
 
+    dst_win.setActivePane(sp);
     dummy_pane.deinit();
+    dst_win.allocator.destroy(dummy_pane);
     sp.resizeTerminal(dummy_width, dummy_height) catch |err| std.log.warn("resizeTerminal failed: {any}", .{err});
 
-    dst_win.setActivePane(sp);
     return .ok;
 }
 
@@ -559,6 +558,7 @@ fn cmdJoinPane(server: *Server, args: []const []const u8) CmdResult {
 fn undoSplit(win: *Window, allocator: std.mem.Allocator, pane: *Pane) void {
     win.removePane(allocator, pane);
     pane.deinit();
+    win.allocator.destroy(pane);
 }
 
 fn cmdBreakPane(server: *Server, args: []const []const u8) CmdResult {
@@ -580,11 +580,12 @@ fn cmdBreakPane(server: *Server, args: []const []const u8) CmdResult {
 
     if (new_win.panes.items.len > 0) {
         var old_pane = new_win.panes.items[0];
-        old_pane.deinit();
         new_win.panes.items[0] = pane;
         new_win.registerPane(pane);
         new_win.layout.root.leaf = pane;
         new_win.setActivePane(pane);
+        old_pane.deinit();
+        new_win.allocator.destroy(old_pane);
         // The pane is already relocated at this point — a resize failure
         // cannot be rolled back, so log it and succeed rather than reporting
         // an error that contradicts the visible state (bug #391).

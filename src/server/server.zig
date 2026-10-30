@@ -998,6 +998,7 @@ pub const Server = struct {
                 win.removePane(self.allocator, pane);
                 pane.valid = false;
                 pane.deinit();
+                win.allocator.destroy(pane);
             }
 
             if (session.windows.items.len == 0) {

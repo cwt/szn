@@ -96,10 +96,12 @@ pub const Options = struct {
         const idx = self.findDef(name) orelse return error.UnknownOption;
         const def = self.table[idx];
         const coerced = try coerceValue(self.allocator, def, value);
+        const coerced_owns_string = (def.type == .string and value != .string and coerced == .string);
+        errdefer if (coerced_owns_string) self.allocator.free(coerced.string);
         try validateType(def, coerced);
 
         const old_value = self.values[idx];
-        const cloned = try cloneValue(self.allocator, coerced);
+        const cloned = if (coerced_owns_string) coerced else try cloneValue(self.allocator, coerced);
         self.values[idx] = cloned;
         freeValue(self.allocator, old_value);
     }

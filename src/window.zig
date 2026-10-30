@@ -345,6 +345,7 @@ pub const Window = struct {
             pane.screen.cell_px_height = ps.cell_px_height;
         }
         try window.panes.append(allocator, pane);
+        errdefer window.panes.deinit(allocator);
         window.registerPane(pane);
         window.active_pane = pane;
         window.layout = try layout.Layout.init(allocator, pane, width, height);

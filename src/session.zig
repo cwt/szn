@@ -8,6 +8,7 @@ pub const Error = window.Error || options_mod.Error;
 
 pub const Session = struct {
     arena: std.heap.ArenaAllocator,
+    allocator: std.mem.Allocator,
     id: u32,
     name: []const u8,
     /// Inline storage backing `name` after the first rename. Mirrors
@@ -30,24 +31,32 @@ pub const Session = struct {
     pub fn init(self: *Session, backing: std.mem.Allocator, id: u32, name: []const u8, width: u32, height: u32, global_options: ?*const options_mod.Options, global_window_options: ?*const options_mod.Options) Error!void {
         self.arena = std.heap.ArenaAllocator.init(backing);
         errdefer self.arena.deinit();
-        const allocator = self.arena.allocator();
+        self.allocator = backing;
+        const allocator = backing;
 
-        const options = if (global_options) |go| try go.clone(allocator) else try options_mod.Options.init(allocator, options_mod.SESSION_OPTIONS);
-        const window_options = if (global_window_options) |gwo| try gwo.clone(allocator) else try options_mod.Options.init(allocator, options_mod.WINDOW_OPTIONS);
+        var options = if (global_options) |go| try go.clone(allocator) else try options_mod.Options.init(allocator, options_mod.SESSION_OPTIONS);
+        errdefer options.deinit();
+        var window_options = if (global_window_options) |gwo| try gwo.clone(allocator) else try options_mod.Options.init(allocator, options_mod.WINDOW_OPTIONS);
+        errdefer window_options.deinit();
 
         self.id = id;
-        self.name = try allocator.dupe(u8, name);
+        const name_len = @min(name.len, self.name_buf.len);
+        @memcpy(self.name_buf[0..name_len], name[0..name_len]);
+        self.name = self.name_buf[0..name_len];
         self.width = width;
         self.height = height;
         self.options = options;
         self.window_options = window_options;
         self.windows = .empty;
+        errdefer self.windows.deinit(allocator);
         self.active_window = null;
         self.last_window = null;
         self.next_win_id = 1;
 
         const initial_win = try allocator.create(Window);
+        errdefer allocator.destroy(initial_win);
         initial_win.* = try Window.init(allocator, 0, name, width, height, &self.window_options, null);
+        errdefer initial_win.deinit(allocator);
         initial_win.setName(name);
         // Window.init sets pane.window to a stack-local pointer; fixup to the
         // heap-allocated window so options lookups (remain-on-exit etc.) work.
@@ -62,7 +71,7 @@ pub const Session = struct {
     }
 
     pub fn arenaAllocator(self: *Session) std.mem.Allocator {
-        return self.arena.allocator();
+        return self.allocator;
     }
 
     pub fn deinit(self: *Session, allocator: std.mem.Allocator) void {
@@ -70,9 +79,13 @@ pub const Session = struct {
         for (self.windows.items) |win| {
             for (win.panes.items) |p| {
                 p.valid = false;
-                p.deinit();
             }
+            win.deinit(self.allocator);
+            self.allocator.destroy(win);
         }
+        self.windows.deinit(self.allocator);
+        self.options.deinit();
+        self.window_options.deinit();
         self.arena.deinit();
     }
 
@@ -99,11 +112,12 @@ pub const Session = struct {
 
     pub fn newWindow(self: *Session, allocator: std.mem.Allocator, name: []const u8) Error!*Window {
         _ = allocator;
-        const a = self.arenaAllocator();
+        const a = self.allocator;
         const win_id = self.next_win_id;
-        self.next_win_id += 1;
         const new_win = try a.create(Window);
+        errdefer a.destroy(new_win);
         new_win.* = try Window.init(a, @intCast(win_id), name, self.width, self.height, &self.window_options, null);
+        errdefer new_win.deinit(a);
         new_win.setName(name);
         const hlimit: ?u32 = if (self.options.get("history-limit")) |hl| @intCast(hl.number) else null;
         for (new_win.panes.items) |p| {
@@ -112,6 +126,7 @@ pub const Session = struct {
             if (hlimit) |hl| p.screen.grid.setHistoryLimit(hl);
         }
         try self.windows.append(a, new_win);
+        self.next_win_id += 1;
         if (self.active_window) |prev| {
             self.last_window = prev;
         }
@@ -129,8 +144,9 @@ pub const Session = struct {
         _ = self.windows.swapRemove(idx);
         for (win.panes.items) |p| {
             p.valid = false;
-            p.deinit();
         }
+        win.deinit(self.allocator);
+        self.allocator.destroy(win);
 
         if (self.active_window == win) {
             self.active_window = if (self.windows.items.len > 0) self.windows.items[0] else null;
@@ -242,13 +258,14 @@ test "window IDs are unique after kills — bug #137" {
     defer session.deinit(testing.allocator);
 
     const w1 = try session.newWindow(testing.allocator, "one");
+    const w1_id = w1.id;
     const w2 = try session.newWindow(testing.allocator, "two");
     _ = w2;
 
     session.killWindow(testing.allocator, w1);
     const w3 = try session.newWindow(testing.allocator, "three");
-    try testing.expect(w3.id != w1.id);
-    try testing.expect(w3.id > w1.id);
+    try testing.expect(w3.id != w1_id);
+    try testing.expect(w3.id > w1_id);
 }
 
 test "session arena allocator manages window and pane memory — bug #245" {
@@ -276,4 +293,47 @@ test "session resize updates all windows — bug #412" {
         try testing.expectEqual(@as(u32, 100), w.width);
         try testing.expectEqual(@as(u32, 30), w.height);
     }
+}
+
+test "session reclaims memory across repeated reflow, alt-screen, option, and window-kill cycles — bug #542" {
+    var failing = std.testing.FailingAllocator.init(testing.allocator, .{});
+    const alloc = failing.allocator();
+
+    var session: Session = undefined;
+    try session.init(alloc, 1, "test-542", 80, 24, null, null);
+    defer session.deinit(alloc);
+
+    const main_win = session.active_window.?;
+    const main_pane = main_win.active_pane.?;
+    try main_pane.writeStr("hello world this is a long line of text that will wrap and reflow when resized\r\n");
+
+    // Warm-up cycle to establish steady-state capacity.
+    {
+        const w = try session.newWindow(alloc, "temp");
+        session.killWindow(alloc, w);
+        try session.resize(40, 24);
+        try session.resize(80, 24);
+        try main_pane.screen.useAltScreen(true);
+        try main_pane.screen.useAltScreen(false);
+        try session.options.set("status-left", .{ .string = "[custom] " });
+        try session.options.unset("status-left");
+    }
+
+    const live_after_warmup = failing.allocated_bytes - failing.freed_bytes;
+
+    // 10 more cycles must not accumulate unreclaimed allocations.
+    var iter: usize = 0;
+    while (iter < 10) : (iter += 1) {
+        const w = try session.newWindow(alloc, "temp");
+        session.killWindow(alloc, w);
+        try session.resize(40, 24);
+        try session.resize(80, 24);
+        try main_pane.screen.useAltScreen(true);
+        try main_pane.screen.useAltScreen(false);
+        try session.options.set("status-left", .{ .string = "[custom] " });
+        try session.options.unset("status-left");
+    }
+
+    const live_after_loops = failing.allocated_bytes - failing.freed_bytes;
+    try testing.expectEqual(live_after_warmup, live_after_loops);
 }

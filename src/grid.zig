@@ -934,10 +934,9 @@ pub const Grid = struct {
                 @memset(line_cells.items[pad_start..], Cell.empty());
             }
 
-            var gl = GridLine{ .dirty = true, .wrapped = did_break };
-            try gl.cells.appendSlice(allocator, line_cells.items);
-            errdefer gl.cells.deinit(allocator);
+            const gl = GridLine{ .cells = line_cells, .dirty = true, .wrapped = did_break };
             try lines.append(allocator, gl);
+            line_cells = .empty;
         }
 
         try out_lines.ensureUnusedCapacity(allocator, lines.items.len);
