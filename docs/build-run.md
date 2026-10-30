@@ -11,7 +11,7 @@ sources:
 verified: human-reviewed
 stale_after: 2027-01-01T00:00:00Z
 tags: [runbook, build, test, benchmark, zig]
-timestamp: 2026-08-30T16:20:00Z
+timestamp: 2026-10-30T07:40:00Z
 ---
 
 # Build, Run, and Test
@@ -76,11 +76,20 @@ Nested szn is blocked (env `SZN` set → `detectNested` returns true).
 `src/test.zig` is a **comptime aggregator** that `@import`s every module so
 their top-level `test {}` blocks compile into one test binary (see the
 `b.addTest` call in `build.zig`). There is no separate `tests/` directory —
-tests live next to the code they cover. As of 2026-10-07 the suite is
-**1064 tests** (1063 passing, 1 skipped), all passing on a clean tree under both Zig 0.16.0 and 0.17.0.
+tests live next to the code they cover. As of 2026-10-30 the suite is
+**1082 tests**, all passing on a clean tree under both Zig 0.16.0 and 0.17.0
+(`-Doptimize=ReleaseFast`, fresh cache).
 
 ```bash
 zig build test
+```
+
+To check both toolchains from one tree, give each its own cache directory:
+
+```bash
+rm -rf .cache .zig-cache
+zig build test -Doptimize=ReleaseFast --summary all --cache-dir .cache/bt16                 # 0.16.0
+/opt/zig/0.17.0/zig build test -Doptimize=ReleaseFast --summary all --cache-dir .cache/bt17 # 0.17.0
 ```
 
 Notes:
@@ -91,28 +100,22 @@ Notes:
 - Some integration tests spawn real PTYs / `fork` (e.g. `integration.zig`) —
   run on a terminal-capable host.
 
-### Stale socket makes 3 tests fail
+### Allocator differences between 0.16 and 0.17
 
-`zig build test` binds a listener at the default socket path
-(`$TMPDIR/szn.sock`, resolved by `socket_path.resolve`) and does **not**
-remove it afterwards. On the next run, three tests that share that global
-path then interfere with each other and report 1039/1042:
+`std.testing.allocator` is a `DebugAllocator` on 0.16.0 but a `SafeAllocator`
+on 0.17.0. The test runner configures it with `check_write_after_free = true`
+on `page_allocator`. `SafeAllocator` never reuses memory and returns freed
+pages to the OS. So a test that reads a pointer after freeing it can pass on
+0.16, where the stale bytes are still mapped, and **crash with SIGSEGV on
+0.17**. Bug [#562](development/bugs/562.md) was exactly this. If a test passes
+on 0.16 but crashes on 0.17, look for a use-after-free first.
 
-```
-server.server.test.server listen creates socket
-server.socket.test.listener creates and closes
-client.connect.test.connectToServer fails gracefully when no server running
-```
+### Socket tests
 
-Remove the leftover socket before testing for a clean 1042/1042:
-
-```bash
-rm -f "$TMPDIR/szn.sock" && zig build test
-```
-
-The underlying cause is that these tests share one global path instead of
-each using a unique one, so they also race against each other when the
-runner schedules them concurrently.
+Older revisions left `szn.sock` behind after `zig build test`, and the next run
+then failed three socket tests. That no longer happens. The tests clean up the
+default socket path, and as of 2026-10-30 the suite also passes when a stale
+socket is already there before the run.
 
 ## Dev script: `bench.sh`
 

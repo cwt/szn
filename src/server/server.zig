@@ -4733,8 +4733,15 @@ test "destroyPane deinitializes the last pane of a window" {
     // Destroy the only pane of the first window
     server.destroyPane(pane1);
 
-    // Pane should be deinitialized
-    try testing.expect(pane1.deinited);
+    // destroyPane -> Session.killWindow -> Layout.deinit has now deinited
+    // *and freed* both pane1 and w1, so neither may be dereferenced here
+    // (reading `pane1.deinited` was a use-after-free that segfaulted under
+    // Zig 0.17's non-reusing SafeAllocator). testing.allocator's leak check
+    // proves the pane was deinitialized; we only compare pointer values.
+    try testing.expectEqual(@as(usize, 1), server.sessions.items.len);
+    try testing.expectEqual(@as(usize, 1), s.windows.items.len);
+    try testing.expect(s.windows.items[0] != w1);
+    try testing.expect(s.active_window == s.windows.items[0]);
 }
 
 test "destroyPane removes pty fd from event loop — bug #178" {

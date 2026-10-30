@@ -168,5 +168,5 @@ with `connect()` before unlinking a stale socket so a live server's endpoint
 is never stolen, and forces `0700` on the socket path (`#378`).
 
 > Because the default path is global, tests that bind it must not run
-> concurrently — see the stale-socket note in
-> [Build, Run, and Test](build-run.md#stale-socket-makes-3-tests-fail).
+> concurrently — see the socket-tests note in
+> [Build, Run, and Test](build-run.md#socket-tests).

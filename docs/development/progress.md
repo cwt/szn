@@ -9,7 +9,7 @@ sources:
 verified: human-reviewed
 stale_after: 2026-12-31T00:00:00Z
 tags: [progress, roadmap, parity, milestones]
-timestamp: 2026-09-27T09:45:00Z
+timestamp: 2026-10-30T07:40:00Z
 ---
 
 # szn — Functional Clone Progress
@@ -17,7 +17,7 @@ timestamp: 2026-09-27T09:45:00Z
 Track progress toward a fully functional tmux clone.
 Based on code audit as of 2026-06-21.
 
-## Current State: 1,064 tests, v0.10.0 release. Hot-path performance architecture overhaul (batch chunk parser `advanceBatch`, fast-path ASCII streaming in `writeStr`, O(1) pane validity tracking `isPaneValid`, batched SGR and render output, arena format string allocations). Configurable Unicode VS16 emoji presentation width option (`variation-selector-always-wide`). Hardened Sixel graphics subsystem (containment verification, scroll-region bound anchor shifting, surviving marker cell purging, transactional placement error rollback). Stable display client pointer lifetimes (`ArrayList(*DisplayClient)`), bounded OSC 52 clipboard and IPC frame limits, race-free PTY child reaping before SIGKILL, Kitty extended keyboard release filtering, raw terminal diagnostics, a 70-bug stability sweep (#441–#510), and the #511–#531 audit sweep.
+## Current State: 1,082 tests, v0.10.0 release. Hot-path performance architecture overhaul (batch chunk parser `advanceBatch`, fast-path ASCII streaming in `writeStr`, O(1) pane validity tracking `isPaneValid`, batched SGR and render output, arena format string allocations). Configurable Unicode VS16 emoji presentation width option (`variation-selector-always-wide`). Hardened Sixel graphics subsystem (containment verification, scroll-region bound anchor shifting, surviving marker cell purging, transactional placement error rollback). Stable display client pointer lifetimes (`ArrayList(*DisplayClient)`), bounded OSC 52 clipboard and IPC frame limits, race-free PTY child reaping before SIGKILL, Kitty extended keyboard release filtering, raw terminal diagnostics, a 70-bug stability sweep (#441–#510), and the #511–#531 audit sweep.
 
 Thai & Lao text rendering & reflow correctness sweep (#502–#505, SARA AM diff-cache cluster repair): compound-vowel cluster integrity (`เ-าะ` patterns no longer split at reflow boundaries), atomic state transitions for runtime `libthai` loading in `src/thai.zig`, and two-way SARA AM diff repair (`Display.renderContent` pre-pass covering Thai `U+0E33` and Lao `U+0EB3` with deduplicated `resolveCell` and isolated `thai.isSaraAm`).
 
@@ -29,7 +29,7 @@ APIs; each was replaced with a spelling that exists in *both* releases
 (`Allocator.dupeZ`, `std.ascii.indexOfIgnoreCase`) plus the optimize-tag check
 were routed through a new `src/compat.zig`. The only comptime version branches
 are two `@hasField` gates in `build.zig` (`Build.build_root`, `.Debug` tag).
-`zig build test` passes **1064/1064 on 0.16.0 and on 0.17.0** (1063 passing, 1 skipped).
+`zig build test` passes **1082/1082 on 0.16.0 and on 0.17.0** (re-verified 2026-10-30 with `-Doptimize=ReleaseFast` on a clean cache, after the #562 fix: a test use-after-free that only Zig 0.17's non-reusing `SafeAllocator` exposed).
 
 ---
 
@@ -50,7 +50,7 @@ are two `@hasField` gates in `build.zig` (`Build.build_root`, `.Debug` tag).
 | 10 | Commands | ✅ Done | ~74 | All 49 commands registered in `CMD_TABLE` (including set-window-option / setw, copy-mode, paste-buffer, find-window, show-messages, and list-keys) |
 | 11 | Full Integration | ✅ Done | ~30 | integration.zig integration test suite complete |
 
-**Total: 1,063 / 1,064 tests passing (1 skipped; verified 2026-10-07, Zig 0.16.0, `-Doptimize=ReleaseFast`). All Phases 0–11 fully complete.**
+**Total: 1,082 / 1,082 tests passing (verified 2026-10-30, Zig 0.16.0 and 0.17.0, `-Doptimize=ReleaseFast`; `detectNested` self-skips inside szn). All Phases 0–11 fully complete.**
 
 > The per-phase **Tests** column above is a snapshot taken when each phase
 > landed, not a partition of the current total — later phases and audit sweeps

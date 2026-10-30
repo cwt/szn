@@ -74,9 +74,22 @@ Portable spellings already in use:
 | `[_]T{v} ** N` array repetition | `std.mem.zeroes` / comptime `@memset` |
 | `.Debug` optimize tag | `compat.is_debug_build` |
 
-`zig build test` must pass on both toolchains (1073 tests). The `.Debug` /
+`zig build test` must pass on both toolchains with zero failures. Verify with a clean
+cache and a release build, using a separate cache per toolchain:
+`rm -rf .cache .zig-cache && zig build test -Doptimize=ReleaseFast --cache-dir .cache/bt16`
+(and the same with the 0.17 binary and `.cache/bt17`). The `.Debug` /
 `OptimizeMode` spellings are deprecated in 0.17 and slated for removal after
 0.18.0 — expect to revisit the `build.zig` gates at that point.
+
+**Tests and allocator differences.** `std.testing.allocator` is a
+`DebugAllocator` on 0.16 but a non-reusing `SafeAllocator` on 0.17, which
+unmaps freed memory. A use-after-free that passes silently on 0.16 *segfaults*
+on 0.17 (bug #562). Never dereference a pointer after the call that frees it,
+not even to assert that it was deinitialized. Assert on the owner's state
+instead (e.g. `session.windows.items.len`) and let the leak checker prove the
+deinit ran. Watch the cascading frees in particular: `Server.destroyPane` on a
+window's last pane → `Session.killWindow` → `Layout.deinit` frees both the
+`Pane` and the `Window`.
 
 ## Design Principles
 

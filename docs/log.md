@@ -7,7 +7,7 @@ sources:
   - docs/
 verified: human-reviewed
 tags: [log, changelog, okf]
-timestamp: 2026-10-29T16:15:00Z
+timestamp: 2026-10-30T07:40:00Z
 ---
 
 # Documentation Bundle Log
@@ -15,6 +15,8 @@ timestamp: 2026-10-29T16:15:00Z
 This file tracks all modifications, extensions, and updates to the `szn` documentation bundle in chronological order.
 
 | Timestamp | Document | Action | Description |
+|---|---|---|---|
+| 2026-10-30T07:40:00Z | [bugs/562](development/bugs/562.md), [bugs/index.md](development/bugs/index.md), [README.md](https://github.com/cwt/szn/blob/main/README.md), [AGENTS.md](https://github.com/cwt/szn/blob/main/AGENTS.md), [build-run.md](build-run.md), [progress.md](development/progress.md) | Created / Updated | Filed and resolved #562: the `destroyPane deinitializes the last pane of a window` test read `pane1.deinited` after `Session.killWindow` → `Layout.deinit` had freed the pane. It passed by luck on Zig 0.16 (`DebugAllocator`) and segfaulted on Zig 0.17 (non-reusing `SafeAllocator`). The test now checks session/window state instead. Regenerated the index tables (**560 entries — 535 resolved / 25 false_positive / 0 open**). Refreshed the test counts to **1,082** (1082/1082 on both toolchains, `-Doptimize=ReleaseFast`, clean cache) in README.md, build-run.md and progress.md. Dropped the hardcoded test count from AGENTS.md, which now just requires zero failures on both toolchains, so it can't drift. Removed the stale-socket caveat from README.md and build-run.md: the suite no longer leaves `szn.sock` behind and passes with a pre-existing stale socket. Added a "tests on 0.17 `SafeAllocator`" rule to AGENTS.md. |
 | 2026-10-29T16:15:00Z | [bugs/542-561](development/bugs/), [bugs/index.md](development/bugs/index.md) | Created | Filed 20 findings (#542–#561) from the 2026-10-29 dual-toolchain deep-analysis review (4 CRITICAL, 9 HIGH, 4 MEDIUM, 1 MEDIUM performance, 1 LOW, 1 LOW code quality; all open) and regenerated `bugs/index.md` summary tables (**559 entries — 514 resolved / 25 false_positive / 20 open**). |
 | 2026-10-22T00:00:00Z | [bugs/532-538](development/bugs/) | Created | Filed 7 findings from the 2026-10-22 deep-analysis review (unguarded max_buffers eviction, dead GridLine.dirty state, test-only Term, duplicated Window.removePane/extractPane, redundant layout.extractPane alias, zig fmt drift, unstructured client I/O logging). All open. |
 | 2026-10-07T09:20:00Z | [render.zig](https://github.com/cwt/szn/blob/main/src/server/render.zig), [thai.zig](https://github.com/cwt/szn/blob/main/src/thai.zig), [README.md](https://github.com/cwt/szn/blob/main/README.md), [architecture.md](architecture.md), [text_reflow.md](text_reflow.md), [progress.md](development/progress.md), [build-run.md](build-run.md), [AGENTS.md](https://github.com/cwt/szn/blob/main/AGENTS.md) | Updated | Refactored SARA AM / Lao SARA AM redraw repair: centralized cell resolution (`resolveCell`) to prevent copy-mode drift, extracted `isSaraAm` into thai.zig, replaced magic poison sentinel with `REDRAW_POISON_CHAR` / `poisonCell()`, added symmetric consonant-change and Lao regression tests (1,064 tests), and updated README and documentation. |
