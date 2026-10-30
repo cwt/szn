@@ -64,7 +64,7 @@ cleanup_procs
 # =========================================================================
 header "1. Startup time (cold)"
 # -------------------------------------------------------------------------
-hyperfine -S --warmup 5 --min-runs 20 --export-json "$TMP_STARTUP" \
+hyperfine --shell default --warmup 5 --min-runs 20 --export-json "$TMP_STARTUP" \
     --prepare "$PREPARE_SZN" \
     -n "szn new -d" \
     "$SZN new-session -d b 2>/dev/null" \
@@ -138,7 +138,7 @@ print_rss "5 windows, ~50 panes" "$MEM_50P_TMUX"
 cleanup_procs
 header "5. Session create/destroy throughput"
 # -------------------------------------------------------------------------
-hyperfine -S --warmup 5 --min-runs 20 --export-json "$TMP_THROUGHPUT" \
+hyperfine --shell default --warmup 5 --min-runs 20 --export-json "$TMP_THROUGHPUT" \
     --prepare "$PREPARE_SZN" \
     -n "szn new + kill" \
     "$SZN new-session -d b 2>/dev/null && $SZN kill-session" \
