@@ -162,6 +162,19 @@ Check out [progress.md](docs/development/progress.md) for the full migration and
 
 ## Building & Installation
 
+### Fedora (Copr)
+
+Binary RPM packages for Fedora are available through [Fedora Copr](https://copr.fedorainfracloud.org/coprs/cwt/szn/):
+
+```bash
+sudo dnf copr enable cwt/szn
+sudo dnf install szn
+```
+
+> **Note:** EPEL 9 and EPEL 10 packages do not currently build due to the `ExclusiveArch: %{zig_arches}` macro constraint in [`szn.spec`](szn.spec), and will be enabled in a future release.
+
+### Building from Source
+
 szn builds with **either Zig 0.16.0 or Zig 0.17.0** — the source is kept
 compatible with both toolchains. See
 [Zig version compatibility](#zig-version-compatibility).
