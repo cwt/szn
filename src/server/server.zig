@@ -536,8 +536,13 @@ pub const Server = struct {
                 _ = c_proc.dup2(devnull, 2);
                 if (devnull > 2) _ = c.close(devnull);
             }
+            var max_fd: c_int = 1024;
+            var rlim: std.c.rlimit = undefined;
+            if (std.c.getrlimit(.NOFILE, &rlim) == 0 and rlim.cur > 0) {
+                max_fd = @intCast(@min(rlim.cur, 65536));
+            }
             var fd: c_int = 3;
-            while (fd < 256) : (fd += 1) {
+            while (fd < max_fd) : (fd += 1) {
                 _ = c.close(fd);
             }
             const argv = [_:null]?[*:0]const u8{ "/bin/sh", "-c", cmd_c, null };
