@@ -556,22 +556,8 @@ fn runServerDaemon(allocator: std.mem.Allocator) Error!void {
             }
         }
         if (orphan_idx) |oi| {
-            const orphan = server.sessions.items[oi];
-            for (orphan.windows.items) |win| {
-                for (win.panes.items) |p| {
-                    if (p.pty) |pty| {
-                        server.loop.removeFd(pty.master);
-                    }
-                    server.removeSixelWaitPane(p);
-                    p.valid = false;
-                }
-            }
-            server.clearPaneMouseRefsBulk();
-            var sess = server.sessions.orderedRemove(oi);
-            sess.deinit(server.allocator);
-            server.allocator.destroy(sess);
-            server.dirty = true;
-            server.status_dirty = true;
+            _ = oi;
+            server.killSessionById(default_session_id);
         }
     } else if (default_pane) |p| {
         const raw_nofile = server.global_options.asNumber("nofile-limit") orelse 1024;

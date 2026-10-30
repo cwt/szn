@@ -2601,7 +2601,7 @@ pub const Server = struct {
         };
     }
 
-    fn removeSixelWaitPane(self: *Server, pane: *Pane) void {
+    pub fn removeSixelWaitPane(self: *Server, pane: *Pane) void {
         for (self.sixel_wait_panes.items, 0..) |p, i| {
             if (p == pane) {
                 _ = self.sixel_wait_panes.swapRemove(i);
@@ -3606,6 +3606,27 @@ pub const Server = struct {
         return session;
     }
 
+    pub fn killSessionById(self: *Server, id: u32) void {
+        const idx = for (self.sessions.items, 0..) |s, i| {
+            if (s.id == id) break i;
+        } else return;
+        var session = self.sessions.orderedRemove(idx);
+        for (session.windows.items) |win| {
+            for (win.panes.items) |p| {
+                if (p.pty) |pty| {
+                    self.loop.removeFd(pty.master);
+                }
+                self.removeSixelWaitPane(p);
+                p.valid = false;
+            }
+        }
+        self.clearPaneMouseRefsBulk();
+        session.deinit(self.allocator);
+        self.allocator.destroy(session);
+        self.dirty = true;
+        self.status_dirty = true;
+    }
+
     pub fn killSession(self: *Server, name: []const u8) ServerError!void {
         const idx = for (self.sessions.items, 0..) |s, i| {
             if (std.mem.eql(u8, s.name, name)) break i;
@@ -3654,7 +3675,7 @@ pub const Server = struct {
     /// Clear both cached mouse pointers. Used when panes are destroyed in bulk
     /// (killSession / killAllSessions) rather than through destroyPane, which
     /// clears them per-pane (bug #283).
-    fn clearPaneMouseRefsBulk(self: *Server) void {
+    pub fn clearPaneMouseRefsBulk(self: *Server) void {
         self.mouse_press_pane = null;
         self.mouse_autoscroll_pane = null;
         self.mouse_autoscroll_dir = null;

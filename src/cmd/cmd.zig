@@ -1217,9 +1217,7 @@ fn setOptionInternal(server: *Server, args: []const []const u8, default_window: 
     if (is_global) {
         const server_scoped = options_mod.isServerScoped(option_name);
         for (server.sessions.items) |session| {
-            if (server_scoped) {
-                if (server.activeSession() == null or session != server.activeSession().?) continue;
-            }
+            if (server_scoped and (server.activeSession() == null or session != server.activeSession().?)) continue;
             if (server_scoped and (server.activeSession() == null or session != server.activeSession().?)) continue;
             if (is_window) {
                 for (session.windows.items) |window| {
