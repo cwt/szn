@@ -1210,15 +1210,21 @@ fn setOptionInternal(server: *Server, args: []const []const u8, default_window: 
         server.dirty = true;
         server.status_dirty = true;
     }
-    // -g updates should also land on the active session's windows so live
-    // config works (bug #557: propagate setw -g to non-active windows).
+    // -g updates should land on sessions so live config works (bug #557).
+    // For normal options, propagate to all sessions; for server-scoped
+    // options (codepoint-widths etc.) keep the snapshot-inheritance model
+    // (active session only) to match the creation-time snapshot contract.
     if (is_global) {
-        if (server.activeSession()) |session| {
+        const server_scoped = options_mod.isServerScoped(option_name);
+        for (server.sessions.items) |session| {
+            if (server_scoped) {
+                if (server.activeSession() == null or session != server.activeSession().?) continue;
+            }
+            if (server_scoped and (server.activeSession() == null or session != server.activeSession().?)) continue;
             if (is_window) {
                 for (session.windows.items) |window| {
                     window.options.set(option_name, parsed_val) catch |err| std.log.warn("options.set failed: {any}", .{err});
                 }
-                // Also update the session's window_options template.
                 session.window_options.set(option_name, parsed_val) catch |err| std.log.warn("options.set failed: {any}", .{err});
             } else {
                 session.options.set(option_name, parsed_val) catch |err| {
