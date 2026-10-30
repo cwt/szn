@@ -25,6 +25,7 @@ pub const SetOpt = struct {
         window: bool = false,
         server: bool = false,
         unset: bool = false,
+        quiet: bool = false,
     },
     option: []const u8,
     value: OptionValue,
@@ -211,6 +212,7 @@ fn parseSet(allocator: std.mem.Allocator, args: []const u8, result: *ParseResult
                     flags.flags.session = false;
                 },
                 'u' => flags.flags.unset = true,
+                'q' => flags.flags.quiet = true,
                 else => {
                     is_flag = false;
                     break;
@@ -247,12 +249,12 @@ pub fn parseValue(allocator: std.mem.Allocator, s: []const u8) Error!OptionValue
     if (std.mem.eql(u8, s, "false") or std.mem.eql(u8, s, "off")) return OptionValue{ .flag = false };
 
     // Quoted string (double or single quotes)
-    if (s.len >= 2 and s[0] == '"' and s[s.len - 1] == '"') {
+    if (s.len >= 2 and s[0] == '"' and findUnescapedQuote(s, 1) == s.len - 1) {
         const inner = s[1 .. s.len - 1];
         const unescaped = try unescapeQuoted(allocator, inner);
         return OptionValue{ .string = unescaped };
     }
-    if (s.len >= 2 and s[0] == '\'' and s[s.len - 1] == '\'') {
+    if (s.len >= 2 and s[0] == '\'' and std.mem.indexOfScalarPos(u8, s, 1, '\'') == s.len - 1) {
         const inner = s[1 .. s.len - 1];
         return OptionValue{ .string = try allocator.dupe(u8, inner) };
     }
@@ -758,4 +760,33 @@ test "parseConfig handles set -u directive — bug #325 #336" {
     try testing.expect(d == .set);
     try testing.expect(d.set.flags.unset);
     try testing.expectEqualStrings("status-interval", d.set.option);
+}
+
+test "quoting and escaping edge cases in parseValue, findUnescapedQuote, and stripInlineComment — bug #557" {
+    const allocator = testing.allocator;
+
+    // 1. Even number of backslashes before closing quote: "hello\\" -> hello\
+    const v1 = try parseValue(allocator, "\"hello\\\\\"");
+    defer if (v1 == .string) allocator.free(v1.string);
+    try testing.expect(v1 == .string);
+    try testing.expectEqualStrings("hello\\", v1.string);
+
+    // 2. Escaped trailing quote without real closing quote: "hello\" -> kept as raw token
+    const v2 = try parseValue(allocator, "\"hello\\\"");
+    defer if (v2 == .string) allocator.free(v2.string);
+    try testing.expect(v2 == .string);
+    try testing.expectEqualStrings("\"hello\\\"", v2.string);
+
+    // 3. Single quotes do not treat backslash as an escape in stripInlineComment
+    try testing.expectEqualStrings(
+        "set -g status-left 'foo\\'",
+        stripInlineComment("set -g status-left 'foo\\' # trailing comment"),
+    );
+
+    // 4. Combined -gq flag in parseConfig
+    var res = try parseConfig(allocator, "set -gq unknown-option 123");
+    defer res.deinit(allocator);
+    try testing.expectEqual(@as(usize, 1), res.directives.items.len);
+    try testing.expect(res.directives.items[0].set.flags.global);
+    try testing.expect(res.directives.items[0].set.flags.quiet);
 }

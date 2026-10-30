@@ -130,6 +130,14 @@ pub const Server = struct {
     pub const MAX_OUT_BUF = 16 << 20;
     /// Upper bound on the command/search prompt buffer (bug #297).
     pub const MAX_COMMAND_BUF = 1 << 16;
+    pub const IF_SHELL_TIMEOUT_MS: i64 = 5000;
+
+    pub const PendingIfShell = struct {
+        pid: c.pid_t,
+        command: []const u8,
+        start_ms: i64,
+        depth: u32,
+    };
 
     allocator: std.mem.Allocator,
     sessions: std.ArrayList(*Session) = .empty,
@@ -280,6 +288,12 @@ pub const Server = struct {
     /// torn down.
     sixel_wait_panes: std.ArrayListUnmanaged(*Pane) = .empty,
 
+    /// Active background `if-shell` condition processes (bug #557). Reaped
+    /// non-blockingly from `reapZombies` / `tickIfShells` so an `if-shell`
+    /// command that talks back to the same server socket or blocks cannot
+    /// deadlock the single-threaded event loop.
+    pending_if_shells: std.ArrayListUnmanaged(PendingIfShell) = .empty,
+
     pub fn init(allocator: std.mem.Allocator) ServerError!Server {
         const key_binding = @import("../key_binding.zig");
         const options_mod = @import("../options.zig");
@@ -336,6 +350,13 @@ pub const Server = struct {
         self.render_buf.deinit(self.allocator);
         self.response_buf.deinit(self.allocator);
         self.sixel_wait_panes.deinit(self.allocator);
+        for (self.pending_if_shells.items) |entry| {
+            _ = c.kill(entry.pid, c.SIG.KILL);
+            var status: c_int = 0;
+            _ = c.waitpid(entry.pid, &status, 0);
+            self.allocator.free(entry.command);
+        }
+        self.pending_if_shells.deinit(self.allocator);
         self.loop.deinit(self.allocator);
         for (self.sessions.items) |s| {
             s.deinit(self.allocator);
@@ -428,6 +449,104 @@ pub const Server = struct {
         try self.loop.addFd(self.allocator, fd, @as(i16, @intCast(std.posix.POLL.IN)), null);
     }
 
+    fn ifShellExitedZero(status: c_int) bool {
+        return (status & 0x7f) == 0 and ((status >> 8) & 0xff) == 0;
+    }
+
+    fn runIfShellCommand(self: *Server, command: []const u8, depth: u32) void {
+        if (depth >= 16) {
+            std.log.warn("if-shell: maximum recursion depth exceeded", .{});
+            return;
+        }
+        const prev_depth = self.config_load_depth;
+        self.config_load_depth = depth + 1;
+        defer self.config_load_depth = prev_depth;
+
+        const parsed_sub = @import("../cfg.zig").parseConfig(self.allocator, command) catch |err| {
+            std.log.warn("if-shell parse failed: {any}", .{err});
+            return;
+        };
+        var p = parsed_sub;
+        defer p.deinit(self.allocator);
+        self.applyDirectives(&p) catch |err| {
+            std.log.warn("if-shell apply failed: {any}", .{err});
+        };
+    }
+
+    fn handleIfShellExit(self: *Server, pid: c.pid_t, status: c_int) bool {
+        for (self.pending_if_shells.items, 0..) |entry, idx| {
+            if (entry.pid == pid) {
+                _ = self.pending_if_shells.orderedRemove(idx);
+                defer self.allocator.free(entry.command);
+                if (ifShellExitedZero(status)) {
+                    self.runIfShellCommand(entry.command, entry.depth);
+                }
+                return true;
+            }
+        }
+        return false;
+    }
+
+    pub fn tickIfShells(self: *Server) void {
+        var i: usize = 0;
+        while (i < self.pending_if_shells.items.len) {
+            const entry = self.pending_if_shells.items[i];
+            var status: c_int = 0;
+            const rc = c.waitpid(entry.pid, &status, WNOHANG);
+            if (rc == entry.pid) {
+                _ = self.pending_if_shells.orderedRemove(i);
+                defer self.allocator.free(entry.command);
+                if (ifShellExitedZero(status)) {
+                    self.runIfShellCommand(entry.command, entry.depth);
+                }
+                continue;
+            }
+            if (rc < 0 and std.c.errno(rc) != .INTR) {
+                _ = self.pending_if_shells.orderedRemove(i);
+                self.allocator.free(entry.command);
+                continue;
+            }
+            if (currentMillis() - entry.start_ms >= IF_SHELL_TIMEOUT_MS) {
+                std.log.warn("if-shell pid {d} timed out after {d}ms; killing", .{ entry.pid, IF_SHELL_TIMEOUT_MS });
+                _ = c.kill(entry.pid, c.SIG.KILL);
+                _ = c.waitpid(entry.pid, &status, 0);
+                _ = self.pending_if_shells.orderedRemove(i);
+                self.allocator.free(entry.command);
+                continue;
+            }
+            i += 1;
+        }
+    }
+
+    fn spawnIfShellChild(cmd_c: [*:0]const u8) ?c.pid_t {
+        const c_proc = struct {
+            extern "c" fn fork() c.pid_t;
+            extern "c" fn open(path: [*:0]const u8, oflag: c_int, ...) c_int;
+            extern "c" fn dup2(oldfd: c_int, newfd: c_int) c_int;
+            extern "c" fn execvp(file: [*:0]const u8, argv: [*:null]const ?[*:0]const u8) c_int;
+        };
+        const pid = c_proc.fork();
+        if (pid < 0) return null;
+        if (pid == 0) {
+            const O_RDWR: c_int = 2;
+            const devnull = c_proc.open("/dev/null", O_RDWR, @as(c_int, 0));
+            if (devnull >= 0) {
+                _ = c_proc.dup2(devnull, 0);
+                _ = c_proc.dup2(devnull, 1);
+                _ = c_proc.dup2(devnull, 2);
+                if (devnull > 2) _ = c.close(devnull);
+            }
+            var fd: c_int = 3;
+            while (fd < 256) : (fd += 1) {
+                _ = c.close(fd);
+            }
+            const argv = [_:null]?[*:0]const u8{ "/bin/sh", "-c", cmd_c, null };
+            _ = c_proc.execvp("/bin/sh", &argv);
+            std.process.exit(127);
+        }
+        return pid;
+    }
+
     pub fn reapZombies(self: *Server) void {
         if (sigchldFlag.load(.seq_cst)) {
             sigchldFlag.store(false, .seq_cst);
@@ -439,6 +558,7 @@ pub const Server = struct {
                     break;
                 }
                 std.log.info("reapZombies reaped pid {d} with status {d}", .{ pid, status });
+                if (self.handleIfShellExit(pid, status)) continue;
                 for (self.sessions.items) |s| {
                     for (s.windows.items) |w| {
                         w.last_foreground_check_ms = 0;
@@ -666,10 +786,14 @@ pub const Server = struct {
 
     pub fn run(self: *Server, timeout_ms: i32) ServerError!void {
         self.reapZombies();
+        self.tickIfShells();
         self.tickAutoscroll();
         self.tickStatusInterval();
         self.tickEscapeTime();
         var poll_timeout: i32 = if (self.mouse_autoscroll_pane != null) @min(timeout_ms, 50) else timeout_ms;
+        if (self.pending_if_shells.items.len > 0) {
+            poll_timeout = @min(poll_timeout, 20);
+        }
         // Wake up exactly when a pending escape sequence would expire so the
         // flush is not delayed by a long poll timeout (bug #350).
         if (self.esc_pending_since_ms != 0 and self.input_reader.state != .ground) {
@@ -3730,49 +3854,88 @@ pub const Server = struct {
                         }
                         continue;
                     }
+                    var is_window = s.flags.window;
                     if (s.flags.unset) {
                         if (s.flags.window) {
-                            self.global_window_options.unset(s.option) catch |err| std.log.warn("unset window option failed: {any}", .{err});
+                            self.global_window_options.unset(s.option) catch |err| {
+                                if (!s.flags.quiet or err != error.UnknownOption) {
+                                    std.log.warn("unset window option failed: {any}", .{err});
+                                }
+                            };
                         } else if (s.flags.session or s.flags.server) {
-                            self.global_options.unset(s.option) catch |err| std.log.warn("unset option failed: {any}", .{err});
+                            self.global_options.unset(s.option) catch |err| {
+                                if (!s.flags.quiet or err != error.UnknownOption) {
+                                    std.log.warn("unset option failed: {any}", .{err});
+                                }
+                            };
                         } else {
                             self.global_options.unset(s.option) catch |err| {
                                 if (err == error.UnknownOption) {
                                     self.global_window_options.unset(s.option) catch |err2| {
                                         if (err2 == error.UnknownOption) {
-                                            std.log.warn("unknown option: {s}", .{s.option});
+                                            if (!s.flags.quiet) std.log.warn("unknown option: {s}", .{s.option});
                                         } else {
                                             std.log.warn("unset window option failed: {any}", .{err2});
                                         }
                                     };
+                                    is_window = true;
                                 } else {
                                     std.log.warn("unset session option failed: {any}", .{err});
                                 }
                             };
                         }
+                        const server_scoped = options.isServerScoped(s.option);
+                        for (self.sessions.items) |session| {
+                            if (server_scoped and (self.activeSession() == null or session != self.activeSession().?)) continue;
+                            if (is_window) {
+                                for (session.windows.items) |window| {
+                                    window.options.unset(s.option) catch {};
+                                }
+                                session.window_options.unset(s.option) catch {};
+                            } else {
+                                session.options.unset(s.option) catch {};
+                            }
+                        }
                     } else {
                         if (s.flags.window) {
                             self.global_window_options.set(s.option, s.value) catch |err| {
-                                std.log.warn("set window option {s} failed: {any}", .{ s.option, err });
+                                if (!s.flags.quiet or err != error.UnknownOption) {
+                                    std.log.warn("set window option {s} failed: {any}", .{ s.option, err });
+                                }
                             };
                         } else if (s.flags.session or s.flags.server) {
                             self.global_options.set(s.option, s.value) catch |err| {
-                                std.log.warn("set session/server option {s} failed: {any}", .{ s.option, err });
+                                if (!s.flags.quiet or err != error.UnknownOption) {
+                                    std.log.warn("set session/server option {s} failed: {any}", .{ s.option, err });
+                                }
                             };
                         } else {
                             self.global_options.set(s.option, s.value) catch |err| {
                                 if (err == error.UnknownOption) {
                                     self.global_window_options.set(s.option, s.value) catch |err2| {
                                         if (err2 == error.UnknownOption) {
-                                            std.log.warn("unknown option: {s}", .{s.option});
+                                            if (!s.flags.quiet) std.log.warn("unknown option: {s}", .{s.option});
                                         } else {
                                             return err2;
                                         }
                                     };
+                                    is_window = true;
                                 } else {
                                     return err;
                                 }
                             };
+                        }
+                        const server_scoped = options.isServerScoped(s.option);
+                        for (self.sessions.items) |session| {
+                            if (server_scoped and (self.activeSession() == null or session != self.activeSession().?)) continue;
+                            if (is_window) {
+                                for (session.windows.items) |window| {
+                                    window.options.set(s.option, s.value) catch {};
+                                }
+                                session.window_options.set(s.option, s.value) catch {};
+                            } else {
+                                session.options.set(s.option, s.value) catch {};
+                            }
                         }
                     }
                     if (std.mem.startsWith(u8, s.option, "status") or
@@ -3781,18 +3944,47 @@ pub const Server = struct {
                         self.dirty = true;
                         self.status_dirty = true;
                     }
-                    if (std.mem.eql(u8, s.option, "prefix")) {
-                        if (s.value == .key) {
-                            self.dispatcher.prefix = s.value.key;
+                    if (std.mem.eql(u8, s.option, "pane-border-format")) {
+                        for (self.sessions.items) |session| {
+                            session.border_format_gen +%= 1;
                         }
                     }
-                    if (std.mem.eql(u8, s.option, "codepoint-widths") and s.value == .string) {
-                        char_width.applyCodepointWidths(self.allocator, s.value.string) catch |err| {
-                            std.log.warn("codepoint-widths: {s}", .{@errorName(err)});
-                        };
+                    if (std.mem.eql(u8, s.option, "prefix")) {
+                        if (self.global_options.get("prefix")) |v| {
+                            if (v == .key) {
+                                self.dispatcher.prefix = v.key;
+                            }
+                        }
                     }
-                    if (std.mem.eql(u8, s.option, "variation-selector-always-wide") and s.value == .flag) {
-                        char_width.setVariationSelectorAlwaysWide(s.value.flag);
+                    if (std.mem.eql(u8, s.option, "codepoint-widths")) {
+                        if (self.global_options.get("codepoint-widths")) |v| {
+                            if (v == .string) {
+                                char_width.applyCodepointWidths(self.allocator, v.string) catch |err| {
+                                    std.log.warn("codepoint-widths: {s}", .{@errorName(err)});
+                                };
+                            }
+                        }
+                    }
+                    if (std.mem.eql(u8, s.option, "variation-selector-always-wide")) {
+                        if (self.global_options.get("variation-selector-always-wide")) |v| {
+                            if (v == .flag) {
+                                char_width.setVariationSelectorAlwaysWide(v.flag);
+                            }
+                        }
+                    }
+                    if (std.mem.eql(u8, s.option, "history-limit")) {
+                        if (self.global_options.get("history-limit")) |v| {
+                            if (v == .number and v.number >= 0) {
+                                const limit: u32 = @intCast(v.number);
+                                for (self.sessions.items) |sess| {
+                                    for (sess.windows.items) |win| {
+                                        for (win.panes.items) |p| {
+                                            p.screen.grid.setHistoryLimit(limit);
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 },
                 .bind_key => |b| {
@@ -3846,21 +4038,48 @@ pub const Server = struct {
                     try self.loadConfigFile(path);
                 },
                 .if_shell => |i| {
-                    const c_sys = struct {
-                        extern "c" fn system(command: [*:0]const u8) c_int;
-                    };
+                    if (self.config_load_depth >= 16) {
+                        std.log.warn("if-shell: maximum recursion depth exceeded", .{});
+                        continue;
+                    }
                     const cmd_c = compat.dupeZ(self.allocator, i.condition) catch continue;
                     defer self.allocator.free(cmd_c);
-                    const rc = c_sys.system(cmd_c);
-                    if (rc == 0) {
-                        const parsed_sub = @import("../cfg.zig").parseConfig(self.allocator, i.command) catch |err| {
-                            std.log.warn("if-shell parse failed: {any}", .{err});
+                    const pid = spawnIfShellChild(cmd_c.ptr) orelse continue;
+
+                    var status: c_int = 0;
+                    var reaped = false;
+                    var attempt: usize = 0;
+                    while (attempt < 30) : (attempt += 1) {
+                        const rc = c.waitpid(pid, &status, WNOHANG);
+                        if (rc == pid) {
+                            reaped = true;
+                            if (ifShellExitedZero(status)) {
+                                self.runIfShellCommand(i.command, self.config_load_depth);
+                            }
+                            break;
+                        }
+                        if (rc < 0 and std.c.errno(rc) != .INTR) {
+                            reaped = true;
+                            break;
+                        }
+                        var req: c.timespec = .{ .sec = 0, .nsec = 1_000_000 };
+                        _ = c.nanosleep(&req, null);
+                    }
+                    if (!reaped) {
+                        const owned_cmd = self.allocator.dupe(u8, i.command) catch {
+                            _ = c.kill(pid, c.SIG.KILL);
+                            _ = c.waitpid(pid, &status, 0);
                             continue;
                         };
-                        var p = parsed_sub;
-                        defer p.deinit(self.allocator);
-                        self.applyDirectives(&p) catch |err| {
-                            std.log.warn("if-shell apply failed: {any}", .{err});
+                        self.pending_if_shells.append(self.allocator, .{
+                            .pid = pid,
+                            .command = owned_cmd,
+                            .start_ms = currentMillis(),
+                            .depth = self.config_load_depth,
+                        }) catch {
+                            self.allocator.free(owned_cmd);
+                            _ = c.kill(pid, c.SIG.KILL);
+                            _ = c.waitpid(pid, &status, 0);
                         };
                     }
                 },
@@ -6621,4 +6840,58 @@ test "writeFrameToClient writes directly and queues only the remainder — bug #
     try testing.expect(server.writeFrameToClient(dc, &hdr, frame));
     try testing.expectEqual(@as(usize, hdr.len + frame.len), dc.out_buf.items.len);
     try testing.expect(std.mem.indexOf(u8, dc.out_buf.items, "yy") != null);
+}
+
+test "applyDirectives coerces quoted non-string options and applies side effects, and runs slow if-shell non-blockingly — bug #557" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+    defer char_width.setVariationSelectorAlwaysWide(false);
+
+    const session = try server.newSession("test-557", 80, 24);
+    const pane = session.active_window.?.active_pane.?;
+
+    // 1. Quoted non-string options in config coerce to .key/.flag/.number and trigger side effects.
+    {
+        const conf =
+            \\set -g prefix "C-a"
+            \\set -g mouse "on"
+            \\set -g history-limit "4321"
+            \\set -g variation-selector-always-wide "on"
+        ;
+        var parsed = try cfg.parseConfig(testing.allocator, conf);
+        defer parsed.deinit(testing.allocator);
+        try server.applyDirectives(&parsed);
+
+        try testing.expectEqual(@as(u21, 'a'), server.dispatcher.prefix.char.code);
+        try testing.expect(server.dispatcher.prefix.char.mod.ctrl);
+        try testing.expectEqual(true, server.global_options.asFlag("mouse").?);
+        try testing.expectEqual(true, session.options.asFlag("mouse").?);
+        try testing.expectEqual(@as(i64, 4321), server.global_options.asNumber("history-limit").?);
+        try testing.expectEqual(@as(u32, 4321), pane.screen.grid.history_limit);
+        try testing.expect(char_width.getVariationSelectorAlwaysWide());
+    }
+
+    // 2. Slow if-shell condition does NOT block applyDirectives; it is queued in pending_if_shells
+    // and completed asynchronously by tickIfShells().
+    {
+        const conf = "if-shell \"sleep 0.1\" \"set -g mouse off\"";
+        var parsed = try cfg.parseConfig(testing.allocator, conf);
+        defer parsed.deinit(testing.allocator);
+        try server.applyDirectives(&parsed);
+
+        // Must have returned before the 100ms sleep finished, with mouse still on.
+        try testing.expectEqual(@as(usize, 1), server.pending_if_shells.items.len);
+        try testing.expectEqual(true, server.global_options.asFlag("mouse").?);
+
+        // Poll tickIfShells until the background child exits (up to 1s).
+        var waited_ms: usize = 0;
+        while (server.pending_if_shells.items.len > 0 and waited_ms < 1000) : (waited_ms += 10) {
+            var req: c.timespec = .{ .sec = 0, .nsec = 10_000_000 };
+            _ = c.nanosleep(&req, null);
+            server.tickIfShells();
+        }
+        try testing.expectEqual(@as(usize, 0), server.pending_if_shells.items.len);
+        try testing.expectEqual(false, server.global_options.asFlag("mouse").?);
+        try testing.expectEqual(false, session.options.asFlag("mouse").?);
+    }
 }

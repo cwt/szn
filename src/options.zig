@@ -172,6 +172,9 @@ fn coerceValue(allocator: std.mem.Allocator, def: OptionDef, value: OptionValue)
                     break :blk OptionValue{ .string = try allocator.dupe(u8, s) };
                 },
                 .key => |k| blk: {
+                    if (k == .char and k.char.code == ' ' and !k.char.mod.ctrl and !k.char.mod.alt and !k.char.mod.shift and !k.char.mod.meta) {
+                        break :blk OptionValue{ .string = try allocator.dupe(u8, " ") };
+                    }
                     var buf: [64]u8 = undefined;
                     const s = key.format(k, &buf);
                     break :blk OptionValue{ .string = try allocator.dupe(u8, s) };
@@ -296,6 +299,16 @@ fn freeValue(allocator: std.mem.Allocator, value: OptionValue) void {
 pub fn isServerScoped(name: []const u8) bool {
     return std.mem.eql(u8, name, "codepoint-widths") or
         std.mem.eql(u8, name, "variation-selector-always-wide");
+}
+
+pub fn findOptionDef(name: []const u8) ?OptionDef {
+    for (SESSION_OPTIONS) |def| {
+        if (std.mem.eql(u8, def.name, name)) return def;
+    }
+    for (WINDOW_OPTIONS) |def| {
+        if (std.mem.eql(u8, def.name, name)) return def;
+    }
+    return null;
 }
 
 // ── Option Tables ──

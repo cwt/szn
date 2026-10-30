@@ -1053,153 +1053,51 @@ fn cmdPrevWindow(server: *Server, _: []const []const u8) CmdResult {
     return .err;
 }
 
-fn setOptionInternal(server: *Server, args: []const []const u8, default_window: bool) CmdResult {
-    if (args.len < 3) return .err;
-    var is_global = false;
-    var is_window = default_window;
-    var is_unset = false;
-    var opt_idx: usize = 1;
-    while (opt_idx < args.len and std.mem.startsWith(u8, args[opt_idx], "-")) {
-        const flag_str = args[opt_idx];
-        // Support combined flags like -gu, -gw, -q (bug #557).
-        if (flag_str.len > 1 and flag_str[0] == '-') {
-            for (flag_str[1..]) |ch| {
-                switch (ch) {
-                    'g' => is_global = true,
-                    'w' => is_window = true,
-                    's' => is_window = false,
-                    'u' => is_unset = true,
-                    else => {},
-                }
+fn applyOptionSideEffects(server: *Server, option_name: []const u8, is_global: bool) CmdResult {
+    const src_opts = if (is_global or options_mod.isServerScoped(option_name))
+        &server.global_options
+    else if (server.activeSession()) |sess|
+        &sess.options
+    else
+        &server.global_options;
+
+    if (std.mem.eql(u8, option_name, "prefix")) {
+        if (src_opts.get("prefix")) |v| {
+            if (v == .key) server.dispatcher.prefix = v.key;
+        }
+    }
+    if (std.mem.eql(u8, option_name, "codepoint-widths")) {
+        if (server.global_options.get("codepoint-widths")) |v| {
+            if (v == .string) {
+                char_width.applyCodepointWidths(server.allocator, v.string) catch return .err;
             }
         }
-        opt_idx += 1;
     }
-    if (args.len - opt_idx < 1) return .err;
-    const option_name = args[opt_idx];
-    // is_unset already determined above
-
-    if (is_unset) {
-        // Unset: restore default value.
-        if (is_global) {
-            if (is_window) {
-                server.global_window_options.unset(option_name) catch return .err;
-            } else {
-                server.global_options.unset(option_name) catch {
-                    server.global_window_options.unset(option_name) catch return .err;
-                    is_window = true;
-                };
+    if (std.mem.eql(u8, option_name, "variation-selector-always-wide")) {
+        if (server.global_options.get("variation-selector-always-wide")) |v| {
+            if (v == .flag) {
+                char_width.setVariationSelectorAlwaysWide(v.flag);
             }
-        } else {
-            const session = server.activeSession() orelse return .err;
-            if (is_window) {
-                const window = session.active_window orelse return .err;
-                window.options.unset(option_name) catch return .err;
-            } else {
-                session.options.unset(option_name) catch {
-                    if (session.active_window) |window| {
-                        window.options.unset(option_name) catch return .err;
-                        is_window = true;
-                    } else {
-                        return .err;
+        }
+    }
+    if (std.mem.eql(u8, option_name, "history-limit")) {
+        if (src_opts.get("history-limit")) |v| {
+            if (v == .number and v.number >= 0) {
+                const limit: u32 = @intCast(v.number);
+                if (is_global) {
+                    for (server.sessions.items) |sess| {
+                        for (sess.windows.items) |win| {
+                            for (win.panes.items) |p| {
+                                p.screen.grid.setHistoryLimit(limit);
+                            }
+                        }
                     }
-                };
-            }
-        }
-        // Propagate global unset to active session/window.
-        if (is_global) {
-            if (server.activeSession()) |session| {
-                if (is_window) {
-                    if (session.active_window) |window| {
-                        window.options.unset(option_name) catch {};
+                } else if (server.activeSession()) |sess| {
+                    for (sess.windows.items) |win| {
+                        for (win.panes.items) |p| {
+                            p.screen.grid.setHistoryLimit(limit);
+                        }
                     }
-                } else {
-                    session.options.unset(option_name) catch {};
-                }
-            }
-        }
-        return .ok;
-    }
-
-    if (args.len - opt_idx < 2) return .err;
-    const value_str = args[opt_idx + 1];
-
-    // Width options are server-scoped (bug #506): the tables they drive are
-    // module globals, and a session clones the global store at creation, so a
-    // session-scoped copy would both over-promise per-session behaviour and go
-    // permanently stale. Redirect to the global store so the stored value and
-    // the applied effect agree, matching tmux's OPTIONS_TABLE_SERVER and the
-    // config-loading path (Server.applyDirectives), which already writes here.
-    if (options_mod.isServerScoped(option_name)) is_global = true;
-
-    const cfg_mod = @import("../cfg.zig");
-    const parsed_val = cfg_mod.parseValue(server.allocator, value_str) catch return .err;
-    // Note: OptionValue duplicates strings internally when set, so we can free parsed_val.string on exit.
-    defer {
-        if (parsed_val == .string) server.allocator.free(parsed_val.string);
-    }
-
-    if (is_global) {
-        if (is_window) {
-            server.global_window_options.set(option_name, parsed_val) catch return .err;
-        } else {
-            server.global_options.set(option_name, parsed_val) catch |err| {
-                if (err == error.UnknownOption) {
-                    server.global_window_options.set(option_name, parsed_val) catch return .err;
-                    is_window = true;
-                } else {
-                    return .err;
-                }
-            };
-            if (std.mem.eql(u8, option_name, "prefix")) {
-                if (parsed_val == .key) {
-                    server.dispatcher.prefix = parsed_val.key;
-                }
-            }
-        }
-    } else {
-        const session = server.activeSession() orelse return .err;
-        if (is_window) {
-            const window = session.active_window orelse return .err;
-            window.options.set(option_name, parsed_val) catch return .err;
-        } else {
-            session.options.set(option_name, parsed_val) catch |err| {
-                if (err == error.UnknownOption) {
-                    if (session.active_window) |window| {
-                        window.options.set(option_name, parsed_val) catch return .err;
-                        is_window = true;
-                    } else {
-                        return .err;
-                    }
-                } else {
-                    return .err;
-                }
-            };
-            if (std.mem.eql(u8, option_name, "prefix") and parsed_val == .key) {
-                server.dispatcher.prefix = parsed_val.key;
-            }
-        }
-    }
-    if (std.mem.eql(u8, option_name, "codepoint-widths") and parsed_val == .string) {
-        char_width.applyCodepointWidths(server.allocator, parsed_val.string) catch return .err;
-    }
-    if (std.mem.eql(u8, option_name, "variation-selector-always-wide") and parsed_val == .flag) {
-        char_width.setVariationSelectorAlwaysWide(parsed_val.flag);
-    }
-    if (std.mem.eql(u8, option_name, "history-limit") and parsed_val == .number) {
-        const limit: u32 = @intCast(parsed_val.number);
-        if (is_global) {
-            for (server.sessions.items) |sess| {
-                for (sess.windows.items) |win| {
-                    for (win.panes.items) |p| {
-                        p.screen.grid.setHistoryLimit(limit);
-                    }
-                }
-            }
-        } else if (server.activeSession()) |sess| {
-            for (sess.windows.items) |win| {
-                for (win.panes.items) |p| {
-                    p.screen.grid.setHistoryLimit(limit);
                 }
             }
         }
@@ -1211,6 +1109,171 @@ fn setOptionInternal(server: *Server, args: []const []const u8, default_window: 
         server.dirty = true;
         server.status_dirty = true;
     }
+    // Invalidate the per-pane border format cache: the generation counter must
+    // move or a runtime pane-border-format change would stay frozen forever
+    // (bug #304/#307 follow-up).
+    if (std.mem.eql(u8, option_name, "pane-border-format")) {
+        if (is_global) {
+            for (server.sessions.items) |session| {
+                session.border_format_gen +%= 1;
+            }
+        } else if (server.activeSession()) |session| {
+            session.border_format_gen +%= 1;
+        }
+    }
+    return .ok;
+}
+
+fn setOptionInternal(server: *Server, args: []const []const u8, default_window: bool) CmdResult {
+    if (args.len < 2) return .err;
+    var is_global = false;
+    var is_window = default_window;
+    var is_unset = false;
+    var is_quiet = false;
+    var opt_idx: usize = 1;
+    while (opt_idx < args.len and std.mem.startsWith(u8, args[opt_idx], "-")) {
+        const flag_str = args[opt_idx];
+        if (flag_str.len <= 1) return .err;
+        // Support combined flags like -gu, -gw, -q (bug #557).
+        for (flag_str[1..]) |ch| {
+            switch (ch) {
+                'g' => is_global = true,
+                'w' => is_window = true,
+                's' => is_window = false,
+                'u' => is_unset = true,
+                'q' => is_quiet = true,
+                else => return .err,
+            }
+        }
+        opt_idx += 1;
+    }
+    if (args.len - opt_idx < 1) return .err;
+    const option_name = args[opt_idx];
+
+    // Width options are server-scoped (bug #506): the tables they drive are
+    // module globals, and a session clones the global store at creation, so a
+    // session-scoped copy would both over-promise per-session behaviour and go
+    // permanently stale. Redirect to the global store so the stored value and
+    // the applied effect agree, matching tmux's OPTIONS_TABLE_SERVER and the
+    // config-loading path (Server.applyDirectives), which already writes here.
+    if (options_mod.isServerScoped(option_name)) is_global = true;
+
+    if (is_unset) {
+        // Unset: restore default value.
+        if (is_global) {
+            if (is_window) {
+                server.global_window_options.unset(option_name) catch |err| {
+                    return if (is_quiet and err == error.UnknownOption) .ok else .err;
+                };
+            } else {
+                server.global_options.unset(option_name) catch |err| {
+                    if (err == error.UnknownOption) {
+                        server.global_window_options.unset(option_name) catch |err2| {
+                            return if (is_quiet and err2 == error.UnknownOption) .ok else .err;
+                        };
+                        is_window = true;
+                    } else {
+                        return .err;
+                    }
+                };
+            }
+        } else {
+            const session = server.activeSession() orelse return .err;
+            if (is_window) {
+                const window = session.active_window orelse return .err;
+                window.options.unset(option_name) catch |err| {
+                    return if (is_quiet and err == error.UnknownOption) .ok else .err;
+                };
+            } else {
+                session.options.unset(option_name) catch |err| {
+                    if (err == error.UnknownOption) {
+                        if (session.active_window) |window| {
+                            window.options.unset(option_name) catch |err2| {
+                                return if (is_quiet and err2 == error.UnknownOption) .ok else .err;
+                            };
+                            is_window = true;
+                        } else {
+                            return if (is_quiet) .ok else .err;
+                        }
+                    } else {
+                        return .err;
+                    }
+                };
+            }
+        }
+        // Propagate global unset across sessions/windows (bug #557).
+        if (is_global) {
+            const server_scoped = options_mod.isServerScoped(option_name);
+            for (server.sessions.items) |session| {
+                if (server_scoped and (server.activeSession() == null or session != server.activeSession().?)) continue;
+                if (is_window) {
+                    for (session.windows.items) |window| {
+                        window.options.unset(option_name) catch {};
+                    }
+                    session.window_options.unset(option_name) catch {};
+                } else {
+                    session.options.unset(option_name) catch {};
+                }
+            }
+        }
+        return applyOptionSideEffects(server, option_name, is_global);
+    }
+
+    if (args.len - opt_idx < 2) return .err;
+    const value_str = args[opt_idx + 1];
+
+    const cfg_mod = @import("../cfg.zig");
+    const is_string_opt = if (options_mod.findOptionDef(option_name)) |def| def.type == .string else false;
+    const parsed_val = if (is_string_opt)
+        options_mod.OptionValue{ .string = server.allocator.dupe(u8, value_str) catch return .err }
+    else
+        cfg_mod.parseValue(server.allocator, value_str) catch return .err;
+    // Note: OptionValue duplicates strings internally when set, so we can free parsed_val.string on exit.
+    defer {
+        if (parsed_val == .string) server.allocator.free(parsed_val.string);
+    }
+
+    if (is_global) {
+        if (is_window) {
+            server.global_window_options.set(option_name, parsed_val) catch |err| {
+                return if (is_quiet and err == error.UnknownOption) .ok else .err;
+            };
+        } else {
+            server.global_options.set(option_name, parsed_val) catch |err| {
+                if (err == error.UnknownOption) {
+                    server.global_window_options.set(option_name, parsed_val) catch |err2| {
+                        return if (is_quiet and err2 == error.UnknownOption) .ok else .err;
+                    };
+                    is_window = true;
+                } else {
+                    return .err;
+                }
+            };
+        }
+    } else {
+        const session = server.activeSession() orelse return .err;
+        if (is_window) {
+            const window = session.active_window orelse return .err;
+            window.options.set(option_name, parsed_val) catch |err| {
+                return if (is_quiet and err == error.UnknownOption) .ok else .err;
+            };
+        } else {
+            session.options.set(option_name, parsed_val) catch |err| {
+                if (err == error.UnknownOption) {
+                    if (session.active_window) |window| {
+                        window.options.set(option_name, parsed_val) catch |err2| {
+                            return if (is_quiet and err2 == error.UnknownOption) .ok else .err;
+                        };
+                        is_window = true;
+                    } else {
+                        return if (is_quiet) .ok else .err;
+                    }
+                } else {
+                    return .err;
+                }
+            };
+        }
+    }
     // -g updates should land on sessions so live config works (bug #557).
     // For normal options, propagate to all sessions; for server-scoped
     // options (codepoint-widths etc.) keep the snapshot-inheritance model
@@ -1218,7 +1281,6 @@ fn setOptionInternal(server: *Server, args: []const []const u8, default_window: 
     if (is_global) {
         const server_scoped = options_mod.isServerScoped(option_name);
         for (server.sessions.items) |session| {
-            if (server_scoped and (server.activeSession() == null or session != server.activeSession().?)) continue;
             if (server_scoped and (server.activeSession() == null or session != server.activeSession().?)) continue;
             if (is_window) {
                 for (session.windows.items) |window| {
@@ -1238,15 +1300,7 @@ fn setOptionInternal(server: *Server, args: []const []const u8, default_window: 
             }
         }
     }
-    // Invalidate the per-pane border format cache: the generation counter must
-    // move or a runtime pane-border-format change would stay frozen forever
-    // (bug #304/#307 follow-up).
-    if (std.mem.eql(u8, option_name, "pane-border-format")) {
-        if (server.activeSession()) |session| {
-            session.border_format_gen +%= 1;
-        }
-    }
-    return .ok;
+    return applyOptionSideEffects(server, option_name, is_global);
 }
 
 fn cmdSetOption(server: *Server, args: []const []const u8) CmdResult {
@@ -3828,4 +3882,85 @@ test "set-option variation-selector-always-wide is server-scoped — bug #506" {
         @as(bool, true),
         server.global_options.get("variation-selector-always-wide").?.flag,
     );
+}
+
+test "set-option preserves string values that look like keys, flags, numbers, or colours, and supports -u/-gu/-q and setw -g propagation — bug #557" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+    const s1 = try server.newSession("s1", 80, 24);
+    const s1_w1 = s1.active_window.?;
+    const s1_w2 = try s1.newWindow(server.allocator, "w2");
+    const s2 = try server.newSession("s2", 80, 24);
+    const s2_w1 = s2.active_window.?;
+
+    // 1. String options preserve single space, boolean words, key names, numbers, and colour names verbatim.
+    inline for (.{
+        .{ "set-option -g status-left \" \"", " " },
+        .{ "set-option -g status-left \"true\"", "true" },
+        .{ "set-option -g status-left \"on\"", "on" },
+        .{ "set-option -g status-left \"123\"", "123" },
+        .{ "set-option -g status-left \"F1\"", "F1" },
+        .{ "set-option -g status-left \"colour1\"", "colour1" },
+    }) |pair| {
+        var c = try parse(pair[0], testing.allocator);
+        defer c.deinit(testing.allocator);
+        try testing.expectEqual(CmdResult.ok, c.exec(&server));
+        try testing.expectEqualStrings(pair[1], server.global_options.asString("status-left").?);
+        try testing.expectEqualStrings(pair[1], s1.options.asString("status-left").?);
+        try testing.expectEqualStrings(pair[1], s2.options.asString("status-left").?);
+    }
+
+    // 2. setw -g propagates to session.window_options and all open windows across all sessions.
+    {
+        var c = try parse("setw -g remain-on-exit on", testing.allocator);
+        defer c.deinit(testing.allocator);
+        try testing.expectEqual(CmdResult.ok, c.exec(&server));
+        try testing.expectEqual(true, server.global_window_options.asFlag("remain-on-exit").?);
+        try testing.expectEqual(true, s1.window_options.asFlag("remain-on-exit").?);
+        try testing.expectEqual(true, s2.window_options.asFlag("remain-on-exit").?);
+        try testing.expectEqual(true, s1_w1.options.asFlag("remain-on-exit").?);
+        try testing.expectEqual(true, s1_w2.options.asFlag("remain-on-exit").?);
+        try testing.expectEqual(true, s2_w1.options.asFlag("remain-on-exit").?);
+    }
+
+    // 3. setw -gu unsets global window option and propagates to all sessions and windows.
+    {
+        var c = try parse("setw -gu remain-on-exit", testing.allocator);
+        defer c.deinit(testing.allocator);
+        try testing.expectEqual(CmdResult.ok, c.exec(&server));
+        try testing.expectEqual(false, server.global_window_options.asFlag("remain-on-exit").?);
+        try testing.expectEqual(false, s1.window_options.asFlag("remain-on-exit").?);
+        try testing.expectEqual(false, s2.window_options.asFlag("remain-on-exit").?);
+        try testing.expectEqual(false, s1_w1.options.asFlag("remain-on-exit").?);
+        try testing.expectEqual(false, s1_w2.options.asFlag("remain-on-exit").?);
+        try testing.expectEqual(false, s2_w1.options.asFlag("remain-on-exit").?);
+    }
+
+    // 4. set -g prefix C-a and set -gu prefix update and restore server.dispatcher.prefix.
+    {
+        var c1 = try parse("set -g prefix C-a", testing.allocator);
+        defer c1.deinit(testing.allocator);
+        try testing.expectEqual(CmdResult.ok, c1.exec(&server));
+        try testing.expectEqual(@as(u21, 'a'), server.dispatcher.prefix.char.code);
+
+        var c2 = try parse("set -gu prefix", testing.allocator);
+        defer c2.deinit(testing.allocator);
+        try testing.expectEqual(CmdResult.ok, c2.exec(&server));
+        try testing.expectEqual(@as(u21, 'b'), server.dispatcher.prefix.char.code);
+    }
+
+    // 5. -q suppresses unknown option errors while bare set rejects unknown options.
+    {
+        var c1 = try parse("set -gq nonexistent-option 42", testing.allocator);
+        defer c1.deinit(testing.allocator);
+        try testing.expectEqual(CmdResult.ok, c1.exec(&server));
+
+        var c2 = try parse("set -gqu nonexistent-option", testing.allocator);
+        defer c2.deinit(testing.allocator);
+        try testing.expectEqual(CmdResult.ok, c2.exec(&server));
+
+        var c3 = try parse("set -g nonexistent-option 42", testing.allocator);
+        defer c3.deinit(testing.allocator);
+        try testing.expectEqual(CmdResult.err, c3.exec(&server));
+    }
 }
