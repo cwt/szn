@@ -189,6 +189,8 @@ pub const InputParser = struct {
         self.intermediate = 0;
         self.private_marker = 0;
         self.osc_buf.clearRetainingCapacity();
+        self.dcs_buf.clearRetainingCapacity();
+        self.dcs_is_sixel = false;
     }
 
     fn advanceGround(self: *InputParser, byte: u8) Error!void {
@@ -414,6 +416,15 @@ pub const InputParser = struct {
         // for non-sixel DCS sequences that will be discarded.
         switch (byte) {
             '0'...'9', ';', ':', '<', '=', '>', '?' => {
+                // Buffer the first param byte(s) so they survive passthrough
+                // (bug #548): advanceDcsParam is only called for *subsequent*
+                // bytes, so the first one must be captured here.
+                if (self.dcs_buf.items.len == 0) {
+                    try self.dcs_buf.appendSlice(self.screen.allocator, "\x1bP");
+                }
+                if (self.dcs_buf.items.len < 3 + 16) {
+                    try self.dcs_buf.append(self.screen.allocator, byte);
+                }
                 self.state = .dcs_param;
             },
             0x20...0x2F => {

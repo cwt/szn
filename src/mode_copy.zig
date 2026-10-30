@@ -527,11 +527,15 @@ pub const CopyMode = struct {
             // so a wrapped line's limit must account for the physical lines
             // walked over (`grid.width -| 1` only covered the head, hiding any
             // match in the continuation part).
+            const cursor_abs_col: usize = if (at_cursor_line)
+                (cursor_logical - li) * grid.width + start_x_cells
+            else
+                0;
             const start_col: usize = if (at_cursor_line)
-                ((cursor_logical - li) * grid.width + start_x_cells) -| 1
+                cursor_abs_col -| 1
             else
                 WHOLE_LINE;
-            const skip_cursor_line = at_cursor_line and start_col == 0;
+            const skip_cursor_line = at_cursor_line and cursor_abs_col == 0;
             at_cursor_line = false;
             if (!skip_cursor_line) {
                 if (searchLogicalLineBackward(grid, allocator, &line_buf, &offsets, li, start_col, needle)) |found_x| {

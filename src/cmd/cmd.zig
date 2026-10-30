@@ -437,8 +437,8 @@ fn cmdSwapPane(server: *Server, args: []const []const u8) CmdResult {
     window.panes.items[src_idx] = pane2;
     window.panes.items[dst_idx] = pane1;
 
-    Server.resizePaneToNode(pane1, node1, &window.layout);
-    Server.resizePaneToNode(pane2, node2, &window.layout);
+    Server.resizePaneToNode(pane1, node2, &window.layout);
+    Server.resizePaneToNode(pane2, node1, &window.layout);
     window.invalidateBorderFormat();
     server.dirty = true;
     return .ok;

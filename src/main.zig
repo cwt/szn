@@ -546,8 +546,33 @@ fn runServerDaemon(allocator: std.mem.Allocator) Error!void {
         break;
     }
     if (default_session_orphaned) {
-        // destroy the unused default session
-        server.killSession("default") catch {};
+        // Destroy the unused pre-created default session by ID (not by name,
+        // since the replacement session may also be named "default") (bug #543).
+        var orphan_idx: ?usize = null;
+        for (server.sessions.items, 0..) |s, i| {
+            if (s.id == default_session_id) {
+                orphan_idx = i;
+                break;
+            }
+        }
+        if (orphan_idx) |oi| {
+            const orphan = server.sessions.items[oi];
+            for (orphan.windows.items) |win| {
+                for (win.panes.items) |p| {
+                    if (p.pty) |pty| {
+                        server.loop.removeFd(pty.master);
+                    }
+                    server.removeSixelWaitPane(p);
+                    p.valid = false;
+                }
+            }
+            server.clearPaneMouseRefsBulk();
+            var sess = server.sessions.orderedRemove(oi);
+            sess.deinit(server.allocator);
+            server.allocator.destroy(sess);
+            server.dirty = true;
+            server.status_dirty = true;
+        }
     } else if (default_pane) |p| {
         const raw_nofile = server.global_options.asNumber("nofile-limit") orelse 1024;
         const min_nofile: u64 = if (raw_nofile > 0) @intCast(raw_nofile) else 0;
