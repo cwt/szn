@@ -1,7 +1,7 @@
 %global debug_package %{nil}
 
 Name:           szn
-Version:        0.10.0
+Version:        0.11.0
 Release:        1%{?dist}
 Summary:        Modern terminal multiplexer rewritten in Zig
 
@@ -58,5 +58,8 @@ XDG_RUNTIME_DIR=$(mktemp -d) %zig_test
 %{_bindir}/szn
 
 %changelog
+* Fri Oct 30 2026 Szn Maintainers <cwt@users.noreply.github.com> - 0.11.0-1
+- Release v0.11.0: dual Zig 0.16/0.17 toolchain support, memory lifecycle reclamation, Lao reflow, and 61-bug stability sweep
+
 * Fri Oct 09 2026 Szn Maintainers <cwt@users.noreply.github.com> - 0.10.0-1
 - Initial RPM package release for Fedora and Enterprise Linux

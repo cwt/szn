@@ -154,7 +154,7 @@ szn is designed to be lean:
 
 - **Startup:** ~7.5 ms from launch to prompt (tmux: ~7.8 ms).
 - **Memory:** ~2.2 MB RSS idle — szn uses ~2200 kB vs tmux's ~4000 kB.
-- **Binary size:** 831 KB stripped (x86-64 Linux), 685 KB on macOS.
+- **Binary size:** 1,053,312 bytes stripped (~1,029 KB, x86-64 Linux), 834,864 bytes on macOS aarch64 (~815 KB) with Zig 0.17.0.
 
 A hyperfine-based benchmark suite is included at [`bench.sh`](bench.sh) for tracking these metrics.
 
