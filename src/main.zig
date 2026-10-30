@@ -548,17 +548,7 @@ fn runServerDaemon(allocator: std.mem.Allocator) Error!void {
     if (default_session_orphaned) {
         // Destroy the unused pre-created default session by ID (not by name,
         // since the replacement session may also be named "default") (bug #543).
-        var orphan_idx: ?usize = null;
-        for (server.sessions.items, 0..) |s, i| {
-            if (s.id == default_session_id) {
-                orphan_idx = i;
-                break;
-            }
-        }
-        if (orphan_idx) |oi| {
-            _ = oi;
-            server.killSessionById(default_session_id);
-        }
+        server.killSessionById(default_session_id);
     } else if (default_pane) |p| {
         const raw_nofile = server.global_options.asNumber("nofile-limit") orelse 1024;
         const min_nofile: u64 = if (raw_nofile > 0) @intCast(raw_nofile) else 0;
