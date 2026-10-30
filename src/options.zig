@@ -164,10 +164,15 @@ fn coerceValue(allocator: std.mem.Allocator, def: OptionDef, value: OptionValue)
                     const s = std.fmt.bufPrint(&buf, "{d}", .{n}) catch break :blk value;
                     break :blk OptionValue{ .string = try allocator.dupe(u8, s) };
                 },
-                .colour => value,
+                .colour => |c| blk: {
+                    var buf: [32]u8 = undefined;
+                    const s = c.fmt(&buf);
+                    break :blk OptionValue{ .string = try allocator.dupe(u8, s) };
+                },
                 .key => |k| blk: {
-                    _ = k;
-                    break :blk value;
+                    var buf: [64]u8 = undefined;
+                    const s = key.format(k, &buf);
+                    break :blk OptionValue{ .string = try allocator.dupe(u8, s) };
                 },
             };
         },

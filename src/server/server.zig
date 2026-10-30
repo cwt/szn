@@ -619,6 +619,7 @@ pub const Server = struct {
         if (self.command_mode) {
             self.command_mode = false;
             self.command_buf.clearRetainingCapacity();
+            self.search_pending = null;
             self.dirty = true;
             return;
         }
@@ -1094,7 +1095,7 @@ pub const Server = struct {
                 defer if (current_cwd) |cwd_ptr| self.allocator.free(cwd_ptr);
                 const new_pane = try window.splitPane(self.allocator, pane, false, 0.5);
                 self.setupPane(session, new_pane, current_cwd) catch |err| {
-                    window.removePane(self.allocator, new_pane);
+                    self.destroyPane(new_pane);
                     return err;
                 };
             },
@@ -1103,7 +1104,7 @@ pub const Server = struct {
                 defer if (current_cwd) |cwd_ptr| self.allocator.free(cwd_ptr);
                 const new_pane = try window.splitPane(self.allocator, pane, true, 0.5);
                 self.setupPane(session, new_pane, current_cwd) catch |err| {
-                    window.removePane(self.allocator, new_pane);
+                    self.destroyPane(new_pane);
                     return err;
                 };
             },

@@ -632,6 +632,15 @@ pub const Screen = struct {
                 self.scroll_region = .{ top, bottom };
             }
         }
+        if (self.alt_scroll_region) |r| {
+            const top = @min(r[0], height -| 1);
+            const bottom = @min(r[1], height -| 1);
+            if (top >= bottom or (top == 0 and bottom >= height -| 1)) {
+                self.alt_scroll_region = null;
+            } else {
+                self.alt_scroll_region = .{ top, bottom };
+            }
+        }
         if (self.saved_cursor) |*sc| {
             sc.x = @min(sc.x, width -| 1);
             sc.y = @min(sc.y, height -| 1);
