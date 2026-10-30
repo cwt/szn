@@ -7,7 +7,6 @@ const options_mod = @import("options.zig");
 pub const Error = window.Error || options_mod.Error;
 
 pub const Session = struct {
-    arena: std.heap.ArenaAllocator,
     allocator: std.mem.Allocator,
     id: u32,
     name: []const u8,
@@ -29,8 +28,6 @@ pub const Session = struct {
     active_window_dirty: bool = false,
 
     pub fn init(self: *Session, backing: std.mem.Allocator, id: u32, name: []const u8, width: u32, height: u32, global_options: ?*const options_mod.Options, global_window_options: ?*const options_mod.Options) Error!void {
-        self.arena = std.heap.ArenaAllocator.init(backing);
-        errdefer self.arena.deinit();
         self.allocator = backing;
         const allocator = backing;
 
@@ -70,10 +67,6 @@ pub const Session = struct {
         self.active_window = initial_win;
     }
 
-    pub fn arenaAllocator(self: *Session) std.mem.Allocator {
-        return self.allocator;
-    }
-
     pub fn deinit(self: *Session, allocator: std.mem.Allocator) void {
         _ = allocator;
         for (self.windows.items) |win| {
@@ -86,7 +79,6 @@ pub const Session = struct {
         self.windows.deinit(self.allocator);
         self.options.deinit();
         self.window_options.deinit();
-        self.arena.deinit();
     }
 
     pub fn resize(self: *Session, new_width: u32, new_height: u32) Error!void {

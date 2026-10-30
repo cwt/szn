@@ -312,14 +312,14 @@ fn cmdMoveWindow(server: *Server, args: []const []const u8) CmdResult {
     const session = server.activeSession() orelse return .err;
     const indices = resolveWindowIndices(session, args) orelse return .err;
 
-    const arena_alloc = session.arenaAllocator();
+    const alloc = session.allocator;
     // The subsequent insert needs len+1 slots; reserving only len left the
     // rollback path unable to re-insert on OOM (bug #391).
-    session.windows.ensureTotalCapacity(arena_alloc, session.windows.items.len + 1) catch return .err;
+    session.windows.ensureTotalCapacity(alloc, session.windows.items.len + 1) catch return .err;
 
     const w = session.windows.orderedRemove(indices.src);
-    session.windows.insert(arena_alloc, indices.dst, w) catch {
-        session.windows.insert(arena_alloc, indices.src, w) catch |err| std.log.warn("insert failed: {any}", .{err});
+    session.windows.insert(alloc, indices.dst, w) catch {
+        session.windows.insert(alloc, indices.src, w) catch |err| std.log.warn("insert failed: {any}", .{err});
         return .err;
     };
     return .ok;
@@ -513,7 +513,7 @@ fn cmdJoinPane(server: *Server, args: []const []const u8) CmdResult {
     // killWindow needs a placeholder leaf in its layout root. Allocate it now
     // so that nothing can fail once sp has been extracted.
     const placeholder: ?*Pane = if (src_win != dst_win and src_win.panes.items.len == 1) blk: {
-        const a = session.arenaAllocator();
+        const a = session.allocator;
         const dummy = a.create(Pane) catch {
             undoSplit(dst_win, server.allocator, dummy_pane);
             return .err;
