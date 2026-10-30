@@ -150,123 +150,19 @@ hyperfine --shell default --warmup 5 --min-runs 20 --export-json "$TMP_THROUGHPU
 cleanup_procs
 header "Summary"
 # -------------------------------------------------------------------------
-if command -v python3 >/dev/null 2>&1; then
-    python3 - "$TMP_STARTUP" "$TMP_THROUGHPUT" "$MEM_1P_SZN" "$MEM_1P_TMUX" "$MEM_10P_SZN" "$MEM_10P_TMUX" "$MEM_50P_SZN" "$MEM_50P_TMUX" << 'EOF'
-import sys, json
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+REPORT_SCRIPT="$SCRIPT_DIR/tools/bench_report.py"
 
-use_color = sys.stdout.isatty()
-GREEN = "\033[32m" if use_color else ""
-CYAN = "\033[36m" if use_color else ""
-BOLD = "\033[1m" if use_color else ""
-DIM = "\033[2m" if use_color else ""
-YELLOW = "\033[33m" if use_color else ""
-RESET = "\033[0m" if use_color else ""
-
-def cell(text, width, color=""):
-    pad = " " * max(0, width - len(text))
-    if color:
-        return f"{color}{text}{RESET}{pad}"
-    return f"{text}{pad}"
-
-def load_timing(path):
-    try:
-        with open(path) as f:
-            d = json.load(f)
-        def get_mean(r):
-            if "mean" in r and r["mean"] is not None:
-                return r["mean"]
-            summary = r.get("summary", {})
-            metric = d.get("primary_metric", "time_wall_clock")
-            if metric in summary and summary[metric] and "mean" in summary[metric]:
-                return summary[metric]["mean"]
-            if "time_wall_clock" in summary and summary["time_wall_clock"] and "mean" in summary["time_wall_clock"]:
-                return summary["time_wall_clock"]["mean"]
-            return 0
-        szn_ms = None
-        tmux_ms = None
-        for r in d.get("results", []):
-            cmd = r.get("command", "")
-            mean_sec = get_mean(r)
-            if "szn" in cmd:
-                szn_ms = mean_sec * 1000.0
-            elif "tmux" in cmd:
-                tmux_ms = mean_sec * 1000.0
-        if szn_ms is None and len(d.get("results", [])) > 0:
-            szn_ms = get_mean(d["results"][0]) * 1000.0
-        if tmux_ms is None and len(d.get("results", [])) > 1:
-            tmux_ms = get_mean(d["results"][1]) * 1000.0
-        return szn_ms, tmux_ms
-    except Exception:
-        return None, None
-
-def format_timing(szn_ms, tmux_ms):
-    if szn_ms is None or tmux_ms is None:
-        return "N/A", "N/A", "N/A", ""
-    szn_str = f"{szn_ms:.2f} ms"
-    tmux_str = f"{tmux_ms:.2f} ms"
-    if szn_ms <= 0 or tmux_ms <= 0:
-        return szn_str, tmux_str, "-", ""
-    if szn_ms < tmux_ms:
-        ratio = tmux_ms / szn_ms
-        comp = f"{ratio:.2f}× faster"
-        color = GREEN
-    elif szn_ms > tmux_ms:
-        ratio = szn_ms / tmux_ms
-        comp = f"{ratio:.2f}× slower"
-        color = YELLOW
-    else:
-        comp = "equal"
-        color = DIM
-    return szn_str, tmux_str, comp, color
-
-def format_memory(szn_val, tmux_val):
-    try:
-        szn_kb = float(szn_val)
-        tmux_kb = float(tmux_val)
-    except (ValueError, TypeError):
-        return f"{szn_val} kB", f"{tmux_val} kB", "N/A", ""
-
-    if szn_kb <= 0 or tmux_kb <= 0:
-        return f"{int(szn_kb)} kB", f"{int(tmux_kb)} kB", "N/A", ""
-
-    szn_str = f"{int(szn_kb)} kB"
-    tmux_str = f"{int(tmux_kb)} kB"
-    pct = ((szn_kb - tmux_kb) / tmux_kb) * 100.0
-    if pct < 0:
-        comp = f"{pct:.1f}%"
-        color = GREEN
-    elif pct > 0:
-        comp = f"+{pct:.1f}%"
-        color = YELLOW
-    else:
-        comp = "equal"
-        color = DIM
-    return szn_str, tmux_str, comp, color
-
-startup_szn, startup_tmux = load_timing(sys.argv[1])
-through_szn, through_tmux = load_timing(sys.argv[2])
-
-rows = [
-    ("Startup time (cold)", *format_timing(startup_szn, startup_tmux)),
-    ("Memory: idle (1 session, 1 pane)", *format_memory(sys.argv[3], sys.argv[4])),
-    ("Memory: 1 window, 10 panes", *format_memory(sys.argv[5], sys.argv[6])),
-    ("Memory: 5 windows, ~50 panes", *format_memory(sys.argv[7], sys.argv[8])),
-    ("Session create/destroy throughput", *format_timing(through_szn, through_tmux)),
-]
-
-w1, w2, w3, w4 = 34, 10, 10, 13
-bar = "─"
-top = f"┌{bar * (w1 + 2)}┬{bar * (w2 + 2)}┬{bar * (w3 + 2)}┬{bar * (w4 + 2)}┐"
-mid = f"├{bar * (w1 + 2)}┼{bar * (w2 + 2)}┼{bar * (w3 + 2)}┼{bar * (w4 + 2)}┤"
-bot = f"└{bar * (w1 + 2)}┴{bar * (w2 + 2)}┴{bar * (w3 + 2)}┴{bar * (w4 + 2)}┘"
-
-print(top)
-print(f"│ {cell('Benchmark', w1, BOLD)} │ {cell('szn', w2, BOLD + CYAN)} │ {cell('tmux', w3, BOLD)} │ {cell('Comparison', w4, BOLD)} │")
-print(mid)
-for name, szn, tmux, comp, comp_color in rows:
-    print(f"│ {cell(name, w1)} │ {cell(szn, w2, CYAN)} │ {cell(tmux, w3)} │ {cell(comp, w4, comp_color)} │")
-print(bot)
-EOF
+if command -v python3 >/dev/null 2>&1 && [[ -f "$REPORT_SCRIPT" ]]; then
+    python3 "$REPORT_SCRIPT" \
+        --startup "$TMP_STARTUP" \
+        --throughput "$TMP_THROUGHPUT" \
+        --mem-1p-szn "$MEM_1P_SZN" \
+        --mem-1p-tmux "$MEM_1P_TMUX" \
+        --mem-10p-szn "$MEM_10P_SZN" \
+        --mem-10p-tmux "$MEM_10P_TMUX" \
+        --mem-50p-szn "$MEM_50P_SZN" \
+        --mem-50p-tmux "$MEM_50P_TMUX"
 else
     echo "Benchmark                          | szn        | tmux"
     echo "-----------------------------------+------------+------------"
