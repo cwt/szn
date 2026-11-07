@@ -347,7 +347,7 @@ pub const SESSION_OPTIONS = &[_]OptionDef{
     .{ .name = "mouse", .type = .flag, .default = OptionValue{ .flag = true } },
     .{ .name = "prefix", .type = .key, .default = OptionValue{ .key = Key{ .char = .{ .code = 'b', .mod = .{ .ctrl = true } } } } }, // C-b
     // `prefix2` removed (bug #384): defined but never consulted anywhere.
-    .{ .name = "escape-time", .type = .number, .default = OptionValue{ .number = 500 }, .min = 0, .max = 10000 },
+    .{ .name = "escape-time", .type = .number, .default = OptionValue{ .number = 10 }, .min = 0, .max = 10000 },
     .{ .name = "base-index", .type = .number, .default = OptionValue{ .number = 0 }, .min = 0, .max = 9999 },
     .{ .name = "pane-base-index", .type = .number, .default = OptionValue{ .number = 0 }, .min = 0, .max = 9999 },
     .{ .name = "display-time", .type = .number, .default = OptionValue{ .number = 1000 }, .min = 0, .max = 60000 },
