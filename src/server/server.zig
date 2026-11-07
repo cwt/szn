@@ -214,6 +214,13 @@ pub const Server = struct {
     copy_click_y: ?u32 = null,
     config_load_depth: u32 = 0,
     mouse_press_pane: ?*Pane = null,
+    /// When non-null, the current left-drag is resizing this pane from a border.
+    /// `mouse_resize_axis` is the axis being dragged; `mouse_resize_start_x/y`
+    /// is the drag origin so each drag event computes an incremental delta.
+    mouse_resize_pane: ?*Pane = null,
+    mouse_resize_axis: ?layout.SplitDir = null,
+    mouse_resize_start_x: u32 = 0,
+    mouse_resize_start_y: u32 = 0,
     mouse_autoscroll_dir: ?enum { up, down } = null,
     mouse_autoscroll_pane: ?*Pane = null,
     ignore_unknown_msg_warn: bool = false,
@@ -2225,7 +2232,27 @@ pub const Server = struct {
                                                 active_pane.dirty = true;
                                             }
                                         } else if (m.button == .left and m.drag) {
-                                            if (self.mouse_press_pane) |press_pane| {
+                                            if (self.mouse_resize_pane) |rp| {
+                                                // Border drag: resize the pane from the pressed border.
+                                                if (self.isPaneValid(rp)) {
+                                                    const cx: i32 = @intCast(m.x);
+                                                    const cy: i32 = @intCast(m.y);
+                                                    const sx: i32 = @intCast(self.mouse_resize_start_x);
+                                                    const sy: i32 = @intCast(self.mouse_resize_start_y);
+                                                    var dw: i32 = 0;
+                                                    var dh: i32 = 0;
+                                                    if (self.mouse_resize_axis == .horizontal) {
+                                                        dw = cx - sx;
+                                                    } else {
+                                                        dh = cy - sy;
+                                                    }
+                                                    resizePaneBy(window, rp, dw, dh);
+                                                    self.mouse_resize_start_x = m.x;
+                                                    self.mouse_resize_start_y = m.y;
+                                                    self.dirty = true;
+                                                    rp.dirty = true;
+                                                }
+                                            } else if (self.mouse_press_pane) |press_pane| {
                                                 // bug #283: guard against a pane destroyed since the press.
                                                 if (!self.isPaneValid(press_pane)) {
                                                     self.mouse_press_pane = null;
@@ -2276,9 +2303,38 @@ pub const Server = struct {
                                             self.mouse_press_y = m.y;
                                             self.handleMouseFocus(m.x, m.y) catch |err| std.log.warn("handleMouseFocus failed: {any}", .{err});
                                             self.mouse_press_pane = window.active_pane;
+                                            // Detect a border drag: if the press is on the right or bottom
+                                            // edge of a pane, a subsequent drag resizes that pane instead of
+                                            // starting a copy-mode selection.
+                                            if (self.mouse_press_pane) |pp| {
+                                                if (self.findPaneBounds(window, pp)) |pb| {
+                                                    // Tolerance zone around borders so the user doesn't have to
+                                                    // hit the exact border pixel (tmux is similarly forgiving).
+                                                    const resize_tol: u32 = 2;
+                                                    const right_edge = pb.x + pb.w;
+                                                    const bottom_edge = pb.y + pb.h;
+                                                    const near_right =
+                                                        pb.w > 0 and m.x >= right_edge -| resize_tol and m.x <= right_edge +| resize_tol;
+                                                    const near_bottom =
+                                                        pb.h > 0 and m.y >= bottom_edge -| resize_tol and m.y <= bottom_edge +| resize_tol;
+                                                    if (near_right) {
+                                                        self.mouse_resize_pane = pp;
+                                                        self.mouse_resize_axis = .horizontal;
+                                                        self.mouse_resize_start_x = m.x;
+                                                        self.mouse_resize_start_y = m.y;
+                                                    } else if (near_bottom) {
+                                                        self.mouse_resize_pane = pp;
+                                                        self.mouse_resize_axis = .vertical;
+                                                        self.mouse_resize_start_x = m.x;
+                                                        self.mouse_resize_start_y = m.y;
+                                                    }
+                                                }
+                                            }
                                         } else if (m.button == .release) {
                                             self.mouse_autoscroll_dir = null;
                                             self.mouse_autoscroll_pane = null;
+                                            self.mouse_resize_pane = null;
+                                            self.mouse_resize_axis = null;
                                             if (self.mouse_press_pane) |press_pane| {
                                                 // bug #283: guard against a pane destroyed since the press.
                                                 if (self.isPaneValid(press_pane)) {
