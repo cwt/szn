@@ -623,3 +623,4 @@ not tabulated here; an `open` bug whose body carries a
 | [560](560.md) | Dead-code and duplication cluster 5: unreachable Kitty codepoints in writeKeyToPty, unused format.expandContent and CmdResult.wait, duplicate SS3 parser, duplicate swap-pane and bind-key flag parsers, and duplicate I/O helpers | LOW (code quality) | resolved |
 | [561](561.md) | Performance cluster 4: full-grid scan in clearSixelMarkerCells, full-scrollback scan in yankSelection, per-search scrollback re-indexing in CopyMode, redundant resolveRowCells in blank-run coalescing, and linear Options scans | MEDIUM (performance) | resolved |
 | [562](562.md) | destroyPane test reads a freed Pane (use-after-free), segfaulting under Zig 0.17's non-reusing SafeAllocator | MEDIUM | resolved |
+| [563](563.md) | Automatic window rename clobbers OSC and screen/tmux title escape sequences | HIGH | resolved |

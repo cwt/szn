@@ -266,6 +266,13 @@ pub const InputParser = struct {
             'c' => try self.screen.resetHard(),
             '=', '>' => {},
             '<' => {},
+            'k' => {
+                // Screen / tmux window rename sequence: ESC k <title> ST (bug #563)
+                self.state = .osc_string;
+                self.osc_buf.clearRetainingCapacity();
+                try self.osc_buf.appendSlice(self.screen.allocator, "0;");
+                self.clearParams();
+            },
             0x20...0x2F => {
                 self.intermediate = byte;
                 self.state = .esc_intermediate;
@@ -2845,4 +2852,24 @@ test "InputParser.deinit uses screen.allocator internally without external alloc
     try parser.feed("\x1bPq#0;2;100;100;100#0~~\x1b\\");
     // deinit() must free using screen.allocator without leaking or requiring an allocator argument
     parser.deinit();
+}
+
+test "ESC k window rename sequence invokes title callback — bug #563" {
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+    var parser = InputParser.init(&screen);
+    defer parser.deinit();
+    var mock = TitleMock{};
+    parser.title_cb = TitleMock.callback;
+    parser.title_ctx = &mock;
+    try parser.feed("\x1bkvith\x1b\\");
+    try testing.expect(mock.called);
+    try testing.expectEqualStrings("vith", mock.title[0..mock.len]);
+
+    // Empty title clear sequence
+    mock.called = false;
+    mock.len = 0;
+    try parser.feed("\x1bk\x1b\\");
+    try testing.expect(mock.called);
+    try testing.expectEqual(@as(usize, 0), mock.len);
 }

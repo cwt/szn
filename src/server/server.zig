@@ -3483,7 +3483,12 @@ pub const Server = struct {
                             else
                                 pty.getForegroundProcessName(&proc_buf);
                             if (proc_res) |proc_name_val| {
-                                if (proc_name_val.len > 0 and !std.mem.eql(u8, win.name, proc_name_val)) {
+                                const proc_changed = (proc_name_val.len > 0 and !std.mem.eql(u8, win.last_foreground_name, proc_name_val));
+                                if (proc_changed) {
+                                    win.has_custom_title = false;
+                                    win.setLastForegroundName(proc_name_val);
+                                }
+                                if (proc_name_val.len > 0 and !win.has_custom_title and !std.mem.eql(u8, win.name, proc_name_val)) {
                                     // Window.name and last_foreground_name live in
                                     // inline fixed buffers; no heap allocation or aliasing (bug #358/#405).
                                     win.setName(proc_name_val);
@@ -6742,6 +6747,56 @@ test "automatic rename detects PGID change without waiting for 1s throttle — b
     // Even if check_ms is 0ms ago, pgid_changed will trigger inspection
     const new_pgid: i32 = 200;
     try testing.expect(new_pgid != win.last_foreground_pgid);
+}
+
+test "automatic rename preserves custom title and restores on process exit — bug #563" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    const session = try server.newSession("test-custom-title", 80, 24);
+    const win = session.active_window.?;
+
+    _ = try server.addDisplayClient(.{ .fd = 100, .sx = 80, .sy = 24 });
+
+    // Initial state: shell running
+    win.setName("zsh");
+    win.setLastForegroundName("zsh");
+    win.last_foreground_pgid = 100;
+    win.last_foreground_check_ms = Server.currentMillis();
+
+    // Application launches, sets custom title
+    win.setLastForegroundName("Python");
+    win.setName("vith");
+    win.has_custom_title = true;
+
+    // Simulate auto-rename tick where process name query still returns Python
+    // (foreground process hasn't changed)
+    const proc_name_val = "Python";
+    const proc_changed = (proc_name_val.len > 0 and !std.mem.eql(u8, win.last_foreground_name, proc_name_val));
+    try testing.expect(!proc_changed);
+    if (proc_changed) {
+        win.has_custom_title = false;
+        win.setLastForegroundName(proc_name_val);
+    }
+    if (proc_name_val.len > 0 and !win.has_custom_title and !std.mem.eql(u8, win.name, proc_name_val)) {
+        win.setName(proc_name_val);
+    }
+    try testing.expectEqualStrings("vith", win.name);
+    try testing.expect(win.has_custom_title);
+
+    // Application exits back to zsh (process changed)
+    const new_proc_val = "zsh";
+    const proc_changed2 = (new_proc_val.len > 0 and !std.mem.eql(u8, win.last_foreground_name, new_proc_val));
+    try testing.expect(proc_changed2);
+    if (proc_changed2) {
+        win.has_custom_title = false;
+        win.setLastForegroundName(new_proc_val);
+    }
+    if (new_proc_val.len > 0 and !win.has_custom_title and !std.mem.eql(u8, win.name, new_proc_val)) {
+        win.setName(new_proc_val);
+    }
+    try testing.expectEqualStrings("zsh", win.name);
+    try testing.expect(!win.has_custom_title);
 }
 
 test "scrollback renders newest lines correctly when history ring buffer wraps — bug #443" {

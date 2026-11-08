@@ -285,6 +285,7 @@ pub const Window = struct {
     layout: layout.Layout,
     options: options_mod.Options,
     automatic_rename: bool = true,
+    has_custom_title: bool = false,
     name_buf: [256]u8 = undefined,
     last_foreground_name_buf: [256]u8 = undefined,
     /// Cached foreground process name from the last getForegroundProcessName
@@ -326,6 +327,7 @@ pub const Window = struct {
             .layout = undefined,
             .options = options,
             .automatic_rename = true,
+            .has_custom_title = false,
         };
         window.setName(name);
         var pane = try allocator.create(Pane);
@@ -518,10 +520,36 @@ fn paneTitleCallback(ctx: ?*anyopaque, title: []const u8) void {
 
 fn windowTitleCallback(ctx: ?*anyopaque, title: []const u8) void {
     const self: *Window = @ptrCast(@alignCast(ctx orelse return));
-    if (title.len == 0) return;
-    if (std.mem.eql(u8, self.name, title)) return;
+    if (title.len == 0) {
+        self.has_custom_title = false;
+        if (self.last_foreground_name.len > 0 and !std.mem.eql(u8, self.name, self.last_foreground_name)) {
+            self.setName(self.last_foreground_name);
+            for (self.panes.items) |p| {
+                p.dirty = true;
+            }
+        }
+        return;
+    }
+    if (std.mem.eql(u8, self.name, title)) {
+        self.has_custom_title = true;
+        return;
+    }
 
     self.setName(title);
+    self.has_custom_title = true;
+    if (self.active_pane) |ap| {
+        if (ap.pty) |*pty| {
+            if (pty.getForegroundPgid()) |cur_pgid| {
+                self.last_foreground_pgid = cur_pgid;
+                var proc_buf: [128]u8 = undefined;
+                if (pty.getProcessNameByPgid(cur_pgid, &proc_buf)) |proc_name_val| {
+                    if (proc_name_val.len > 0) {
+                        self.setLastForegroundName(proc_name_val);
+                    }
+                } else |_| {}
+            }
+        }
+    }
     for (self.panes.items) |p| {
         p.dirty = true;
     }
@@ -777,6 +805,12 @@ test "auto-rename avoids freeing name_buf and avoids aliased double-free — bug
     windowTitleCallback(&window, "user@host: ~");
     try testing.expectEqualStrings("user@host: ~", window.name);
     try testing.expectEqualStrings("htop", window.last_foreground_name);
+    try testing.expect(window.has_custom_title);
+
+    // Empty title clears custom title and restores last_foreground_name (bug #563)
+    windowTitleCallback(&window, "");
+    try testing.expect(!window.has_custom_title);
+    try testing.expectEqualStrings("htop", window.name);
 }
 
 test "window resize and split invalidate cached pane-border-format — bug #433" {
