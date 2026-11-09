@@ -1,15 +1,13 @@
 %global debug_package %{nil}
 
 Name:           szn
-Version:        0.11.0
+Version:        0.11.1
 Release:        1%{?dist}
 Summary:        Modern terminal multiplexer rewritten in Zig
 
 License:        MIT
 URL:            https://github.com/cwt/szn
 Source0:        %{url}/archive/refs/tags/v%{version}.tar.gz#/%{name}-%{version}.tar.gz
-
-ExclusiveArch:  %{zig_arches}
 
 BuildRequires:  zig >= 0.16.0
 BuildRequires:  zig-rpm-macros
@@ -58,6 +56,9 @@ XDG_RUNTIME_DIR=$(mktemp -d) %zig_test
 %{_bindir}/szn
 
 %changelog
+* Mon Nov 09 2026 Szn Maintainers <cwt@users.noreply.github.com> - 0.11.1-1
+- Release v0.11.1: mouse drag-to-resize panes, 10ms default escape-time, and title preservation
+
 * Fri Oct 30 2026 Szn Maintainers <cwt@users.noreply.github.com> - 0.11.0-1
 - Release v0.11.0: dual Zig 0.16/0.17 toolchain support, memory lifecycle reclamation, Lao reflow, and 61-bug stability sweep
 
