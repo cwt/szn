@@ -1,7 +1,8 @@
 # szn
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Zig Compatibility](https://img.shields.io/badge/zig-0.16.0%20%7C%200.17.0-red.svg)](#zig-version-compatibility)
+[![Zig Compatibility](https://img.shields.io/badge/zig-0.16.0%20%7C%200.17.1-F7A41D.svg)](#zig-version-compatibility)
+![GitHub Release](https://img.shields.io/github/v/release/cwt/szn)
 [![Ask DeepWiki](https://img.shields.io/badge/Ask-DeepWiki-blue)](https://deepwiki.com/cwt/szn)
 <!-- [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/cwt/szn) -->
 
