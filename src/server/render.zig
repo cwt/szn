@@ -277,16 +277,54 @@ pub const Display = struct {
 
         for (bounds) |pb| {
             if (!full_rebuild and !pb.pane.dirty) continue;
-            const pane_has_sixels = blk: {
-                var found = false;
-                for (&pb.pane.screen.sixel_images) |opt| {
-                    if (opt != null) {
-                        found = true;
-                        break;
+            const pane_has_sixels = pb.pane.screen.active_sixel_count > 0;
+            // Precompute per-pane sixel containment once per pane (instead of
+            // calling findSixelImage + ceil-div on every sixel cell). Open-
+            // addressed 128-entry hash table (load factor <= 0.5) guarantees
+            // O(1) lookup even under slot != id % 64 collisions, preserving
+            // first-slot precedence on any duplicate masked ID.
+            var sixel_id_keys: [128]u32 = undefined;
+            var sixel_id_contained: [128]bool = undefined;
+            var any_contained_sixel = false;
+            if (pane_has_sixels) {
+                @memset(&sixel_id_keys, 0xFFFFFFFF);
+                const scr = &pb.pane.screen;
+                const cell_h = if (scr.cell_px_height > 0) scr.cell_px_height else 20;
+                const cell_w = if (scr.cell_px_width > 0) scr.cell_px_width else 10;
+                for (&scr.sixel_images) |*opt_img| {
+                    if (opt_img.*) |*img| {
+                        const masked_id = img.id & 0x1FFFFF;
+                        var h: usize = masked_id & 127;
+                        while (sixel_id_keys[h] != 0xFFFFFFFF and sixel_id_keys[h] != masked_id) {
+                            h = (h + 1) & 127;
+                        }
+                        if (sixel_id_keys[h] == 0xFFFFFFFF) {
+                            // Saturating ceil-div, matching Screen.placeSixelImage (bug #464).
+                            const cell_rows = if (img.px_height > 0) (img.px_height +| cell_h -| 1) / cell_h else 1;
+                            const cell_cols = if (img.px_width > 0) (img.px_width +| cell_w -| 1) / cell_w else 1;
+                            // Position derived from the image's stored anchor
+                            // (bug #200), not per-cell comb offsets. i64
+                            // geometry: narrowing u32 dims to i32 would trap
+                            // past INT32_MAX (bug #473).
+                            const img_pane_col: i64 = @intCast(img.anchor_col);
+                            const img_pane_row: i64 = img.anchor_row;
+                            // Mark the cell as sixel only when the image is
+                            // *fully contained* in this pane, matching
+                            // renderSixelImages (bug #202).
+                            const contained = img_pane_col >= 0 and
+                                img_pane_col + @as(i64, cell_cols) <= @as(i64, pb.w) and
+                                img_pane_row >= 0 and
+                                img_pane_row + @as(i64, cell_rows) <= @as(i64, pb.h);
+                            sixel_id_keys[h] = masked_id;
+                            sixel_id_contained[h] = contained;
+                            if (contained) any_contained_sixel = true;
+                        }
                     }
                 }
-                break :blk found;
-            };
+            }
+            var last_sixel_id: u32 = 0xFFFFFFFF;
+            var last_sixel_contained = false;
+
             for (0..pb.h) |y| {
                 if (pb.y + y >= merged_h) break;
 
@@ -297,38 +335,22 @@ pub const Display = struct {
                     if (pb.x + x >= merged_w) break;
                     var cell = if (cells) |cls| (if (x < cls.items.len) cls.items[x] else Cell.empty()) else Cell.empty();
                     if (pane_has_sixels and cell.attr.sixel) {
-                        const image_id = cell.char;
-                        if (pb.pane.screen.findSixelImage(image_id)) |img| {
-                            // Saturating ceil-div, matching Screen.placeSixelImage (bug #464).
-                            const cell_rows = if (img.px_height > 0) (img.px_height +| pb.pane.screen.cell_px_height -| 1) / pb.pane.screen.cell_px_height else 1;
-                            const cell_cols = if (img.px_width > 0) (img.px_width +| pb.pane.screen.cell_px_width -| 1) / pb.pane.screen.cell_px_width else 1;
-
-                            // Position derived from the image's stored anchor
-                            // (bug #200), not per-cell comb offsets. i64
-                            // geometry: narrowing u32 dims to i32 would trap
-                            // past INT32_MAX (bug #473).
-                            const img_pane_col: i64 = @intCast(img.anchor_col);
-                            const img_pane_row: i64 = img.anchor_row;
-
-                            // Mark the cell as sixel only when the image is
-                            // *fully contained* in this pane, matching the
-                            // rule used by renderSixelImages for the actual
-                            // sixel draw. When the two disagree you get
-                            // artifacts: either text drawn over the sixel
-                            // overlay, or blank cells without sixel — which
-                            // appears as a "tail" / ghost on screen (bug #202).
-                            const contained_img = img_pane_col >= 0 and
-                                img_pane_col + @as(i64, cell_cols) <= @as(i64, pb.w) and
-                                img_pane_row >= 0 and
-                                img_pane_row + @as(i64, cell_rows) <= @as(i64, pb.h);
-
-                            if (!contained_img) {
-                                cell.attr.sixel = false;
-                                cell.char = 0;
-                                cell.comb1 = 0;
-                                cell.comb2 = 0;
+                        const contained_img = if (!any_contained_sixel) false else blk: {
+                            const masked_id: u32 = cell.char;
+                            if (masked_id == last_sixel_id) break :blk last_sixel_contained;
+                            var h: usize = masked_id & 127;
+                            var res = false;
+                            while (sixel_id_keys[h] != 0xFFFFFFFF) : (h = (h + 1) & 127) {
+                                if (sixel_id_keys[h] == masked_id) {
+                                    res = sixel_id_contained[h];
+                                    break;
+                                }
                             }
-                        } else {
+                            last_sixel_id = masked_id;
+                            last_sixel_contained = res;
+                            break :blk res;
+                        };
+                        if (!contained_img) {
                             cell.attr.sixel = false;
                             cell.char = 0;
                             cell.comb1 = 0;
@@ -978,15 +1000,17 @@ pub const Display = struct {
     const PerPaneSixelState = struct {
         anchors: [64]?SixelAnchor = std.mem.zeroes([64]?SixelAnchor),
         ids: [64]?u32 = std.mem.zeroes([64]?u32),
+        has_any_anchor: bool = false,
     };
 
     fn computeSixelState(screen: *const Screen, pb: PaneBounds) PerPaneSixelState {
         var state = PerPaneSixelState{};
+        if (screen.active_sixel_count == 0) return state;
         const pane_h = pb.h;
         const pane_w = pb.w;
 
         for (&screen.sixel_images, 0..) |*opt_img, slot| {
-            const img = opt_img.* orelse continue;
+            const img = if (opt_img.*) |*i| i else continue;
             // Only images belonging to the currently active screen are drawn;
             // the other screen's images are erased on switch (bug #298 ghosts).
             if (img.alt_screen != screen.mode.alt_screen) continue;
@@ -1027,34 +1051,23 @@ pub const Display = struct {
                     .row = std.math.cast(i32, img_top) orelse std.math.maxInt(i32),
                 };
                 state.ids[slot] = img.id;
+                state.has_any_anchor = true;
             }
         }
         return state;
     }
 
     fn renderSixelImages(self: Display, bounds: []const PaneBounds) Error!void {
-        // Phase 0 — check if any pane has (or had) sixel images. Skip the
-        // entire O(total_cells) per-pane scan when no sixels are present.
-        var needs_erase = false;
-        var has_sixel = false;
+        // Phase 0 — O(panes) check whether any pane currently holds a sixel or
+        // had one drawn on the previous frame (requiring an erase-all).
+        var has_any = false;
         for (bounds) |pb| {
-            for (pb.pane.screen.sixel_images) |opt_img| {
-                if (opt_img != null) {
-                    needs_erase = true;
-                    has_sixel = true;
-                    break;
-                }
+            if (pb.pane.screen.active_sixel_count > 0 or pb.pane.screen.has_last_sixel_anchors) {
+                has_any = true;
+                break;
             }
-            for (pb.pane.screen.sixel_last_anchor) |opt_anchor| {
-                if (opt_anchor != null) {
-                    needs_erase = true;
-                    break;
-                }
-            }
-            if (needs_erase) break;
         }
-
-        if (!has_sixel and !needs_erase) return;
+        if (!has_any) return;
 
         // Sixel images live out-of-band from last_cells, so the diff can't
         // represent them. Re-emitting every image on every render re-sent a
@@ -1099,6 +1112,7 @@ pub const Display = struct {
             for (bounds[0..state_count], 0..) |pb, i| {
                 pb.pane.screen.sixel_last_anchor = states[i].anchors;
                 pb.pane.screen.sixel_last_id = states[i].ids;
+                pb.pane.screen.has_last_sixel_anchors = states[i].has_any_anchor;
             }
             return;
         }
@@ -1121,7 +1135,7 @@ pub const Display = struct {
                         prev_a.?.col == cur.?.col and prev_a.?.row == cur.?.row;
                     if (same_anchor and prev_id != null and prev_id.? == st.ids[slot].?) continue;
                 }
-                const img = screen.sixel_images[slot].?;
+                const img = &screen.sixel_images[slot].?;
                 try self.moveTo(@as(u32, @intCast(cur.?.col)), @as(u32, @intCast(cur.?.row)));
                 try self.writeBytes(img.data);
                 try self.writeBytes("\x1b[m");
@@ -1131,6 +1145,7 @@ pub const Display = struct {
         for (bounds[0..state_count], 0..) |pb, i| {
             pb.pane.screen.sixel_last_anchor = states[i].anchors;
             pb.pane.screen.sixel_last_id = states[i].ids;
+            pb.pane.screen.has_last_sixel_anchors = states[i].has_any_anchor;
         }
     }
 };
@@ -1437,7 +1452,7 @@ test "renderSixelImages emits DCS at correct absolute position" {
 
     // Inject a synthetic sixel image at pane cell (5, 3) with known DCS bytes.
     const raw_dcs = try allocator.dupe(u8, "\x1bPqA\x1b\\");
-    pane.screen.sixel_images[0] = .{
+    pane.screen.setSixelSlot(0, .{
         .data = raw_dcs,
         .col = 5,
         .row = 3,
@@ -1446,7 +1461,7 @@ test "renderSixelImages emits DCS at correct absolute position" {
         .id = 0,
         .anchor_col = 5,
         .anchor_row = 3,
-    };
+    });
     pane.screen.sixel_refcounts[0] = 1;
     var cell = &pane.screen.grid.getLineMut(3).cells.items[5];
     cell.attr.sixel = true;
@@ -1490,7 +1505,7 @@ test "renderSixelImages re-emits only a replaced image at the same anchor — bu
     const pane = win.active_pane.?;
 
     const dcs_a = try allocator.dupe(u8, "\x1bPqAAAA\x1b\\");
-    pane.screen.sixel_images[0] = .{ .data = dcs_a, .col = 3, .row = 2, .px_width = 10, .px_height = 20, .id = 1, .anchor_col = 3, .anchor_row = 2 };
+    pane.screen.setSixelSlot(0, .{ .data = dcs_a, .col = 3, .row = 2, .px_width = 10, .px_height = 20, .id = 1, .anchor_col = 3, .anchor_row = 2 });
     pane.screen.sixel_refcounts[0] = 1;
     const bounds = [_]PaneBounds{.{ .pane = pane, .x = 0, .y = 0, .w = 80, .h = 23 }};
 
@@ -1500,9 +1515,9 @@ test "renderSixelImages re-emits only a replaced image at the same anchor — bu
     // Replace the image at the SAME anchor with new content (new id). The
     // renderer must clear the old overlay (erase-all) and emit only the new
     // DCS — never re-emit the old bytes.
-    if (pane.screen.sixel_images[0]) |*img| img.deinit(pane.screen.allocator);
+    pane.screen.clearSixelSlot(0);
     const dcs_b = try allocator.dupe(u8, "\x1bPqBBBB\x1b\\");
-    pane.screen.sixel_images[0] = .{ .data = dcs_b, .col = 3, .row = 2, .px_width = 10, .px_height = 20, .id = 2, .anchor_col = 3, .anchor_row = 2 };
+    pane.screen.setSixelSlot(0, .{ .data = dcs_b, .col = 3, .row = 2, .px_width = 10, .px_height = 20, .id = 2, .anchor_col = 3, .anchor_row = 2 });
     pane.screen.sixel_refcounts[0] = 1;
 
     capture_buf.clearRetainingCapacity();
@@ -1536,7 +1551,7 @@ test "renderSixelImages renders sixel from every pane — bug #194" {
 
     // Both panes store their image in slot 0 (id % 64 == 0).
     const dcs1 = try allocator.dupe(u8, "\x1bPqONEx\x1b\\");
-    pane1.screen.sixel_images[0] = .{ .data = dcs1, .col = 5, .row = 3, .px_width = 10, .px_height = 20, .id = 0 };
+    pane1.screen.setSixelSlot(0, .{ .data = dcs1, .col = 5, .row = 3, .px_width = 10, .px_height = 20, .id = 0 });
     pane1.screen.sixel_refcounts[0] = 1;
     var c1 = &pane1.screen.grid.getLineMut(3).cells.items[5];
     c1.attr.sixel = true;
@@ -1545,7 +1560,7 @@ test "renderSixelImages renders sixel from every pane — bug #194" {
     c1.comb2 = 0;
 
     const dcs2 = try allocator.dupe(u8, "\x1bPqTWO\x1b\\");
-    pane2.screen.sixel_images[0] = .{ .data = dcs2, .col = 5, .row = 3, .px_width = 10, .px_height = 20, .id = 0 };
+    pane2.screen.setSixelSlot(0, .{ .data = dcs2, .col = 5, .row = 3, .px_width = 10, .px_height = 20, .id = 0 });
     pane2.screen.sixel_refcounts[0] = 1;
     var c2 = &pane2.screen.grid.getLineMut(3).cells.items[5];
     c2.attr.sixel = true;
@@ -1626,7 +1641,7 @@ test "renderSixelImages clips sixel to pane and erases when scrolled above the b
     const pane = win.active_pane.?;
 
     const raw = try allocator.dupe(u8, "\x1bPqCLIP\x1b\\");
-    pane.screen.sixel_images[0] = .{
+    pane.screen.setSixelSlot(0, .{
         .data = raw,
         .col = 0,
         .row = 0,
@@ -1635,7 +1650,7 @@ test "renderSixelImages clips sixel to pane and erases when scrolled above the b
         .id = 0,
         .anchor_col = 0,
         .anchor_row = 0,
-    };
+    });
     pane.screen.sixel_refcounts[0] = 1;
     var cell = &pane.screen.grid.getLineMut(0).cells.items[0];
     cell.attr.sixel = true;
@@ -1730,8 +1745,7 @@ test "renderSixelImages erases removed image overlay — bug #195" {
     try display.renderSixelImages(&bounds);
 
     // Remove the image from the registry (e.g. eraseDisplay mode 2).
-    if (pane.screen.sixel_images[0]) |*img| img.deinit(pane.screen.allocator);
-    pane.screen.sixel_images[0] = null;
+    pane.screen.clearSixelSlot(0);
 
     capture_buf.clearRetainingCapacity();
     try display.renderSixelImages(&bounds);

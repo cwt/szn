@@ -123,6 +123,10 @@ pub const Screen = struct {
     tab_stop: u32 = 8,
     /// Sixel images received from child processes, stored in a ring buffer registry.
     sixel_images: [64]?SixelImage = std.mem.zeroes([64]?SixelImage),
+    /// Number of non-null entries currently in `sixel_images` (0..64), kept in
+    /// sync on every slot transition so `hasSixelImages()`, cell refcount
+    /// guards, and renderer fast-paths are O(1) without scanning all 64 slots.
+    active_sixel_count: u8 = 0,
     next_sixel_id: u32 = 0,
     /// Per-slot reference count: number of grid cells currently referencing
     /// this sixel image (bug #225). Replaces the O(n) cell-scan in
@@ -135,6 +139,9 @@ pub const Screen = struct {
     /// so without tracking the last anchor a scrolling image leaves a smear
     /// trail, and a removed image leaves a permanent ghost.
     sixel_last_anchor: [64]?SixelAnchor = std.mem.zeroes([64]?SixelAnchor),
+    /// True when at least one entry in `sixel_last_anchor` is non-null, letting
+    /// `Display.renderSixelImages` skip its 128-slot Phase 0 scan in O(1).
+    has_last_sixel_anchors: bool = false,
     /// Image id each slot was last drawn with, so a replacement at the same
     /// anchor (e.g. a preview thumbnail swapping content) is detected as a
     /// change even though the position didn't move (bug #298).
@@ -287,16 +294,14 @@ pub const Screen = struct {
         const preferred_slot = id % 64;
 
         // 1. Try preferred slot if empty or not referenced
-        if (self.sixel_images[preferred_slot] == null) {
-            target_slot = preferred_slot;
-        } else if (!self.isImageReferenced(self.sixel_images[preferred_slot].?.id)) {
+        if (self.sixel_images[preferred_slot] == null or self.sixel_refcounts[preferred_slot] == 0) {
             target_slot = preferred_slot;
         }
 
         // 2. Otherwise, find any empty slot
-        if (target_slot == null) {
-            for (self.sixel_images, 0..) |opt_img, idx| {
-                if (opt_img == null) {
+        if (target_slot == null and self.active_sixel_count < self.sixel_images.len) {
+            for (&self.sixel_images, 0..) |*opt_img, idx| {
+                if (opt_img.* == null) {
                     target_slot = idx;
                     break;
                 }
@@ -305,12 +310,10 @@ pub const Screen = struct {
 
         // 3. If no empty slot, find any slot whose image is no longer referenced
         if (target_slot == null) {
-            for (self.sixel_images, 0..) |opt_img, idx| {
-                if (opt_img) |img| {
-                    if (!self.isImageReferenced(img.id)) {
-                        target_slot = idx;
-                        break;
-                    }
+            for (&self.sixel_images, 0..) |*opt_img, idx| {
+                if (opt_img.* != null and self.sixel_refcounts[idx] == 0) {
+                    target_slot = idx;
+                    break;
                 }
             }
         }
@@ -321,8 +324,8 @@ pub const Screen = struct {
         if (target_slot == null) {
             var min_id: u32 = std.math.maxInt(u32);
             var min_idx: usize = 0;
-            for (self.sixel_images, 0..) |opt_img, idx| {
-                if (opt_img) |img| {
+            for (&self.sixel_images, 0..) |*opt_img, idx| {
+                if (opt_img.*) |*img| {
                     if (img.id < min_id) {
                         min_id = img.id;
                         min_idx = idx;
@@ -333,15 +336,12 @@ pub const Screen = struct {
         }
 
         const slot = target_slot.?;
-        if (self.sixel_images[slot]) |*old| {
-            old.deinit(self.allocator);
-            self.sixel_refcounts[slot] = 0;
-        }
+        self.clearSixelSlot(slot);
 
         // Saturating narrowing: cursor rows are grid-bound, but a huge grid
         // must degrade to INT32_MAX rather than trap in @intCast (bug #473).
         const anchor_row_i32 = std.math.cast(i32, self.cursor.y) orelse std.math.maxInt(i32);
-        self.sixel_images[slot] = SixelImage{
+        self.setSixelSlot(slot, SixelImage{
             .data = dcs_bytes,
             .col = self.cursor.x,
             .row = anchor_row_i32,
@@ -351,14 +351,10 @@ pub const Screen = struct {
             .anchor_col = self.cursor.x,
             .anchor_row = anchor_row_i32,
             .alt_screen = self.mode.alt_screen, // bug #219: tag so shiftSixelAnchors filters correctly
-        };
+        });
         errdefer {
             self.clearSixelMarkerCells(id);
-            if (self.sixel_images[slot]) |*img| {
-                img.deinit(self.allocator);
-                self.sixel_images[slot] = null;
-            }
-            self.sixel_refcounts[slot] = 0;
+            self.clearSixelSlot(slot);
         }
 
         // Saturating ceil-div: absurd wire dimensions must not wrap small and
@@ -372,9 +368,7 @@ pub const Screen = struct {
         // marker loop below would scroll the grid cell_rows times (bug #464).
         if (cell_rows > self.grid.height or cell_cols > self.grid.width) {
             std.log.debug("dropping oversized sixel placement: {d}x{d} cells", .{ cell_cols, cell_rows });
-            self.allocator.free(dcs_bytes);
-            self.sixel_images[slot] = null;
-            self.sixel_refcounts[slot] = 0;
+            self.clearSixelSlot(slot);
             return;
         }
 
@@ -444,7 +438,33 @@ pub const Screen = struct {
     /// (bug #219: alt-screen images must not drift when the main grid scrolls).
     /// When `region` is provided ([top, bottom]), only shifts images intersecting
     /// the scroll region (bug #492).
+    /// Assign or clear a sixel slot while keeping `active_sixel_count` in sync.
+    /// Does not free any previously stored image — call `clearSixelSlot` first
+    /// when replacing or clearing an occupied slot.
+    pub fn setSixelSlot(self: *Screen, slot: usize, img: ?SixelImage) void {
+        const had = self.sixel_images[slot] != null;
+        const has = img != null;
+        self.sixel_images[slot] = img;
+        if (!had and has) {
+            self.active_sixel_count += 1;
+        } else if (had and !has) {
+            self.active_sixel_count -= 1;
+        }
+    }
+
+    /// Free any image in `slot`, clear the slot and its refcount, and keep
+    /// `active_sixel_count` in sync.
+    pub fn clearSixelSlot(self: *Screen, slot: usize) void {
+        if (self.sixel_images[slot]) |*img| {
+            img.deinit(self.allocator);
+            self.sixel_images[slot] = null;
+            self.active_sixel_count -= 1;
+        }
+        self.sixel_refcounts[slot] = 0;
+    }
+
     fn shiftSixelAnchors(self: *Screen, delta_rows: i32, region: ?[2]u32) void {
+        if (self.active_sixel_count == 0) return;
         const is_alt = self.mode.alt_screen;
         const cell_h = if (self.cell_px_height > 0) self.cell_px_height else 20;
         for (&self.sixel_images) |*opt_img| {
@@ -474,13 +494,9 @@ pub const Screen = struct {
         return self.sixel_refcounts[idx] > 0;
     }
 
-    /// Returns true if any sixel image is registered or pending.
+    /// Returns true if any sixel image is registered or pending (O(1)).
     pub fn hasSixelImages(self: *const Screen) bool {
-        if (self.pending_sixel != null) return true;
-        for (self.sixel_images) |opt_img| {
-            if (opt_img != null) return true;
-        }
-        return false;
+        return self.active_sixel_count > 0 or self.pending_sixel != null;
     }
 
     /// Finds a sixel image in the registry by its absolute ID.
@@ -490,10 +506,21 @@ pub const Screen = struct {
     }
 
     /// Finds the slot index of a sixel image in the registry by its absolute ID.
+    /// Probes preferred slot `image_id % 64` first in O(1), then falls back to
+    /// a pointer scan across the remaining slots to handle slot collisions.
     pub fn findSixelImageSlot(self: *const Screen, image_id: u32) ?usize {
-        for (self.sixel_images, 0..) |opt_img, idx| {
-            if (opt_img) |img| {
-                if ((img.id & 0x1FFFFF) == (image_id & 0x1FFFFF)) {
+        if (self.active_sixel_count == 0) return null;
+        const masked = image_id & 0x1FFFFF;
+        const preferred = masked % 64;
+        if (self.sixel_images[preferred]) |*img| {
+            if ((img.id & 0x1FFFFF) == masked) {
+                return preferred;
+            }
+        }
+        for (&self.sixel_images, 0..) |*opt_img, idx| {
+            if (idx == preferred) continue;
+            if (opt_img.*) |*img| {
+                if ((img.id & 0x1FFFFF) == masked) {
                     return idx;
                 }
             }
@@ -504,9 +531,10 @@ pub const Screen = struct {
     // ── Refcount helpers (bug #225) ──
 
     /// Decrement the refcount for the sixel image occupying cell (x, y) on the
-    /// main grid.  If the cell has no sixel marker the call is a no-op.
+    /// main grid.  If no sixels are active or the cell has no sixel marker the
+    /// call is an O(1) no-op.
     fn decrementMainGridRef(self: *Screen, x: u32, y: u32) void {
-        if (!self.hasSixelImages()) return;
+        if (self.active_sixel_count == 0) return;
         if (x >= self.grid.width or y >= self.grid.height) return;
         const cell = self.grid.getCell(x, y);
         if (!cell.attr.sixel) return;
@@ -520,8 +548,7 @@ pub const Screen = struct {
 
     /// Increment the refcount for the sixel image occupying cell if it has a sixel marker (bug #491).
     fn incrementCellRef(self: *Screen, cell: Cell) void {
-        if (!self.hasSixelImages()) return;
-        if (!cell.attr.sixel) return;
+        if (!cell.attr.sixel or self.active_sixel_count == 0) return;
         const id = @as(u32, cell.char & 0x1FFFFF);
         if (self.findSixelImageSlot(id)) |slot| {
             self.sixel_refcounts[slot] += 1;
@@ -530,8 +557,8 @@ pub const Screen = struct {
 
     /// Decrement refcount for every cell in the given line's cells slice.
     fn decrementLineRefs(self: *Screen, cells: []const Cell) void {
-        if (!self.hasSixelImages()) return;
-        for (cells, 0..) |cell, x| {
+        if (self.active_sixel_count == 0) return;
+        for (cells) |cell| {
             if (cell.attr.sixel) {
                 const id = @as(u32, cell.char & 0x1FFFFF);
                 if (self.findSixelImageSlot(id)) |slot| {
@@ -540,7 +567,6 @@ pub const Screen = struct {
                     }
                 }
             }
-            _ = x;
         }
     }
 
@@ -659,14 +685,14 @@ pub const Screen = struct {
         // Sixel images anchored beyond the new screen height or no longer
         // referenced by visible cells are outside the visible grid. Evict them
         // so anchors do not retain invalid coordinates (bug #435).
-        for (&self.sixel_images, 0..) |*opt_img, idx| {
-            if (opt_img.*) |*img| {
-                // i64 comparison: narrowing height to i32 would trap past
-                // INT32_MAX (bug #473).
-                if (@as(i64, img.anchor_row) >= @as(i64, height) or !self.isImageReferenced(img.id)) {
-                    self.sixel_refcounts[idx] = 0;
-                    img.deinit(self.allocator);
-                    opt_img.* = null;
+        if (self.active_sixel_count > 0) {
+            for (0..self.sixel_images.len) |idx| {
+                if (self.sixel_images[idx]) |*img| {
+                    // i64 comparison: narrowing height to i32 would trap past
+                    // INT32_MAX (bug #473).
+                    if (@as(i64, img.anchor_row) >= @as(i64, height) or self.sixel_refcounts[idx] == 0) {
+                        self.clearSixelSlot(idx);
+                    }
                 }
             }
         }
@@ -1011,7 +1037,7 @@ pub const Screen = struct {
             return;
         }
 
-        const has_sixels = self.hasSixelImages();
+        const has_sixels = self.active_sixel_count > 0;
         var rem = run;
         while (rem.len > 0) {
             if (self.mode.line_wrap) {
@@ -1181,32 +1207,38 @@ pub const Screen = struct {
 
     pub fn eraseLine(self: *Screen, mode: u8) void {
         const fill = self.eraseCell();
-        const cx = @min(self.cursor.x, self.grid.width -| 1);
+        if (self.grid.width == 0 or self.cursor.y >= self.grid.height) {
+            self.dirty = true;
+            return;
+        }
+        const cx = @min(self.cursor.x, self.grid.width - 1);
+        const line = self.grid.getLineMut(self.cursor.y);
         switch (mode) {
             0 => {
-                var x = cx;
-                while (x < self.grid.width) : (x += 1) {
-                    // bug #225: decrement refcount before erasing.
-                    self.decrementMainGridRef(x, self.cursor.y);
-                    self.grid.setCell(x, self.cursor.y, fill);
+                if (cx < line.cells.items.len) {
+                    const end = @min(@as(usize, self.grid.width), line.cells.items.len);
+                    const slice = line.cells.items[cx..end];
+                    // bug #225: decrement refcounts before erasing.
+                    self.decrementLineRefs(slice);
+                    @memset(slice, fill);
                 }
                 if (self.cursor.x == 0) {
-                    self.grid.getLineMut(self.cursor.y).wrapped = false;
+                    line.wrapped = false;
                 }
+                line.dirty = true;
             },
             1 => {
-                var x: u32 = 0;
-                while (x <= cx) : (x += 1) {
-                    // bug #225: decrement refcount before erasing.
-                    self.decrementMainGridRef(x, self.cursor.y);
-                    self.grid.setCell(x, self.cursor.y, fill);
+                const end = @min(@as(usize, cx) + 1, line.cells.items.len);
+                const slice = line.cells.items[0..end];
+                // bug #225: decrement refcounts before erasing.
+                self.decrementLineRefs(slice);
+                @memset(slice, fill);
+                if (cx >= self.grid.width - 1) {
+                    line.wrapped = false;
                 }
-                if (cx >= self.grid.width -| 1) {
-                    self.grid.getLineMut(self.cursor.y).wrapped = false;
-                }
+                line.dirty = true;
             },
             2 => {
-                const line = self.grid.getLineMut(self.cursor.y);
                 // bug #225: decrement refcounts for all cells in this line.
                 self.decrementLineRefs(line.cells.items);
                 @memset(line.cells.items, fill);
@@ -1269,34 +1301,31 @@ pub const Screen = struct {
         }
 
         var removed_sixel = false;
-        for (self.sixel_images, 0..) |opt_img, idx| {
-            if (opt_img) |img| {
-                // Only affect images on the active screen buffer (bug #546).
-                if (img.alt_screen != self.mode.alt_screen) continue;
-                const cell_h = if (self.cell_px_height > 0) self.cell_px_height else 20;
-                // Saturating ceil-div, matching placeSixelImage (bug #464).
-                const cell_rows = if (img.px_height > 0) (img.px_height +| cell_h -| 1) / cell_h else 1;
-                // i64 geometry: narrowing u32 dims to i32 would trap past
-                // INT32_MAX (bug #473).
-                const remove = switch (mode) {
-                    0 => (@as(i64, img.anchor_row) + @as(i64, cell_rows)) > @as(i64, self.cursor.y),
-                    1 => @as(i64, img.anchor_row) <= @as(i64, self.cursor.y),
-                    2 => true,
-                    // CSI 3 J clears scrollback only: remove images entirely in scrollback.
-                    3 => (@as(i64, img.anchor_row) + @as(i64, cell_rows)) <= 0,
-                    else => false,
-                };
-                if (remove) {
-                    removed_sixel = true;
-                    // bug #493: clear surviving marker cells so dead IDs are not left on the grid.
-                    self.clearSixelMarkerCells(img.id);
-                    // bug #225: zero refcount for evicted image.
-                    self.sixel_refcounts[idx] = 0;
-                    const slot = &self.sixel_images[idx];
-                    if (slot.*) |*img_ptr| {
-                        img_ptr.deinit(self.allocator);
+        if (self.active_sixel_count > 0) {
+            const cell_h = if (self.cell_px_height > 0) self.cell_px_height else 20;
+            for (0..self.sixel_images.len) |idx| {
+                if (self.sixel_images[idx]) |*img| {
+                    // Only affect images on the active screen buffer (bug #546).
+                    if (img.alt_screen != self.mode.alt_screen) continue;
+                    // Saturating ceil-div, matching placeSixelImage (bug #464).
+                    const cell_rows = if (img.px_height > 0) (img.px_height +| cell_h -| 1) / cell_h else 1;
+                    // i64 geometry: narrowing u32 dims to i32 would trap past
+                    // INT32_MAX (bug #473).
+                    const remove = switch (mode) {
+                        0 => (@as(i64, img.anchor_row) + @as(i64, cell_rows)) > @as(i64, self.cursor.y),
+                        1 => @as(i64, img.anchor_row) <= @as(i64, self.cursor.y),
+                        2 => true,
+                        // CSI 3 J clears scrollback only: remove images entirely in scrollback.
+                        3 => (@as(i64, img.anchor_row) + @as(i64, cell_rows)) <= 0,
+                        else => false,
+                    };
+                    if (remove) {
+                        removed_sixel = true;
+                        // bug #493: clear surviving marker cells so dead IDs are not left on the grid.
+                        self.clearSixelMarkerCells(img.id);
+                        // bug #225: zero refcount and free evicted image.
+                        self.clearSixelSlot(idx);
                     }
-                    slot.* = null;
                 }
             }
         }
@@ -1388,11 +1417,12 @@ pub const Screen = struct {
         // bug #292: inserting chars shifts [cursor.x, width-1] right by `num`;
         // the markers in the rightmost `num` cells are shifted off the edge and
         // destroyed, so exactly those must have their refcounts released.
-        if (num > 0 and self.grid.width > 0) {
-            const start = self.grid.width - num;
-            var x: u32 = start;
-            while (x < self.grid.width) : (x += 1) {
-                self.decrementMainGridRef(x, self.cursor.y);
+        if (self.active_sixel_count > 0 and num > 0 and self.grid.width > 0 and self.cursor.y < self.grid.height) {
+            const line = self.grid.getLine(self.cursor.y);
+            const start = @min(@as(usize, self.grid.width - num), line.cells.items.len);
+            const end = @min(@as(usize, self.grid.width), line.cells.items.len);
+            if (start < end) {
+                self.decrementLineRefs(line.cells.items[start..end]);
             }
         }
         self.grid.insertChars(cx, self.cursor.y, n);
@@ -1406,11 +1436,12 @@ pub const Screen = struct {
         // the markers at [cursor.x, cursor.x+num-1] are shifted off the left
         // edge and destroyed — release their refcounts (previously the wrong
         // tail cells were decremented).
-        if (num > 0) {
-            var x: u32 = cx;
-            const end = cx + num;
-            while (x < end) : (x += 1) {
-                self.decrementMainGridRef(x, self.cursor.y);
+        if (self.active_sixel_count > 0 and num > 0 and self.cursor.y < self.grid.height) {
+            const line = self.grid.getLine(self.cursor.y);
+            const start = @min(@as(usize, cx), line.cells.items.len);
+            const end = @min(@as(usize, cx + num), line.cells.items.len);
+            if (start < end) {
+                self.decrementLineRefs(line.cells.items[start..end]);
             }
         }
         self.grid.deleteChars(cx, self.cursor.y, n);
@@ -1680,13 +1711,7 @@ pub const Screen = struct {
     }
 
     pub fn resetHard(self: *Screen) Error!void {
-        var had_sixels = false;
-        for (self.sixel_images) |opt_img| {
-            if (opt_img != null) {
-                had_sixels = true;
-                break;
-            }
-        }
+        const had_sixels = self.active_sixel_count > 0;
         // If currently on the alt screen, leave it first so the saved main
         // grid is restored rather than destroyed (bug #546).
         if (self.mode.alt_screen) {
@@ -1717,11 +1742,10 @@ pub const Screen = struct {
         self.grid.clear();
         // bug #225: zero all refcounts before clearing images.
         @memset(&self.sixel_refcounts, 0);
-        for (&self.sixel_images) |*opt_img| {
-            if (opt_img.*) |*img| {
-                img.deinit(self.allocator);
+        if (self.active_sixel_count > 0) {
+            for (0..self.sixel_images.len) |idx| {
+                self.clearSixelSlot(idx);
             }
-            opt_img.* = null;
         }
         if (had_sixels) {
             self.force_clear = true;
@@ -1743,11 +1767,10 @@ pub const Screen = struct {
         self.grid.clear();
         // bug #225: zero refcounts.
         @memset(&self.sixel_refcounts, 0);
-        for (&self.sixel_images) |*opt_img| {
-            if (opt_img.*) |*img| {
-                img.deinit(self.allocator);
+        if (self.active_sixel_count > 0) {
+            for (0..self.sixel_images.len) |idx| {
+                self.clearSixelSlot(idx);
             }
-            opt_img.* = null;
         }
         self.dirty = true;
     }
@@ -1802,12 +1825,11 @@ pub const Screen = struct {
     /// clearing its slot. Used when a screen is torn down so its images can't
     /// linger and be re-emitted as ghosts (bug #298).
     fn dropScreenSixels(self: *Screen, alt: bool) void {
-        for (&self.sixel_images, 0..) |*opt_img, i| {
-            if (opt_img.*) |*img| {
+        if (self.active_sixel_count == 0) return;
+        for (0..self.sixel_images.len) |i| {
+            if (self.sixel_images[i]) |*img| {
                 if (img.alt_screen == alt) {
-                    img.deinit(self.allocator);
-                    opt_img.* = null;
-                    self.sixel_refcounts[i] = 0;
+                    self.clearSixelSlot(i);
                 }
             }
         }
@@ -2086,7 +2108,7 @@ test "eraseDisplay only force_clears when an overlapping sixel is removed — bu
     defer screen.deinit();
 
     const dcs = try testing.allocator.dupe(u8, "\x1bPqX\x1b\\");
-    screen.sixel_images[0] = .{ .data = dcs, .col = 0, .row = 0, .px_width = 10, .px_height = 20, .id = 0 };
+    screen.setSixelSlot(0, .{ .data = dcs, .col = 0, .row = 0, .px_width = 10, .px_height = 20, .id = 0 });
 
     // Mode 0 erases from the cursor downward; place the cursor past the image
     // so it is NOT removed. force_clear must stay false (bug #201).
@@ -3216,14 +3238,14 @@ test "insertChars releases refcounts of markers shifted off the right edge — b
     defer screen.deinit();
 
     // Seed an image in slot 0 with marker cells at (2,0) and (4,0).
-    screen.sixel_images[0] = .{
+    screen.setSixelSlot(0, .{
         .data = try allocator.dupe(u8, "\x1bPqX\x1b\\"),
         .col = 0,
         .row = 0,
         .px_width = 5,
         .px_height = 20,
         .id = 1,
-    };
+    });
     screen.sixel_refcounts[0] = 2;
     var m1 = Cell.empty();
     m1.attr.sixel = true;
@@ -3250,14 +3272,14 @@ test "insert mode re-increments refcounts of markers it shifts — bug #513" {
     defer screen.deinit();
 
     // Seed an image in slot 0 with marker cells at (0,0) and (2,0).
-    screen.sixel_images[0] = .{
+    screen.setSixelSlot(0, .{
         .data = try allocator.dupe(u8, "\x1bPqX\x1b\\"),
         .col = 0,
         .row = 0,
         .px_width = 5,
         .px_height = 20,
         .id = 1,
-    };
+    });
     screen.sixel_refcounts[0] = 2;
     var m1 = Cell.empty();
     m1.attr.sixel = true;
@@ -3289,14 +3311,14 @@ test "deleteChars releases refcounts of markers shifted off the left edge — bu
     defer screen.deinit();
 
     // Seed an image in slot 0 with marker cells at (0,0) and (3,0).
-    screen.sixel_images[0] = .{
+    screen.setSixelSlot(0, .{
         .data = try allocator.dupe(u8, "\x1bPqX\x1b\\"),
         .col = 0,
         .row = 0,
         .px_width = 5,
         .px_height = 20,
         .id = 1,
-    };
+    });
     screen.sixel_refcounts[0] = 2;
     var m1 = Cell.empty();
     m1.attr.sixel = true;
@@ -3323,14 +3345,14 @@ test "insertLines decrements discarded bottom line refcount exactly once — bug
     defer screen.deinit();
 
     // Seed a sixel image in slot 0 with marker cells at (0,3) and (0,4).
-    screen.sixel_images[0] = .{
+    screen.setSixelSlot(0, .{
         .data = try allocator.dupe(u8, "\x1bPqX\x1b\\"),
         .col = 0,
         .row = 3,
         .px_width = 5,
         .px_height = 40,
         .id = 1,
-    };
+    });
     screen.sixel_refcounts[0] = 2;
     var m1 = Cell.empty();
     m1.attr.sixel = true;
@@ -3356,14 +3378,14 @@ test "deleteLines does not decrement preserved bottom line refcount — bug #279
     defer screen.deinit();
 
     // Seed a sixel image in slot 0 with a single marker cell at (0,4).
-    screen.sixel_images[0] = .{
+    screen.setSixelSlot(0, .{
         .data = try allocator.dupe(u8, "\x1bPqX\x1b\\"),
         .col = 0,
         .row = 4,
         .px_width = 5,
         .px_height = 20,
         .id = 1,
-    };
+    });
     screen.sixel_refcounts[0] = 1;
     var m = Cell.empty();
     m.attr.sixel = true;
@@ -3378,6 +3400,161 @@ test "deleteLines does not decrement preserved bottom line refcount — bug #279
 
     try testing.expectEqual(@as(usize, 1), screen.sixel_refcounts[0]);
     try testing.expect(screen.grid.getCell(0, 3).attr.sixel);
+}
+
+fn expectSixelCountConsistent(screen: *const Screen) !void {
+    var actual: u8 = 0;
+    for (&screen.sixel_images) |*opt_img| {
+        if (opt_img.* != null) actual += 1;
+    }
+    try testing.expectEqual(actual, screen.active_sixel_count);
+}
+
+test "active_sixel_count stays consistent across all lifecycle and OOM transitions" {
+    const allocator = std.testing.allocator;
+    var screen = try Screen.init(allocator, 20, 10);
+    defer screen.deinit();
+    screen.cell_size_known = true;
+    try expectSixelCountConsistent(&screen);
+
+    // 1. placeSixelImage + oversized drop
+    screen.cursor = .{ .x = 0, .y = 0 };
+    try screen.placeSixelImage(try allocator.dupe(u8, "\x1bPqA\x1b\\"), 10, 20);
+    try testing.expectEqual(@as(u8, 1), screen.active_sixel_count);
+    try expectSixelCountConsistent(&screen);
+
+    // Oversized placement must drop cleanly without leaking active_sixel_count.
+    try screen.placeSixelImage(try allocator.dupe(u8, "\x1bPqBIG\x1b\\"), 10, 400);
+    try testing.expectEqual(@as(u8, 1), screen.active_sixel_count);
+    try expectSixelCountConsistent(&screen);
+
+    // 2. eraseDisplay modes 0, 1, 3, 2
+    screen.cursor = .{ .x = 0, .y = 5 };
+    try screen.placeSixelImage(try allocator.dupe(u8, "\x1bPqB\x1b\\"), 10, 20);
+    try testing.expectEqual(@as(u8, 2), screen.active_sixel_count);
+    try expectSixelCountConsistent(&screen);
+
+    screen.cursor = .{ .x = 0, .y = 5 };
+    screen.eraseDisplay(0); // removes second image at row 5
+    try expectSixelCountConsistent(&screen);
+    try testing.expectEqual(@as(u8, 1), screen.active_sixel_count);
+
+    screen.cursor = .{ .x = 0, .y = 0 };
+    screen.eraseDisplay(1); // removes first image at row 0
+    try expectSixelCountConsistent(&screen);
+    try testing.expectEqual(@as(u8, 0), screen.active_sixel_count);
+
+    // Scroll image into scrollback, then eraseDisplay(3)
+    screen.cursor = .{ .x = 0, .y = 0 };
+    try screen.placeSixelImage(try allocator.dupe(u8, "\x1bPqS\x1b\\"), 10, 20);
+    try screen.scrollUp(2);
+    screen.eraseDisplay(3);
+    try expectSixelCountConsistent(&screen);
+    try testing.expectEqual(@as(u8, 0), screen.active_sixel_count);
+
+    // eraseDisplay(2)
+    screen.cursor = .{ .x = 0, .y = 2 };
+    try screen.placeSixelImage(try allocator.dupe(u8, "\x1bPqC\x1b\\"), 10, 20);
+    screen.eraseDisplay(2);
+    try expectSixelCountConsistent(&screen);
+    try testing.expectEqual(@as(u8, 0), screen.active_sixel_count);
+
+    // 3. resize evicting out-of-bounds sixel
+    screen.cursor = .{ .x = 0, .y = 8 };
+    try screen.placeSixelImage(try allocator.dupe(u8, "\x1bPqR\x1b\\"), 10, 20);
+    try testing.expectEqual(@as(u8, 1), screen.active_sixel_count);
+    try screen.resize(20, 4);
+    try expectSixelCountConsistent(&screen);
+
+    // 4. useAltScreen(true) + sixel + useAltScreen(false)
+    try screen.useAltScreen(true);
+    screen.cursor = .{ .x = 0, .y = 0 };
+    try screen.placeSixelImage(try allocator.dupe(u8, "\x1bPqALT\x1b\\"), 10, 20);
+    try expectSixelCountConsistent(&screen);
+    try screen.useAltScreen(false);
+    try expectSixelCountConsistent(&screen);
+
+    // 5. clearScreen & resetHard
+    screen.cursor = .{ .x = 0, .y = 0 };
+    try screen.placeSixelImage(try allocator.dupe(u8, "\x1bPqCL\x1b\\"), 10, 20);
+    screen.clearScreen();
+    try expectSixelCountConsistent(&screen);
+    try testing.expectEqual(@as(u8, 0), screen.active_sixel_count);
+
+    screen.cursor = .{ .x = 0, .y = 0 };
+    try screen.placeSixelImage(try allocator.dupe(u8, "\x1bPqRH\x1b\\"), 10, 20);
+    try screen.resetHard();
+    try expectSixelCountConsistent(&screen);
+    try testing.expectEqual(@as(u8, 0), screen.active_sixel_count);
+
+    // 6. placeSixelImage OOM errdefer rollback (bug #501)
+    var failing = testing.FailingAllocator.init(allocator, .{ .fail_index = std.math.maxInt(usize) });
+    var oom_screen = try Screen.init(failing.allocator(), 10, 2);
+    defer oom_screen.deinit();
+    oom_screen.cell_size_known = true;
+    oom_screen.cursor = .{ .x = 0, .y = 1 };
+    const dcs = try failing.allocator().dupe(u8, "\x1bPqOOM\x1b\\");
+    failing.fail_index = failing.alloc_index;
+    const res = oom_screen.placeSixelImage(dcs, 10, 40);
+    try testing.expectError(error.OutOfMemory, res);
+    try expectSixelCountConsistent(&oom_screen);
+    try testing.expectEqual(@as(u8, 0), oom_screen.active_sixel_count);
+}
+
+test "findSixelImageSlot falls back across slot collisions and eraseLine updates refcounts" {
+    const allocator = std.testing.allocator;
+    var screen = try Screen.init(allocator, 10, 4);
+    defer screen.deinit();
+
+    // Place id=1 in slot 5 (not preferred slot 1 % 64 == 1) and id=65 in slot 1 (occupying preferred slot 1).
+    screen.setSixelSlot(1, .{
+        .data = try allocator.dupe(u8, "\x1bPqA\x1b\\"),
+        .col = 0,
+        .row = 0,
+        .px_width = 20,
+        .px_height = 20,
+        .id = 65,
+    });
+    screen.sixel_refcounts[1] = 2;
+    screen.setSixelSlot(5, .{
+        .data = try allocator.dupe(u8, "\x1bPqB\x1b\\"),
+        .col = 4,
+        .row = 0,
+        .px_width = 30,
+        .px_height = 20,
+        .id = 1,
+    });
+    screen.sixel_refcounts[5] = 3;
+
+    try testing.expectEqual(@as(?usize, 1), screen.findSixelImageSlot(65));
+    try testing.expectEqual(@as(?usize, 5), screen.findSixelImageSlot(1));
+    try testing.expectEqual(@as(?usize, null), screen.findSixelImageSlot(99));
+
+    // Seed markers on row 0: cols 0,1 -> id=65; cols 4,5,6 -> id=1
+    for ([_]usize{ 0, 1 }) |c| {
+        var cell = Cell.empty();
+        cell.attr.sixel = true;
+        cell.char = 65;
+        screen.grid.getLineMut(0).cells.items[c] = cell;
+    }
+    for ([_]usize{ 4, 5, 6 }) |c| {
+        var cell = Cell.empty();
+        cell.attr.sixel = true;
+        cell.char = 1;
+        screen.grid.getLineMut(0).cells.items[c] = cell;
+    }
+
+    // eraseLine(0) from x=5 clears cols 5..10 (2 markers of id=1)
+    screen.cursor = .{ .x = 5, .y = 0 };
+    screen.eraseLine(0);
+    try testing.expectEqual(@as(usize, 1), screen.sixel_refcounts[5]);
+    try testing.expectEqual(@as(usize, 2), screen.sixel_refcounts[1]);
+
+    // eraseLine(1) up to x=0 clears col 0 (1 marker of id=65)
+    screen.cursor = .{ .x = 0, .y = 0 };
+    screen.eraseLine(1);
+    try testing.expectEqual(@as(usize, 1), screen.sixel_refcounts[1]);
+    try testing.expectEqual(@as(usize, 1), screen.sixel_refcounts[5]);
 }
 
 test "eraseLine mode 0 when cursor.x equals grid.width" {
