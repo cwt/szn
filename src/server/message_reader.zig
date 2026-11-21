@@ -14,46 +14,68 @@ pub const ReadError = error{
 
 pub const MessageReader = struct {
     buf: [protocol.MAX_CLIENT_PACKET_SIZE]u8 = undefined,
+    head: usize = 0,
     pos: usize = 0,
 
+    pub fn len(self: *const MessageReader) usize {
+        return self.pos - self.head;
+    }
+
     pub fn reset(self: *MessageReader) void {
+        self.head = 0;
         self.pos = 0;
     }
 
     pub fn feed(self: *MessageReader, data: []const u8) ReadError!void {
-        if (data.len > self.buf.len - self.pos) return error.BufferFull;
+        if (self.head >= self.pos) {
+            self.head = 0;
+            self.pos = 0;
+        }
+        if (data.len > self.buf.len - self.pos) {
+            const unread = self.pos - self.head;
+            if (self.head > 0 and data.len <= self.buf.len - unread) {
+                if (unread > 0) {
+                    std.mem.copyForwards(u8, self.buf[0..unread], self.buf[self.head..self.pos]);
+                }
+                self.head = 0;
+                self.pos = unread;
+            } else {
+                return error.BufferFull;
+            }
+        }
         @memcpy(self.buf[self.pos..][0..data.len], data);
         self.pos += data.len;
     }
 
     pub fn tryParse(self: *MessageReader) ReadError!?Packet {
-        if (self.pos < 5) return null;
+        const avail = self.pos - self.head;
+        if (avail < 5) return null;
 
-        const len = std.mem.readInt(u32, self.buf[0..4], .little);
-        if (len < 5) return error.InvalidPacket;
-        if (len > self.buf.len) return error.PacketTooLarge;
+        const slice = self.buf[self.head..self.pos];
+        const pkt_len = std.mem.readInt(u32, slice[0..4], .little);
+        if (pkt_len < 5) return error.InvalidPacket;
+        if (pkt_len > self.buf.len) return error.PacketTooLarge;
 
-        if (self.pos < len) return null;
+        if (avail < pkt_len) return null;
 
         const pkt = Packet{
             .header = .{
-                .length = len,
-                .msg_type = self.buf[4],
+                .length = pkt_len,
+                .msg_type = slice[4],
             },
-            .data = self.buf[5..len],
+            .data = slice[5..pkt_len],
         };
 
         return pkt;
     }
 
     pub fn consume(self: *MessageReader, pkt: Packet) void {
-        const consumed = pkt.header.length;
-        if (consumed >= self.pos) {
+        const consumed: usize = pkt.header.length;
+        if (self.head + consumed >= self.pos) {
+            self.head = 0;
             self.pos = 0;
         } else {
-            const remaining = self.pos - consumed;
-            std.mem.copyForwards(u8, self.buf[0..remaining], self.buf[consumed..self.pos]);
-            self.pos = remaining;
+            self.head += consumed;
         }
     }
 };
@@ -282,4 +304,45 @@ test "message reader rejects client packet exceeding MAX_CLIENT_PACKET_SIZE" {
     // Feeding should either succeed or fail depending on buffer space.
     // If it succeeds, tryParse should reject it as PacketTooLarge.
     try testing.expectError(error.PacketTooLarge, reader.tryParse());
+}
+
+test "message reader compacts on feed only when tail space is exhausted" {
+    var reader = MessageReader{};
+
+    const pkt_a = Packet.make(.stdin_data, "0123456789A"); // 16 bytes
+    var ser_buf: [32]u8 = undefined;
+    const ser = pkt_a.serialize(&ser_buf);
+
+    // Fill almost the entire 8 KiB buffer with 500 packets (8,000 bytes).
+    for (0..500) |_| {
+        try reader.feed(ser);
+    }
+    try testing.expectEqual(@as(usize, 8000), reader.len());
+
+    // Consume 499 packets: head advances in O(1) without shifting.
+    for (0..499) |_| {
+        const parsed = (try reader.tryParse()).?;
+        try testing.expectEqualStrings("0123456789A", parsed.data);
+        reader.consume(parsed);
+    }
+    try testing.expectEqual(@as(usize, 16), reader.len());
+    try testing.expectEqual(@as(usize, 7984), reader.head);
+
+    // Feed 400 bytes (> 192 tail bytes remaining): feed compacts unread 16 bytes to 0.
+    for (0..25) |_| {
+        try reader.feed(ser);
+    }
+    try testing.expectEqual(@as(usize, 0), reader.head);
+    try testing.expectEqual(@as(usize, 26 * 16), reader.len());
+
+    // Drain all 26 packets cleanly.
+    var drained: usize = 0;
+    while (try reader.tryParse()) |p| {
+        try testing.expectEqualStrings("0123456789A", p.data);
+        reader.consume(p);
+        drained += 1;
+    }
+    try testing.expectEqual(@as(usize, 26), drained);
+    try testing.expectEqual(@as(usize, 0), reader.pos);
+    try testing.expectEqual(@as(usize, 0), reader.head);
 }

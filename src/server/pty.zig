@@ -126,7 +126,7 @@ pub const Pty = struct {
     /// master because the child isn't reading its stdin (e.g. it is throttled
     /// by flow control). Drained when the master becomes writable again
     /// (POLLOUT) so keystrokes are never dropped under backpressure.
-    input_buf: std.ArrayList(u8) = .empty,
+    input_buf: io.ByteQueue = .{},
     /// Optional hook invoked when writeInput() has to queue bytes in
     /// input_buf, so the owner can arm POLLOUT on the master right away
     /// instead of rescanning every pane each tick (bug #479). Set by
@@ -249,9 +249,8 @@ pub const Pty = struct {
 
     pub fn deinit(self: *Pty) void {
         if (self.allocator) |alloc| {
-            if (self.input_buf.capacity > 0) {
+            if (self.input_buf.capacity() > 0) {
                 self.input_buf.deinit(alloc);
-                self.input_buf = .empty;
             }
             self.allocator = null;
         }
@@ -301,7 +300,7 @@ pub const Pty = struct {
         // not lost; the server drains it on POLLOUT.
         const rem = data[off..];
         const alloc = self.allocator orelse return error.WriteFailed;
-        if (self.input_buf.items.len + rem.len > 1024 * 1024) return error.WriteFailed;
+        if (self.input_buf.len() + rem.len > 1024 * 1024) return error.WriteFailed;
         self.input_buf.appendSlice(alloc, rem) catch return error.WriteFailed;
         if (self.input_queued_cb) |cb| cb(self.input_queued_ctx, self.master);
     }
@@ -311,27 +310,35 @@ pub const Pty = struct {
     /// queue is dropped); false when the child is still not reading and the
     /// remainder stays queued for a later POLLOUT drain.
     pub fn flushInput(self: *Pty) bool {
-        if (self.input_buf.items.len == 0) return true;
+        if (self.input_buf.isEmpty()) return true;
+        const unread = self.input_buf.unreadSlice();
         var off: usize = 0;
-        while (off < self.input_buf.items.len) {
-            const chunk = self.input_buf.items[off..];
+        while (off < unread.len) {
+            const chunk = unread[off..];
             switch (io.writeOnce(self.master, chunk)) {
                 .wrote => |w| off += w,
                 .would_block => break,
                 .closed => break,
                 .failed => {
-                    self.input_buf.clearRetainingCapacity();
+                    if (self.allocator) |alloc| {
+                        self.input_buf.clearAndReclaim(alloc);
+                    } else {
+                        self.input_buf.clearRetainingCapacity();
+                    }
                     return true;
                 },
             }
         }
-        if (off >= self.input_buf.items.len) {
-            self.input_buf.clearRetainingCapacity();
+        if (off >= unread.len) {
+            if (self.allocator) |alloc| {
+                self.input_buf.clearAndReclaim(alloc);
+            } else {
+                self.input_buf.clearRetainingCapacity();
+            }
             return true;
         }
         if (off > 0) {
-            std.mem.copyForwards(u8, self.input_buf.items[0 .. self.input_buf.items.len - off], self.input_buf.items[off..]);
-            self.input_buf.items.len -= off;
+            self.input_buf.consume(off);
         }
         return false;
     }
@@ -500,7 +507,7 @@ test "writeInput queues remainder under backpressure and flushInput drains it â€
     defer testing.allocator.free(big);
     @memset(big, 'y');
     try pty.writeInput(big);
-    try testing.expect(pty.input_buf.items.len > 0);
+    try testing.expect(pty.input_buf.len() > 0);
     try testing.expectEqual(@as(usize, 1), Counter.count);
 
     // Drain the read end and flush repeatedly until the queue empties.
@@ -509,11 +516,11 @@ test "writeInput queues remainder under backpressure and flushInput drains it â€
     // to free pipe room until the whole queue is written.
     var drain: [16384]u8 = undefined;
     var dguard: usize = 0;
-    while (pty.input_buf.items.len > 0 and dguard < 10000) : (dguard += 1) {
+    while (pty.input_buf.len() > 0 and dguard < 10000) : (dguard += 1) {
         _ = read(fds[0], &drain, drain.len);
         _ = pty.flushInput();
     }
-    try testing.expectEqual(@as(usize, 0), pty.input_buf.items.len);
+    try testing.expectEqual(@as(usize, 0), pty.input_buf.len());
 }
 
 test "Pty.deinit is safe when unspawned and idempotent â€” bug #439" {

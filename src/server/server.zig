@@ -93,7 +93,7 @@ pub const DisplayClient = struct {
     /// new frame: the per-client diff state (last_cells) only advances when the
     /// frame currently buffered is fully flushed, so the client always receives
     /// a complete, consistent screen image.
-    out_buf: std.ArrayList(u8) = .empty,
+    out_buf: io.ByteQueue = .{},
     /// True when this client can't keep up with the render rate (its out_buf
     /// crossed RENDER_HIGH_WATERMARK). While set, the server stops reading the
     /// pane pty so the child is throttled to this client's speed instead of
@@ -950,7 +950,7 @@ pub const Server = struct {
         if ((ev.revents & @as(i16, @intCast(std.posix.POLL.OUT))) != 0) {
             if (pane.pty) |*pty| {
                 _ = pty.flushInput();
-                if (pty.input_buf.items.len == 0) {
+                if (pty.input_buf.isEmpty()) {
                     self.loop.removeFdEvents(pty.master, std.posix.POLL.OUT);
                 }
             }
@@ -2721,7 +2721,7 @@ pub const Server = struct {
         pane.sixel_pending_ctx = @ptrCast(self);
         // The fd may already hold queued input (re-watch after HUP): addFd
         // replaced the entry's event bits, so re-arm POLLOUT explicitly.
-        if (pty.input_buf.items.len > 0) {
+        if (pty.input_buf.len() > 0) {
             self.loop.addFdEvents(pty.master, std.posix.POLL.OUT);
         }
     }
@@ -3067,7 +3067,7 @@ pub const Server = struct {
             // Queue onto the pending buffer and let the non-blocking flush
             // deliver it.  A bare c.write could EAGAIN on the now
             // non-blocking socket and lose the query.
-            if (dc.out_buf.items.len > 0) {
+            if (dc.out_buf.len() > 0) {
                 if (self.appendClientOut(dc, hdr_slice)) {
                     _ = self.flushDisplayClient(dc);
                 }
@@ -3126,10 +3126,10 @@ pub const Server = struct {
     /// it hanging forever (bug #376). The hard cap still applies.
     fn appendClientOutUrgent(self: *Server, dc: *DisplayClient, data: []const u8) bool {
         if (data.len == 0) return true;
-        if (dc.out_buf.items.len + data.len > MAX_OUT_BUF) {
+        if (dc.out_buf.len() + data.len > MAX_OUT_BUF) {
             _ = self.flushDisplayClient(dc);
-            if (dc.out_buf.items.len + data.len > MAX_OUT_BUF) {
-                dc.out_buf.clearRetainingCapacity();
+            if (dc.out_buf.len() + data.len > MAX_OUT_BUF) {
+                dc.out_buf.clearAndReclaim(self.allocator);
                 dc.last_cells.clearRetainingCapacity();
                 self.clearBehind(dc); // bug #522
             }
@@ -3143,7 +3143,7 @@ pub const Server = struct {
             if (dc.fd != fd) continue;
             if (!self.appendClientOutUrgent(dc, data)) return;
             _ = self.flushDisplayClient(dc);
-            if (dc.out_buf.items.len > 0) {
+            if (dc.out_buf.len() > 0) {
                 self.loop.addFdEvents(dc.fd, std.posix.POLL.OUT);
             }
             return;
@@ -3155,7 +3155,7 @@ pub const Server = struct {
             if (dc.fd != fd) continue;
             if (!self.appendClientOut(dc, data)) return;
             _ = self.flushDisplayClient(dc);
-            if (dc.out_buf.items.len > 0) {
+            if (dc.out_buf.len() > 0) {
                 self.loop.addFdEvents(dc.fd, std.posix.POLL.OUT);
             }
             return;
@@ -3191,11 +3191,11 @@ pub const Server = struct {
         // plus this frame exceed the hard cap, drop the backlog and resync the
         // diff state so the next full render repaints a coherent screen rather
         // than feeding the client a corrupt slice.
-        if (dc.out_buf.items.len + total_len > MAX_OUT_BUF) {
+        if (dc.out_buf.len() + total_len > MAX_OUT_BUF) {
             // A transient EAGAIN may have cleared by now — drain before giving up.
             _ = self.flushDisplayClient(dc);
-            if (dc.out_buf.items.len + total_len > MAX_OUT_BUF) {
-                dc.out_buf.clearRetainingCapacity();
+            if (dc.out_buf.len() + total_len > MAX_OUT_BUF) {
+                dc.out_buf.clearAndReclaim(self.allocator);
                 dc.last_cells.clearRetainingCapacity();
                 self.clearBehind(dc); // bug #522
                 return false;
@@ -3209,24 +3209,18 @@ pub const Server = struct {
         // large frame (e.g. a big sixel) is queued even if it crosses the
         // watermark — only ADDITIONAL frames are skipped once the buffer is
         // already large.
-        if (dc.behind or dc.out_buf.items.len >= RENDER_HIGH_WATERMARK) {
+        if (dc.behind or dc.out_buf.len() >= RENDER_HIGH_WATERMARK) {
             if (!dc.behind) {
                 dc.behind = true;
                 self.behind_count += 1;
             }
             return true;
         }
-        const prev_len = dc.out_buf.items.len;
-        if (hdr.len > 0) {
-            dc.out_buf.appendSlice(self.allocator, hdr) catch return false;
-        }
-        if (body.len > 0) {
-            dc.out_buf.appendSlice(self.allocator, body) catch {
-                dc.out_buf.shrinkRetainingCapacity(prev_len);
-                return false;
-            };
-        }
-        if (dc.out_buf.items.len > RENDER_HIGH_WATERMARK) {
+        // Reserve both header and body up front so the append is atomic on OOM.
+        dc.out_buf.ensureUnusedCapacity(self.allocator, total_len) catch return false;
+        dc.out_buf.appendSliceAssumeCapacity(hdr);
+        dc.out_buf.appendSliceAssumeCapacity(body);
+        if (dc.out_buf.len() > RENDER_HIGH_WATERMARK) {
             if (!dc.behind) {
                 dc.behind = true;
                 self.behind_count += 1;
@@ -3247,7 +3241,7 @@ pub const Server = struct {
     /// old path always heap-copied the whole frame before the write. Falls
     /// back to queueing when a previous frame is still pending.
     fn writeFrameToClient(self: *Server, dc: *DisplayClient, hdr: []const u8, body: []const u8) bool {
-        if (dc.out_buf.items.len > 0) return self.appendClientOutFrame(dc, hdr, body);
+        if (dc.out_buf.len() > 0) return self.appendClientOutFrame(dc, hdr, body);
         const total_len = hdr.len + body.len;
 
         // Flow control (bug #298 follow-up, bug #431): while this client is
@@ -3257,7 +3251,7 @@ pub const Server = struct {
         // Reserve the worst case (the whole frame) up front so a partial write
         // can always queue its remainder — a half-written frame must never be
         // abandoned because an allocation failed.
-        dc.out_buf.ensureTotalCapacity(self.allocator, total_len) catch return false;
+        dc.out_buf.ensureUnusedCapacity(self.allocator, total_len) catch return false;
 
         var off: usize = 0;
         while (off < total_len) {
@@ -3288,10 +3282,12 @@ pub const Server = struct {
             // A single large frame may cross the watermark on its own; that
             // sets behind (the sent prefix cannot be unfetched) and further
             // frames are skipped until the socket drains.
-            if (dc.out_buf.items.len > RENDER_HIGH_WATERMARK and !dc.behind) {
+            if (dc.out_buf.len() > RENDER_HIGH_WATERMARK and !dc.behind) {
                 dc.behind = true;
                 self.behind_count += 1;
             }
+        } else if (dc.out_buf.capacity() > io.ByteQueue.RECLAIM_THRESHOLD) {
+            dc.out_buf.clearAndReclaim(self.allocator);
         }
 
         // Frame-flow diagnostics (bug #298): count what reached clients.
@@ -3308,25 +3304,26 @@ pub const Server = struct {
     /// in out_buf and POLLOUT is armed so flushDisplayClient is retried by the
     /// event loop when the socket becomes writable again.
     fn flushDisplayClient(self: *Server, dc: *DisplayClient) bool {
-        if (dc.out_buf.items.len == 0) return true;
+        if (dc.out_buf.isEmpty()) return true;
+        const unread = dc.out_buf.unreadSlice();
         var off: usize = 0;
-        while (off < dc.out_buf.items.len) {
-            const chunk = dc.out_buf.items[off..];
+        while (off < unread.len) {
+            const chunk = unread[off..];
             switch (io.writeOnce(dc.fd, chunk)) {
                 .wrote => |w| off += w,
                 .would_block => break,
                 .closed => break,
                 .failed => {
                     // Broken pipe / fatal — give up on this client's backlog.
-                    dc.out_buf.clearRetainingCapacity();
+                    dc.out_buf.clearAndReclaim(self.allocator);
                     self.clearBehind(dc);
                     self.loop.removeFdEvents(dc.fd, std.posix.POLL.OUT);
                     return true;
                 },
             }
         }
-        if (off >= dc.out_buf.items.len) {
-            dc.out_buf.clearRetainingCapacity();
+        if (off >= unread.len) {
+            dc.out_buf.clearAndReclaim(self.allocator);
             // Client has caught up — clear the flow-control flag so pane reads
             // (and thus the child) resume at full speed.
             self.clearBehind(dc);
@@ -3334,8 +3331,7 @@ pub const Server = struct {
             return true;
         }
         if (off > 0) {
-            std.mem.copyForwards(u8, dc.out_buf.items[0 .. dc.out_buf.items.len - off], dc.out_buf.items[off..]);
-            dc.out_buf.items.len -= off;
+            dc.out_buf.consume(off);
         }
         self.loop.addFdEvents(dc.fd, std.posix.POLL.OUT);
         return false;
@@ -3541,7 +3537,7 @@ pub const Server = struct {
             // render. While a frame is partially sent we must not regenerate a
             // new one: the diff state (last_cells) only advances once the
             // buffered frame is fully flushed, keeping the client in sync.
-            if (dc.out_buf.items.len > 0) {
+            if (dc.out_buf.len() > 0) {
                 if (!self.flushDisplayClient(dc)) {
                     all_flushed = false;
                     continue;
@@ -5654,7 +5650,7 @@ test "flushDisplayClient correctly handles partial writes and buffers remaining 
     // It will return false, but should NOT lose/discard the unwritten data!
     const flushed = server.flushDisplayClient(dc);
     try testing.expect(!flushed);
-    try testing.expect(dc.out_buf.items.len > 0);
+    try testing.expect(dc.out_buf.len() > 0);
 
     // Read everything currently in client socket buffer to drain it
     var drain_buf: [4096]u8 = undefined;
@@ -5671,7 +5667,7 @@ test "flushDisplayClient correctly handles partial writes and buffers remaining 
     // This time it should successfully write the rest of the data and return true.
     const flushed_again = server.flushDisplayClient(dc);
     try testing.expect(flushed_again);
-    try testing.expectEqual(@as(usize, 0), dc.out_buf.items.len);
+    try testing.expectEqual(@as(usize, 0), dc.out_buf.len());
 
     // Read from client end and verify it received the exact test_data
     var read_buf: [128]u8 = undefined;
@@ -6198,11 +6194,11 @@ test "appendClientOut marks display client behind on watermark and skips frames 
     // skipped (the already-buffered frame is kept, not duplicated).
     try testing.expect(server.appendClientOut(dc, "frame"));
     try testing.expect(dc.behind);
-    try testing.expectEqual(@as(usize, Server.RENDER_HIGH_WATERMARK + 1), dc.out_buf.items.len);
+    try testing.expectEqual(@as(usize, Server.RENDER_HIGH_WATERMARK + 1), dc.out_buf.len());
 
     // While behind, further frames are also skipped (no pile-up).
     try testing.expect(server.appendClientOut(dc, "frame2"));
-    try testing.expectEqual(@as(usize, Server.RENDER_HIGH_WATERMARK + 1), dc.out_buf.items.len);
+    try testing.expectEqual(@as(usize, Server.RENDER_HIGH_WATERMARK + 1), dc.out_buf.len());
 
     // Draining the buffer (writable fd) clears behind and empties out_buf,
     // letting the child resume at full speed.
@@ -6212,7 +6208,7 @@ test "appendClientOut marks display client behind on watermark and skips frames 
     try dc.out_buf.appendSlice(testing.allocator, "small");
     try testing.expect(server.flushDisplayClient(dc));
     try testing.expect(!dc.behind);
-    try testing.expectEqual(@as(usize, 0), dc.out_buf.items.len);
+    try testing.expectEqual(@as(usize, 0), dc.out_buf.len());
 }
 
 test "prompt command execution frees DispatchResult — bug #237" {
@@ -6658,11 +6654,11 @@ test "appendClientOutFrame and renderToDisplayClient obey RENDER_HIGH_WATERMARK 
     try testing.expect(server.appendClientOutFrame(dc, &hdr, "hello world"));
     try testing.expect(dc.behind);
 
-    const len_after_first = dc.out_buf.items.len;
+    const len_after_first = dc.out_buf.len();
 
     // Subsequent frame while behind is skipped
     try testing.expect(server.appendClientOutFrame(dc, &hdr, "another frame"));
-    try testing.expectEqual(len_after_first, dc.out_buf.items.len);
+    try testing.expectEqual(len_after_first, dc.out_buf.len());
 }
 
 test "window setName invalidates status cache and redraws updated name — bug #441" {
@@ -6879,7 +6875,7 @@ test "writeFrameToClient writes directly and queues only the remainder — bug #
     const pkt = protocol.Packet.make(.output, "direct");
     pkt.header.encode(&hdr);
     try testing.expect(server.writeFrameToClient(dc, &hdr, "direct"));
-    try testing.expectEqual(@as(usize, 0), dc.out_buf.items.len);
+    try testing.expectEqual(@as(usize, 0), dc.out_buf.len());
 
     var recv_buf: [64]u8 = undefined;
     const n = std.c.read(fds[0], &recv_buf, recv_buf.len);
@@ -6911,8 +6907,8 @@ test "writeFrameToClient writes directly and queues only the remainder — bug #
     const pkt2 = protocol.Packet.make(.output, frame);
     pkt2.header.encode(&hdr);
     try testing.expect(server.writeFrameToClient(dc, &hdr, frame));
-    try testing.expectEqual(@as(usize, hdr.len + frame.len), dc.out_buf.items.len);
-    try testing.expect(std.mem.indexOf(u8, dc.out_buf.items, "yy") != null);
+    try testing.expectEqual(@as(usize, hdr.len + frame.len), dc.out_buf.len());
+    try testing.expect(std.mem.indexOf(u8, dc.out_buf.unreadSlice(), "yy") != null);
 }
 
 test "applyDirectives coerces quoted non-string options and applies side effects, and runs slow if-shell non-blockingly — bug #557" {

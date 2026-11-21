@@ -89,19 +89,19 @@ const setBlocking = io.setBlocking;
 /// backlog is dropped and `needs_redraw` is set so the client asks the server
 /// for a full repaint once the pty drains. A single frame larger than the
 /// whole cap is rejected outright. Returns false when nothing was queued.
-fn queueStdout(allocator: std.mem.Allocator, out_buf: *std.ArrayList(u8), data: []const u8, needs_redraw: *bool) bool {
+fn queueStdout(allocator: std.mem.Allocator, out_buf: *io.ByteQueue, data: []const u8, needs_redraw: *bool) bool {
     if (data.len == 0) return true;
     if (data.len > MAX_CLIENT_OUT_BUF) {
-        out_buf.clearRetainingCapacity();
+        out_buf.clearAndReclaim(allocator);
         needs_redraw.* = true;
         return false;
     }
-    if (out_buf.items.len + data.len > MAX_CLIENT_OUT_BUF) {
-        out_buf.clearRetainingCapacity();
+    if (out_buf.len() + data.len > MAX_CLIENT_OUT_BUF) {
+        out_buf.clearAndReclaim(allocator);
         needs_redraw.* = true;
     }
     out_buf.appendSlice(allocator, data) catch {
-        out_buf.clearRetainingCapacity();
+        out_buf.clearAndReclaim(allocator);
         needs_redraw.* = true;
         return false;
     };
@@ -112,28 +112,28 @@ fn queueStdout(allocator: std.mem.Allocator, out_buf: *std.ArrayList(u8), data: 
 /// buffer was written (or the fd is unwritable for good, in which case the
 /// buffer is dropped); false when the pty is applying backpressure and the
 /// remainder stays queued for a later POLL.OUT drain.
-fn flushStdout(fd: i32, out_buf: *std.ArrayList(u8)) bool {
-    if (out_buf.items.len == 0) return true;
+fn flushStdout(allocator: std.mem.Allocator, fd: i32, out_buf: *io.ByteQueue) bool {
+    if (out_buf.isEmpty()) return true;
+    const unread = out_buf.unreadSlice();
     var off: usize = 0;
-    while (off < out_buf.items.len) {
-        const n = c.write(fd, out_buf.items.ptr + off, out_buf.items.len - off);
+    while (off < unread.len) {
+        const n = c.write(fd, unread.ptr + off, unread.len - off);
         if (n < 0) {
             const err = std.c.errno(n);
             if (err == .INTR) continue;
             if (err == .AGAIN) break;
-            out_buf.clearRetainingCapacity();
+            out_buf.clearAndReclaim(allocator);
             return true;
         }
         if (n == 0) break;
         off += @as(usize, @intCast(n));
     }
-    if (off >= out_buf.items.len) {
-        out_buf.clearRetainingCapacity();
+    if (off >= unread.len) {
+        out_buf.clearAndReclaim(allocator);
         return true;
     }
     if (off > 0) {
-        std.mem.copyForwards(u8, out_buf.items[0 .. out_buf.items.len - off], out_buf.items[off..]);
-        out_buf.items.len -= off;
+        out_buf.consume(off);
     }
     return false;
 }
@@ -665,12 +665,12 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
     _ = tcflush(stdin_fd, TCIFLUSH);
     defer raw.deinit();
 
-    var read_buf: std.ArrayList(u8) = .empty;
+    var read_buf: io.ByteQueue = .{};
     defer read_buf.deinit(allocator);
 
     // Pending stdout bytes that couldn't be written while the downstream pty
     // applied backpressure. Drained whenever POLL.OUT fires on stdout.
-    var out_buf: std.ArrayList(u8) = .empty;
+    var out_buf: io.ByteQueue = .{};
     defer out_buf.deinit(allocator);
 
     var display = Display{
@@ -683,8 +683,8 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
     display.enterAltScreen() catch |err| std.log.warn("enterAltScreen failed: {any}", .{err});
     defer {
         setBlocking(stdout_fd);
-        while (out_buf.items.len > 0) {
-            if (!flushStdout(stdout_fd, &out_buf)) break;
+        while (out_buf.len() > 0) {
+            if (!flushStdout(allocator, stdout_fd, &out_buf)) break;
         }
         display.exitAltScreen() catch |err| std.log.warn("exitAltScreen failed: {any}", .{err});
     }
@@ -765,10 +765,10 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
         // fills the server socket so its flow control throttles the child to
         // our speed; otherwise we'd keep consuming frames and dropping them,
         // which reads as a frozen screen. Resume when the queue drains.
-        const congested = out_buf.items.len >= CLIENT_OUT_HIGH_WATERMARK;
+        const congested = out_buf.len() >= CLIENT_OUT_HIGH_WATERMARK;
         if (congested != backpressure) {
             backpressure = congested;
-            std.log.warn("client backpressure {s} (out_buf={d})", .{ if (congested) "on" else "off", out_buf.items.len });
+            std.log.warn("client backpressure {s} (out_buf={d})", .{ if (congested) "on" else "off", out_buf.len() });
         }
         // CPU-spike diagnostic (bug #298): every ~2 s report how much is queued
         // for the downstream pty, so a 90% CPU report can be attributed to the
@@ -776,7 +776,7 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
         const diag_now = currentMillis();
         if (diag_now - last_diag_ms > 2000) {
             last_diag_ms = diag_now;
-            std.log.debug("client: out_buf={d} backpressure={any} awaiting_cell_size={any}", .{ out_buf.items.len, congested, awaiting_cell_size });
+            std.log.debug("client: out_buf={d} backpressure={any} awaiting_cell_size={any}", .{ out_buf.len(), congested, awaiting_cell_size });
         }
         if (congested) {
             pollfds[0] = .{ .fd = -1, .events = 0, .revents = 0 };
@@ -796,7 +796,7 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
             }
         }
         var poll_count: usize = 2;
-        if (out_buf.items.len > 0) {
+        if (out_buf.len() > 0) {
             pollfds[2] = .{ .fd = stdout_fd, .events = @as(i16, @intCast(std.posix.POLL.OUT)), .revents = 0 };
             poll_count = 3;
         }
@@ -914,7 +914,7 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
             const write_slice = read_buf.unusedCapacitySlice();
             const n = c.read(server_fd, write_slice.ptr, write_slice.len);
             if (n > 0) {
-                read_buf.items.len += @as(usize, @intCast(n));
+                read_buf.advanceTail(@as(usize, @intCast(n)));
             } else if (n == -1) {
                 const err = std.c.errno(n);
                 if (err != .AGAIN and err != .INTR) {
@@ -927,9 +927,10 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
                 continue;
             }
 
+            const unread = read_buf.unreadSlice();
             var read_pos: usize = 0;
-            while (read_buf.items.len - read_pos >= 5) {
-                const pkt_len = std.mem.readInt(u32, read_buf.items[read_pos..][0..4], .little);
+            while (unread.len - read_pos >= 5) {
+                const pkt_len = std.mem.readInt(u32, unread[read_pos..][0..4], .little);
                 if (pkt_len < 5) {
                     std.log.err("client malformed packet length {d}, exiting", .{pkt_len});
                     running = false;
@@ -943,14 +944,14 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
                     running = false;
                     break;
                 }
-                if (read_buf.items.len - read_pos < pkt_len) break;
+                if (unread.len - read_pos < pkt_len) break;
 
-                const msg_type = protocol.MessageType.fromByte(read_buf.items[read_pos + 4]) orelse {
-                    std.log.warn("client received unknown message type byte: {}", .{read_buf.items[read_pos + 4]});
+                const msg_type = protocol.MessageType.fromByte(unread[read_pos + 4]) orelse {
+                    std.log.warn("client received unknown message type byte: {}", .{unread[read_pos + 4]});
                     read_pos += pkt_len;
                     continue;
                 };
-                const data = read_buf.items[read_pos + 5 .. read_pos + pkt_len];
+                const data = unread[read_pos + 5 .. read_pos + pkt_len];
 
                 pkt_total += 1;
                 switch (msg_type) {
@@ -969,7 +970,7 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
                         // cap was hit and a backlog dropped, request a full
                         // repaint once the pty demonstrably drains again.
                         if (queueStdout(allocator, &out_buf, data, &needs_redraw)) {
-                            if (flushStdout(stdout_fd, &out_buf) and needs_redraw) {
+                            if (flushStdout(allocator, stdout_fd, &out_buf) and needs_redraw) {
                                 needs_redraw = false;
                                 const rd_pkt = protocol.Packet.make(.redraw, "");
                                 var rd_buf: [128]u8 = undefined;
@@ -989,7 +990,7 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
                         // (possibly late) reply in the stdin handler so it can't
                         // leak to the pane as a keystroke (bug #298).
                         out_buf.appendSlice(allocator, "\x1b[14t") catch {};
-                        _ = flushStdout(stdout_fd, &out_buf);
+                        _ = flushStdout(allocator, stdout_fd, &out_buf);
                         awaiting_cell_size = true;
                         awaiting_cell_size_since_ms = currentMillis();
                         cell_resp_len = 0;
@@ -1016,13 +1017,12 @@ fn runInteractiveClient(allocator: std.mem.Allocator) Error!void {
             }
 
             if (read_pos > 0) {
-                std.mem.copyForwards(u8, read_buf.items[0 .. read_buf.items.len - read_pos], read_buf.items[read_pos..]);
-                read_buf.items.len -= read_pos;
+                read_buf.consumeReclaiming(allocator, read_pos);
             }
         }
 
         if (poll_count == 3 and (pollfds[2].revents & @as(i16, @intCast(std.posix.POLL.OUT))) != 0) {
-            if (flushStdout(stdout_fd, &out_buf) and needs_redraw) {
+            if (flushStdout(allocator, stdout_fd, &out_buf) and needs_redraw) {
                 needs_redraw = false;
                 const rd_pkt = protocol.Packet.make(.redraw, "");
                 var rd_buf: [128]u8 = undefined;
@@ -1068,7 +1068,7 @@ test "sigaction configured with SA_RESTART — bug #236" {
 }
 
 test "queueStdout drops the backlog on overflow and sets needs_redraw — bug #298" {
-    var out_buf: std.ArrayList(u8) = .empty;
+    var out_buf: io.ByteQueue = .{};
     defer out_buf.deinit(testing.allocator);
     var needs_redraw = false;
 
@@ -1081,12 +1081,12 @@ test "queueStdout drops the backlog on overflow and sets needs_redraw — bug #2
     while (total + chunk.len <= MAX_CLIENT_OUT_BUF) : (total += chunk.len) {
         try testing.expect(queueStdout(testing.allocator, &out_buf, chunk, &needs_redraw));
     }
-    try testing.expectEqual(@as(usize, MAX_CLIENT_OUT_BUF), out_buf.items.len);
+    try testing.expectEqual(@as(usize, MAX_CLIENT_OUT_BUF), out_buf.len());
     try testing.expect(!needs_redraw);
 
     // One more chunk overflows: the backlog is dropped and redraw is requested.
     try testing.expect(queueStdout(testing.allocator, &out_buf, chunk, &needs_redraw));
-    try testing.expectEqual(@as(usize, 1024), out_buf.items.len);
+    try testing.expectEqual(@as(usize, 1024), out_buf.len());
     try testing.expect(needs_redraw);
 
     // A single frame larger than the whole cap is dropped outright.
@@ -1095,7 +1095,7 @@ test "queueStdout drops the backlog on overflow and sets needs_redraw — bug #2
     @memset(huge, 'B');
     needs_redraw = false;
     try testing.expect(!queueStdout(testing.allocator, &out_buf, huge, &needs_redraw));
-    try testing.expectEqual(@as(usize, 0), out_buf.items.len);
+    try testing.expectEqual(@as(usize, 0), out_buf.len());
     try testing.expect(needs_redraw);
 }
 
@@ -1106,7 +1106,7 @@ test "flushStdout keeps the remainder on a full pipe and drains later — bug #2
     defer _ = std.c.close(fds[1]);
     setNonBlocking(fds[1]);
 
-    var out_buf: std.ArrayList(u8) = .empty;
+    var out_buf: io.ByteQueue = .{};
     defer out_buf.deinit(testing.allocator);
 
     // Larger than the OS pipe buffer so the first flush cannot finish.
@@ -1116,16 +1116,17 @@ test "flushStdout keeps the remainder on a full pipe and drains later — bug #2
     try out_buf.appendSlice(testing.allocator, big);
 
     // The pipe fills up and the flush returns false, keeping the remainder.
-    try testing.expect(!flushStdout(fds[1], &out_buf));
-    try testing.expect(out_buf.items.len > 0);
+    try testing.expect(!flushStdout(testing.allocator, fds[1], &out_buf));
+    try testing.expect(out_buf.len() > 0);
 
     // Drain the read end until the whole buffer is written out.
     var drain_buf: [16384]u8 = undefined;
-    while (out_buf.items.len > 0) {
+    while (out_buf.len() > 0) {
         _ = std.c.read(fds[0], &drain_buf, drain_buf.len);
-        if (flushStdout(fds[1], &out_buf)) break;
+        if (flushStdout(testing.allocator, fds[1], &out_buf)) break;
     }
-    try testing.expectEqual(@as(usize, 0), out_buf.items.len);
+    try testing.expectEqual(@as(usize, 0), out_buf.len());
+    try testing.expectEqual(@as(usize, 0), out_buf.capacity());
 }
 
 test "ignoring SIGPIPE turns a write to a closed peer into EPIPE, not a crash — bug #298" {

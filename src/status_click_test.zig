@@ -114,5 +114,5 @@ test "queueToClient / sendRequestCellSize self-heals on overflow instead of trun
     // next full render then repaints a coherent screen.
     server.needs_cell_size_refresh = true;
     server.sendRequestCellSize();
-    try std.testing.expectEqual(@as(usize, 0), dcp.out_buf.items.len);
+    try std.testing.expectEqual(@as(usize, 0), dcp.out_buf.len());
 }

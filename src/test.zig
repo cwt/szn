@@ -19,6 +19,7 @@ comptime {
     // exhausts the allocator's retained metadata before they run).
     _ = @import("status_click_test.zig");
     _ = @import("colour.zig");
+    _ = @import("io.zig");
     _ = @import("grid.zig");
     _ = @import("screen.zig");
     _ = @import("key.zig");
