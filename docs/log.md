@@ -7,7 +7,7 @@ sources:
   - docs/
 verified: human-reviewed
 tags: [log, changelog, okf]
-timestamp: 2026-10-30T07:40:00Z
+timestamp: 2026-11-21T03:15:00Z
 ---
 
 # Documentation Bundle Log
@@ -16,6 +16,7 @@ This file tracks all modifications, extensions, and updates to the `szn` documen
 
 | Timestamp | Document | Action | Description |
 |---|---|---|---|
+| 2026-11-21T03:15:00Z | [algorithm-optimization-plan.md](development/algorithm-optimization-plan.md), [index.md](development/index.md) | Created / Updated | Created prioritized algorithmic optimization plan (P0 reflow quadratic scans & copy-mode fast path, P1 O(N) ByteQueue drains, P1 sixel refcount guard & containment mask, P2 bounded PTY drain & border dirty preservation, P3 region rotate / charWidth / status cleanups) with empirical two-layer benchmark methodology, doubling scaling exponent (α) gates, and dual Zig 0.16/0.17 verification criteria; linked from development index. |
 | 2026-10-30T15:25:00Z | [v0.11.0.md](releases/v0.11.0.md) | Created | Created release notes for v0.11.0 (dual Zig 0.16/0.17 toolchain support, lifecycle memory reclamation, Lao script reflow, RPM packaging, and 61-bug stability sweep). |
 | 2026-10-30T15:25:00Z | [index.md](releases/index.md), [README.md](https://github.com/cwt/szn/blob/main/README.md) | Updated | Added v0.11.0 to releases index, updated binary sizes for Zig 0.17.0 (1,053,312 bytes x86-64 Linux, 834,864 bytes aarch64 macOS). |
 | 2026-10-30T15:25:00Z | [progress.md](development/progress.md), [build.zig.zon](https://github.com/cwt/szn/blob/main/build.zig.zon), [szn.spec](https://github.com/cwt/szn/blob/main/szn.spec) | Updated | Bumped version to 0.11.0 and documented v0.11.0 release milestone. |

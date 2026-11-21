@@ -7,11 +7,12 @@ sources:
   - docs/development/
 verified: human-reviewed
 tags: [index, development, okf]
-timestamp: 2026-09-04T09:18:00Z
+timestamp: 2026-11-21T03:15:00Z
 ---
 
 # Development
 
+- [Algorithm Optimization Plan](algorithm-optimization-plan.md)
 - [Bugs](bugs/index.md)
 - [Lessons from Talyn](lessons-from-talyn.md)
 - [Migration Plan](migration.md)
