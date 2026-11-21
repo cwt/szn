@@ -172,16 +172,43 @@ pub const Pane = struct {
         self.dirty = true;
     }
 
+    /// Maximum bytes and reads drained from a PTY in a single `feedPty` call
+    /// before yielding back to the event loop to render and service input.
+    /// Coalesces bulk bursts (especially on macOS where PTY reads deliver 1 KiB
+    /// per syscall) while staying responsive to interactive keystrokes.
+    const FEED_PTY_BUDGET: usize = 64 * 1024;
+    const FEED_PTY_MAX_READS: usize = 64;
+
     pub fn feedPty(self: *Pane) Error!void {
         const pty = &(self.pty orelse return);
-        var buf: [4096]u8 = undefined;
-        const n = try pty.readOutput(&buf);
         const parser = self.getParser();
-        try parser.advanceBatch(buf[0..n]);
-        self.dirty = true;
-        if (self.screen.pending_sixel != null) {
-            if (self.sixel_pending_hook) |hook| hook(self.sixel_pending_ctx, self);
+        var buf: [8192]u8 = undefined;
+        var total_read: usize = 0;
+        var reads: usize = 0;
+        var read_err: ?Error = null;
+
+        while (total_read < FEED_PTY_BUDGET and reads < FEED_PTY_MAX_READS) {
+            const want = @min(buf.len, FEED_PTY_BUDGET - total_read);
+            const n = pty.readOutput(buf[0..want]) catch |err| {
+                read_err = err;
+                break;
+            };
+            reads += 1;
+            if (n == 0) break;
+            try parser.advanceBatch(buf[0..n]);
+            total_read += n;
+            // Preserve bug #204's prompt-hold invariant: stop reading as soon
+            // as a sixel is buffered waiting for measured cell dimensions.
+            if (self.screen.pending_sixel != null) break;
         }
+
+        if (total_read > 0) {
+            self.dirty = true;
+            if (self.screen.pending_sixel != null) {
+                if (self.sixel_pending_hook) |hook| hook(self.sixel_pending_ctx, self);
+            }
+        }
+        if (read_err) |err| return err;
     }
 
     pub fn writeInput(self: *Pane, data: []const u8) Error!void {
@@ -294,6 +321,10 @@ pub const Window = struct {
     /// Last time the foreground-process syscall ran, in ms. Rate-limits the
     /// check to 500ms when pgid is unchanged (bug #300, #442).
     last_foreground_check_ms: i64 = 0,
+    /// Last time `tcgetpgrp(2)` ran during renderToDisplayClient, in ms.
+    /// Rate-limits PGID polling to 100ms during output bursts unless
+    /// `last_foreground_check_ms == 0` (reset on Enter / SIGCHLD).
+    last_pgid_check_ms: i64 = 0,
     last_foreground_pgid: i32 = -1,
     name_dirty: bool = false,
     active_pane_dirty: bool = false,
@@ -861,4 +892,70 @@ test "Pane.saveGrid and restoreSavedGrid recycle saved_grid in-place — bug #36
     pane.restoreSavedGrid();
     try testing.expectEqual(@as(u21, 'B'), pane.screen.grid.getCell(0, 0).char);
     try testing.expect(pane.saved_grid != null);
+}
+
+test "Pane.feedPty preserves dirty state on mid-loop EOF and respects budget" {
+    const io_mod = @import("io.zig");
+    var pane = try Pane.init(testing.allocator, 1, 80, 24);
+    defer pane.deinit();
+
+    var fds: [2]c_int = undefined;
+    if (std.c.pipe(&fds) != 0) return error.Unexpected;
+    io_mod.setNonBlocking(fds[0]);
+    pane.pty = .{ .master = fds[0], .slave = -1, .pid = -1 };
+    pane.dirty = false;
+
+    const msg = "final output";
+    try io_mod.writeAll(fds[1], msg);
+    _ = std.c.close(fds[1]);
+
+    // First read gets "final output", second read gets EOF (error.ProcessExited).
+    // feedPty must mark pane.dirty = true and retain parsed cells before returning EOF.
+    const res = pane.feedPty();
+    try testing.expectError(error.ProcessExited, res);
+    try testing.expect(pane.dirty);
+    try testing.expectEqual(@as(u21, 'f'), pane.screen.grid.getCell(0, 0).char);
+    try testing.expectEqual(@as(u21, 't'), pane.screen.grid.getCell(msg.len - 1, 0).char);
+}
+
+test "Pane.feedPty stops reading immediately when pending_sixel is buffered" {
+    const io_mod = @import("io.zig");
+    var pane = try Pane.init(testing.allocator, 1, 80, 24);
+    defer pane.deinit();
+    pane.screen.cell_size_known = false;
+
+    const HookState = struct {
+        called: usize = 0,
+        fn hook(ctx: ?*anyopaque, _: *Pane) void {
+            const st: *@This() = @ptrCast(@alignCast(ctx.?));
+            st.called += 1;
+        }
+    };
+    var hook_state = HookState{};
+    pane.sixel_pending_hook = HookState.hook;
+    pane.sixel_pending_ctx = &hook_state;
+
+    var fds: [2]c_int = undefined;
+    if (std.c.pipe(&fds) != 0) return error.Unexpected;
+    defer _ = std.c.close(fds[1]);
+    io_mod.setNonBlocking(fds[0]);
+    pane.pty = .{ .master = fds[0], .slave = -1, .pid = -1 };
+    pane.dirty = false;
+
+    // Write > 8 KiB: a small sixel DCS followed by padding so a second read would be needed.
+    const sixel = "\x1bPq\"1;1;10;20#0;2;100;0;0~-\x1b\\";
+    try io_mod.writeAll(fds[1], sixel);
+    var tail: [9000]u8 = undefined;
+    @memset(&tail, 'Z');
+    try io_mod.writeAll(fds[1], &tail);
+
+    try pane.feedPty();
+    try testing.expect(pane.dirty);
+    try testing.expect(pane.screen.pending_sixel != null);
+    try testing.expectEqual(@as(usize, 1), hook_state.called);
+
+    // Remaining bytes past the first 8192-byte chunk must still sit unread in the pipe.
+    var probe: [16]u8 = undefined;
+    const rem = std.c.read(fds[0], &probe, probe.len);
+    try testing.expect(rem > 0);
 }

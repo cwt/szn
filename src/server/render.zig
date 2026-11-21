@@ -324,12 +324,49 @@ pub const Display = struct {
             }
             var last_sixel_id: u32 = 0xFFFFFFFF;
             var last_sixel_contained = false;
+            const has_copy_mode = pb.pane.screen.copy_mode != null;
+            const fast_row_merge = !pane_has_sixels and !has_copy_mode;
 
             for (0..pb.h) |y| {
                 if (pb.y + y >= merged_h) break;
 
                 const cells = resolveRowCells(&pb.pane.screen, y);
                 const merged_line = merged_screen.grid.getLineMut(@intCast(pb.y + y));
+
+                if (fast_row_merge) {
+                    comptime std.debug.assert(@sizeOf(Cell) == @sizeOf(u128));
+                    const max_w = @min(@as(usize, merged_w), merged_line.cells.items.len);
+                    if (pb.x >= max_w) continue;
+                    const row_w = @min(@as(usize, pb.w), max_w - @as(usize, pb.x));
+                    const dst_row = merged_line.cells.items[pb.x .. pb.x + row_w];
+                    if (cells) |cls| {
+                        const copy_w = @min(row_w, cls.items.len);
+                        const src_slice = cls.items[0..copy_w];
+                        const dst_slice = dst_row[0..copy_w];
+                        if (!std.mem.eql(u8, std.mem.sliceAsBytes(dst_slice), std.mem.sliceAsBytes(src_slice))) {
+                            @memcpy(dst_slice, src_slice);
+                            merged_line.dirty = true;
+                        }
+                        if (copy_w < row_w) {
+                            const empty_cell = Cell.empty();
+                            for (dst_row[copy_w..]) |*dst| {
+                                if (!dst.eql(empty_cell)) {
+                                    dst.* = empty_cell;
+                                    merged_line.dirty = true;
+                                }
+                            }
+                        }
+                    } else {
+                        const empty_cell = Cell.empty();
+                        for (dst_row) |*dst| {
+                            if (!dst.eql(empty_cell)) {
+                                dst.* = empty_cell;
+                                merged_line.dirty = true;
+                            }
+                        }
+                    }
+                    continue;
+                }
 
                 for (0..pb.w) |x| {
                     if (pb.x + x >= merged_w) break;
@@ -375,68 +412,87 @@ pub const Display = struct {
         }
 
         var active_bounds: ?PaneBounds = null;
+        var has_border_format = false;
         for (bounds) |pb| {
             if (pb.pane == active_pane) {
                 active_bounds = pb;
-                break;
+            }
+            if (pb.border_format.len > 0) {
+                has_border_format = true;
             }
         }
 
+        const lc_valid: ?[]const Cell = if (!full_rebuild and self.last_cells != null and
+            self.last_sx.?.* == self.sx and self.last_sy.?.* == self.sy and
+            self.last_cells.?.items.len == @as(usize, merged_w) * @as(usize, merged_h))
+            self.last_cells.?.items
+        else
+            null;
+
         const mode_border_fg = if (pane_in_copy_mode) Colour.fromIndexed(11) else theme.pane_active_border_fg;
-        drawLayoutBorders(layout_root, 0, 0, merged_w, merged_h, merged_screen, active_bounds, theme.pane_border_fg, mode_border_fg);
+        // Preserve row-granular dirty flags across unchanged split borders:
+        // when border_format is active and last_cells is valid, defer border
+        // dirty marking until after border_format overwrites its cells so
+        // unchanged format text never falsely dirties its border row.
+        const defer_border_dirty = has_border_format and lc_valid != null;
+        drawLayoutBorders(layout_root, 0, 0, merged_w, merged_h, merged_screen, active_bounds, theme.pane_border_fg, mode_border_fg, !defer_border_dirty);
 
-        for (bounds) |pb| {
-            const fmt = pb.border_format;
-            if (fmt.len == 0) continue;
+        if (has_border_format) {
+            for (bounds) |pb| {
+                const fmt = pb.border_format;
+                if (fmt.len == 0) continue;
 
-            // Draw format on the horizontal border row above the pane (pb.y - 1).
-            if (pb.y > 0) {
-                const top_y = pb.y - 1;
-                if (top_y < merged_screen.grid.height) {
-                    var i: usize = 0;
-                    var col: u32 = 0;
-                    while (i < fmt.len and col < pb.w) {
-                        const cp_len = std.unicode.utf8ByteSequenceLength(fmt[i]) catch 1;
-                        if (i + cp_len > fmt.len) break;
-                        const cp = std.unicode.utf8Decode(fmt[i .. i + cp_len]) catch 0;
-                        if (pb.x + col >= merged_screen.grid.width) break;
+                // Draw format on the horizontal border row above the pane (pb.y - 1).
+                if (pb.y > 0) {
+                    const top_y = pb.y - 1;
+                    if (top_y < merged_screen.grid.height) {
                         const border_line = merged_screen.grid.getLineMut(top_y);
-                        border_line.dirty = true;
-                        var cell = &border_line.cells.items[pb.x + col];
-                        cell.char = cp;
-                        if (pb.pane == active_pane) {
-                            cell.fg = mode_border_fg;
-                        } else {
-                            cell.fg = theme.pane_border_fg;
+                        var i: usize = 0;
+                        var col: u32 = 0;
+                        while (i < fmt.len and col < pb.w) {
+                            const cp_len = std.unicode.utf8ByteSequenceLength(fmt[i]) catch 1;
+                            if (i + cp_len > fmt.len) break;
+                            const cp = std.unicode.utf8Decode(fmt[i .. i + cp_len]) catch 0;
+                            if (pb.x + col >= merged_screen.grid.width) break;
+                            var cell = &border_line.cells.items[pb.x + col];
+                            const prev = cell.*;
+                            cell.char = cp;
+                            cell.fg = if (pb.pane == active_pane) mode_border_fg else theme.pane_border_fg;
+                            if (!defer_border_dirty and !cell.eql(prev)) {
+                                border_line.dirty = true;
+                            }
+                            i += cp_len;
+                            col += 1;
                         }
-                        i += cp_len;
-                        col += 1;
+                    }
+                } else if (pb.x > 0) {
+                    // No top border — draw on the vertical border column to the
+                    // left of the pane (pb.x - 1), one codepoint per row.
+                    const left_x = pb.x - 1;
+                    if (left_x < merged_screen.grid.width) {
+                        var i: usize = 0;
+                        var row: u32 = pb.y;
+                        while (i < fmt.len and row < pb.y + pb.h and row < merged_screen.grid.height) {
+                            const cp_len = std.unicode.utf8ByteSequenceLength(fmt[i]) catch 1;
+                            if (i + cp_len > fmt.len) break;
+                            const cp = std.unicode.utf8Decode(fmt[i .. i + cp_len]) catch 0;
+                            const border_line = merged_screen.grid.getLineMut(row);
+                            var cell = &border_line.cells.items[left_x];
+                            const prev = cell.*;
+                            cell.char = cp;
+                            cell.fg = if (pb.pane == active_pane) mode_border_fg else theme.pane_border_fg;
+                            if (!defer_border_dirty and !cell.eql(prev)) {
+                                border_line.dirty = true;
+                            }
+                            i += cp_len;
+                            row += 1;
+                        }
                     }
                 }
-            } else if (pb.x > 0) {
-                // No top border — draw on the vertical border column to the
-                // left of the pane (pb.x - 1), one codepoint per row.
-                const left_x = pb.x - 1;
-                if (left_x < merged_screen.grid.width) {
-                    var i: usize = 0;
-                    var row: u32 = pb.y;
-                    while (i < fmt.len and row < pb.y + pb.h and row < merged_screen.grid.height) {
-                        const cp_len = std.unicode.utf8ByteSequenceLength(fmt[i]) catch 1;
-                        if (i + cp_len > fmt.len) break;
-                        const cp = std.unicode.utf8Decode(fmt[i .. i + cp_len]) catch 0;
-                        const border_line = merged_screen.grid.getLineMut(row);
-                        border_line.dirty = true;
-                        var cell = &border_line.cells.items[left_x];
-                        cell.char = cp;
-                        if (pb.pane == active_pane) {
-                            cell.fg = mode_border_fg;
-                        } else {
-                            cell.fg = theme.pane_border_fg;
-                        }
-                        i += cp_len;
-                        row += 1;
-                    }
-                }
+            }
+
+            if (defer_border_dirty) {
+                markChangedBorderRows(layout_root, 0, 0, merged_w, merged_h, merged_screen, lc_valid.?);
             }
         }
 
@@ -481,6 +537,7 @@ pub const Display = struct {
         active_bound: ?PaneBounds,
         border_fg: Colour,
         active_border_fg: Colour,
+        mark_dirty: bool,
     ) void {
         switch (node.*) {
             .leaf => {},
@@ -498,13 +555,16 @@ pub const Display = struct {
                             const is_active = isBorderActiveAt(border_x, y, true, active_bound);
                             const border_col = if (is_active) active_border_fg else border_fg;
                             const border_line = merged_screen.grid.getLineMut(y);
-                            border_line.dirty = true;
                             const cell = &border_line.cells.items[border_x];
+                            const prev = cell.*;
                             paintBorderCell(cell, 0x2500, 0x2502, border_col);
+                            if (mark_dirty and !cell.eql(prev)) {
+                                border_line.dirty = true;
+                            }
                         }
                     }
-                    drawLayoutBorders(s.a, lx, ly, w1, lh, merged_screen, active_bound, border_fg, active_border_fg);
-                    drawLayoutBorders(s.b, lx + w1 + 1, ly, w2, lh, merged_screen, active_bound, border_fg, active_border_fg);
+                    drawLayoutBorders(s.a, lx, ly, w1, lh, merged_screen, active_bound, border_fg, active_border_fg, mark_dirty);
+                    drawLayoutBorders(s.b, lx + w1 + 1, ly, w2, lh, merged_screen, active_bound, border_fg, active_border_fg, mark_dirty);
                 } else {
                     const sizes = @import("../layout.zig").splitSizes(lh -| 1, s.proportion);
                     const h1 = sizes.first;
@@ -512,19 +572,85 @@ pub const Display = struct {
                     const border_y = ly + h1;
 
                     if (border_y < merged_screen.grid.height) {
+                        const border_line = merged_screen.grid.getLineMut(border_y);
                         var x: u32 = lx;
                         while (x < lx + lw) : (x += 1) {
                             if (x >= merged_screen.grid.width) break;
                             const is_active = isBorderActiveAt(x, border_y, false, active_bound);
                             const border_col = if (is_active) active_border_fg else border_fg;
-                            const border_line = merged_screen.grid.getLineMut(border_y);
-                            border_line.dirty = true;
                             const cell = &border_line.cells.items[x];
+                            const prev = cell.*;
                             paintBorderCell(cell, 0x2502, 0x2500, border_col);
+                            if (mark_dirty and !cell.eql(prev)) {
+                                border_line.dirty = true;
+                            }
                         }
                     }
-                    drawLayoutBorders(s.a, lx, ly, lw, h1, merged_screen, active_bound, border_fg, active_border_fg);
-                    drawLayoutBorders(s.b, lx, ly + h1 + 1, lw, h2, merged_screen, active_bound, border_fg, active_border_fg);
+                    drawLayoutBorders(s.a, lx, ly, lw, h1, merged_screen, active_bound, border_fg, active_border_fg, mark_dirty);
+                    drawLayoutBorders(s.b, lx, ly + h1 + 1, lw, h2, merged_screen, active_bound, border_fg, active_border_fg, mark_dirty);
+                }
+            },
+        }
+    }
+
+    /// Compare final border cells (after `drawLayoutBorders` + `border_format`)
+    /// against `last_cells`, marking only rows whose border cell actually changed.
+    fn markChangedBorderRows(
+        node: *const @import("../layout.zig").Node,
+        lx: u32,
+        ly: u32,
+        lw: u32,
+        lh: u32,
+        merged_screen: *Screen,
+        lc: []const Cell,
+    ) void {
+        const merged_w: usize = merged_screen.grid.width;
+        switch (node.*) {
+            .leaf => {},
+            .split => |s| {
+                if (s.direction == .horizontal) {
+                    const sizes = @import("../layout.zig").splitSizes(lw -| 1, s.proportion);
+                    const w1 = sizes.first;
+                    const w2 = sizes.second;
+                    const border_x = lx + w1;
+
+                    if (border_x < merged_screen.grid.width) {
+                        var y: u32 = ly;
+                        while (y < ly + lh) : (y += 1) {
+                            if (y >= merged_screen.grid.height) break;
+                            const border_line = merged_screen.grid.getLineMut(y);
+                            if (border_line.dirty) continue;
+                            const idx = @as(usize, y) * merged_w + border_x;
+                            if (idx < lc.len and !border_line.cells.items[border_x].eql(lc[idx])) {
+                                border_line.dirty = true;
+                            }
+                        }
+                    }
+                    markChangedBorderRows(s.a, lx, ly, w1, lh, merged_screen, lc);
+                    markChangedBorderRows(s.b, lx + w1 + 1, ly, w2, lh, merged_screen, lc);
+                } else {
+                    const sizes = @import("../layout.zig").splitSizes(lh -| 1, s.proportion);
+                    const h1 = sizes.first;
+                    const h2 = sizes.second;
+                    const border_y = ly + h1;
+
+                    if (border_y < merged_screen.grid.height) {
+                        const border_line = merged_screen.grid.getLineMut(border_y);
+                        if (!border_line.dirty) {
+                            const row_base = @as(usize, border_y) * merged_w;
+                            var x: u32 = lx;
+                            while (x < lx + lw) : (x += 1) {
+                                if (x >= merged_screen.grid.width) break;
+                                const idx = row_base + x;
+                                if (idx < lc.len and !border_line.cells.items[x].eql(lc[idx])) {
+                                    border_line.dirty = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    markChangedBorderRows(s.a, lx, ly, lw, h1, merged_screen, lc);
+                    markChangedBorderRows(s.b, lx, ly + h1 + 1, lw, h2, merged_screen, lc);
                 }
             },
         }
@@ -2579,4 +2705,86 @@ test "Display enterAltScreen and exitAltScreen sequences — bug #540" {
     capture_buf.clearRetainingCapacity();
     try display.exitAltScreen();
     try testing.expectEqualSlices(u8, "\x1b[m\x1b[?2026l\x1b[H\x1b[2J\x1b[?7h\x1b[<1u\x1b[?1000l\x1b[?1002l\x1b[?1006l\x1b[?2004l\x1b[?25h\x1b[?1049l", capture_buf.items);
+}
+
+test "renderAll preserves row-granular dirty flags across split borders and border_format" {
+    const allocator = testing.allocator;
+    var win = try Window.init(allocator, 1, "split-dirty", 21, 11, null, null);
+    defer win.deinit(allocator);
+
+    const p0 = win.active_pane.?;
+    const p1 = try win.splitPane(allocator, p0, false, 0.5); // horizontal split: vertical border col 10
+    const p2 = try win.splitPane(allocator, p1, true, 0.5); // vertical split on right: horizontal border row 5
+    try win.resize(21, 11);
+
+    var capture_buf: std.ArrayList(u8) = .empty;
+    defer capture_buf.deinit(allocator);
+    var last_cells: std.ArrayList(Cell) = .empty;
+    defer last_cells.deinit(allocator);
+    var last_sx: u32 = 0;
+    var last_sy: u32 = 0;
+    var merged_screen: ?Screen = null;
+    defer if (merged_screen) |*ms| ms.deinit();
+
+    const disp = Display{
+        .fd = -1,
+        .sx = 21,
+        .sy = 11,
+        .capture = &capture_buf,
+        .capture_allocator = allocator,
+        .last_cells = &last_cells,
+        .last_sx = &last_sx,
+        .last_sy = &last_sy,
+        .merged_screen = &merged_screen,
+    };
+
+    const theme = ThemeColours{
+        .status_fg = Colour.default_(),
+        .status_bg = Colour.default_(),
+        .pane_border_fg = Colour.fromIndexed(8),
+        .pane_active_border_fg = Colour.fromIndexed(2),
+    };
+    const wins = [_]*Window{&win};
+    var bounds = [_]PaneBounds{
+        .{ .pane = p0, .x = 0, .y = 0, .w = 10, .h = 11, .border_format = "" },
+        .{ .pane = p1, .x = 11, .y = 0, .w = 10, .h = 5, .border_format = "" },
+        .{ .pane = p2, .x = 11, .y = 6, .w = 10, .h = 5, .border_format = "HELLO" },
+    };
+
+    // Frame 1: full rebuild primes merged_screen and last_cells.
+    try disp.renderAll(allocator, &bounds, p0, "s", &wins, &win, win.layout.root, theme, null, false, "", 0, false, true, null, false);
+    for (win.panes.items) |p| p.dirty = false;
+
+    // Frame 2: touch only cell (0, 0) in p0 with border_format unchanged.
+    // Stamp sentinel into col 0 of last_cells on rows 1..10: rows skipped by
+    // renderContent will retain the sentinel.
+    const sentinel: u21 = 0x1FFFFE;
+    for (1..11) |y| {
+        last_cells.items[y * 21 + 0].char = sentinel;
+    }
+    p0.screen.grid.setCell(1, 0, Cell.withChar('Q'));
+    p0.dirty = true;
+    capture_buf.clearRetainingCapacity();
+    try disp.renderAll(allocator, &bounds, p0, "s", &wins, &win, win.layout.root, theme, null, false, "", 0, false, false, null, false);
+    p0.dirty = false;
+
+    // All 10 unmodified rows (including row 5 with border_format "HELLO") must be skipped.
+    for (1..11) |y| {
+        try testing.expectEqual(sentinel, last_cells.items[y * 21 + 0].char);
+    }
+
+    // Frame 3: shrink border_format "HELLO" -> "HI". Row 5 must be marked dirty
+    // so restored border cells ('─') at cols 13..15 are emitted into last_cells.
+    bounds[2].border_format = "HI";
+    capture_buf.clearRetainingCapacity();
+    try disp.renderAll(allocator, &bounds, p0, "s", &wins, &win, win.layout.root, theme, null, false, "", 0, false, false, null, false);
+    try testing.expectEqual(@as(u21, 'H'), last_cells.items[5 * 21 + 11].char);
+    try testing.expectEqual(@as(u21, 'I'), last_cells.items[5 * 21 + 12].char);
+    try testing.expectEqual(@as(u21, 0x2500), last_cells.items[5 * 21 + 13].char);
+
+    // Frame 4: switch active pane from p0 to p2 — horizontal border row 5 fg must
+    // flip from pane_border_fg (8) to pane_active_border_fg (2).
+    capture_buf.clearRetainingCapacity();
+    try disp.renderAll(allocator, &bounds, p2, "s", &wins, &win, win.layout.root, theme, null, false, "", 0, false, false, null, false);
+    try testing.expectEqual(theme.pane_active_border_fg, last_cells.items[5 * 21 + 13].fg);
 }

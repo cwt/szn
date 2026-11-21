@@ -2709,6 +2709,7 @@ pub const Server = struct {
 
     pub fn watchPanePty(self: *Server, pane: *Pane) ServerError!void {
         const pty = if (pane.pty) |*p| p else return;
+        io.setNonBlocking(pty.master);
         const parser = pane.getParser();
         parser.clipboard_cb = paneClipboardCallback;
         parser.clipboard_ctx = self;
@@ -3458,50 +3459,64 @@ pub const Server = struct {
         }
 
         // Perform automatic window renaming
+        const rename_now = currentMillis();
         for (session.windows.items) |win| {
-            if (win.automatic_rename) {
-                if (win.active_pane) |ap| {
-                    if (ap.pty) |pty| {
-                        const cur_pgid = pty.getForegroundPgid() orelse -1;
-                        const pgid_changed = (cur_pgid > 0 and cur_pgid != win.last_foreground_pgid);
-                        const now = currentMillis();
-                        // Query immediately whenever foreground PGID changes (0 ms delay),
-                        // or every 500ms as a fallback when unchanged (bug #300, #442).
-                        if (pgid_changed or
-                            win.last_foreground_name.len == 0 or
-                            now - win.last_foreground_check_ms >= 500)
-                        {
-                            win.last_foreground_check_ms = now;
-                            win.last_foreground_pgid = cur_pgid;
-                            var proc_buf: [128]u8 = undefined;
-                            const proc_res = if (cur_pgid > 0)
-                                pty.getProcessNameByPgid(cur_pgid, &proc_buf)
-                            else
-                                pty.getForegroundProcessName(&proc_buf);
-                            if (proc_res) |proc_name_val| {
-                                const proc_changed = (proc_name_val.len > 0 and !std.mem.eql(u8, win.last_foreground_name, proc_name_val));
-                                if (proc_changed) {
-                                    win.has_custom_title = false;
-                                    win.setLastForegroundName(proc_name_val);
-                                }
-                                if (proc_name_val.len > 0 and !win.has_custom_title and !std.mem.eql(u8, win.name, proc_name_val)) {
-                                    // Window.name and last_foreground_name live in
-                                    // inline fixed buffers; no heap allocation or aliasing (bug #358/#405).
-                                    win.setName(proc_name_val);
-                                    win.setLastForegroundName(proc_name_val);
-                                    ap.dirty = true;
-                                    self.dirty = true;
-                                    self.status_dirty = true;
-                                } else {
-                                    // Name unchanged — cache it to skip future syscalls.
-                                    if (win.last_foreground_name.len == 0) {
-                                        win.setLastForegroundName(proc_name_val);
-                                    }
-                                }
-                            } else |_| {}
+            if (!win.automatic_rename) continue;
+            const ap = win.active_pane orelse continue;
+            const pty = ap.pty orelse continue;
+
+            // Throttle tcgetpgrp(2) to 100ms during output bursts while still
+            // checking immediately (0 ms delay) when last_foreground_check_ms
+            // is 0 (cleared on Enter in processInput and on SIGCHLD in
+            // reapZombies) or before the first name is cached (bug #300, #442).
+            const force_check = win.last_foreground_check_ms == 0 or
+                win.last_pgid_check_ms == 0 or
+                win.last_foreground_name.len == 0;
+            const within_full_interval = rename_now >= win.last_foreground_check_ms and
+                rename_now - win.last_foreground_check_ms < 500;
+            const within_pgid_interval = rename_now >= win.last_pgid_check_ms and
+                rename_now - win.last_pgid_check_ms < 100;
+            if (!force_check and within_full_interval and within_pgid_interval) {
+                continue;
+            }
+
+            win.last_pgid_check_ms = rename_now;
+            const cur_pgid = pty.getForegroundPgid() orelse -1;
+            const pgid_changed = (cur_pgid > 0 and cur_pgid != win.last_foreground_pgid);
+            // Query immediately whenever foreground PGID changes (0 ms delay),
+            // or every 500ms as a fallback when unchanged (bug #300, #442).
+            if (pgid_changed or
+                win.last_foreground_name.len == 0 or
+                !within_full_interval)
+            {
+                win.last_foreground_check_ms = rename_now;
+                win.last_foreground_pgid = cur_pgid;
+                var proc_buf: [128]u8 = undefined;
+                const proc_res = if (cur_pgid > 0)
+                    pty.getProcessNameByPgid(cur_pgid, &proc_buf)
+                else
+                    pty.getForegroundProcessName(&proc_buf);
+                if (proc_res) |proc_name_val| {
+                    const proc_changed = (proc_name_val.len > 0 and !std.mem.eql(u8, win.last_foreground_name, proc_name_val));
+                    if (proc_changed) {
+                        win.has_custom_title = false;
+                        win.setLastForegroundName(proc_name_val);
+                    }
+                    if (proc_name_val.len > 0 and !win.has_custom_title and !std.mem.eql(u8, win.name, proc_name_val)) {
+                        // Window.name and last_foreground_name live in
+                        // inline fixed buffers; no heap allocation or aliasing (bug #358/#405).
+                        win.setName(proc_name_val);
+                        win.setLastForegroundName(proc_name_val);
+                        ap.dirty = true;
+                        self.dirty = true;
+                        self.status_dirty = true;
+                    } else {
+                        // Name unchanged — cache it to skip future syscalls.
+                        if (win.last_foreground_name.len == 0) {
+                            win.setLastForegroundName(proc_name_val);
                         }
                     }
-                }
+                } else |_| {}
             }
         }
 
@@ -6743,6 +6758,39 @@ test "automatic rename detects PGID change without waiting for 1s throttle — b
     // Even if check_ms is 0ms ago, pgid_changed will trigger inspection
     const new_pgid: i32 = 200;
     try testing.expect(new_pgid != win.last_foreground_pgid);
+}
+
+test "automatic rename throttles tcgetpgrp within 100ms and checks immediately when reset to 0" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    const session = try server.newSession("test-pgid-throttle", 80, 24);
+    const win = session.active_window.?;
+    const pane = win.active_pane.?;
+
+    var fds: [2]c_int = undefined;
+    if (std.c.pipe(&fds) != 0) return error.PipeFailed;
+    defer _ = std.c.close(fds[0]);
+    defer _ = std.c.close(fds[1]);
+    pane.pty = .{ .master = fds[1], .slave = fds[0], .pid = -1 };
+    pane.dirty = false;
+    server.dirty = false;
+
+    const now = Server.currentMillis();
+    win.setLastForegroundName("zsh");
+    win.last_foreground_pgid = 100;
+    win.last_foreground_check_ms = now;
+    win.last_pgid_check_ms = now - 5;
+
+    // Within 100ms window: renderToDisplayClient must skip tcgetpgrp and leave last_pgid_check_ms unchanged.
+    server.renderToDisplayClient();
+    try testing.expectEqual(now - 5, win.last_pgid_check_ms);
+
+    // Clearing last_foreground_check_ms (as on Enter or SIGCHLD) forces an immediate check.
+    win.last_foreground_check_ms = 0;
+    server.renderToDisplayClient();
+    try testing.expect(win.last_pgid_check_ms >= now);
+    try testing.expect(win.last_foreground_check_ms >= now);
 }
 
 test "automatic rename preserves custom title and restores on process exit — bug #563" {
