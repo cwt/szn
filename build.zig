@@ -11,7 +11,7 @@ pub fn build(b: *std.Build) void {
             b.build_root.handle
         else
             b.root.root_dir.handle;
-        const zon_content = root_handle.readFileAlloc(b.graph.io, "build.zig.zon", b.allocator, @fromBackingInt(@intCast(1024 * 1024))) catch break :blk "unknown";
+        const zon_content = root_handle.readFileAlloc(b.graph.io, "build.zig.zon", b.allocator, @enumFromInt(1024 * 1024)) catch break :blk "unknown";
         const needle = ".version = \"";
         const start_idx = std.mem.indexOf(u8, zon_content, needle) orelse break :blk "unknown";
         const start = start_idx + needle.len;

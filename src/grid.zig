@@ -144,6 +144,20 @@ pub const Grid = struct {
         return &self.history.items[ring_idx];
     }
 
+    fn getHistoryLineMut(self: *Grid, idx: usize) *GridLine {
+        const ring_idx = (self.history_start + idx) % self.history.items.len;
+        return &self.history.items[ring_idx];
+    }
+
+    /// Resize a line's cell storage to `width` using exact capacity when growing
+    /// so we never incur ArrayList.growCapacity's +57% slack per row.
+    fn resizeCellsExact(cells: *std.ArrayList(Cell), allocator: std.mem.Allocator, width: u32) Error!void {
+        if (cells.capacity < width) {
+            try cells.ensureTotalCapacityPrecise(allocator, width);
+        }
+        cells.items.len = width;
+    }
+
     /// Re-establish the empty-ring invariant after externally corrupt states so
     /// no mutating path can index into an empty `history` list (bug #444).
     fn normalizeHistoryRing(self: *Grid) void {
@@ -312,7 +326,7 @@ pub const Grid = struct {
         try self.normalize();
         while (self.lines.items.len < new_height) {
             var line = GridLine{};
-            try line.cells.resize(self.allocator, self.width);
+            try resizeCellsExact(&line.cells, self.allocator, self.width);
             @memset(line.cells.items, Cell.empty());
             try self.lines.append(self.allocator, line);
         }
@@ -377,7 +391,7 @@ pub const Grid = struct {
             var old_top = self.getLineMut(0).*;
             old_top.dirty = false;
             var new_line = GridLine{};
-            try new_line.cells.resize(self.allocator, self.width);
+            try resizeCellsExact(&new_line.cells, self.allocator, self.width);
             @memset(new_line.cells.items, Cell.empty());
             self.getLineMut(0).* = new_line;
             self.start_index = (self.start_index + 1) % self.height;
@@ -389,7 +403,7 @@ pub const Grid = struct {
             old_top.dirty = false;
             var new_line = self.history.items[insert_idx];
             if (new_line.cells.items.len != self.width) {
-                try new_line.cells.resize(self.allocator, self.width);
+                try resizeCellsExact(&new_line.cells, self.allocator, self.width);
             }
             @memset(new_line.cells.items, Cell.empty());
             new_line.wrapped = false;
@@ -408,7 +422,7 @@ pub const Grid = struct {
             // Recycle the evicted line's cells buffer for the new line at bottom of screen.
             var recycled = self.history.items[oldest_idx];
             if (recycled.cells.items.len != self.width) {
-                try recycled.cells.resize(self.allocator, self.width);
+                try resizeCellsExact(&recycled.cells, self.allocator, self.width);
             }
             @memset(recycled.cells.items, Cell.empty());
             recycled.wrapped = false;
@@ -567,58 +581,136 @@ pub const Grid = struct {
 
     /// Returns the index after the last cell in the visual cluster at `start`.
     /// Handles Thai clusters (leading vowel + base + following vowel + attaching),
-    /// CJK wide char + padding pairs, and regular single cells.
-    fn findClusterEnd(cells: []const Cell, start: usize) usize {
-        if (cells[start].attr.sixel) return start + 1;
-        const cp = cells[start].char;
-        if (cp == ' ' and cells[start].is_padding) return start + 1;
-        if (thai.isThaiOrLao(cp)) return thai.findThaiClusterEnd(cells, start);
-        if (char_width.charWidth(cp) == 2) return @min(start + 2, cells.len);
-        return start + 1;
-    }
+    const Cluster = struct {
+        end: usize,
+        width: u32,
+    };
 
-    /// Returns the display width of a cluster spanning `cells[0..end)`.
-    fn clusterWidth(cells: []const Cell) u32 {
-        var w: u32 = 0;
-        for (cells) |c| {
-            if (c.is_padding) continue;
-            if (c.attr.sixel) {
-                w += 1;
-                continue;
+    /// Return both the end index and display width of the visual cluster
+    /// starting at `cells[start]` in a single pass (calling `charWidth` once
+    /// per cell instead of twice across separate findClusterEnd/clusterWidth).
+    fn nextCluster(cells: []const Cell, start: usize) Cluster {
+        const c0 = cells[start];
+        if (c0.attr.sixel) return .{ .end = start + 1, .width = 1 };
+        const cp = c0.char;
+        if (cp == ' ') return .{ .end = start + 1, .width = if (c0.is_padding) 0 else 1 };
+        if (cp == 0) return .{ .end = start + 1, .width = 0 };
+        if (thai.isThaiOrLao(cp)) {
+            const end = thai.findThaiClusterEnd(cells, start);
+            var w: u32 = 0;
+            for (cells[start..end]) |c| {
+                if (c.is_padding) continue;
+                if (c.attr.sixel) {
+                    w += 1;
+                    continue;
+                }
+                w += if (c.char == ' ') 1 else char_width.charWidth(c.char);
             }
-            w += if (c.char == ' ') 1 else char_width.charWidth(c.char);
+            return .{ .end = end, .width = w };
         }
-        return w;
+        const w0: u32 = char_width.charWidth(cp);
+        if (w0 == 2) {
+            const end = @min(start + 2, cells.len);
+            var w: u32 = if (c0.is_padding) 0 else w0;
+            if (end > start + 1) {
+                const c1 = cells[start + 1];
+                if (!c1.is_padding) {
+                    w += if (c1.attr.sixel) 1 else if (c1.char == ' ') 1 else char_width.charWidth(c1.char);
+                }
+            }
+            return .{ .end = end, .width = w };
+        }
+        return .{ .end = start + 1, .width = if (c0.is_padding) 0 else w0 };
     }
 
     fn isNumberChar(cp: u21) bool {
         return (cp >= '0' and cp <= '9') or cp == ',' or cp == '.';
     }
 
+    fn isUnwrittenCell(c: Cell) bool {
+        return c.char == 0 and !c.is_padding and c.comb1 == 0 and c.comb2 == 0 and !c.attr.sixel;
+    }
+
+    fn trimmedCellLen(cells: []const Cell) usize {
+        var len = cells.len;
+        while (len > 0 and isUnwrittenCell(cells[len - 1])) {
+            len -= 1;
+        }
+        return len;
+    }
+
+    /// True if `cells` fits on a single physical row of width `new_width`
+    /// without triggering any wrap condition in `rewrapInternal`.
+    fn fitsSingleLine(cells: []const Cell, new_width: u32) bool {
+        if (cells.len == 0) return true;
+        // Every cell contributes display width <= 2, so 2*len <= new_width
+        // guarantees the row cannot overflow without scanning any cells.
+        if (@as(u64, cells.len) * 2 <= new_width) return true;
+        var line_width: u32 = 0;
+        var i: usize = 0;
+        while (i < cells.len) {
+            const cl = nextCluster(cells, i);
+            if (line_width > 0 and line_width + cl.width > new_width) return false;
+            line_width += cl.width;
+            i = cl.end;
+        }
+        return true;
+    }
+
+    fn isThaiWordBoundary(cells: []const Cell, wb: usize) bool {
+        if (thai.isThai(cells[wb - 1].char) or (wb < cells.len and thai.isThai(cells[wb].char))) {
+            return true;
+        }
+        if (cells[wb - 1].char == ' ' and wb >= 2 and thai.isThai(cells[wb - 2].char)) {
+            return true;
+        }
+        if (wb < cells.len and cells[wb].char == ' ' and wb + 1 < cells.len and thai.isThai(cells[wb + 1].char)) {
+            return true;
+        }
+        return false;
+    }
+
+    const TaiScan = struct { has_thai: bool, has_tai: bool };
+
+    fn scanTaiPresence(cells: []const Cell) TaiScan {
+        var has_thai = false;
+        var has_tai = false;
+        for (cells) |c| {
+            if (thai.isThaiOrLao(c.char)) {
+                has_tai = true;
+                if (thai.isThai(c.char)) {
+                    has_thai = true;
+                    break;
+                }
+            } else if (c.comb1 != 0 or c.comb2 != 0) {
+                if (thai.cellHasThanthakhat(c) or thai.cellHasMaiHanAkat(c)) {
+                    has_tai = true;
+                }
+            }
+        }
+        return .{ .has_thai = has_thai, .has_tai = has_tai };
+    }
+
     /// Rewrap a flat cell sequence (one logical line) to `new_width`.
-    /// Returns owned slice of GridLine. Lines that wrap to the next physical
-    /// line have wrapped=true; the last line of each rewrapped group is false.
+    /// Appends owned `GridLine`s to `out_lines`. Lines that wrap to the next
+    /// physical line have wrapped=true; the last line of each group is false.
     fn rewrap(
         cells: []const Cell,
         new_width: u32,
         allocator: std.mem.Allocator,
+        scratch: std.mem.Allocator,
         cursor_offset: ?usize,
         out_cursor_pos: ?*CursorPos,
         out_lines: *std.ArrayList(GridLine),
     ) !void {
-        const has_thai = blk: {
-            for (cells) |c| {
-                if (c.char >= 0x0E00 and c.char <= 0x0E7F) break :blk true;
-            }
-            break :blk false;
-        };
-        const word_breaks = if (has_thai)
-            try thai.findWordBreaks(allocator, cells)
+        const tai_scan = scanTaiPresence(cells);
+        const word_breaks = if (tai_scan.has_thai)
+            try thai.findWordBreaksWithScratch(scratch, scratch, cells)
         else
             &[_]usize{};
-        defer if (has_thai) allocator.free(word_breaks);
+        defer if (tai_scan.has_thai) scratch.free(word_breaks);
 
-        return rewrapWithBreaks(cells, word_breaks, new_width, allocator, cursor_offset, out_cursor_pos, out_lines);
+        return rewrapInternal(cells, word_breaks, tai_scan.has_tai, new_width, allocator, cursor_offset, out_cursor_pos, out_lines);
     }
 
     /// Inner rewrap entry point taking precomputed `word_breaks`. Exposed so
@@ -633,58 +725,80 @@ pub const Grid = struct {
         out_cursor_pos: ?*CursorPos,
         out_lines: *std.ArrayList(GridLine),
     ) !void {
-        var lines: std.ArrayList(GridLine) = .empty;
+        const tai_scan = scanTaiPresence(cells);
+        return rewrapInternal(cells, word_breaks, tai_scan.has_tai, new_width, allocator, cursor_offset, out_cursor_pos, out_lines);
+    }
+
+    fn rewrapInternal(
+        cells: []const Cell,
+        word_breaks: []const usize,
+        has_tai: bool,
+        new_width: u32,
+        allocator: std.mem.Allocator,
+        cursor_offset: ?usize,
+        out_cursor_pos: ?*CursorPos,
+        out_lines: *std.ArrayList(GridLine),
+    ) !void {
+        const orig_out_len = out_lines.items.len;
         errdefer {
-            for (lines.items) |*l| l.deinit(allocator);
-            lines.deinit(allocator);
+            for (out_lines.items[orig_out_len..]) |*l| l.deinit(allocator);
+            out_lines.items.len = orig_out_len;
         }
 
         if (cells.len == 0) {
             var line_cells: std.ArrayList(Cell) = .empty;
-            try line_cells.resize(allocator, new_width);
+            errdefer line_cells.deinit(allocator);
+            try line_cells.ensureTotalCapacityPrecise(allocator, new_width);
+            line_cells.items.len = new_width;
             @memset(line_cells.items, Cell.empty());
-            var gl = GridLine{ .dirty = true, .wrapped = false };
-            gl.cells = line_cells;
-            try lines.append(allocator, gl);
+            try out_lines.append(allocator, GridLine{ .cells = line_cells, .dirty = true, .wrapped = false });
             if (cursor_offset) |co| {
                 if (out_cursor_pos) |ocp| {
                     ocp.line_idx = 0;
                     ocp.col_idx = @min(co, new_width -| 1);
                 }
             }
-            try out_lines.ensureUnusedCapacity(allocator, lines.items.len);
-            for (lines.items) |l| out_lines.appendAssumeCapacity(l);
-            lines.items.len = 0;
-            lines.deinit(allocator);
             return;
         }
 
+        const est_lines = @max(@as(usize, 1), (cells.len + new_width - 1) / new_width);
+        try out_lines.ensureUnusedCapacity(allocator, est_lines);
+
+        var wb_lo: usize = 0;
         var i: usize = 0;
         while (i < cells.len) {
             const line_start = i;
+            if (has_tai and word_breaks.len > 0) {
+                while (wb_lo < word_breaks.len and word_breaks[wb_lo] <= line_start) : (wb_lo += 1) {}
+            }
+
             var line_cells: std.ArrayList(Cell) = .empty;
             defer line_cells.deinit(allocator);
+            try line_cells.ensureTotalCapacityPrecise(allocator, new_width);
+
             var line_width: u32 = 0;
             var did_break = false;
-
             var last_cluster_start: usize = i;
+            var last_tai_space_wb: ?usize = null;
 
             while (i < cells.len) {
-                const cluster_end = findClusterEnd(cells, i);
-                const cw = clusterWidth(cells[i..cluster_end]);
+                const cl = nextCluster(cells, i);
+                const cluster_end = cl.end;
+                const cw = cl.width;
                 if (line_width > 0 and line_width + cw > new_width) {
                     did_break = true;
 
                     // Number breaking rule:
                     // If we are breaking inside a number (digits, commas, periods),
-                    // check the length of the number.
+                    // check whether total run length <= 6 (capped scan, O(1) forward).
                     if (isNumberChar(cells[i - 1].char) and isNumberChar(cells[i].char)) {
                         var start_idx = i - 1;
                         while (start_idx > line_start and isNumberChar(cells[start_idx - 1].char)) {
                             start_idx -= 1;
                         }
                         var end_idx = i;
-                        while (end_idx < cells.len and isNumberChar(cells[end_idx].char)) {
+                        const short_limit = start_idx + 7;
+                        while (end_idx < cells.len and end_idx < short_limit and isNumberChar(cells[end_idx].char)) {
                             end_idx += 1;
                         }
                         const num_len = end_idx - start_idx;
@@ -715,167 +829,148 @@ pub const Grid = struct {
                         }
                     }
 
-                    // If libthai returned word boundaries, use them to break at a valid boundary.
-                    var found_wb: ?usize = null;
-                    if (word_breaks.len > 0) {
-                        var wb_idx: usize = word_breaks.len;
-                        while (wb_idx > 0) {
-                            wb_idx -= 1;
-                            const wb = word_breaks[wb_idx];
-                            if (wb > line_start and wb <= i) {
-                                // Only wrap if this boundary borders a Thai character or space adjacent to a Thai word
-                                const is_thai_boundary = blk: {
-                                    if (thai.isThai(cells[wb - 1].char) or (wb < cells.len and thai.isThai(cells[wb].char))) {
-                                        break :blk true;
-                                    }
-                                    if (cells[wb - 1].char == ' ' and wb >= 2 and thai.isThai(cells[wb - 2].char)) {
-                                        break :blk true;
-                                    }
-                                    if (wb < cells.len and cells[wb].char == ' ' and wb + 1 < cells.len and thai.isThai(cells[wb + 1].char)) {
-                                        break :blk true;
-                                    }
-                                    break :blk false;
-                                };
-                                if (is_thai_boundary) {
+                    if (has_tai) {
+                        // Monotonic exponential + binary search over word_breaks[wb_lo..].
+                        var found_wb: ?usize = null;
+                        if (wb_lo < word_breaks.len and word_breaks[wb_lo] <= i) {
+                            var lo: usize = wb_lo;
+                            var hi: usize = wb_lo;
+                            var step: usize = 1;
+                            while (hi < word_breaks.len and word_breaks[hi] <= i) {
+                                lo = hi + 1;
+                                hi = @min(hi +| step, word_breaks.len);
+                                step <<= 1;
+                            }
+                            while (lo < hi) {
+                                const mid = lo + (hi - lo) / 2;
+                                if (word_breaks[mid] <= i) {
+                                    lo = mid + 1;
+                                } else {
+                                    hi = mid;
+                                }
+                            }
+                            var wb_idx = lo;
+                            while (wb_idx > wb_lo) {
+                                wb_idx -= 1;
+                                const wb = word_breaks[wb_idx];
+                                if (isThaiWordBoundary(cells, wb)) {
                                     found_wb = wb;
                                     break;
                                 }
-                            } else if (wb <= line_start) {
-                                break;
                             }
                         }
-                    }
 
-                    // A space character bordering a Thai or Lao character is also a valid word boundary.
-                    var space_wb: ?usize = null;
-                    if (cells[i].char == ' ' and !cells[i].is_padding) {
-                        if (i > 0 and thai.isThaiOrLao(cells[i - 1].char)) {
-                            // If followed immediately by a right-attaching mark (ๆ, ฯ, ໆ, ຯ),
-                            // do not break here because right-attaching marks must never begin a line.
-                            if (i + 1 >= cells.len or !thai.isThaiRightAttaching(cells[i + 1].char)) {
-                                space_wb = i;
+                        // A space character bordering a Thai or Lao character is also a valid word boundary.
+                        var space_wb: ?usize = null;
+                        if (cells[i].char == ' ' and !cells[i].is_padding) {
+                            if (i > 0 and thai.isThaiOrLao(cells[i - 1].char)) {
+                                // If followed immediately by a right-attaching mark (ๆ, ฯ, ໆ, ຯ),
+                                // do not break here because right-attaching marks must never begin a line.
+                                if (i + 1 >= cells.len or !thai.isThaiRightAttaching(cells[i + 1].char)) {
+                                    space_wb = i;
+                                }
+                            }
+                        } else {
+                            space_wb = last_tai_space_wb;
+                        }
+
+                        if (space_wb) |wb| {
+                            if (wb <= line_start + 1) {
+                                space_wb = null;
                             }
                         }
-                    } else {
-                        var j = i;
-                        while (j > line_start) {
-                            j -= 1;
-                            if (cells[j].char == ' ' and !cells[j].is_padding) {
-                                const borders_thai = blk: {
-                                    if (j > 0 and thai.isThaiOrLao(cells[j - 1].char)) break :blk true;
-                                    if (j + 1 < cells.len and thai.isThaiOrLao(cells[j + 1].char)) break :blk true;
-                                    break :blk false;
-                                };
-                                if (borders_thai) {
-                                    // A right-attaching mark (ๆ, ฯ, ໆ, ຯ) must never begin a line.
-                                    // If j + 1 is right-attaching, do not break at this space;
-                                    // continue scanning backward for a prior word break.
-                                    if (j + 1 < cells.len and thai.isThaiRightAttaching(cells[j + 1].char)) {
-                                        continue;
-                                    }
-                                    space_wb = j + 1;
+
+                        const final_wb = @max(found_wb orelse 0, space_wb orelse 0);
+                        if (final_wb > 0) {
+                            i = final_wb;
+                            line_cells.shrinkRetainingCapacity(final_wb - line_start);
+                            break;
+                        }
+
+                        // Right-attaching mark rule: if breaking would leave a right-attaching mark (ๆ, ฯ)
+                        // at the start of the next line, backtrack to before the preceding syllable/word
+                        // so it never begins a line.
+                        var right_attach_pos: ?usize = null;
+                        if (i < cells.len and thai.isThaiRightAttaching(cells[i].char)) {
+                            right_attach_pos = i;
+                        } else if (i + 1 < cells.len and cells[i].char == ' ' and thai.isThaiRightAttaching(cells[i + 1].char)) {
+                            right_attach_pos = i + 1;
+                        }
+                        if (right_attach_pos) |ra_idx| {
+                            var p = ra_idx;
+                            while (p > line_start and cells[p - 1].char == ' ') p -= 1;
+                            if (p > line_start) {
+                                const syl_start = thai.findThaiSyllableStart(cells, p - 1, line_start);
+                                if (syl_start > line_start) {
+                                    i = syl_start;
+                                    line_cells.shrinkRetainingCapacity(syl_start - line_start);
                                     break;
                                 }
                             }
                         }
-                    }
 
-                    if (space_wb) |wb| {
-                        if (wb <= line_start + 1) {
-                            space_wb = null;
+                        // THANTHAKHAT rule: a consonant marked with Thanthakhat (◌์ / Garan) represents
+                        // the silent coda of a syllable and can never begin a syllable or a line.
+                        // If breaking at i would place a Thanthakhat mark (or its double-consonant cluster)
+                        // at the start of the next line, backtrack to before the syllable start.
+                        var thanthakhat_pos: ?usize = null;
+                        if (i < cells.len and thai.cellHasThanthakhat(cells[i])) {
+                            thanthakhat_pos = i;
+                        } else if (i + 1 < cells.len and thai.cellHasThanthakhat(cells[i + 1]) and !thai.isThaiFollowingVowel(cells[i].char)) {
+                            thanthakhat_pos = i + 1;
                         }
-                    }
-
-                    const final_wb = @max(found_wb orelse 0, space_wb orelse 0);
-                    if (final_wb > 0) {
-                        i = final_wb;
-                        line_cells.shrinkRetainingCapacity(final_wb - line_start);
-                        break;
-                    }
-
-                    // Right-attaching mark rule: if breaking would leave a right-attaching mark (ๆ, ฯ)
-                    // at the start of the next line, backtrack to before the preceding syllable/word
-                    // so it never begins a line.
-                    var right_attach_pos: ?usize = null;
-                    if (i < cells.len and thai.isThaiRightAttaching(cells[i].char)) {
-                        right_attach_pos = i;
-                    } else if (i + 1 < cells.len and cells[i].char == ' ' and thai.isThaiRightAttaching(cells[i + 1].char)) {
-                        right_attach_pos = i + 1;
-                    }
-                    if (right_attach_pos) |ra_idx| {
-                        var p = ra_idx;
-                        while (p > line_start and cells[p - 1].char == ' ') p -= 1;
-                        if (p > line_start) {
-                            const syl_start = thai.findThaiSyllableStart(cells, p - 1, line_start);
+                        if (thanthakhat_pos) |th_idx| {
+                            const syl_start = thai.findThaiSyllableStart(cells, th_idx, line_start);
                             if (syl_start > line_start) {
                                 i = syl_start;
                                 line_cells.shrinkRetainingCapacity(syl_start - line_start);
                                 break;
                             }
                         }
-                    }
 
-                    // THANTHAKHAT rule: a consonant marked with Thanthakhat (◌์ / Garan) represents
-                    // the silent coda of a syllable and can never begin a syllable or a line.
-                    // If breaking at i would place a Thanthakhat mark (or its double-consonant cluster)
-                    // at the start of the next line, backtrack to before the syllable start.
-                    var thanthakhat_pos: ?usize = null;
-                    if (i < cells.len and thai.cellHasThanthakhat(cells[i])) {
-                        thanthakhat_pos = i;
-                    } else if (i + 1 < cells.len and thai.cellHasThanthakhat(cells[i + 1]) and !thai.isThaiFollowingVowel(cells[i].char)) {
-                        thanthakhat_pos = i + 1;
-                    }
-                    if (thanthakhat_pos) |th_idx| {
-                        const syl_start = thai.findThaiSyllableStart(cells, th_idx, line_start);
-                        if (syl_start > line_start) {
-                            i = syl_start;
-                            line_cells.shrinkRetainingCapacity(syl_start - line_start);
-                            break;
-                        }
-                    }
-
-                    // MAI HAN AKAT rule: if the last added cluster contains MAI HAN AKAT,
-                    // we cannot break the line right after it. Backtrack to before that cluster.
-                    var has_mai_han_akat = false;
-                    var k = last_cluster_start;
-                    while (k < i) : (k += 1) {
-                        if (thai.cellHasMaiHanAkat(cells[k])) {
-                            has_mai_han_akat = true;
-                            break;
-                        }
-                    }
-
-                    if (has_mai_han_akat and last_cluster_start > line_start) {
-                        i = last_cluster_start;
-                        line_cells.shrinkRetainingCapacity(last_cluster_start - line_start);
-                        break;
-                    }
-
-                    // Look-ahead heuristic: if breaking would leave a single Thai/Lao consonant
-                    // at the start of the next line, followed immediately by a leading vowel,
-                    // backtrack to the start of the word (the leading vowel of the current syllable).
-                    if (cluster_end == i + 1 and thai.isThaiOrLao(cells[i].char) and !thai.isThaiLeadingVowel(cells[i].char)) {
-                        const next_idx = cluster_end;
-                        if (next_idx < cells.len and thai.isThaiLeadingVowel(cells[next_idx].char)) {
-                            var j = i;
-                            var found_vowel_idx: ?usize = null;
-                            var first_thai_idx = i;
-                            while (j > line_start) {
-                                j -= 1;
-                                const cp = cells[j].char;
-                                if (!thai.isThaiOrLao(cp)) {
-                                    break;
-                                }
-                                first_thai_idx = j;
-                                if (thai.isThaiLeadingVowel(cp)) {
-                                    found_vowel_idx = j;
-                                    break;
-                                }
+                        // MAI HAN AKAT rule: if the last added cluster contains MAI HAN AKAT,
+                        // we cannot break the line right after it. Backtrack to before that cluster.
+                        var has_mai_han_akat = false;
+                        var k = last_cluster_start;
+                        while (k < i) : (k += 1) {
+                            if (thai.cellHasMaiHanAkat(cells[k])) {
+                                has_mai_han_akat = true;
+                                break;
                             }
-                            const break_idx = found_vowel_idx orelse first_thai_idx;
-                            if (break_idx > line_start) {
-                                i = break_idx;
-                                line_cells.shrinkRetainingCapacity(break_idx - line_start);
+                        }
+
+                        if (has_mai_han_akat and last_cluster_start > line_start) {
+                            i = last_cluster_start;
+                            line_cells.shrinkRetainingCapacity(last_cluster_start - line_start);
+                            break;
+                        }
+
+                        // Look-ahead heuristic: if breaking would leave a single Thai/Lao consonant
+                        // at the start of the next line, followed immediately by a leading vowel,
+                        // backtrack to the start of the word (the leading vowel of the current syllable).
+                        if (cluster_end == i + 1 and thai.isThaiOrLao(cells[i].char) and !thai.isThaiLeadingVowel(cells[i].char)) {
+                            const next_idx = cluster_end;
+                            if (next_idx < cells.len and thai.isThaiLeadingVowel(cells[next_idx].char)) {
+                                var j = i;
+                                var found_vowel_idx: ?usize = null;
+                                var first_thai_idx = i;
+                                while (j > line_start) {
+                                    j -= 1;
+                                    const cp = cells[j].char;
+                                    if (!thai.isThaiOrLao(cp)) {
+                                        break;
+                                    }
+                                    first_thai_idx = j;
+                                    if (thai.isThaiLeadingVowel(cp)) {
+                                        found_vowel_idx = j;
+                                        break;
+                                    }
+                                }
+                                const break_idx = found_vowel_idx orelse first_thai_idx;
+                                if (break_idx > line_start) {
+                                    i = break_idx;
+                                    line_cells.shrinkRetainingCapacity(break_idx - line_start);
+                                }
                             }
                         }
                     }
@@ -889,7 +984,7 @@ pub const Grid = struct {
                     if (last_cluster_start > line_start) {
                         const quote_cp = cells[last_cluster_start].char;
                         const is_quote = quote_cp == '"' or quote_cp == '\'' or quote_cp == '`';
-                        if (is_quote and findClusterEnd(cells, last_cluster_start) == last_cluster_start + 1) {
+                        if (is_quote and nextCluster(cells, last_cluster_start).end == last_cluster_start + 1) {
                             const prev_cp = cells[last_cluster_start - 1].char;
                             const prev_is_boundary = prev_cp == ' ' or prev_cp == '\t' or
                                 prev_cp == '(' or prev_cp == '[' or prev_cp == '{' or
@@ -927,6 +1022,20 @@ pub const Grid = struct {
 
                     break;
                 }
+
+                if (has_tai) {
+                    var idx_c = i;
+                    while (idx_c < cluster_end) : (idx_c += 1) {
+                        if (cells[idx_c].char == ' ' and !cells[idx_c].is_padding) {
+                            const borders_thai = (idx_c > 0 and thai.isThaiOrLao(cells[idx_c - 1].char)) or
+                                (idx_c + 1 < cells.len and thai.isThaiOrLao(cells[idx_c + 1].char));
+                            if (borders_thai and (idx_c + 1 >= cells.len or !thai.isThaiRightAttaching(cells[idx_c + 1].char))) {
+                                last_tai_space_wb = idx_c + 1;
+                            }
+                        }
+                    }
+                }
+
                 last_cluster_start = i;
                 try line_cells.appendSlice(allocator, cells[i..cluster_end]);
                 line_width += cw;
@@ -936,28 +1045,23 @@ pub const Grid = struct {
             if (cursor_offset) |co| {
                 if (co >= line_start and (co < i or (i == cells.len and co >= i))) {
                     if (out_cursor_pos) |ocp| {
-                        ocp.line_idx = lines.items.len;
+                        ocp.line_idx = out_lines.items.len - orig_out_len;
                         ocp.col_idx = @min(co - line_start, new_width -| 1);
                     }
                 }
             }
 
-            // Pad to new_width
+            // Pad to new_width (capacity >= new_width already ensured via ensureTotalCapacityPrecise)
             const pad_start = line_cells.items.len;
             if (pad_start < new_width) {
-                try line_cells.resize(allocator, new_width);
+                line_cells.items.len = new_width;
                 @memset(line_cells.items[pad_start..], Cell.empty());
             }
 
             const gl = GridLine{ .cells = line_cells, .dirty = true, .wrapped = did_break };
-            try lines.append(allocator, gl);
+            try out_lines.append(allocator, gl);
             line_cells = .empty;
         }
-
-        try out_lines.ensureUnusedCapacity(allocator, lines.items.len);
-        for (lines.items) |l| out_lines.appendAssumeCapacity(l);
-        lines.items.len = 0;
-        lines.deinit(allocator);
     }
 
     /// Reflow the grid content to `new_width`, respecting Thai cluster, CJK
@@ -988,6 +1092,13 @@ pub const Grid = struct {
         try self.reflowCursorInternal(self.width, cursor_x, cursor_y, out_cursor_x, out_cursor_y, true);
     }
 
+    fn getLogicalRowMut(self: *Grid, row_idx: usize, hist_len: usize) *GridLine {
+        if (row_idx < hist_len) {
+            return self.getHistoryLineMut(row_idx);
+        }
+        return self.getLineMut(@intCast(row_idx - hist_len));
+    }
+
     fn reflowCursorInternal(
         self: *Grid,
         new_width: u32,
@@ -1000,10 +1111,43 @@ pub const Grid = struct {
         if (!force and new_width == self.width) return;
         if (new_width == 0) return;
 
+        self.normalizeHistoryRing();
+        const hist_len = self.historyLen();
+
+        // ── Tier A: whole-grid no-op fast path when width is unchanged ──
+        // If no physical row is soft-wrapped (and every row fits in self.width
+        // and history is within history_limit), every logical line is already
+        // a single row that cannot rewrap: zero allocations, zero cell copies,
+        // no scratch arena creation, and trailing BCE cells stay intact.
+        if (new_width == self.width and hist_len <= self.history_limit) {
+            var any_wrapped = false;
+            var h_i: usize = 0;
+            while (h_i < hist_len) : (h_i += 1) {
+                const hl = self.getHistoryLine(h_i);
+                if (hl.wrapped or hl.cells.items.len > self.width) {
+                    any_wrapped = true;
+                    break;
+                }
+            }
+            if (!any_wrapped) {
+                for (self.lines.items) |*l| {
+                    if (l.wrapped or l.cells.items.len > self.width) {
+                        any_wrapped = true;
+                        break;
+                    }
+                }
+            }
+            if (!any_wrapped) {
+                if (cursor_x != null and cursor_y != null) {
+                    if (out_cursor_y) |ocy| ocy.* = @min(cursor_y.?, self.height -| 1);
+                    if (out_cursor_x) |ocx| ocx.* = @min(cursor_x.?, new_width -| 1);
+                }
+                return;
+            }
+        }
+
         try self.normalize();
 
-        // Guarded like every other site (bug #293 pattern; #386).
-        const hist_len = self.historyLen();
         const total = hist_len + self.lines.items.len;
 
         // Find the last non-empty line to avoid treating trailing empty lines as content.
@@ -1024,7 +1168,7 @@ pub const Grid = struct {
             }
             var has_content = false;
             for (line.cells.items) |c| {
-                if (c.char != 0 or c.is_padding or c.comb1 != 0 or c.comb2 != 0 or c.attr.sixel) {
+                if (!isUnwrittenCell(c)) {
                     has_content = true;
                     break;
                 }
@@ -1048,27 +1192,66 @@ pub const Grid = struct {
             process_limit = @max(process_limit, total);
         }
 
-        // ── Flatten all lines into logical lines ──
+        const allocator = self.allocator;
+
         var scratch_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
         defer scratch_arena.deinit();
         const scratch = scratch_arena.allocator();
 
+        // ── Phase 1 (Fallible): plan transfers & rewrap wrapped lines ──
+        // `self.lines` and `self.history` remain intact and valid throughout
+        // Phase 1 so any OOM unwinds cleanly with zero leaks or double-frees.
+        const PlanItem = union(enum) {
+            transfer: struct { row_idx: usize, trimmed_len: usize },
+            rewrapped: usize,
+        };
+        var plan: std.ArrayList(PlanItem) = .empty;
+        try plan.ensureTotalCapacity(scratch, process_limit);
+
         var flat_cells: std.ArrayList(Cell) = .empty;
-        try flat_cells.ensureTotalCapacity(scratch, process_limit * self.width);
 
-        const Span = struct { start: usize, len: usize };
-        var logical_spans: std.ArrayList(Span) = .empty;
-        try logical_spans.ensureTotalCapacity(scratch, process_limit);
+        var rewrapped_lines: std.ArrayList(GridLine) = .empty;
+        errdefer {
+            for (rewrapped_lines.items) |*l| l.deinit(allocator);
+            rewrapped_lines.deinit(allocator);
+        }
 
-        const allocator = self.allocator;
+        const max_retained_cap: usize = @max(@as(usize, new_width) * 2, 128);
+        var new_cursor_logical_line: ?usize = null;
+        var new_cursor_offset_on_line: ?usize = null;
+
         var idx: usize = 0;
-        var cursor_logical_line: ?usize = null;
-        var cursor_offset_in_logical: ?usize = null;
-
         while (idx < process_limit) {
-            const start_idx = flat_cells.items.len;
-            var line_idx = idx;
+            const first_line = self.getLogicalRowMut(idx, hist_len);
 
+            // Tier B fast path: standalone unwrapped physical row whose trimmed
+            // content fits in `new_width` and whose backing buffer is not grossly
+            // oversized can be transferred directly into the output without
+            // flattening or allocating a replacement GridLine.
+            if (!first_line.wrapped and first_line.cells.capacity <= max_retained_cap) {
+                const trimmed_len = trimmedCellLen(first_line.cells.items);
+                if (fitsSingleLine(first_line.cells.items[0..trimmed_len], new_width)) {
+                    if (first_line.cells.capacity < new_width) {
+                        // Safe on OOM: items[0..self.width] stays untouched if a later alloc fails.
+                        try first_line.cells.ensureTotalCapacityPrecise(allocator, new_width);
+                    }
+                    const out_idx = plan.items.len;
+                    try plan.append(scratch, .{ .transfer = .{
+                        .row_idx = idx,
+                        .trimmed_len = trimmed_len,
+                    } });
+                    if (cursor_y != null and idx == cursor_y.? + hist_len) {
+                        new_cursor_logical_line = out_idx;
+                        new_cursor_offset_on_line = @min(cursor_x.?, new_width -| 1);
+                    }
+                    idx += 1;
+                    continue;
+                }
+            }
+
+            // General path: flatten logical line (consecutive wrapped rows) and rewrap.
+            flat_cells.clearRetainingCapacity();
+            var line_idx = idx;
             var is_cursor_logical_line = false;
             var cursor_offset_in_this_logical: usize = 0;
             var current_offset: usize = 0;
@@ -1079,15 +1262,7 @@ pub const Grid = struct {
                 else
                     self.getLine(@intCast(line_idx - hist_len));
 
-                var cells_to_add = line.cells.items;
-                // Trim trailing unwritten cells from all lines to remove padding
-                // Exclude padding cells (char == 0, is_padding == true) and combining chars — bug #264.
-                while (cells_to_add.len > 0) {
-                    const last = cells_to_add[cells_to_add.len - 1];
-                    if (last.char == 0 and !last.is_padding and last.comb1 == 0 and last.comb2 == 0 and !last.attr.sixel) {
-                        cells_to_add = cells_to_add[0 .. cells_to_add.len - 1];
-                    } else break;
-                }
+                const cells_to_add = line.cells.items[0..trimmedCellLen(line.cells.items)];
 
                 if (cursor_y != null and line_idx == cursor_y.? + hist_len) {
                     is_cursor_logical_line = true;
@@ -1104,143 +1279,152 @@ pub const Grid = struct {
             idx = line_idx;
 
             // Final trim of trailing unwritten cells — exclude padding and combining chars — bug #264.
-            while (flat_cells.items.len > start_idx) {
-                const last = flat_cells.items[flat_cells.items.len - 1];
-                if (last.char == 0 and !last.is_padding and last.comb1 == 0 and last.comb2 == 0 and !last.attr.sixel) {
-                    _ = flat_cells.pop();
-                } else break;
-            }
+            flat_cells.items.len = trimmedCellLen(flat_cells.items);
 
-            const current_logical_idx = logical_spans.items.len;
-            if (is_cursor_logical_line) {
-                cursor_logical_line = current_logical_idx;
-                cursor_offset_in_logical = cursor_offset_in_this_logical;
-            }
-
-            try logical_spans.append(scratch, Span{
-                .start = start_idx,
-                .len = flat_cells.items.len - start_idx,
-            });
-        }
-
-        // ── Save and replace old lines ──
-        var old_lines = self.lines;
-        var old_history = self.history;
-        const old_hist_start = self.history_start;
-        const old_hist_count = self.history_count;
-        self.lines = .empty;
-        self.history = .empty;
-        self.start_index = 0;
-        self.history_start = 0;
-        self.history_count = 0;
-
-        // ── Rewrap each logical line and build new line set ──
-        var new_lines: std.ArrayList(GridLine) = .empty;
-        errdefer {
-            for (new_lines.items) |*l| l.deinit(allocator);
-            new_lines.deinit(allocator);
-            self.lines = old_lines;
-            self.history = old_history;
-            self.history_start = old_hist_start;
-            self.history_count = old_hist_count;
-        }
-
-        var new_cursor_logical_line: ?usize = null;
-        var new_cursor_offset_on_line: ?usize = null;
-
-        for (logical_spans.items, 0..) |span, logical_line_idx| {
             var rewrap_cursor_pos = CursorPos{ .line_idx = 0, .col_idx = 0 };
-            const has_cursor = (cursor_logical_line != null and cursor_logical_line.? == logical_line_idx);
-
-            const flat = flat_cells.items[span.start .. span.start + span.len];
-
-            const before = new_lines.items.len;
+            const rw_before = rewrapped_lines.items.len;
+            const plan_before = plan.items.len;
             try rewrap(
-                flat,
+                flat_cells.items,
                 new_width,
                 allocator,
-                if (has_cursor) cursor_offset_in_logical else null,
-                if (has_cursor) &rewrap_cursor_pos else null,
-                &new_lines,
+                scratch,
+                if (is_cursor_logical_line) cursor_offset_in_this_logical else null,
+                if (is_cursor_logical_line) &rewrap_cursor_pos else null,
+                &rewrapped_lines,
             );
 
-            if (has_cursor) {
-                new_cursor_logical_line = before + rewrap_cursor_pos.line_idx;
+            const produced = rewrapped_lines.items.len - rw_before;
+            try plan.ensureUnusedCapacity(scratch, produced);
+            var ri = rw_before;
+            while (ri < rewrapped_lines.items.len) : (ri += 1) {
+                plan.appendAssumeCapacity(.{ .rewrapped = ri });
+            }
+
+            if (is_cursor_logical_line) {
+                new_cursor_logical_line = plan_before + rewrap_cursor_pos.line_idx;
                 new_cursor_offset_on_line = rewrap_cursor_pos.col_idx;
             }
         }
 
-        // ── Split result into visible + history ──
-        self.width = new_width;
-
-        const total_len = new_lines.items.len;
+        // Pre-allocate destination containers and any bottom padding lines
+        // BEFORE mutating `self` so Phase 2 is 100% infallible.
+        const total_len = plan.items.len;
         const height = self.height;
-        if (total_len <= height) {
-            // Pad new_lines with empty lines to match self.height before assigning
-            while (new_lines.items.len < height) {
+
+        var vis_list: std.ArrayList(GridLine) = .empty;
+        errdefer vis_list.deinit(allocator);
+        try vis_list.ensureTotalCapacityPrecise(allocator, height);
+
+        var pad_lines: std.ArrayList(GridLine) = .empty;
+        errdefer {
+            for (pad_lines.items) |*l| l.deinit(allocator);
+            pad_lines.deinit(allocator);
+        }
+        if (total_len < height) {
+            const pad_count = height - total_len;
+            try pad_lines.ensureTotalCapacityPrecise(allocator, pad_count);
+            var pi: usize = 0;
+            while (pi < pad_count) : (pi += 1) {
                 var line_cells: std.ArrayList(Cell) = .empty;
-                try line_cells.resize(allocator, new_width);
+                errdefer line_cells.deinit(allocator);
+                try line_cells.ensureTotalCapacityPrecise(allocator, new_width);
+                line_cells.items.len = new_width;
                 @memset(line_cells.items, Cell.empty());
-                try new_lines.append(allocator, GridLine{
+                pad_lines.appendAssumeCapacity(.{
                     .cells = line_cells,
                     .dirty = true,
                     .wrapped = false,
                 });
             }
-            self.lines = new_lines;
-            self.history_count = 0;
-            self.history_start = 0;
-            new_lines = .empty;
-        } else {
-            const h_count = total_len - height;
-
-            // Allocate visible portion (last `height` lines)
-            var vis_list: std.ArrayList(GridLine) = .empty;
-            try vis_list.ensureTotalCapacity(allocator, height);
-            errdefer vis_list.deinit(allocator);
-
-            // Allocate history portion (first `h_count` lines)
-            var hist_list: std.ArrayList(GridLine) = .empty;
-            try hist_list.ensureTotalCapacity(allocator, h_count);
-            errdefer hist_list.deinit(allocator);
-
-            vis_list.appendSliceAssumeCapacity(new_lines.items[h_count..]);
-            hist_list.appendSliceAssumeCapacity(new_lines.items[0..h_count]);
-
-            // Enforce the scrollback cap after rewrap: shrinking width grows
-            // physical line counts, so without this trim, repeated narrow
-            // resizes unbound history past `history_limit` (bug #371).
-            // Evicted lines release their cells and fire the sixel-evict
-            // callback exactly like scrollUp.
-            const excess = hist_list.items.len -| self.history_limit;
-            if (excess > 0) {
-                var evicted: usize = 0;
-                while (evicted < excess) : (evicted += 1) {
-                    self.notifyEvict(hist_list.items[evicted].cells.items);
-                    hist_list.items[evicted].deinit(allocator);
-                }
-                std.mem.copyForwards(GridLine, hist_list.items[0 .. hist_list.items.len - excess], hist_list.items[excess..]);
-                hist_list.items.len -= excess;
-            }
-            self.lines = vis_list;
-            self.history = hist_list;
-            self.history_count = hist_list.items.len;
-            self.history_start = 0;
-
-            // Free new_lines backing array
-            new_lines.deinit(allocator);
-            new_lines = .empty;
         }
 
-        // ── Deinit old lines AFTER split succeeds — bug #217/#230 fix ──
+        var hist_list: std.ArrayList(GridLine) = .empty;
+        errdefer hist_list.deinit(allocator);
+        const h_count = if (total_len > height) total_len - height else 0;
+        const excess = h_count -| self.history_limit;
+        const keep_hist = h_count - excess;
+        if (keep_hist > 0) {
+            try hist_list.ensureTotalCapacityPrecise(allocator, keep_hist);
+        }
+
+        // ── Phase 2 (Infallible Commit): materialize plan & swap buffers ──
+        var old_lines = self.lines;
+        var old_history = self.history;
+
+        const materialize = struct {
+            fn take(
+                g: *Grid,
+                item: PlanItem,
+                h_len: usize,
+                nw: u32,
+                rw: []GridLine,
+            ) GridLine {
+                switch (item) {
+                    .transfer => |tr| {
+                        const slot = g.getLogicalRowMut(tr.row_idx, h_len);
+                        var gl = slot.*;
+                        slot.cells = .empty;
+                        gl.cells.items.len = nw;
+                        if (tr.trimmed_len < nw) {
+                            @memset(gl.cells.items[tr.trimmed_len..nw], Cell.empty());
+                        }
+                        gl.dirty = true;
+                        gl.wrapped = false;
+                        return gl;
+                    },
+                    .rewrapped => |ri| {
+                        const gl = rw[ri];
+                        rw[ri].cells = .empty;
+                        return gl;
+                    },
+                }
+            }
+        }.take;
+
+        if (total_len <= height) {
+            for (plan.items) |item| {
+                vis_list.appendAssumeCapacity(materialize(self, item, hist_len, new_width, rewrapped_lines.items));
+            }
+            for (pad_lines.items) |pad_gl| {
+                vis_list.appendAssumeCapacity(pad_gl);
+            }
+            pad_lines.items.len = 0;
+        } else {
+            // Evict excess oldest lines beyond history_limit (bug #371).
+            var ev_i: usize = 0;
+            while (ev_i < excess) : (ev_i += 1) {
+                var ev_line = materialize(self, plan.items[ev_i], hist_len, new_width, rewrapped_lines.items);
+                self.notifyEvict(ev_line.cells.items);
+                ev_line.deinit(allocator);
+            }
+            var hi: usize = excess;
+            while (hi < h_count) : (hi += 1) {
+                hist_list.appendAssumeCapacity(materialize(self, plan.items[hi], hist_len, new_width, rewrapped_lines.items));
+            }
+            var vi: usize = h_count;
+            while (vi < total_len) : (vi += 1) {
+                vis_list.appendAssumeCapacity(materialize(self, plan.items[vi], hist_len, new_width, rewrapped_lines.items));
+            }
+        }
+
+        // Release remaining non-transferred old rows and staging arrays.
         for (old_lines.items) |*l| l.deinit(allocator);
         old_lines.deinit(allocator);
         for (old_history.items) |*l| l.deinit(allocator);
         old_history.deinit(allocator);
+        rewrapped_lines.deinit(allocator);
+        pad_lines.deinit(allocator);
+
+        self.lines = vis_list;
+        self.history = hist_list;
+        self.history_count = hist_list.items.len;
+        self.history_start = 0;
+        self.start_index = 0;
+        self.width = new_width;
 
         if (cursor_x != null and cursor_y != null) {
             if (new_cursor_logical_line) |ncll| {
-                const h_count = if (total_len > height) total_len - height else 0;
                 if (ncll >= h_count) {
                     if (out_cursor_y) |ocy| ocy.* = @intCast(ncll - h_count);
                     if (out_cursor_x) |ocx| ocx.* = @intCast(new_cursor_offset_on_line orelse 0);
@@ -2705,4 +2889,139 @@ test "Grid.scrollUp takes eviction path when ring is physically full — bug #49
 
     // 3. history_count remained at 5 (did not erroneously increment past items.len)
     try testing.expectEqual(@as(usize, 5), grid.history_count);
+}
+
+test "forceReflowCursor Tier A is zero-alloc and preserves trailing BCE cells when no line is wrapped" {
+    var grid = try Grid.initWithLimit(testing.allocator, 20, 4, 10);
+    defer grid.deinit();
+
+    // Populate unwrapped history + visible lines, including a trailing BCE background cell.
+    for (0..6) |r| {
+        grid.writeChar(0, 0, @intCast('A' + r));
+        try grid.scrollUp();
+    }
+    grid.writeChar(0, 0, 'H');
+    grid.writeChar(1, 0, 'i');
+    var bce = Cell.empty();
+    bce.bg = Colour.fromIndexed(4);
+    grid.setCell(15, 0, bce);
+
+    // Swap in a 0-budget FailingAllocator during forceReflowCursor: any heap alloc fails!
+    var failing = std.testing.FailingAllocator.init(testing.allocator, .{ .fail_index = 0 });
+    const orig_alloc = grid.allocator;
+    grid.allocator = failing.allocator();
+    defer grid.allocator = orig_alloc;
+
+    var out_cx: u32 = 0;
+    var out_cy: u32 = 0;
+    try grid.forceReflowCursor(25, 10, &out_cx, &out_cy);
+
+    try testing.expectEqual(@as(u32, 19), out_cx);
+    try testing.expectEqual(@as(u32, 3), out_cy);
+    try testing.expectEqual(@as(usize, 6), grid.historyLen());
+    try testing.expectEqual(Colour.fromIndexed(4), grid.getCell(15, 0).bg);
+}
+
+test "Grid.reflow uses exact line capacity without growCapacity bloat" {
+    var grid = try Grid.initWithLimit(testing.allocator, 120, 4, 50);
+    defer grid.deinit();
+
+    // Create a wrapped logical line that will rewrap into fresh buffers.
+    for (0..120) |x| grid.writeChar(@intCast(x), 0, 'a');
+    grid.lines.items[0].wrapped = true;
+    for (0..40) |x| grid.writeChar(@intCast(x), 1, 'b');
+
+    try grid.reflow(80);
+    for (grid.lines.items) |l| {
+        try testing.expectEqual(@as(usize, 80), l.cells.items.len);
+        try testing.expectEqual(@as(usize, 80), l.cells.capacity);
+    }
+}
+
+test "Grid.reflow OOM rollback leaves grid intact with zero leaks across Tier B transfers" {
+    // Sweep every allocation point during both shrink (with Tier B + wrapped rows + eviction)
+    // and grow (with Tier B in-place capacity expansion).
+    const cases = [_]struct { init_w: u32, target_w: u32, hist_limit: u32 }{
+        .{ .init_w = 20, .target_w = 10, .hist_limit = 4 },
+        .{ .init_w = 10, .target_w = 20, .hist_limit = 4 },
+    };
+
+    for (cases) |tc| {
+        var fail_idx: usize = 0;
+        while (fail_idx < 40) : (fail_idx += 1) {
+            var failing = std.testing.FailingAllocator.init(testing.allocator, .{ .fail_index = std.math.maxInt(usize) });
+            var grid = try Grid.initWithLimit(failing.allocator(), tc.init_w, 3, tc.hist_limit);
+            defer grid.deinit();
+
+            // Mix unwrapped short rows (Tier B candidates) and wrapped rows.
+            for (0..5) |r| {
+                const len: u32 = if (r % 2 == 0) 4 else tc.init_w;
+                var x: u32 = 0;
+                while (x < len) : (x += 1) {
+                    grid.writeChar(x, 2, @intCast('a' + ((r + x) % 26)));
+                }
+                if (r % 2 == 1) grid.getLineMut(2).wrapped = true;
+                try grid.scrollUp();
+            }
+            grid.writeChar(0, 0, 'Z');
+
+            // Arm failure at `fail_idx` relative to current allocation count.
+            const base_allocs = failing.alloc_index;
+            failing.fail_index = base_allocs + fail_idx;
+
+            var cx: u32 = 0;
+            var cy: u32 = 0;
+            const res = grid.reflowCursor(tc.target_w, 1, 0, &cx, &cy);
+            // Disarm before deinit.
+            failing.fail_index = std.math.maxInt(usize);
+
+            if (res) |_| {
+                try testing.expectEqual(tc.target_w, grid.width);
+                break; // Reached success; no further alloc points exist.
+            } else |err| {
+                try testing.expectEqual(error.OutOfMemory, err);
+                // Grid must remain completely intact at its original width.
+                try testing.expectEqual(tc.init_w, grid.width);
+                try testing.expectEqual(@as(u21, 'Z'), grid.getCell(0, 0).char);
+            }
+        }
+    }
+}
+
+test "Grid.rewrapWithBreaks matches linear search across monotonic and backtracked Thai wraps" {
+    // Construct a long Thai sequence with mixed breaks, spaces, right-attaching marks, and quotes.
+    const pattern = [_]u21{ 0x0E20, 0x0E32, 0x0E29, 0x0E32, 0x0E44, 0x0E17, 0x0E22, ' ' };
+    var cells: [256]Cell = undefined;
+    for (&cells, 0..) |*c, idx| {
+        c.* = Cell.withChar(pattern[idx % pattern.len]);
+    }
+    // Synthetic word breaks at 4, 7, 12, 15, ...
+    var breaks: std.ArrayList(usize) = .empty;
+    defer breaks.deinit(testing.allocator);
+    var pos: usize = 4;
+    while (pos < cells.len) : (pos += 8) {
+        try breaks.append(testing.allocator, pos);
+        if (pos + 3 < cells.len) try breaks.append(testing.allocator, pos + 3);
+    }
+
+    var out: std.ArrayList(GridLine) = .empty;
+    defer {
+        for (out.items) |*l| l.deinit(testing.allocator);
+        out.deinit(testing.allocator);
+    }
+    try Grid.rewrapWithBreaks(&cells, breaks.items, 12, testing.allocator, 100, null, &out);
+    try testing.expect(out.items.len >= 20);
+    // Reconstruct non-empty cells and verify lossless round-trip!
+    var rebuilt: std.ArrayList(u21) = .empty;
+    defer rebuilt.deinit(testing.allocator);
+    for (out.items) |l| {
+        const tlen = Grid.trimmedCellLen(l.cells.items);
+        for (l.cells.items[0..tlen]) |c| {
+            try rebuilt.append(testing.allocator, c.char);
+        }
+    }
+    try testing.expectEqual(cells.len, rebuilt.items.len);
+    for (cells, rebuilt.items) |orig, got| {
+        try testing.expectEqual(orig.char, got);
+    }
 }

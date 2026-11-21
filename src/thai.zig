@@ -801,70 +801,235 @@ pub fn deinitLibThai() void {
 }
 
 pub fn findWordBreaks(allocator: std.mem.Allocator, cells: []const Cell) ![]usize {
-    var has_thai = false;
-    for (cells) |c| {
-        if (isThai(c.char)) {
-            has_thai = true;
-            break;
-        }
-    }
-    if (!has_thai) return allocator.alloc(usize, 0);
+    return findWordBreaksWithScratch(allocator, allocator, cells);
+}
 
-    const libthai = getLibThai() orelse return allocator.alloc(usize, 0);
+/// Find Thai word break cell indices using `libthai`, allocating temporary
+/// working buffers from `scratch_allocator` and the returned slice from
+/// `result_allocator`.
+///
+/// Splits the input into contiguous Thai-containing spans (skipping non-Thai
+/// stretches) and segments very long unbroken Thai spans in bounded overlapping
+/// chunks so runtime stays strictly O(N) even on 64k+ unbroken Thai lines.
+pub fn findWordBreaksWithScratch(
+    result_allocator: std.mem.Allocator,
+    scratch_allocator: std.mem.Allocator,
+    cells: []const Cell,
+) ![]usize {
+    const first_thai = blk: {
+        for (cells, 0..) |c, idx| {
+            if (isThai(c.char)) break :blk idx;
+        }
+        break :blk null;
+    } orelse return result_allocator.alloc(usize, 0);
+
+    const libthai = getLibThai() orelse return result_allocator.alloc(usize, 0);
+
+    // Bounded window size keeps libthai's internal DP/backtracking strictly O(1)
+    // per chunk (linear O(N) overall), while overlapping at verified word
+    // boundaries >= CHUNK_OVERLAP codepoints before the window edge preserves
+    // dictionary context (max Thai dictionary word length is well under 64).
+    const CHUNK_LEN: usize = 2048;
+    const CHUNK_OVERLAP: usize = 64;
 
     var codepoints: std.ArrayList(u32) = .empty;
-    defer codepoints.deinit(allocator);
+    defer codepoints.deinit(scratch_allocator);
     var cell_indices: std.ArrayList(usize) = .empty;
-    defer cell_indices.deinit(allocator);
+    defer cell_indices.deinit(scratch_allocator);
 
-    for (cells, 0..) |c, i| {
-        if (c.char != 0 and !c.is_padding) {
-            try codepoints.append(allocator, c.char);
-            try cell_indices.append(allocator, i);
-            if (c.comb1 != 0) {
-                try codepoints.append(allocator, char_width.combiningCodepoint(c.comb1));
-                try cell_indices.append(allocator, i);
-            }
-            if (c.comb2 != 0) {
-                try codepoints.append(allocator, char_width.combiningCodepoint(c.comb2));
-                try cell_indices.append(allocator, i);
-            }
-        }
-    }
-
-    if (codepoints.items.len == 0) return allocator.alloc(usize, 0);
-
-    // th_brk_wc_find_breaks expects a null-terminated wide-character string
-    try codepoints.append(allocator, 0);
-
-    const breaks_buf = try allocator.alloc(c_int, codepoints.items.len);
-    defer allocator.free(breaks_buf);
-
-    const num_breaks = libthai.th_brk_wc_find_breaks(
-        libthai.brk,
-        codepoints.items.ptr,
-        breaks_buf.ptr,
-        breaks_buf.len,
-    );
-
-    if (num_breaks <= 0) return allocator.alloc(usize, 0);
+    var chunk_buf: []u32 = &.{};
+    defer if (chunk_buf.len > 0) scratch_allocator.free(chunk_buf);
+    var breaks_buf: []c_int = &.{};
+    defer if (breaks_buf.len > 0) scratch_allocator.free(breaks_buf);
 
     var result: std.ArrayList(usize) = .empty;
-    errdefer result.deinit(allocator);
+    errdefer result.deinit(result_allocator);
 
-    var i: usize = 0;
-    while (i < @as(usize, @intCast(num_breaks))) : (i += 1) {
-        const raw = breaks_buf[i];
-        // A hostile/broken libthai must not panic on a negative position
-        // (bug #394); skip it like an out-of-range one.
-        if (raw < 0) continue;
-        const p: usize = @intCast(raw);
-        if (p < cell_indices.items.len) {
-            try result.append(allocator, cell_indices.items[p]);
+    var scan: usize = first_thai;
+    while (scan < cells.len) {
+        // Include 1 preceding context cell so libthai sees the non-Thai->Thai boundary.
+        const span_start = scan -| 1;
+
+        // Extend span across contiguous Thai cells and short gaps (<= 2 non-Thai cells)
+        // so adjacent Thai words separated by spaces/punctuation stay in one span.
+        var span_end = scan + 1;
+        var non_thai_gap: usize = 0;
+        var k = span_end;
+        while (k < cells.len) : (k += 1) {
+            if (isThai(cells[k].char)) {
+                span_end = k + 1;
+                non_thai_gap = 0;
+            } else {
+                non_thai_gap += 1;
+                if (non_thai_gap > 2) break;
+            }
         }
+        // Include 1 trailing context cell for the Thai->non-Thai boundary.
+        const ctx_end = @min(span_end + 1, cells.len);
+        const span = cells[span_start..ctx_end];
+
+        // Count exact UTF-32 codepoints in this span to avoid ArrayList growth churn.
+        var cp_count: usize = 0;
+        for (span) |c| {
+            if (c.char != 0 and !c.is_padding) {
+                cp_count += 1;
+                if (c.comb1 != 0) cp_count += 1;
+                if (c.comb2 != 0) cp_count += 1;
+            }
+        }
+
+        if (cp_count > 0) {
+            codepoints.clearRetainingCapacity();
+            cell_indices.clearRetainingCapacity();
+            if (codepoints.capacity < cp_count + 1) {
+                try codepoints.ensureTotalCapacityPrecise(scratch_allocator, cp_count + 1);
+            }
+            if (cell_indices.capacity < cp_count) {
+                try cell_indices.ensureTotalCapacityPrecise(scratch_allocator, cp_count);
+            }
+
+            for (span, 0..) |c, rel_i| {
+                if (c.char != 0 and !c.is_padding) {
+                    const abs_i = span_start + rel_i;
+                    codepoints.appendAssumeCapacity(c.char);
+                    cell_indices.appendAssumeCapacity(abs_i);
+                    if (c.comb1 != 0) {
+                        codepoints.appendAssumeCapacity(char_width.combiningCodepoint(c.comb1));
+                        cell_indices.appendAssumeCapacity(abs_i);
+                    }
+                    if (c.comb2 != 0) {
+                        codepoints.appendAssumeCapacity(char_width.combiningCodepoint(c.comb2));
+                        cell_indices.appendAssumeCapacity(abs_i);
+                    }
+                }
+            }
+
+            const total_cps = codepoints.items.len;
+            const work_len = @min(total_cps, CHUNK_LEN);
+            if (breaks_buf.len < work_len) {
+                if (breaks_buf.len > 0) scratch_allocator.free(breaks_buf);
+                breaks_buf = try scratch_allocator.alloc(c_int, work_len);
+            }
+
+            if (total_cps <= CHUNK_LEN) {
+                // Fast single-call path (covers all typical terminal lines verbatim).
+                codepoints.appendAssumeCapacity(0);
+                const num_breaks = libthai.th_brk_wc_find_breaks(
+                    libthai.brk,
+                    codepoints.items.ptr,
+                    breaks_buf.ptr,
+                    total_cps,
+                );
+                if (num_breaks > 0) {
+                    const n_brk: usize = @intCast(num_breaks);
+                    try result.ensureUnusedCapacity(result_allocator, n_brk);
+                    for (breaks_buf[0..n_brk]) |raw| {
+                        // A hostile/broken libthai must not panic on a negative position
+                        // (bug #394); skip it like an out-of-range one.
+                        if (raw < 0) continue;
+                        const p: usize = @intCast(raw);
+                        if (p < cell_indices.items.len) {
+                            const cell_idx = cell_indices.items[p];
+                            if (result.items.len == 0 or result.items[result.items.len - 1] < cell_idx) {
+                                result.appendAssumeCapacity(cell_idx);
+                            }
+                        }
+                    }
+                }
+            } else {
+                // Bounded chunked path for huge unbroken Thai spans (> 2048 codepoints).
+                if (chunk_buf.len < CHUNK_LEN + 1) {
+                    if (chunk_buf.len > 0) scratch_allocator.free(chunk_buf);
+                    chunk_buf = try scratch_allocator.alloc(u32, CHUNK_LEN + 1);
+                }
+                var pos: usize = 0;
+                while (pos < total_cps) {
+                    const end = @min(pos + CHUNK_LEN, total_cps);
+                    const clen = end - pos;
+                    @memcpy(chunk_buf[0..clen], codepoints.items[pos..end]);
+                    chunk_buf[clen] = 0;
+
+                    const num_breaks = libthai.th_brk_wc_find_breaks(
+                        libthai.brk,
+                        chunk_buf.ptr,
+                        breaks_buf.ptr,
+                        clen,
+                    );
+                    const n_brk: usize = if (num_breaks > 0) @intCast(num_breaks) else 0;
+
+                    if (end == total_cps) {
+                        if (n_brk > 0) {
+                            try result.ensureUnusedCapacity(result_allocator, n_brk);
+                            for (breaks_buf[0..n_brk]) |raw| {
+                                if (raw < 0) continue;
+                                const p: usize = @intCast(raw);
+                                if (p < clen) {
+                                    const cell_idx = cell_indices.items[pos + p];
+                                    if (result.items.len == 0 or result.items[result.items.len - 1] < cell_idx) {
+                                        result.appendAssumeCapacity(cell_idx);
+                                    }
+                                }
+                            }
+                        }
+                        break;
+                    }
+
+                    // Pick the last word break with >= CHUNK_OVERLAP lookahead remaining.
+                    const safe_max = clen -| CHUNK_OVERLAP;
+                    var cut: usize = 0;
+                    var emit_count: usize = 0;
+                    for (breaks_buf[0..n_brk], 0..) |raw, bi| {
+                        if (raw <= 0) continue;
+                        const p: usize = @intCast(raw);
+                        if (p <= safe_max) {
+                            cut = p;
+                            emit_count = bi + 1;
+                        } else {
+                            break;
+                        }
+                    }
+
+                    if (cut > 0) {
+                        try result.ensureUnusedCapacity(result_allocator, emit_count);
+                        for (breaks_buf[0..emit_count]) |raw| {
+                            if (raw < 0) continue;
+                            const p: usize = @intCast(raw);
+                            if (p < clen) {
+                                const cell_idx = cell_indices.items[pos + p];
+                                if (result.items.len == 0 or result.items[result.items.len - 1] < cell_idx) {
+                                    result.appendAssumeCapacity(cell_idx);
+                                }
+                            }
+                        }
+                        pos += cut;
+                    } else {
+                        // No dictionary break within safe_max (e.g. non-word repetition):
+                        // emit whatever breaks exist and advance past the chunk.
+                        if (n_brk > 0) {
+                            try result.ensureUnusedCapacity(result_allocator, n_brk);
+                            for (breaks_buf[0..n_brk]) |raw| {
+                                if (raw < 0) continue;
+                                const p: usize = @intCast(raw);
+                                if (p < clen) {
+                                    const cell_idx = cell_indices.items[pos + p];
+                                    if (result.items.len == 0 or result.items[result.items.len - 1] < cell_idx) {
+                                        result.appendAssumeCapacity(cell_idx);
+                                    }
+                                }
+                            }
+                        }
+                        pos = end;
+                    }
+                }
+            }
+        }
+
+        // Advance to the next Thai cell past ctx_end.
+        scan = ctx_end;
+        while (scan < cells.len and !isThai(cells[scan].char)) : (scan += 1) {}
     }
 
-    return result.toOwnedSlice(allocator);
+    return result.toOwnedSlice(result_allocator);
 }
 
 test "findWordBreaks using libthai if available" {
@@ -912,4 +1077,30 @@ test "isSaraAm: Thai and Lao SARA AM" {
     try testing.expect(!isSaraAm(0x0E01)); // Thai KO KAI
     try testing.expect(!isSaraAm(0x0E32)); // Thai SARA AA
     try testing.expect(!isSaraAm('A'));
+}
+
+test "findWordBreaks handles >2048-codepoint Thai spans with strictly increasing breaks" {
+    if (getLibThai() == null) return;
+    defer deinitLibThai();
+
+    // Repeat "ภาษาไทย" 450 times = 3,150 cells (> CHUNK_LEN = 2048).
+    const word = [_]u21{ 0x0E20, 0x0E32, 0x0E29, 0x0E32, 0x0E44, 0x0E17, 0x0E22 };
+    const total = word.len * 450;
+    const cells = try testing.allocator.alloc(Cell, total);
+    defer testing.allocator.free(cells);
+    for (cells, 0..) |*c, idx| {
+        c.* = Cell.withChar(word[idx % word.len]);
+    }
+
+    const breaks = try findWordBreaks(testing.allocator, cells);
+    defer testing.allocator.free(breaks);
+
+    try testing.expect(breaks.len > 400);
+    var prev: usize = 0;
+    for (breaks, 0..) |b, idx| {
+        try testing.expect(b < total);
+        if (idx > 0) try testing.expect(b > prev);
+        prev = b;
+    }
+    try testing.expect(breaks[breaks.len - 1] > 2800);
 }
