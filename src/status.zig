@@ -389,18 +389,18 @@ pub fn buildLine(
     // entry whose start lies beyond `centre_cols` is pushed off-screen and any
     // partially-overflowing entry is clamped at the truncation boundary.
     if (out_ranges) |r| {
-        var w: usize = 0;
-        while (w < r.items.len) {
-            const range = &r.items[w];
+        // Entries have monotonically non-decreasing start_col, so once an
+        // entry starts at or beyond centre_cols, it and every following entry
+        // are off-screen and can be truncated in O(1).
+        for (r.items, 0..) |*range, w| {
             if (range.start_col >= res.centre_cols) {
-                _ = r.orderedRemove(w);
-                continue;
+                r.items.len = w;
+                break;
             }
             const new_start = res.centre_start + range.start_col;
             const new_end = res.centre_start + @min(range.end_col, res.centre_cols);
             range.start_col = @intCast(new_start);
             range.end_col = @intCast(new_end);
-            w += 1;
         }
     }
 
@@ -695,6 +695,33 @@ test "buildLine truncates centre to available width — bug #290" {
     try testing.expectEqual(@as(u32, 1), ranges.items[1].pos);
     try testing.expectEqual(@as(u32, 7), ranges.items[1].start_col);
     try testing.expectEqual(@as(u32, 8), ranges.items[1].end_col);
+}
+
+test "buildLine drops all off-screen trailing window ranges in O(W)" {
+    const windows = [_]WindowInfo{
+        .{ .index = 0, .name = "alpha", .flags = "", .is_active = true },
+        .{ .index = 1, .name = "bravo", .flags = "", .is_active = false },
+        .{ .index = 2, .name = "charlie", .flags = "", .is_active = false },
+        .{ .index = 3, .name = "delta", .flags = "", .is_active = false },
+    };
+    var ranges = std.ArrayList(WindowRange).empty;
+    defer ranges.deinit(testing.allocator);
+    // "0:alpha" = 7 cols; width = 7 drops windows 1, 2, 3 completely.
+    const res = try buildLine(testing.allocator, .{
+        .session_name = "s",
+        .windows = &windows,
+        .left = "",
+        .right = "",
+        .left_length = 0,
+        .right_length = 0,
+        .width = 7,
+    }, &ranges);
+    defer res.deinit(testing.allocator);
+
+    try testing.expectEqual(@as(usize, 1), ranges.items.len);
+    try testing.expectEqual(@as(u32, 0), ranges.items[0].pos);
+    try testing.expectEqual(@as(u32, 0), ranges.items[0].start_col);
+    try testing.expectEqual(@as(u32, 7), ranges.items[0].end_col);
 }
 
 test "buildLine with style in window-status-current-format" {

@@ -28,13 +28,43 @@ const Override = struct {
 };
 
 var override_count: usize = 0;
+var override_min_cp: u21 = std.math.maxInt(u21);
+var override_max_cp: u21 = 0;
+var overrides_disjoint: bool = true;
 var overrides: [MAX_OVERRIDES]Override = undefined;
+var sorted_overrides: [MAX_OVERRIDES]Override = undefined;
 
-/// Replace the entire override table with a single codepoint range.
+/// Append a single codepoint range to the override table.
 /// Returns `error.OverrideTableFull` if the table is saturated.
 pub fn setOverride(start: u21, end: u21, width: u2) !void {
     if (override_count >= MAX_OVERRIDES) return error.OverrideTableFull;
-    overrides[override_count] = .{ .start = start, .end = end, .width = width };
+    const entry = Override{ .start = start, .end = end, .width = width };
+    overrides[override_count] = entry;
+
+    if (overrides_disjoint) {
+        // Maintain sorted_overrides for O(log M) lookup whenever all entries
+        // are pairwise disjoint; fall back to insertion-order scan on overlap
+        // so first-entry precedence is preserved identically.
+        var pos: usize = override_count;
+        while (pos > 0 and sorted_overrides[pos - 1].start > start) : (pos -= 1) {}
+        const overlaps_prev = pos > 0 and sorted_overrides[pos - 1].end >= start;
+        const overlaps_next = pos < override_count and sorted_overrides[pos].start <= end;
+        if (overlaps_prev or overlaps_next) {
+            overrides_disjoint = false;
+        } else {
+            if (pos < override_count) {
+                std.mem.copyBackwards(
+                    Override,
+                    sorted_overrides[pos + 1 .. override_count + 1],
+                    sorted_overrides[pos..override_count],
+                );
+            }
+            sorted_overrides[pos] = entry;
+        }
+    }
+
+    if (start < override_min_cp) override_min_cp = start;
+    if (end > override_max_cp) override_max_cp = end;
     override_count += 1;
 }
 
@@ -42,6 +72,9 @@ pub fn setOverride(start: u21, end: u21, width: u2) !void {
 /// from scratch on every assignment, so we never need incremental deletion.
 pub fn clearOverrides() void {
     override_count = 0;
+    override_min_cp = std.math.maxInt(u21);
+    override_max_cp = 0;
+    overrides_disjoint = true;
 }
 
 var variation_selector_always_wide: bool = false;
@@ -60,6 +93,22 @@ pub fn getVariationSelectorAlwaysWide() bool {
 pub const OverrideError = error{OverrideTableFull};
 
 fn overrideWidth(cp: u21) ?u2 {
+    if (overrides_disjoint) {
+        var lo: usize = 0;
+        var hi: usize = override_count;
+        while (lo < hi) {
+            const mid = lo + (hi - lo) / 2;
+            const ov = sorted_overrides[mid];
+            if (cp < ov.start) {
+                hi = mid;
+            } else if (cp > ov.end) {
+                lo = mid + 1;
+            } else {
+                return ov.width;
+            }
+        }
+        return null;
+    }
     var i: usize = 0;
     while (i < override_count) : (i += 1) {
         if (cp >= overrides[i].start and cp <= overrides[i].end) {
@@ -218,14 +267,110 @@ pub fn combiningCodepoint(idx: u13) u21 {
     return combining_marks[idx - 1];
 }
 
+// ── Comptime 2-level deduplicated BMP lookup table (U+0000..U+FFFF) ──
+//
+// Packs 4 × 2-bit widths per byte (64 bytes per 256-codepoint page) and
+// deduplicates identical pages at comptime (~4 KiB total rodata). Replaces
+// up to 3 binary searches per BMP codepoint with 2 L1 array loads.
+
+fn comptimePaintRange(pages: *[256][64]u8, start_cp: u32, end_cp: u32, width: u2) void {
+    const fill_byte: u8 = @as(u8, width) * 0x55;
+    var cp: u32 = start_cp;
+    while (cp <= end_cp) {
+        if ((cp & 0xFF) == 0 and cp + 255 <= end_cp) {
+            @memset(&pages[cp >> 8], fill_byte);
+            cp += 256;
+        } else {
+            const page = cp >> 8;
+            const low = cp & 0xFF;
+            const byte_idx = low >> 2;
+            const shift: u3 = @intCast((low & 3) * 2);
+            pages[page][byte_idx] = (pages[page][byte_idx] & ~(@as(u8, 3) << shift)) | (@as(u8, width) << shift);
+            cp += 1;
+        }
+    }
+}
+
+const bmp_raw_pages: [256][64]u8 = blk: {
+    @setEvalBranchQuota(200_000);
+    var pages: [256][64]u8 = undefined;
+    for (&pages) |*p| @memset(p, 0x55); // default width 1
+
+    // Paint in reverse precedence order so zero_width wins over wide/emoji,
+    // matching the reference lookup order.
+    for (emoji_presentation_ranges) |r| {
+        if (r.start <= 0xFFFF) {
+            const s = @max(@as(u32, r.start), 0x0300);
+            const e = @min(@as(u32, r.end), 0xFFFF);
+            if (s <= e) comptimePaintRange(&pages, s, e, 2);
+        }
+    }
+    for (wide_ranges) |r| {
+        if (r.start <= 0xFFFF) {
+            const s = @max(@as(u32, r.start), 0x0300);
+            const e = @min(@as(u32, r.end), 0xFFFF);
+            if (s <= e) comptimePaintRange(&pages, s, e, 2);
+        }
+    }
+    for (zero_width_ranges) |r| {
+        if (r.start <= 0xFFFF) {
+            const s = @max(@as(u32, r.start), 0x0300);
+            const e = @min(@as(u32, r.end), 0xFFFF);
+            if (s <= e) comptimePaintRange(&pages, s, e, 0);
+        }
+    }
+    comptimePaintRange(&pages, 0x00, 0x1F, 0);
+    comptimePaintRange(&pages, 0x7F, 0x9F, 0);
+    break :blk pages;
+};
+
+const bmp_table_meta = blk: {
+    @setEvalBranchQuota(200_000);
+    var page_idx: [256]u8 = std.mem.zeroes([256]u8);
+    var unique_pages: [256][64]u8 = undefined;
+    var count: usize = 0;
+    for (bmp_raw_pages, 0..) |page, p| {
+        var found: ?usize = null;
+        var u: usize = 0;
+        while (u < count) : (u += 1) {
+            if (std.mem.eql(u8, &unique_pages[u], &page)) {
+                found = u;
+                break;
+            }
+        }
+        if (found) |idx| {
+            page_idx[p] = @intCast(idx);
+        } else {
+            unique_pages[count] = page;
+            page_idx[p] = @intCast(count);
+            count += 1;
+        }
+    }
+    break :blk .{ .index = page_idx, .count = count, .pages = unique_pages };
+};
+
+const bmp_page_index: [256]u8 = bmp_table_meta.index;
+const bmp_blocks: [bmp_table_meta.count][64]u8 = bmp_table_meta.pages[0..bmp_table_meta.count].*;
+
+fn supplStartIndex(comptime ranges: []const WidthRange) usize {
+    for (ranges, 0..) |r, i| {
+        if (r.end >= 0x10000) return i;
+    }
+    return ranges.len;
+}
+
+const suppl_zero_width_ranges = zero_width_ranges[supplStartIndex(&zero_width_ranges)..];
+const suppl_wide_ranges = wide_ranges[supplStartIndex(&wide_ranges)..];
+const suppl_emoji_ranges = emoji_presentation_ranges[supplStartIndex(&emoji_presentation_ranges)..];
+
 pub fn charWidth(cp: u21) u2 {
-    // User overrides win first — these let the operator match whatever width
-    // their terminal actually uses for ambiguous codepoints (bug #206).
-    if (override_count > 0) {
+    // User overrides win first — bounded by [override_min_cp, override_max_cp]
+    // so ASCII and out-of-range codepoints skip override lookup in O(1) (bug #206).
+    if (override_count > 0 and cp >= override_min_cp and cp <= override_max_cp) {
         if (overrideWidth(cp)) |w| return w;
     }
 
-    // Fast path: ASCII printable + Latin-1 Supplement
+    // Fast path: ASCII printable + Latin-1 Supplement (0 memory loads)
     if (cp < 0x0300) {
         // The zero-width run is the C0 controls plus the C1 block 0x80..0x9F.
         // The upper bound must be 0x9F, not 0xA0: U+00A0 NO-BREAK SPACE is a
@@ -234,15 +379,23 @@ pub fn charWidth(cp: u21) u2 {
         if (cp < 0x20 or (cp >= 0x7F and cp <= 0x9F)) return 0;
         return 1;
     }
-    // Binary search in the non-trivial ranges table
-    if (searchTable(cp, &zero_width_ranges)) return 0;
-    if (searchTable(cp, &wide_ranges)) return 2;
+
+    // O(1) 2-level table lookup for all BMP codepoints (0x0300..0xFFFF).
+    if (cp <= 0xFFFF) {
+        const page = bmp_page_index[cp >> 8];
+        const low: u8 = @truncate(cp);
+        const byte = bmp_blocks[page][low >> 2];
+        const shift: u3 = @intCast((low & 3) * 2);
+        return @truncate(byte >> shift);
+    }
+
+    // Supplementary planes (>= 0x10000): binary search only supplementary slices.
+    if (searchTable(cp, suppl_zero_width_ranges)) return 0;
+    if (searchTable(cp, suppl_wide_ranges)) return 2;
     // Emoji-presentation codepoints that modern terminals (iTerm2, kitty,
     // Ghostty, WezTerm, Terminal.app) render as width 2 even though their
-    // East-Asian-Width class is "ambiguous" or "neutral".  Misclassifying
-    // these as width 1 makes the model cursor drift relative to the real
-    // terminal, which is bug #206.
-    if (searchTable(cp, &emoji_presentation_ranges)) return 2;
+    // East-Asian-Width class is "ambiguous" or "neutral" (bug #206).
+    if (searchTable(cp, suppl_emoji_ranges)) return 2;
 
     // Fall through: width 1 default.
     // Note: Thai SARA AM (U+0E33 ำ) is intentionally width 1 (matching standard Unicode
@@ -864,4 +1017,44 @@ test "applyCodepointWidths: inverted range rejected, previous table preserved �
 
     // Clean up for other tests.
     try applyCodepointWidths(std.testing.allocator, "");
+}
+
+test "charWidth: 2-level BMP table matches reference ranges across all Unicode scalars" {
+    clearOverrides();
+    var cp: u32 = 0;
+    while (cp <= 0x10FFFF) : (cp += 1) {
+        const ucp: u21 = @intCast(cp);
+        const expected: u2 = blk: {
+            if (ucp < 0x0300) {
+                if (ucp < 0x20 or (ucp >= 0x7F and ucp <= 0x9F)) break :blk 0;
+                break :blk 1;
+            }
+            if (searchTable(ucp, &zero_width_ranges)) break :blk 0;
+            if (searchTable(ucp, &wide_ranges)) break :blk 2;
+            if (searchTable(ucp, &emoji_presentation_ranges)) break :blk 2;
+            break :blk 1;
+        };
+        try std.testing.expectEqual(expected, charWidth(ucp));
+    }
+}
+
+test "charWidth: out-of-order disjoint and overlapping overrides preserve exact precedence" {
+    defer clearOverrides();
+
+    // Disjoint out-of-order entries use binary search and bounds fast-path.
+    clearOverrides();
+    try setOverride(0x2600, 0x2610, 2);
+    try setOverride(0x2500, 0x2510, 2);
+    try setOverride(0x2550, 0x2555, 1);
+    try std.testing.expect(overrides_disjoint);
+    try std.testing.expectEqual(@as(u2, 1), charWidth('A'));
+    try std.testing.expectEqual(@as(u2, 2), charWidth(0x2505));
+    try std.testing.expectEqual(@as(u2, 1), charWidth(0x2552));
+    try std.testing.expectEqual(@as(u2, 2), charWidth(0x2608));
+    try std.testing.expectEqual(@as(u2, 1), charWidth(0x2520)); // gap between ranges
+
+    // Overlapping entry falls back to first-entry-wins insertion order.
+    try setOverride(0x2504, 0x2508, 1);
+    try std.testing.expect(!overrides_disjoint);
+    try std.testing.expectEqual(@as(u2, 2), charWidth(0x2505)); // earlier 0x2500..0x2510=2 wins
 }

@@ -1356,58 +1356,73 @@ pub const Screen = struct {
         self.dirty = true;
     }
 
-    pub fn insertLines(self: *Screen, n: u32) Error!void {
-        const top = if (self.scroll_region) |r| r[0] else 0;
-        const bottom = if (self.scroll_region) |r| r[1] else self.grid.height - 1;
-        const y = @max(self.cursor.y, top);
-        if (y > bottom) return;
-        const count = @min(n, bottom + 1 - y);
-        const fill = self.eraseCell();
-        var i: u32 = 0;
-        while (i < count) : (i += 1) {
-            var row = bottom;
-            const temp = self.grid.getLine(bottom).*;
-            // bug #278: decrement refcounts exactly once for the discarded
-            // bottom line (the buffer moves to `y` and is reused as the new
-            // blank line, so the old bottom content is erased exactly once).
-            self.decrementLineRefs(temp.cells.items);
-            while (row > y) : (row -= 1) {
-                self.grid.getLineMut(row).* = self.grid.getLine(row - 1).*;
-            }
-            self.grid.getLineMut(y).* = temp;
-            const line = self.grid.getLineMut(y);
-            @memset(line.cells.items, fill);
-            line.wrapped = false;
-            line.dirty = true;
-        }
-        self.dirty = true;
-    }
-
-    pub fn deleteLines(self: *Screen, n: u32) Error!void {
-        const top = if (self.scroll_region) |r| r[0] else 0;
-        const bottom = if (self.scroll_region) |r| r[1] else self.grid.height - 1;
-        const y = @max(self.cursor.y, top);
-        if (y > bottom) return;
-        const count = @min(n, bottom + 1 - y);
-        const fill = self.eraseCell();
-        var i: u32 = 0;
-        while (i < count) : (i += 1) {
-            // bug #279: the old bottom line shifts UP and stays visible — its
-            // refcounts must NOT be decremented. Only the old line `y` content
-            // (moved to `bottom`, then memset) is discarded, so it is the only
-            // line that gets its refcounts released.
-            const temp = self.grid.getLine(y).*;
-            var row = y;
-            while (row < bottom) : (row += 1) {
-                self.grid.getLineMut(row).* = self.grid.getLine(row + 1).*;
-            }
-            self.grid.getLineMut(bottom).* = temp;
-            const line = self.grid.getLineMut(bottom);
+    /// Rotate lines `[top .. bottom + 1]` down by `count` rows in O(H): the
+    /// bottom `count` lines recycle to the top of the sub-region, have their
+    /// sixel refcounts decremented once, and are cleared with `fill`. Every
+    /// row in `[top .. bottom]` is marked dirty so row-granular diffing never
+    /// skips relocated rows.
+    fn rotateRegionDown(self: *Screen, top: u32, bottom: u32, count: u32, fill: Cell) Error!void {
+        if (count == 0) return;
+        try self.grid.normalize();
+        const region = self.grid.lines.items[top .. bottom + 1];
+        const c_usize: usize = count;
+        std.mem.rotate(GridLine, region, region.len - c_usize);
+        for (region[0..c_usize]) |*line| {
             self.decrementLineRefs(line.cells.items);
             @memset(line.cells.items, fill);
             line.wrapped = false;
             line.dirty = true;
         }
+        for (region[c_usize..]) |*line| {
+            line.dirty = true;
+        }
+    }
+
+    /// Rotate lines `[top .. bottom + 1]` up by `count` rows in O(H): the top
+    /// `count` lines recycle to the bottom of the sub-region, have their sixel
+    /// refcounts decremented once, and are cleared with `fill`. Every row in
+    /// `[top .. bottom]` is marked dirty.
+    fn rotateRegionUp(self: *Screen, top: u32, bottom: u32, count: u32, fill: Cell) Error!void {
+        if (count == 0) return;
+        try self.grid.normalize();
+        const region = self.grid.lines.items[top .. bottom + 1];
+        const c_usize: usize = count;
+        std.mem.rotate(GridLine, region, c_usize);
+        const keep = region.len - c_usize;
+        for (region[0..keep]) |*line| {
+            line.dirty = true;
+        }
+        for (region[keep..]) |*line| {
+            self.decrementLineRefs(line.cells.items);
+            @memset(line.cells.items, fill);
+            line.wrapped = false;
+            line.dirty = true;
+        }
+    }
+
+    pub fn insertLines(self: *Screen, n: u32) Error!void {
+        if (self.grid.height == 0) return;
+        const top = if (self.scroll_region) |r| r[0] else 0;
+        const bottom = if (self.scroll_region) |r| r[1] else self.grid.height - 1;
+        const y = @max(self.cursor.y, top);
+        if (y > bottom) return;
+        const count = @min(n, bottom + 1 - y);
+        // bug #278: decrement refcounts exactly once for the discarded bottom
+        // lines (reused as the new blank lines at `y .. y + count`).
+        try self.rotateRegionDown(y, bottom, count, self.eraseCell());
+        self.dirty = true;
+    }
+
+    pub fn deleteLines(self: *Screen, n: u32) Error!void {
+        if (self.grid.height == 0) return;
+        const top = if (self.scroll_region) |r| r[0] else 0;
+        const bottom = if (self.scroll_region) |r| r[1] else self.grid.height - 1;
+        const y = @max(self.cursor.y, top);
+        if (y > bottom) return;
+        const count = @min(n, bottom + 1 - y);
+        // bug #279: surviving lines shift up without releasing refcounts; only
+        // the `count` discarded lines rotated to the bottom release refcounts.
+        try self.rotateRegionUp(y, bottom, count, self.eraseCell());
         self.dirty = true;
     }
 
@@ -1473,22 +1488,7 @@ pub const Screen = struct {
             const top = r[0];
             const bottom = r[1];
             const count = @min(n, bottom + 1 - top);
-            const fill = self.eraseCell();
-            var i: u32 = 0;
-            while (i < count) : (i += 1) {
-                const temp = self.grid.getLine(top).*;
-                var row = top;
-                while (row < bottom) : (row += 1) {
-                    self.grid.getLineMut(row).* = self.grid.getLine(row + 1).*;
-                }
-                self.grid.getLineMut(bottom).* = temp;
-                const last = self.grid.getLineMut(bottom);
-                // bug #225: decrement refcounts for the fill cells.
-                self.decrementLineRefs(last.cells.items);
-                @memset(last.cells.items, fill);
-                last.wrapped = false;
-                last.dirty = true;
-            }
+            try self.rotateRegionUp(top, bottom, count, self.eraseCell());
             // Sixel images anchored within the scroll region must follow the
             // content shift so their anchors stay in sync with their cells.
             // Shift by the FULL amount: scrolling n>1 lines used to move
@@ -1522,21 +1522,7 @@ pub const Screen = struct {
             const top = r[0];
             const bottom = r[1];
             const count = @min(n, bottom + 1 - top);
-            const fill = self.eraseCell();
-            var i: u32 = 0;
-            while (i < count) : (i += 1) {
-                var y = bottom;
-                while (y > top) : (y -= 1) {
-                    const line = self.grid.getLineMut(y);
-                    const prev = self.grid.getLineMut(y - 1);
-                    std.mem.swap(GridLine, line, prev);
-                }
-                const first = self.grid.getLineMut(top);
-                self.decrementLineRefs(first.cells.items);
-                @memset(first.cells.items, fill);
-                first.wrapped = false;
-                first.dirty = true;
-            }
+            try self.rotateRegionDown(top, bottom, count, self.eraseCell());
             // Mirror the non-region branch: region SD moves content down, so
             // sixel anchors must follow too. The shift was missing entirely,
             // desyncing images after any region SD (bug #387).
@@ -3555,6 +3541,80 @@ test "findSixelImageSlot falls back across slot collisions and eraseLine updates
     screen.eraseLine(1);
     try testing.expectEqual(@as(usize, 1), screen.sixel_refcounts[1]);
     try testing.expectEqual(@as(usize, 1), screen.sixel_refcounts[5]);
+}
+
+test "O(H) region rotation handles non-zero start_index, dirty flags, and sixel refcounts" {
+    const allocator = std.testing.allocator;
+    var screen = try Screen.init(allocator, 6, 8);
+    defer screen.deinit();
+
+    // Scroll full screen 3 times so grid.start_index != 0 before region ops.
+    try screen.scrollUp(3);
+    try testing.expect(screen.grid.start_index != 0);
+
+    // Label rows 0..7 with '0'..'7' and clear dirty flags.
+    for (0..8) |r| {
+        const line = screen.grid.getLineMut(@intCast(r));
+        line.cells.items[0] = Cell.withChar(@intCast('0' + r));
+        line.dirty = false;
+    }
+
+    // Seed a sixel with markers on rows 2 and 5 (inside scroll region [1..6]).
+    screen.setSixelSlot(0, .{
+        .data = try allocator.dupe(u8, "\x1bPqR\x1b\\"),
+        .col = 1,
+        .row = 2,
+        .px_width = 10,
+        .px_height = 80,
+        .id = 0,
+    });
+    screen.sixel_refcounts[0] = 2;
+    var marker = Cell.empty();
+    marker.attr.sixel = true;
+    marker.char = 0;
+    screen.grid.getLineMut(2).cells.items[1] = marker;
+    screen.grid.getLineMut(5).cells.items[1] = marker;
+
+    screen.setScrollRegion(1, 6);
+    screen.cursorPosition(0, 1);
+
+    // insertLines(2): rows 5,6 discarded (row 5 had 1 marker -> refcount 2 -> 1);
+    // rows 1,2,3,4 shift down to 3,4,5,6; rows 1,2 become blank.
+    try screen.insertLines(2);
+    try testing.expectEqual(@as(usize, 1), screen.sixel_refcounts[0]);
+    try testing.expectEqual(@as(u21, '0'), screen.grid.getCell(0, 0).char);
+    try testing.expectEqual(@as(u21, 0), screen.grid.getCell(0, 1).char);
+    try testing.expectEqual(@as(u21, 0), screen.grid.getCell(0, 2).char);
+    try testing.expectEqual(@as(u21, '1'), screen.grid.getCell(0, 3).char);
+    try testing.expectEqual(@as(u21, '2'), screen.grid.getCell(0, 4).char);
+    try testing.expectEqual(@as(u21, '3'), screen.grid.getCell(0, 5).char);
+    try testing.expectEqual(@as(u21, '4'), screen.grid.getCell(0, 6).char);
+    try testing.expectEqual(@as(u21, '7'), screen.grid.getCell(0, 7).char);
+    for (1..7) |r| try testing.expect(screen.grid.getLine(@intCast(r)).dirty);
+    try testing.expect(!screen.grid.getLine(0).dirty);
+    try testing.expect(!screen.grid.getLine(7).dirty);
+
+    // deleteLines(2): rows 1,2 discarded (blank); rows 3,4,5,6 shift back up to 1,2,3,4.
+    try screen.deleteLines(2);
+    try testing.expectEqual(@as(usize, 1), screen.sixel_refcounts[0]);
+    try testing.expectEqual(@as(u21, '1'), screen.grid.getCell(0, 1).char);
+    try testing.expectEqual(@as(u21, '2'), screen.grid.getCell(0, 2).char);
+    try testing.expect(screen.grid.getCell(1, 2).attr.sixel);
+    try testing.expectEqual(@as(u21, 0), screen.grid.getCell(0, 5).char);
+    try testing.expectEqual(@as(u21, 0), screen.grid.getCell(0, 6).char);
+
+    // Region scrollUp(2): rows 1,2 discarded (row 2 had remaining marker -> refcount 0).
+    try screen.scrollUp(2);
+    try testing.expectEqual(@as(usize, 0), screen.sixel_refcounts[0]);
+    try testing.expectEqual(@as(u21, '3'), screen.grid.getCell(0, 1).char);
+    try testing.expectEqual(@as(u21, '4'), screen.grid.getCell(0, 2).char);
+
+    // Region scrollDown(2): rows 1,2 ('3','4') shift down to 3,4; rows 1,2 blank.
+    try screen.scrollDown(2);
+    try testing.expectEqual(@as(u21, 0), screen.grid.getCell(0, 1).char);
+    try testing.expectEqual(@as(u21, 0), screen.grid.getCell(0, 2).char);
+    try testing.expectEqual(@as(u21, '3'), screen.grid.getCell(0, 3).char);
+    try testing.expectEqual(@as(u21, '4'), screen.grid.getCell(0, 4).char);
 }
 
 test "eraseLine mode 0 when cursor.x equals grid.width" {
