@@ -11,7 +11,7 @@ pub fn build(b: *std.Build) void {
             b.build_root.handle
         else
             b.root.root_dir.handle;
-        const zon_content = root_handle.readFileAlloc(b.graph.io, "build.zig.zon", b.allocator, @enumFromInt(1024 * 1024)) catch break :blk "unknown";
+        const zon_content = root_handle.readFileAlloc(b.graph.io, "build.zig.zon", b.allocator, @fromBackingInt(@intCast(1024 * 1024))) catch break :blk "unknown";
         const needle = ".version = \"";
         const start_idx = std.mem.indexOf(u8, zon_content, needle) orelse break :blk "unknown";
         const start = start_idx + needle.len;
@@ -69,4 +69,45 @@ pub fn build(b: *std.Build) void {
     const test_run = b.addRunArtifact(test_exe);
     const test_step = b.step("test", "Run all tests");
     test_step.dependOn(&test_run.step);
+
+    const szn_bench_module = b.createModule(.{
+        .root_source_file = b.path("src/bench_exports.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    szn_bench_module.link_libc = true;
+    szn_bench_module.addImport("build_options", build_options.createModule());
+
+    const bench_module = b.createModule(.{
+        .root_source_file = b.path("tools/bench_algo.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    bench_module.link_libc = true;
+    bench_module.addImport("szn", szn_bench_module);
+    bench_module.addImport("build_options", build_options.createModule());
+
+    const bench_exe = b.addExecutable(.{
+        .name = "bench_algo",
+        .root_module = bench_module,
+    });
+    if (optimize != debug_mode and !is_darwin) {
+        bench_exe.lto = .thin;
+        bench_exe.use_lld = true;
+    }
+    const install_bench = b.addInstallArtifact(bench_exe, .{});
+    const bench_build_step = b.step("bench-build", "Build and install the algorithmic benchmark harness");
+    bench_build_step.dependOn(&install_bench.step);
+
+    const bench_run = b.addRunArtifact(bench_exe);
+    bench_run.step.dependOn(&install_bench.step);
+    if (@hasField(std.Build, "args")) {
+        if (b.args) |args| {
+            bench_run.addArgs(args);
+        }
+    } else {
+        bench_run.addPassthruArgs();
+    }
+    const bench_step = b.step("bench", "Run the algorithmic microbenchmark suite");
+    bench_step.dependOn(&bench_run.step);
 }

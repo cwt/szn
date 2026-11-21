@@ -606,12 +606,6 @@ pub const Grid = struct {
         out_cursor_pos: ?*CursorPos,
         out_lines: *std.ArrayList(GridLine),
     ) !void {
-        var lines: std.ArrayList(GridLine) = .empty;
-        errdefer {
-            for (lines.items) |*l| l.deinit(allocator);
-            lines.deinit(allocator);
-        }
-
         const has_thai = blk: {
             for (cells) |c| {
                 if (c.char >= 0x0E00 and c.char <= 0x0E7F) break :blk true;
@@ -623,6 +617,27 @@ pub const Grid = struct {
         else
             &[_]usize{};
         defer if (has_thai) allocator.free(word_breaks);
+
+        return rewrapWithBreaks(cells, word_breaks, new_width, allocator, cursor_offset, out_cursor_pos, out_lines);
+    }
+
+    /// Inner rewrap entry point taking precomputed `word_breaks`. Exposed so
+    /// deterministic benchmarks can isolate Zig rewrap scaling from external
+    /// `libthai` C dictionary latency without duplicating rewrap logic.
+    pub fn rewrapWithBreaks(
+        cells: []const Cell,
+        word_breaks: []const usize,
+        new_width: u32,
+        allocator: std.mem.Allocator,
+        cursor_offset: ?usize,
+        out_cursor_pos: ?*CursorPos,
+        out_lines: *std.ArrayList(GridLine),
+    ) !void {
+        var lines: std.ArrayList(GridLine) = .empty;
+        errdefer {
+            for (lines.items) |*l| l.deinit(allocator);
+            lines.deinit(allocator);
+        }
 
         if (cells.len == 0) {
             var line_cells: std.ArrayList(Cell) = .empty;
