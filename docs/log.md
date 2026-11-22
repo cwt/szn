@@ -7,7 +7,7 @@ sources:
   - docs/
 verified: human-reviewed
 tags: [log, changelog, okf]
-timestamp: 2026-11-21T03:15:00Z
+timestamp: 2026-11-22T09:24:00Z
 ---
 
 # Documentation Bundle Log
@@ -16,6 +16,7 @@ This file tracks all modifications, extensions, and updates to the `szn` documen
 
 | Timestamp | Document | Action | Description |
 |---|---|---|---|
+| 2026-11-22T09:24:00Z | [566.md](development/bugs/566.md), [567.md](development/bugs/567.md), [bugs/index.md](development/bugs/index.md), [main.zig](https://github.com/cwt/szn/blob/main/src/main.zig), [server.zig](https://github.com/cwt/szn/blob/main/src/server/server.zig), [bench.sh](https://github.com/cwt/szn/blob/main/bench.sh), [bench_report.py](https://github.com/cwt/szn/blob/main/tools/bench_report.py) | Created / Resolved | Filed and resolved #566 and #567 (rev `851:6c9f48cb2fdc`): `runServerDaemon` 16 ms `"default"` session resurrection / orphan daemon & shell leak on fast `new-session && kill-session`, cold bare `new-session -d` collision, and leaked daemon on invalid `new-session` args (3 new unit tests, 1,112/1,112 passing on Zig 0.16.0 & 0.17.1); plus `bench.sh` socket isolation, stale-socket recovery removal, exact 2×5 10-pane/50-pane parity, `SHELL=/bin/sh` normalization, and `bench_report.py` executable-aware classification. Regenerated `bugs/index.md` (**565 entries — 540 resolved / 25 false_positive / 0 open**). |
 | 2026-11-21T03:15:00Z | [algorithm-optimization-plan.md](development/algorithm-optimization-plan.md), [index.md](development/index.md) | Created / Updated | Created prioritized algorithmic optimization plan (P0 reflow quadratic scans & copy-mode fast path, P1 O(N) ByteQueue drains, P1 sixel refcount guard & containment mask, P2 bounded PTY drain & border dirty preservation, P3 region rotate / charWidth / status cleanups) with empirical two-layer benchmark methodology, doubling scaling exponent (α) gates, and dual Zig 0.16/0.17 verification criteria; linked from development index. |
 | 2026-10-30T15:25:00Z | [v0.11.0.md](releases/v0.11.0.md) | Created | Created release notes for v0.11.0 (dual Zig 0.16/0.17 toolchain support, lifecycle memory reclamation, Lao script reflow, RPM packaging, and 61-bug stability sweep). |
 | 2026-10-30T15:25:00Z | [index.md](releases/index.md), [README.md](https://github.com/cwt/szn/blob/main/README.md) | Updated | Added v0.11.0 to releases index, updated binary sizes for Zig 0.17.0 (1,053,312 bytes x86-64 Linux, 834,864 bytes aarch64 macOS). |
