@@ -725,14 +725,14 @@ pub const Server = struct {
         }
     }
 
-    /// The session's `escape-time` budget in ms (tmux-compatible default 500).
+    /// The session's `escape-time` budget in ms (matches options.zig default 10).
     fn escapeTimeMs(self: *Server) i64 {
         if (self.activeSession()) |s| {
             if (s.options.get("escape-time")) |v| {
                 if (v == .number) return @intCast(@max(v.number, 0));
             }
         }
-        return 500;
+        return 10;
     }
 
     /// Forward a stale partial escape sequence to the pane verbatim and reset
@@ -905,13 +905,17 @@ pub const Server = struct {
         return false;
     }
 
-    /// Drop cached mouse pointers (`mouse_press_pane`, `mouse_autoscroll_pane`)
-    /// when the referenced pane is being destroyed — bug #283.
+    /// Drop cached mouse pointers (`mouse_press_pane`, `mouse_autoscroll_pane`,
+    /// `mouse_resize_pane`) when the referenced pane is being destroyed — bug #283.
     fn clearPaneMouseRefs(self: *Server, pane: *Pane) void {
         if (self.mouse_press_pane == pane) self.mouse_press_pane = null;
         if (self.mouse_autoscroll_pane == pane) {
             self.mouse_autoscroll_pane = null;
             self.mouse_autoscroll_dir = null;
+        }
+        if (self.mouse_resize_pane == pane) {
+            self.mouse_resize_pane = null;
+            self.mouse_resize_axis = null;
         }
     }
 
@@ -2233,8 +2237,11 @@ pub const Server = struct {
                                             }
                                         } else if (m.button == .left and m.drag) {
                                             if (self.mouse_resize_pane) |rp| {
-                                                // Border drag: resize the pane from the pressed border.
-                                                if (self.isPaneValid(rp)) {
+                                                // Border drag: resize the pane's layout split along the dragged axis.
+                                                if (!self.isPaneValid(rp)) {
+                                                    self.mouse_resize_pane = null;
+                                                    self.mouse_resize_axis = null;
+                                                } else {
                                                     const cx: i32 = @intCast(m.x);
                                                     const cy: i32 = @intCast(m.y);
                                                     const sx: i32 = @intCast(self.mouse_resize_start_x);
@@ -2246,11 +2253,16 @@ pub const Server = struct {
                                                     } else {
                                                         dh = cy - sy;
                                                     }
-                                                    resizePaneBy(window, rp, dw, dh);
+                                                    // Only adjust an existing layout split — never fall back to
+                                                    // resizing the terminal below its layout slot.
+                                                    if ((dw != 0 or dh != 0) and window.layout.resizePane(rp, dw, dh)) {
+                                                        window.resize(window.width, window.height) catch |err|
+                                                            std.log.warn("window resize failed: {any}", .{err});
+                                                        self.dirty = true;
+                                                        rp.dirty = true;
+                                                    }
                                                     self.mouse_resize_start_x = m.x;
                                                     self.mouse_resize_start_y = m.y;
-                                                    self.dirty = true;
-                                                    rp.dirty = true;
                                                 }
                                             } else if (self.mouse_press_pane) |press_pane| {
                                                 // bug #283: guard against a pane destroyed since the press.
@@ -2308,14 +2320,20 @@ pub const Server = struct {
                                             // starting a copy-mode selection.
                                             if (self.mouse_press_pane) |pp| {
                                                 if (self.findPaneBounds(window, pp)) |pb| {
-                                                    // Tolerance zone around borders so the user doesn't have to
-                                                    // hit the exact border pixel (tmux is similarly forgiving).
+                                                    // Tolerance zone around interior split borders so the user
+                                                    // doesn't have to hit the exact border cell. Only arm when a
+                                                    // split actually exists on that axis AND the edge is an
+                                                    // interior border (never on a single-pane or outer window edge).
                                                     const resize_tol: u32 = 2;
                                                     const right_edge = pb.x + pb.w;
                                                     const bottom_edge = pb.y + pb.h;
-                                                    const near_right =
+                                                    const has_right_split = right_edge < window.layout.width and
+                                                        window.layout.hasSplitOnAxis(pp, .horizontal);
+                                                    const has_bottom_split = bottom_edge < window.layout.height and
+                                                        window.layout.hasSplitOnAxis(pp, .vertical);
+                                                    const near_right = has_right_split and
                                                         pb.w > 0 and m.x >= right_edge -| resize_tol and m.x <= right_edge +| resize_tol;
-                                                    const near_bottom =
+                                                    const near_bottom = has_bottom_split and
                                                         pb.h > 0 and m.y >= bottom_edge -| resize_tol and m.y <= bottom_edge +| resize_tol;
                                                     if (near_right) {
                                                         self.mouse_resize_pane = pp;
@@ -3497,25 +3515,7 @@ pub const Server = struct {
                 else
                     pty.getForegroundProcessName(&proc_buf);
                 if (proc_res) |proc_name_val| {
-                    const proc_changed = (proc_name_val.len > 0 and !std.mem.eql(u8, win.last_foreground_name, proc_name_val));
-                    if (proc_changed) {
-                        win.has_custom_title = false;
-                        win.setLastForegroundName(proc_name_val);
-                    }
-                    if (proc_name_val.len > 0 and !win.has_custom_title and !std.mem.eql(u8, win.name, proc_name_val)) {
-                        // Window.name and last_foreground_name live in
-                        // inline fixed buffers; no heap allocation or aliasing (bug #358/#405).
-                        win.setName(proc_name_val);
-                        win.setLastForegroundName(proc_name_val);
-                        ap.dirty = true;
-                        self.dirty = true;
-                        self.status_dirty = true;
-                    } else {
-                        // Name unchanged — cache it to skip future syscalls.
-                        if (win.last_foreground_name.len == 0) {
-                            win.setLastForegroundName(proc_name_val);
-                        }
-                    }
+                    self.applyForegroundProcessName(win, ap, proc_name_val);
                 } else |_| {}
             }
         }
@@ -3820,13 +3820,41 @@ pub const Server = struct {
         self.sessions.clearRetainingCapacity();
     }
 
-    /// Clear both cached mouse pointers. Used when panes are destroyed in bulk
+    /// Apply a queried foreground process name to a window's automatic-rename
+    /// state: preserves an explicit custom title (bug #563) while the same
+    /// process stays in the foreground, and restores automatic naming once the
+    /// foreground process changes.
+    fn applyForegroundProcessName(self: *Server, win: *Window, ap: *Pane, proc_name_val: []const u8) void {
+        const proc_changed = (proc_name_val.len > 0 and !std.mem.eql(u8, win.last_foreground_name, proc_name_val));
+        if (proc_changed) {
+            win.has_custom_title = false;
+            win.setLastForegroundName(proc_name_val);
+        }
+        if (proc_name_val.len > 0 and !win.has_custom_title and !std.mem.eql(u8, win.name, proc_name_val)) {
+            // Window.name and last_foreground_name live in inline fixed
+            // buffers; no heap allocation or aliasing (bug #358/#405).
+            win.setName(proc_name_val);
+            win.setLastForegroundName(proc_name_val);
+            ap.dirty = true;
+            self.dirty = true;
+            self.status_dirty = true;
+        } else {
+            // Name unchanged — cache it to skip future syscalls.
+            if (win.last_foreground_name.len == 0) {
+                win.setLastForegroundName(proc_name_val);
+            }
+        }
+    }
+
+    /// Clear all cached mouse pointers. Used when panes are destroyed in bulk
     /// (killSession / killAllSessions) rather than through destroyPane, which
     /// clears them per-pane (bug #283).
     pub fn clearPaneMouseRefsBulk(self: *Server) void {
         self.mouse_press_pane = null;
         self.mouse_autoscroll_pane = null;
         self.mouse_autoscroll_dir = null;
+        self.mouse_resize_pane = null;
+        self.mouse_resize_axis = null;
     }
 
     pub fn activeSession(self: *Server) ?*Session {
@@ -5811,10 +5839,12 @@ test "destroyPane clears cached mouse pane pointers — bug #283" {
     const pane1 = win.active_pane.?;
     const pane2 = try win.splitPane(server.allocator, pane1, false, 0.5);
 
-    // Simulate an in-progress drag/autoscroll targeting pane2.
+    // Simulate an in-progress drag/autoscroll/resize targeting pane2.
     server.mouse_press_pane = pane2;
     server.mouse_autoscroll_pane = pane2;
     server.mouse_autoscroll_dir = .up;
+    server.mouse_resize_pane = pane2;
+    server.mouse_resize_axis = .horizontal;
     server.mouse_press_x = 10;
     server.mouse_press_y = 5;
 
@@ -5825,6 +5855,8 @@ test "destroyPane clears cached mouse pane pointers — bug #283" {
     try testing.expect(server.mouse_press_pane == null);
     try testing.expect(server.mouse_autoscroll_pane == null);
     try testing.expect(server.mouse_autoscroll_dir == null);
+    try testing.expect(server.mouse_resize_pane == null);
+    try testing.expect(server.mouse_resize_axis == null);
 
     // tickAutoscroll must not dereference the freed pane.
     server.tickAutoscroll();
@@ -5837,16 +5869,86 @@ test "tickAutoscroll ignores pane destroyed via killSession — bug #283" {
     const s = try server.newSession("test-autoscroll-kill", 80, 24);
     const pane = s.active_window.?.active_pane.?;
 
-    // Simulate autoscroll referencing the pane, then kill the whole session
-    // (which does NOT route through destroyPane).
+    // Simulate autoscroll and drag-resize referencing the pane, then kill the
+    // whole session (which does NOT route through destroyPane).
     server.mouse_autoscroll_pane = pane;
     server.mouse_autoscroll_dir = .up;
+    server.mouse_resize_pane = pane;
+    server.mouse_resize_axis = .vertical;
     _ = server.killSession("test-autoscroll-kill") catch return error.Unexpected;
 
-    // tickAutoscroll must detect the stale pane and clear it, not crash.
+    // Cached pointers must all be cleared immediately by killSession.
     server.tickAutoscroll();
     try testing.expect(server.mouse_autoscroll_pane == null);
     try testing.expect(server.mouse_autoscroll_dir == null);
+    try testing.expect(server.mouse_resize_pane == null);
+    try testing.expect(server.mouse_resize_axis == null);
+}
+
+test "mouse drag-to-resize never fires in a single-pane window or on outer window edges" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    const s = try server.newSession("test-drag-single", 80, 24);
+    const win = s.active_window.?;
+    const pane = win.active_pane.?;
+    const orig_w = pane.screen.grid.width;
+    const orig_h = pane.screen.grid.height;
+
+    // Press within 2 cells of the right edge (x=78, 1-indexed 79) and drag left.
+    try server.processInput("\x1b[<0;79;10M");
+    try testing.expect(server.mouse_resize_pane == null);
+    try server.processInput("\x1b[<32;70;10M");
+    try server.processInput("\x1b[<3;70;10m");
+    try testing.expectEqual(orig_w, pane.screen.grid.width);
+    try testing.expectEqual(orig_h, pane.screen.grid.height);
+
+    // Press within 2 cells of the bottom edge (y=22, 1-indexed 23) and drag up.
+    try server.processInput("\x1b[<0;40;23M");
+    try testing.expect(server.mouse_resize_pane == null);
+    try server.processInput("\x1b[<32;40;15M");
+    try server.processInput("\x1b[<3;40;15m");
+    try testing.expectEqual(orig_w, pane.screen.grid.width);
+    try testing.expectEqual(orig_h, pane.screen.grid.height);
+}
+
+test "mouse drag-to-resize resizes interior split border and ignores outer edges" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    const s = try server.newSession("test-drag-split", 80, 24);
+    const win = s.active_window.?;
+    const pane1 = win.active_pane.?;
+    const pane2 = try win.splitPane(server.allocator, pane1, false, 0.5); // horizontal split: pane1 left, pane2 right
+    win.active_pane = pane1;
+
+    const b1_before = win.layout.findPaneBounds(pane1).?;
+    const b2_before = win.layout.findPaneBounds(pane2).?;
+    const border_x_1idx = b1_before.x + b1_before.w + 1; // 1-indexed SGR column on border
+
+    // Press on interior vertical divider (pane1's right edge) and drag +5 cols right.
+    var seq_buf: [64]u8 = undefined;
+    const press_seq = try std.fmt.bufPrint(&seq_buf, "\x1b[<0;{d};10M", .{border_x_1idx});
+    try server.processInput(press_seq);
+    try testing.expectEqual(@as(?*Pane, pane1), server.mouse_resize_pane);
+    try testing.expectEqual(@as(@TypeOf(server.mouse_resize_axis), .horizontal), server.mouse_resize_axis);
+
+    const drag_seq = try std.fmt.bufPrint(&seq_buf, "\x1b[<32;{d};10M", .{border_x_1idx + 5});
+    try server.processInput(drag_seq);
+    try server.processInput("\x1b[<3;45;10m");
+    try testing.expect(server.mouse_resize_pane == null);
+
+    const b1_after = win.layout.findPaneBounds(pane1).?;
+    const b2_after = win.layout.findPaneBounds(pane2).?;
+    try testing.expect(b1_after.w > b1_before.w);
+    try testing.expect(b2_after.w < b2_before.w);
+    try testing.expectEqual(b1_after.w, pane1.screen.grid.width);
+    try testing.expectEqual(b2_after.w, pane2.screen.grid.width);
+
+    // Pressing near the outer right edge of pane2 must NOT arm border resize.
+    try server.processInput("\x1b[<0;79;10M");
+    try testing.expect(server.mouse_resize_pane == null);
+    try server.processInput("\x1b[<3;79;10m");
 }
 
 test "OSC 52 clipboard forwarding and buffer copy" {
@@ -6799,48 +6901,43 @@ test "automatic rename preserves custom title and restores on process exit — b
 
     const session = try server.newSession("test-custom-title", 80, 24);
     const win = session.active_window.?;
+    const pane = win.active_pane.?;
 
     _ = try server.addDisplayClient(.{ .fd = 100, .sx = 80, .sy = 24 });
 
-    // Initial state: shell running
+    // Initial state: shell running, then application launches and sets custom title.
     win.setName("zsh");
     win.setLastForegroundName("zsh");
     win.last_foreground_pgid = 100;
     win.last_foreground_check_ms = Server.currentMillis();
 
-    // Application launches, sets custom title
     win.setLastForegroundName("Python");
     win.setName("vith");
     win.has_custom_title = true;
+    server.dirty = false;
+    server.status_dirty = false;
+    pane.dirty = false;
 
-    // Simulate auto-rename tick where process name query still returns Python
-    // (foreground process hasn't changed)
-    const proc_name_val = "Python";
-    const proc_changed = (proc_name_val.len > 0 and !std.mem.eql(u8, win.last_foreground_name, proc_name_val));
-    try testing.expect(!proc_changed);
-    if (proc_changed) {
-        win.has_custom_title = false;
-        win.setLastForegroundName(proc_name_val);
-    }
-    if (proc_name_val.len > 0 and !win.has_custom_title and !std.mem.eql(u8, win.name, proc_name_val)) {
-        win.setName(proc_name_val);
-    }
+    // Production auto-rename gate with unchanged foreground process ("Python")
+    // must keep custom title "vith" intact and keep has_custom_title true.
+    server.applyForegroundProcessName(win, pane, "Python");
+    try testing.expectEqualStrings("vith", win.name);
+    try testing.expect(win.has_custom_title);
+    try testing.expect(!server.status_dirty);
+
+    // Production renderToDisplayClient tick must also preserve the custom title.
+    win.last_foreground_check_ms = 0;
+    server.renderToDisplayClient();
     try testing.expectEqualStrings("vith", win.name);
     try testing.expect(win.has_custom_title);
 
-    // Application exits back to zsh (process changed)
-    const new_proc_val = "zsh";
-    const proc_changed2 = (new_proc_val.len > 0 and !std.mem.eql(u8, win.last_foreground_name, new_proc_val));
-    try testing.expect(proc_changed2);
-    if (proc_changed2) {
-        win.has_custom_title = false;
-        win.setLastForegroundName(new_proc_val);
-    }
-    if (new_proc_val.len > 0 and !win.has_custom_title and !std.mem.eql(u8, win.name, new_proc_val)) {
-        win.setName(new_proc_val);
-    }
+    // Application exits back to zsh: production gate must clear has_custom_title,
+    // restore window name to "zsh", and mark status dirty.
+    server.applyForegroundProcessName(win, pane, "zsh");
     try testing.expectEqualStrings("zsh", win.name);
     try testing.expect(!win.has_custom_title);
+    try testing.expect(server.status_dirty);
+    try testing.expect(pane.dirty);
 }
 
 test "scrollback renders newest lines correctly when history ring buffer wraps — bug #443" {

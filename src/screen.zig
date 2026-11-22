@@ -1207,12 +1207,27 @@ pub const Screen = struct {
 
     pub fn eraseLine(self: *Screen, mode: u8) void {
         const fill = self.eraseCell();
-        if (self.grid.width == 0 or self.cursor.y >= self.grid.height) {
+        if (self.cursor.y >= self.grid.height) {
+            self.dirty = true;
+            return;
+        }
+        const line = self.grid.getLineMut(self.cursor.y);
+        if (self.grid.width == 0) {
+            switch (mode) {
+                0 => {
+                    if (self.cursor.x == 0) line.wrapped = false;
+                    line.dirty = true;
+                },
+                1, 2 => {
+                    line.wrapped = false;
+                    line.dirty = true;
+                },
+                else => {},
+            }
             self.dirty = true;
             return;
         }
         const cx = @min(self.cursor.x, self.grid.width - 1);
-        const line = self.grid.getLineMut(self.cursor.y);
         switch (mode) {
             0 => {
                 if (cx < line.cells.items.len) {
@@ -1366,7 +1381,9 @@ pub const Screen = struct {
         try self.grid.normalize();
         const region = self.grid.lines.items[top .. bottom + 1];
         const c_usize: usize = count;
-        std.mem.rotate(GridLine, region, region.len - c_usize);
+        if (c_usize < region.len) {
+            std.mem.rotate(GridLine, region, region.len - c_usize);
+        }
         for (region[0..c_usize]) |*line| {
             self.decrementLineRefs(line.cells.items);
             @memset(line.cells.items, fill);
@@ -1387,7 +1404,9 @@ pub const Screen = struct {
         try self.grid.normalize();
         const region = self.grid.lines.items[top .. bottom + 1];
         const c_usize: usize = count;
-        std.mem.rotate(GridLine, region, c_usize);
+        if (c_usize < region.len) {
+            std.mem.rotate(GridLine, region, c_usize);
+        }
         const keep = region.len - c_usize;
         for (region[0..keep]) |*line| {
             line.dirty = true;
@@ -3615,6 +3634,16 @@ test "O(H) region rotation handles non-zero start_index, dirty flags, and sixel 
     try testing.expectEqual(@as(u21, 0), screen.grid.getCell(0, 2).char);
     try testing.expectEqual(@as(u21, '3'), screen.grid.getCell(0, 3).char);
     try testing.expectEqual(@as(u21, '4'), screen.grid.getCell(0, 4).char);
+
+    // Full-region count (count == region.len) clears the entire region without
+    // passing amount == len to std.mem.rotate.
+    try screen.deleteLines(100);
+    for (1..7) |r| try testing.expectEqual(@as(u21, 0), screen.grid.getCell(0, @intCast(r)).char);
+    try testing.expectEqual(@as(u21, '0'), screen.grid.getCell(0, 0).char);
+    try testing.expectEqual(@as(u21, '7'), screen.grid.getCell(0, 7).char);
+    screen.grid.getLineMut(3).cells.items[0] = Cell.withChar('X');
+    try screen.insertLines(100);
+    for (1..7) |r| try testing.expectEqual(@as(u21, 0), screen.grid.getCell(0, @intCast(r)).char);
 }
 
 test "eraseLine mode 0 when cursor.x equals grid.width" {

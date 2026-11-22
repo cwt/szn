@@ -195,7 +195,10 @@ pub const Pane = struct {
             };
             reads += 1;
             if (n == 0) break;
-            try parser.advanceBatch(buf[0..n]);
+            parser.advanceBatch(buf[0..n]) catch |err| {
+                read_err = err;
+                break;
+            };
             total_read += n;
             // Preserve bug #204's prompt-hold invariant: stop reading as soon
             // as a sixel is buffered waiting for measured cell dimensions.

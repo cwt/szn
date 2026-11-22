@@ -152,11 +152,14 @@ pub const ByteQueue = struct {
     }
 
     /// Snapshot current unread length for rollback across potential compaction.
+    /// Precondition: callers must not invoke `consume` / `consumeReclaiming`
+    /// between `checkpoint()` and the matching `rollback()`.
     pub fn checkpoint(self: *const ByteQueue) usize {
         return self.len();
     }
 
     /// Roll back appended tail bytes to a previous `checkpoint()` unread length.
+    /// Precondition: no `consume` occurred since `checkpoint()`.
     pub fn rollback(self: *ByteQueue, saved_unread_len: usize) void {
         if (saved_unread_len < self.len()) {
             self.buf.items.len = self.head + saved_unread_len;

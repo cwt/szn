@@ -300,6 +300,24 @@ pub const Layout = struct {
         }
     }
 
+    /// True when `target` has at least one ancestor split along `dir`.
+    pub fn hasSplitOnAxis(self: *const Layout, target: *const Pane, dir: SplitDir) bool {
+        return hasSplitOnAxisNode(self.root, target, dir);
+    }
+
+    fn hasSplitOnAxisNode(node: *const Node, target: *const Pane, dir: SplitDir) bool {
+        return switch (node.*) {
+            .leaf => false,
+            .split => |s| {
+                const in_a = nodeContains(s.a, target);
+                const in_b = !in_a and nodeContains(s.b, target);
+                if (!in_a and !in_b) return false;
+                if (s.direction == dir) return true;
+                return hasSplitOnAxisNode(if (in_a) s.a else s.b, target, dir);
+            },
+        };
+    }
+
     /// Grow or shrink `pane` by `dw`/`dh` cells by adjusting the deepest
     /// ancestor split on the path to it whose direction matches the axis
     /// (bug #511). Returns true when a split proportion changed, so the caller

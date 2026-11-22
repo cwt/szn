@@ -1003,22 +1003,12 @@ pub fn findWordBreaksWithScratch(
                         }
                         pos += cut;
                     } else {
-                        // No dictionary break within safe_max (e.g. non-word repetition):
-                        // emit whatever breaks exist and advance past the chunk.
-                        if (n_brk > 0) {
-                            try result.ensureUnusedCapacity(result_allocator, n_brk);
-                            for (breaks_buf[0..n_brk]) |raw| {
-                                if (raw < 0) continue;
-                                const p: usize = @intCast(raw);
-                                if (p < clen) {
-                                    const cell_idx = cell_indices.items[pos + p];
-                                    if (result.items.len == 0 or result.items[result.items.len - 1] < cell_idx) {
-                                        result.appendAssumeCapacity(cell_idx);
-                                    }
-                                }
-                            }
-                        }
-                        pos = end;
+                        // No dictionary break within safe_max (e.g. long non-word
+                        // repetition): do NOT emit tentative edge-zone breaks in
+                        // (safe_max..clen); advance by safe_max so the trailing
+                        // CHUNK_OVERLAP codepoints carry full dictionary context
+                        // into the next chunk for any word straddling `end`.
+                        pos += safe_max;
                     }
                 }
             }
@@ -1103,4 +1093,80 @@ test "findWordBreaks handles >2048-codepoint Thai spans with strictly increasing
         prev = b;
     }
     try testing.expect(breaks[breaks.len - 1] > 2800);
+}
+
+test "findWordBreaks no-break chunk fallback preserves 64-cp overlap for straddling word" {
+    if (getLibThai() == null) return;
+    defer deinitLibThai();
+
+    // 2045 repeated 'ก' (no internal word break in [0..1984]) immediately
+    // followed by "ภาษาไทย" straddling the 2048-codepoint chunk boundary.
+    const prefix_len: usize = 2045;
+    const tail = [_]u21{ 0x0E20, 0x0E32, 0x0E29, 0x0E32, 0x0E44, 0x0E17, 0x0E22 }; // ภาษาไทย
+    const cells = try testing.allocator.alloc(Cell, prefix_len + tail.len);
+    defer testing.allocator.free(cells);
+    for (0..prefix_len) |i| cells[i] = Cell.withChar(0x0E01);
+    for (tail, 0..) |ch, i| cells[prefix_len + i] = Cell.withChar(ch);
+
+    const breaks = try findWordBreaks(testing.allocator, cells);
+    defer testing.allocator.free(breaks);
+
+    // Must find the word boundary between "ภาษา" (4 cells) and "ไทย" at prefix_len + 4 (2049).
+    var found_tail_break = false;
+    for (breaks) |b| {
+        if (b == prefix_len + 4) {
+            found_tail_break = true;
+            break;
+        }
+    }
+    try testing.expect(found_tail_break);
+}
+
+test "findWordBreaks span splitting across gaps >= 3 matches whole-line libthai segmentation" {
+    const libthai = getLibThai() orelse return;
+    defer deinitLibThai();
+
+    // Ambiguous Thai phrases separated by gaps of 1, 2, 3, and 6 non-Thai cells.
+    // "ตากลม" ("ตา|กลม" / "ตาก|ลม") + gaps + "ภาษาไทย" + gap + "ตากลม".
+    const text = [_]u21{
+        0x0E15, 0x0E32, 0x0E01, 0x0E25, 0x0E21, // ตากลม
+        ' ', // gap 1
+        0x0E15, 0x0E32, 0x0E01, 0x0E25, 0x0E21, // ตากลม
+        ' ', ' ', // gap 2
+        0x0E20, 0x0E32, 0x0E29, 0x0E32, 0x0E44, 0x0E17, 0x0E22, // ภาษาไทย
+        ' ', '-', ' ', // gap 3 (splits span)
+        0x0E15, 0x0E32, 0x0E01, 0x0E25, 0x0E21, // ตากลม
+        ' ', 'A', 'B', 'C', 'D', ' ', // gap 6 (splits span)
+        0x0E20, 0x0E32, 0x0E29, 0x0E32, 0x0E44, 0x0E17, 0x0E22, // ภาษาไทย
+    };
+    var cells: [text.len]Cell = undefined;
+    for (text, 0..) |ch, i| cells[i] = Cell.withChar(ch);
+
+    const got = try findWordBreaks(testing.allocator, &cells);
+    defer testing.allocator.free(got);
+
+    // Reference: single whole-line th_brk_wc_find_breaks call.
+    var wcs: [text.len + 1]u32 = undefined;
+    for (text, 0..) |ch, i| wcs[i] = ch;
+    wcs[text.len] = 0;
+    var raw_breaks: [text.len]c_int = undefined;
+    const n_raw = libthai.th_brk_wc_find_breaks(libthai.brk, &wcs, &raw_breaks, text.len);
+    const n_brk: usize = if (n_raw > 0) @intCast(n_raw) else 0;
+
+    // Every Thai-adjacent break in the whole-line call must appear identically in `got`.
+    for (raw_breaks[0..n_brk]) |r| {
+        if (r < 0) continue;
+        const idx: usize = @intCast(r);
+        if (idx == 0 or idx >= text.len) continue;
+        const touches_thai = isThai(text[idx - 1]) or isThai(text[idx]);
+        if (!touches_thai) continue;
+        var found = false;
+        for (got) |g| {
+            if (g == idx) {
+                found = true;
+                break;
+            }
+        }
+        try testing.expect(found);
+    }
 }

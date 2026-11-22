@@ -591,7 +591,7 @@ pub const Grid = struct {
     /// per cell instead of twice across separate findClusterEnd/clusterWidth).
     fn nextCluster(cells: []const Cell, start: usize) Cluster {
         const c0 = cells[start];
-        if (c0.attr.sixel) return .{ .end = start + 1, .width = 1 };
+        if (c0.attr.sixel) return .{ .end = start + 1, .width = if (c0.is_padding) 0 else 1 };
         const cp = c0.char;
         if (cp == ' ') return .{ .end = start + 1, .width = if (c0.is_padding) 0 else 1 };
         if (cp == 0) return .{ .end = start + 1, .width = 0 };
@@ -1365,7 +1365,10 @@ pub const Grid = struct {
                         const slot = g.getLogicalRowMut(tr.row_idx, h_len);
                         var gl = slot.*;
                         slot.cells = .empty;
-                        gl.cells.items.len = nw;
+                        // Preserve all cells up to trimmed_len when interior
+                        // zero-width cells (e.g. char==0 from eraseChars) make
+                        // cell count exceed display width `nw`.
+                        gl.cells.items.len = @max(tr.trimmed_len, nw);
                         if (tr.trimmed_len < nw) {
                             @memset(gl.cells.items[tr.trimmed_len..nw], Cell.empty());
                         }
@@ -3024,4 +3027,48 @@ test "Grid.rewrapWithBreaks matches linear search across monotonic and backtrack
     for (cells, rebuilt.items) |orig, got| {
         try testing.expectEqual(orig.char, got);
     }
+}
+
+test "Grid.reflow Tier B preserves trailing content after interior erased cells on shrink" {
+    // Repro: 80-wide unwrapped row with 40 'A's, 20 interior erased (char 0)
+    // cells, and 20 'B's. Display width is 60, trimmed_len is 80. Shrinking to
+    // 60 triggers Tier B and must keep all 80 cells (matching general rewrap).
+    var grid = try Grid.init(testing.allocator, 80, 2);
+    defer grid.deinit();
+
+    const line = grid.getLineMut(0);
+    for (0..40) |x| line.cells.items[x] = Cell.withChar('A');
+    for (40..60) |x| line.cells.items[x] = Cell.empty(); // char == 0
+    for (60..80) |x| line.cells.items[x] = Cell.withChar('B');
+    line.wrapped = false;
+
+    try grid.reflow(60);
+    const shrunk = grid.getLine(0);
+    try testing.expectEqual(@as(usize, 80), shrunk.cells.items.len);
+    for (0..40) |x| try testing.expectEqual(@as(u21, 'A'), shrunk.cells.items[x].char);
+    for (40..60) |x| try testing.expectEqual(@as(u21, 0), shrunk.cells.items[x].char);
+    for (60..80) |x| try testing.expectEqual(@as(u21, 'B'), shrunk.cells.items[x].char);
+
+    // Widening back to 80 must retain all 20 'B's intact.
+    try grid.reflow(80);
+    const restored = grid.getLine(0);
+    for (0..40) |x| try testing.expectEqual(@as(u21, 'A'), restored.cells.items[x].char);
+    for (60..80) |x| try testing.expectEqual(@as(u21, 'B'), restored.cells.items[x].char);
+}
+
+test "Grid.nextCluster treats padded sixel cell as width 0" {
+    var pad_sixel = Cell.empty();
+    pad_sixel.attr.sixel = true;
+    pad_sixel.is_padding = true;
+    var normal_sixel = Cell.empty();
+    normal_sixel.attr.sixel = true;
+    const cells = [_]Cell{ pad_sixel, normal_sixel };
+
+    const c0 = Grid.nextCluster(&cells, 0);
+    try testing.expectEqual(@as(usize, 1), c0.end);
+    try testing.expectEqual(@as(u32, 0), c0.width);
+
+    const c1 = Grid.nextCluster(&cells, 1);
+    try testing.expectEqual(@as(usize, 2), c1.end);
+    try testing.expectEqual(@as(u32, 1), c1.width);
 }
