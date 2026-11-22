@@ -67,12 +67,18 @@ def load_timing(path: str | None) -> tuple[float | None, float | None]:
         tmux_ms = None
 
         for result in results:
-            cmd = result.get("command", "")
+            name = str(result.get("name", "")).strip()
+            cmd = str(result.get("command", "")).strip()
+            first_tok = os.path.basename(cmd.split()[0]) if cmd.split() else ""
             mean_sec = extract_mean_seconds(result, data)
-            if "szn" in cmd:
+            if first_tok == "szn" or name.startswith("szn"):
                 szn_ms = mean_sec * 1000.0
-            elif "tmux" in cmd:
+            elif first_tok == "tmux" or name.startswith("tmux"):
                 tmux_ms = mean_sec * 1000.0
+            elif "tmux" in cmd and "szn" not in first_tok:
+                tmux_ms = mean_sec * 1000.0
+            elif "szn" in cmd:
+                szn_ms = mean_sec * 1000.0
 
         if szn_ms is None and len(results) > 0:
             szn_ms = extract_mean_seconds(results[0], data) * 1000.0
@@ -247,7 +253,7 @@ def main() -> None:
             *format_memory(args.mem_10p_szn, args.mem_10p_tmux, colors),
         ),
         (
-            "Memory: 5 windows, ~50 panes",
+            "Memory: 5 windows, 50 panes",
             *format_memory(args.mem_50p_szn, args.mem_50p_tmux, colors),
         ),
         (

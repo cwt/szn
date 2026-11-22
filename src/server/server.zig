@@ -867,7 +867,9 @@ pub const Server = struct {
                 }
                 if (has_in) {
                     self.handleClient(ev.fd) catch |err| {
-                        std.log.err("client {d} error: {any}", .{ ev.fd, err });
+                        if (err != error.ConnectionClosed) {
+                            std.log.err("client {d} error: {any}", .{ ev.fd, err });
+                        }
                         self.removeClient(ev.fd);
                     };
                 } else if (has_hup or has_err) {

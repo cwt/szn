@@ -263,7 +263,7 @@ fn mainInner(init: std.process.Init) Error!void {
                 }
                 if (pid == 0) {
                     log_mod.disable();
-                    try runServerDaemon(allocator);
+                    try runServerDaemon(allocator, false);
                     std.process.exit(0);
                 } else {
                     waitForSocket() catch {
@@ -283,7 +283,7 @@ fn mainInner(init: std.process.Init) Error!void {
                         }
                         if (pid == 0) {
                             log_mod.disable();
-                            try runServerDaemon(allocator);
+                            try runServerDaemon(allocator, false);
                             std.process.exit(0);
                         } else {
                             waitForSocket() catch {
@@ -394,7 +394,7 @@ fn spawnDaemonAndAttach(allocator: std.mem.Allocator) Error!void {
     }
     if (pid == 0) {
         log_mod.disable();
-        try runServerDaemon(allocator);
+        try runServerDaemon(allocator, true);
     } else {
         waitForSocket() catch {
             std.debug.print("Server failed to start\n", .{});
@@ -426,7 +426,31 @@ fn redirectStdioToDevNull() void {
     }
 }
 
-fn runServerDaemon(allocator: std.mem.Allocator) Error!void {
+/// Wait for the parent `new-session` client to connect and create the initial
+/// session when the daemon is forked without a pre-created "default" session
+/// (bug #543, bug #566). Exits the server loop immediately if the initial
+/// command leaves zero sessions (e.g. invalid args or an immediate
+/// `kill-session`), if the client disconnects without creating a session, or
+/// if `timeout_ms` elapses with no session created.
+fn waitForInitialSession(server: *Server, timeout_ms: i64) Error!void {
+    const deadline = io.currentMillis() + timeout_ms;
+    var saw_client = false;
+    while (server.loop.running and server.sessions.items.len == 0) {
+        if (server.client_fds.items.len > 0) saw_client = true;
+        if (saw_client and server.client_fds.items.len == 0) {
+            server.loop.running = false;
+            break;
+        }
+        const remaining = deadline - io.currentMillis();
+        if (remaining <= 0) {
+            server.loop.running = false;
+            break;
+        }
+        try server.run(@intCast(@min(remaining, 100)));
+    }
+}
+
+fn runServerDaemon(allocator: std.mem.Allocator, create_default_session: bool) Error!void {
     // Re-open stdin/stdout/stderr to /dev/null to avoid accidental terminal I/O.
     redirectStdioToDevNull();
 
@@ -442,23 +466,6 @@ fn runServerDaemon(allocator: std.mem.Allocator) Error!void {
         std.log.warn("Failed to load default config: {any}", .{err});
     };
 
-    const session = try server.newSession("default", sx, sy - 1);
-    const default_session_id = session.id;
-    // Verify that the initial session has an active window and pane
-    if (session.active_window) |win| {
-        if (win.active_pane == null) {
-            std.log.err("newSession returned window with no active pane", .{});
-            return error.OutOfMemory;
-        }
-    } else {
-        std.log.err("newSession returned session with no active window", .{});
-        return error.OutOfMemory;
-    }
-
-    server.display_sx = sx;
-    server.display_sy = sy;
-    try server.listen();
-
     var chld_act: std.posix.Sigaction = .{
         .handler = .{ .handler = server_mod.sigchld_handler },
         .mask = std.posix.sigemptyset(),
@@ -466,55 +473,42 @@ fn runServerDaemon(allocator: std.mem.Allocator) Error!void {
     };
     std.posix.sigaction(.CHLD, &chld_act, null);
 
-    const shell = try server.resolveShell(allocator, session);
-    defer allocator.free(shell);
-    std.log.info("spawning shell: {s}", .{shell});
+    server.display_sx = sx;
+    server.display_sy = sy;
+    try server.listen();
+    errdefer server.shutdownServer();
 
-    // Wait up to ~16 ms for the parent to connect and send the new-session
-    // command before spawning the shell.  This way the parent gets the
-    // response quickly instead of waiting for the shell fork+exec.
-    for (0..16) |_| {
-        try server.run(1);
-    }
-
-    // bug #221: re-validate that the pane still exists after the run(1) burst,
-    // since a connected parent client could have killed the session in that
-    // window.  Walk sessions again to confirm the pointer is still live.
-    var default_pane: ?*@import("window.zig").Pane = null;
-    for (server.sessions.items) |s| {
-        if (s.id == default_session_id) {
-            if (s.active_window) |w| {
-                default_pane = w.active_pane;
+    if (create_default_session) {
+        const session = try server.newSession("default", sx, sy - 1);
+        const default_pane = if (session.active_window) |win|
+            win.active_pane orelse {
+                std.log.err("newSession returned window with no active pane", .{});
+                return error.OutOfMemory;
             }
-            break;
-        }
-    }
+        else {
+            std.log.err("newSession returned session with no active window", .{});
+            return error.OutOfMemory;
+        };
 
-    // If another session was created and made active during the startup ticks
-    // (e.g. `szn new-session -s <name>`), the pre-created "default" session
-    // (default_session_id) is now orphaned with an unspawned pane. Destroy it
-    // instead of spawning a stray shell (bug #543).
-    var default_session_orphaned = false;
-    for (server.sessions.items) |s| {
-        if (s.id == default_session_id) continue;
-        // a new session exists and is active
-        default_session_orphaned = true;
-        break;
-    }
-    if (default_session_orphaned) {
-        // Destroy the unused pre-created default session by ID (not by name,
-        // since the replacement session may also be named "default") (bug #543).
-        server.killSessionById(default_session_id);
-    } else if (default_pane) |p| {
+        const shell = try server.resolveShell(allocator, session);
+        defer allocator.free(shell);
+        std.log.info("spawning shell: {s}", .{shell});
+
         const raw_nofile = server.global_options.asNumber("nofile-limit") orelse 1024;
         const min_nofile: u64 = if (raw_nofile > 0) @intCast(raw_nofile) else 0;
-        try p.spawn(allocator, &[_][]const u8{shell}, null, min_nofile);
-        errdefer if (p.pty) |*pty| {
+        try default_pane.spawn(allocator, &[_][]const u8{shell}, null, min_nofile);
+        errdefer if (default_pane.pty) |*pty| {
             pty.deinit();
-            p.pty = null;
+            default_pane.pty = null;
         };
-        try server.watchPanePty(p);
-        p.initPty();
+        try server.watchPanePty(default_pane);
+        default_pane.initPty();
+    } else {
+        // Forked for `new-session` / `new`: wait for the parent client to
+        // send its command instead of pre-creating a phantom "default"
+        // session that races an immediate `kill-session` or collides with
+        // bare `szn new-session -d` (bug #543, bug #566).
+        try waitForInitialSession(&server, 5000);
     }
 
     while (server.loop.running) {
@@ -1249,4 +1243,97 @@ test "RawTerminal.init returns GetAttrFailed on non-tty fd — bug #498" {
         _ = std.c.close(fds[1]);
     }
     try testing.expectError(error.GetAttrFailed, raw_mod.RawTerminal.init(fds[0]));
+}
+
+fn attachTestSocketClient(allocator: std.mem.Allocator, server: *Server) ![2]i32 {
+    const MessageReader = @import("server/message_reader.zig").MessageReader;
+    var fds: [2]i32 = undefined;
+    if (std.c.socketpair(std.c.AF.UNIX, std.c.SOCK.STREAM, 0, &fds) != 0) return error.Unexpected;
+    errdefer {
+        _ = std.c.close(fds[0]);
+        _ = std.c.close(fds[1]);
+    }
+    try server.client_fds.append(allocator, fds[0]);
+    const reader = try allocator.create(MessageReader);
+    errdefer allocator.destroy(reader);
+    reader.* = .{};
+    try server.client_readers.put(fds[0], reader);
+    try server.loop.addFd(allocator, fds[0], @as(i16, @intCast(std.posix.POLL.IN)), null);
+    return fds;
+}
+
+test "waitForInitialSession stops loop when new-session is immediately killed — bug #566" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    const fds = try attachTestSocketClient(testing.allocator, &server);
+    defer _ = std.c.close(fds[1]);
+
+    var buf1: [64]u8 = undefined;
+    const pkt1 = protocol.Packet.make(.command, "new-session b").serialize(&buf1);
+    var buf2: [64]u8 = undefined;
+    const pkt2 = protocol.Packet.make(.command, "kill-session").serialize(&buf2);
+    try io.writeAll(fds[1], pkt1);
+    try io.writeAll(fds[1], pkt2);
+
+    try waitForInitialSession(&server, 500);
+    try testing.expectEqual(@as(usize, 0), server.sessions.items.len);
+    try testing.expect(!server.loop.running);
+}
+
+test "waitForInitialSession accepts cold bare new-session (default) — bug #566" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    const fds = try attachTestSocketClient(testing.allocator, &server);
+    defer _ = std.c.close(fds[1]);
+
+    var buf: [64]u8 = undefined;
+    const pkt = protocol.Packet.make(.command, "new-session").serialize(&buf);
+    try io.writeAll(fds[1], pkt);
+
+    try waitForInitialSession(&server, 500);
+    try testing.expect(server.loop.running);
+    try testing.expectEqual(@as(usize, 1), server.sessions.items.len);
+    try testing.expectEqualStrings("default", server.sessions.items[0].name);
+}
+
+test "waitForInitialSession stops loop on invalid command, empty disconnect, or timeout — bug #566" {
+    // 1) Invalid initial command leaves 0 sessions and stops the loop immediately.
+    {
+        var server = try Server.init(testing.allocator);
+        defer server.deinit();
+        const fds = try attachTestSocketClient(testing.allocator, &server);
+        defer _ = std.c.close(fds[1]);
+
+        var buf: [64]u8 = undefined;
+        const pkt = protocol.Packet.make(.command, "new-session a b c").serialize(&buf);
+        try io.writeAll(fds[1], pkt);
+
+        try waitForInitialSession(&server, 500);
+        try testing.expectEqual(@as(usize, 0), server.sessions.items.len);
+        try testing.expect(!server.loop.running);
+    }
+
+    // 2) Client disconnects without sending any command.
+    {
+        var server = try Server.init(testing.allocator);
+        defer server.deinit();
+        const fds = try attachTestSocketClient(testing.allocator, &server);
+        _ = std.c.close(fds[1]);
+
+        try waitForInitialSession(&server, 500);
+        try testing.expectEqual(@as(usize, 0), server.sessions.items.len);
+        try testing.expect(!server.loop.running);
+    }
+
+    // 3) No client connects before timeout expires.
+    {
+        var server = try Server.init(testing.allocator);
+        defer server.deinit();
+
+        try waitForInitialSession(&server, 5);
+        try testing.expectEqual(@as(usize, 0), server.sessions.items.len);
+        try testing.expect(!server.loop.running);
+    }
 }
