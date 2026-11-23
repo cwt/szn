@@ -12,19 +12,22 @@ sources:
   - src/screen.zig
   - src/grid.zig
   - src/input.zig
+  - src/io.zig
   - src/cmd/cmd.zig
 verified: human-reviewed
 stale_after: 2027-01-01T00:00:00Z
 tags: [architecture, overview, server, client, process-model]
-timestamp: 2026-08-30T16:20:00Z
+timestamp: 2026-11-23T03:05:00Z
 ---
 
 # Architecture Overview
 
 szn is a from-scratch rewrite of tmux in Zig, targeting **Zig 0.16.0 and
-0.17.0**. It keeps tmux's client/server shape but replaces imsg with a tiny
-length-prefixed packet protocol and uses arena allocation per session/pane
-instead of reference counting.
+0.17.x** (verified on 0.16.0 and 0.17.1). It keeps tmux's client/server shape
+but replaces imsg with a tiny length-prefixed packet protocol and uses
+owner-scoped allocation with deterministic teardown per session, window, and
+pane instead of reference counting (the earlier `Session.arena` bump wrapper
+was retired in `#542`).
 
 > **Referencing convention:** this document names **symbols and files**, not
 > line numbers. Line citations drift every time a file is edited — an earlier
@@ -69,7 +72,7 @@ Watched fds: listener socket, each client fd, and each pane PTY master fd
 
 | Type | File | Notes |
 |------|------|-------|
-| `Session` | `session.zig` | Arena allocator, `windows: ArrayList(*Window)`, `active_window`, per-session `Options`. |
+| `Session` | `session.zig` | Backing `allocator`, `windows: ArrayList(*Window)`, `active_window`, per-session `Options` and default `window_options`. |
 | `Window` | `window.zig` | `panes: ArrayList(*Pane)`, a binary-split `Layout` tree, options. |
 | `Pane` | `window.zig` | `screen: Screen`, optional `pty`, optional `parser`, `dirty`, back-pointer to window. |
 
@@ -108,9 +111,10 @@ conceptual building block.
 
 ## Input parsing
 
-`InputParser` in `src/input.zig` is a byte-at-a-time state machine (see its
-`State` enum: ground, ESC, CSI, OSC, and a rich DCS set including sixel).
-Attached per pane and fed by `Pane.feedPty`.
+`InputParser` in `src/input.zig` is a state machine with a fast-path
+`advanceBatch` scanner for contiguous printable ASCII runs alongside its
+byte-level ESC, CSI, OSC, and DCS/sixel states. Attached per pane and fed by
+`Pane.feedPty` (bounded to a 64 KiB / 64-read budget per loop tick).
 
 It handles cursor moves, erase, insert/delete line/char, scroll,
 `DECSET`/`DECRST`, SGR, terminal queries (DA1/DA2, DSR, DECRQM,
@@ -137,7 +141,7 @@ title/clipboard, and kitty keyboard (`CSI u`).
 
 Commands are described by `CmdEntry` (`src/cmd/cmd.zig`) and assembled into a
 **comptime** table (`CMD_TABLE`, exposed through `cmdTable()`) from the
-`commands.*` instances — 48 entries as of 2026-08-30. `parse`/`lookup`
+`commands.*` instances — 49 entries. `parse`/`lookup`
 tokenize and validate args; `dispatchCommand` (`src/server/dispatch.zig`)
 calls `exec(server)` and returns a `DispatchResult`
 (`.ready`/`.err`/`.exit`/`.wait`). Handlers operate directly on `*Server`.
@@ -145,10 +149,10 @@ calls `exec(server)` and returns a `DispatchResult`
 ## Directory layout
 
 - `src/` root — core modules: `main`, `session`, `window`, `screen`, `grid`,
-  `input`, `colour`, `char_width`, `key`, `key_binding`, `options`, `cfg`,
+  `input`, `io`, `colour`, `char_width`, `key`, `key_binding`, `options`, `cfg`,
   `layout`, `choose`, `mode_copy`, `clock`, `buffer`, `format`, `status`,
-  `thai`, `socket_path`, `log`, `integration`, `compat` (cross-toolchain
-  shims for Zig 0.16/0.17 — see
+  `thai`, `socket_path`, `log`, `integration`, `bench_exports`, `compat`
+  (cross-toolchain shims for Zig 0.16/0.17 — see
   [Zig version compatibility](https://github.com/cwt/szn/blob/main/README.md#zig-version-compatibility)).
 - `src/server/` — `server`, `loop`, `protocol`, `socket`, `pty`,
   `message_reader`, `dispatch`, `render`.
@@ -157,7 +161,8 @@ calls `exec(server)` and returns a `DispatchResult`
 
 ## Design principles (from `AGENTS.md`)
 
-- Arena allocation per session/pane lifecycle; never `allocator.destroy`.
+- Owner-scoped allocation per session/pane lifecycle (deterministic teardown on
+  `Session.deinit`/`killWindow` and `Pane.deinit`, no reference counting).
 - Global state minimized — context passed explicitly through
   `Server`/`Screen`/`Pane`. Three exceptions are documented and deliberate:
   the async-signal handler flags (`sigchldFlag`, `sigwinchFlag`, `sighupFlag`),

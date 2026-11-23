@@ -11,14 +11,15 @@ sources:
 verified: human-reviewed
 stale_after: 2027-01-01T00:00:00Z
 tags: [runbook, build, test, benchmark, zig]
-timestamp: 2026-10-30T07:40:00Z
+timestamp: 2026-11-23T03:05:00Z
 ---
 
 # Build, Run, and Test
 
 ## Prerequisites
 
-- **Zig 0.16.0 or Zig 0.17.0** — the source compiles on both (see
+- **Zig 0.16.0 or Zig 0.17.x** (verified on 0.16.0 and 0.17.1) — the source
+  compiles on both (see
   [Zig version compatibility](https://github.com/cwt/szn/blob/main/README.md#zig-version-compatibility)).
   There is no `.zig-version` pin and `build.zig.zon` has no
   `minimum_zig_version`, so either 0.16.x or 0.17.x works.
@@ -76,8 +77,8 @@ Nested szn is blocked (env `SZN` set → `detectNested` returns true).
 `src/test.zig` is a **comptime aggregator** that `@import`s every module so
 their top-level `test {}` blocks compile into one test binary (see the
 `b.addTest` call in `build.zig`). There is no separate `tests/` directory —
-tests live next to the code they cover. As of 2026-10-30 the suite is
-**1082 tests**, all passing on a clean tree under both Zig 0.16.0 and 0.17.0
+tests live next to the code they cover. As of 2026-11-23 the suite is
+**1,112 tests**, all passing on a clean tree under both Zig 0.16.0 and 0.17.1
 (`-Doptimize=ReleaseFast`, fresh cache).
 
 ```bash
@@ -89,7 +90,7 @@ To check both toolchains from one tree, give each its own cache directory:
 ```bash
 rm -rf .cache .zig-cache
 zig build test -Doptimize=ReleaseFast --summary all --cache-dir .cache/bt16                 # 0.16.0
-/opt/zig/0.17.0/zig build test -Doptimize=ReleaseFast --summary all --cache-dir .cache/bt17 # 0.17.0
+/opt/zig/0.17.1/zig build test -Doptimize=ReleaseFast --summary all --cache-dir .cache/bt17 # 0.17.1
 ```
 
 Notes:
@@ -117,12 +118,27 @@ then failed three socket tests. That no longer happens. The tests clean up the
 default socket path, and as of 2026-10-30 the suite also passes when a stale
 socket is already there before the run.
 
-## Dev script: `bench.sh`
+## Benchmarking
 
-`bench.sh` builds `szn` with `ReleaseFast` and benchmarks startup time and
-create/destroy throughput (and RSS memory) against `tmux -u` using
-`hyperfine`. Requires `hyperfine` and `tmux` on `PATH`. It does **not**
-correspond to a `zig build bench` step.
+### Macrobenchmarks: `bench.sh` and `tools/bench_throughput.sh`
+
+`bench.sh` builds `szn` with `ReleaseFast` and benchmarks cold startup latency,
+session create/destroy throughput, and RSS memory (1, 10, and 50 panes) against
+`tmux -u` using `hyperfine` in isolated `/tmp` socket directories (rendering
+the summary via `tools/bench_report.py`). Requires `hyperfine`, `tmux`, and
+`lsof` on `PATH`.
+
+`tools/bench_throughput.sh` runs end-to-end PTY/IPC throughput, scrollback
+resize, copy-mode toggle, and sixel backpressure benchmarks.
+
+### Algorithmic microbenchmarks: `zig build bench`
+
+`zig build bench -Doptimize=ReleaseFast` builds and runs `tools/bench_algo.zig`
+(linked against `src/bench_exports.zig`), measuring latency, asymptotic scaling
+exponents (`α`), and allocation/memmove counters across reflow, `ByteQueue`,
+sixel rendering, `charWidth`, and region-scroll workloads. Use
+`tools/bench_compare.py` to compare two JSON runs against the saved baselines
+in `docs/development/benchmarks/`.
 
 ## Dependencies
 

@@ -1,7 +1,7 @@
 %global debug_package %{nil}
 
 Name:           szn
-Version:        0.11.1
+Version:        0.12.0
 Release:        1%{?dist}
 Summary:        Modern terminal multiplexer rewritten in Zig
 
@@ -56,6 +56,9 @@ XDG_RUNTIME_DIR=$(mktemp -d) %zig_test
 %{_bindir}/szn
 
 %changelog
+* Mon Nov 23 2026 Szn Maintainers <cwt@users.noreply.github.com> - 0.12.0-1
+- Release v0.12.0: 5-phase algorithmic performance overhaul, mouse drag-to-resize panes, 10ms escape-time, and bug fixes #563-#567
+
 * Mon Nov 09 2026 Szn Maintainers <cwt@users.noreply.github.com> - 0.11.1-1
 - Release v0.11.1: mouse drag-to-resize panes, 10ms default escape-time, and title preservation
 

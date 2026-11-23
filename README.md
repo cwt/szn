@@ -142,13 +142,13 @@ set -g variation-selector-always-wide on
 ## Status
 
 All core development phases (Phases 0 to 11) are fully implemented and complete. We have a robust, functional Zig terminal multiplexer featuring:
-- High-performance grid engine with arena-allocated session/pane lifecycles.
+- High-performance grid engine with deterministic session, window, and pane memory lifecycles.
 - Client-server IPC over Unix sockets.
 - 49 commands matching standard tmux behavior (including pane resizing, layout splits, paste buffers, clock-mode, and command-prompt).
 - Standard VT100 wrap-pending and Background Color Erase (BCE) support for accurate rendering.
-- Full multi-pane layouts, interactive copy mode, status bars, and config parsing (`.szn.conf`).
+- Full multi-pane layouts (including mouse drag-to-resize on split borders), interactive copy mode, status bars, and config parsing (`.szn.conf`).
 - **Advanced Text Reflow** — automatically rewraps text on pane resizing, respecting CJK characters, combining marks, and Thai & Lao cluster integrity (including an $O(1)$ syllable backtracking algorithm). See [docs/text_reflow.md](docs/text_reflow.md) for full design details.
-- **1,082 unit and integration tests, all passing on Zig 0.16.0 and 0.17.0.**
+- **1,112 unit and integration tests, all passing on Zig 0.16.0 and 0.17.1.**
 
 > **Running the suite:** `zig build test`. The `detectNested` test skips
 > itself when run inside an szn pane (`SZN` set), so expect one skip there.
@@ -158,11 +158,12 @@ All core development phases (Phases 0 to 11) are fully implemented and complete.
 
 szn is designed to be lean:
 
-- **Startup:** ~7.5 ms from launch to prompt (tmux: ~7.8 ms).
-- **Memory:** ~2.2 MB RSS idle — szn uses ~2200 kB vs tmux's ~4000 kB.
-- **Binary size:** 1,053,312 bytes stripped (~1,029 KB, x86-64 Linux), 834,864 bytes on macOS aarch64 (~815 KB) with Zig 0.17.0.
+- **Startup (cold):** ~6.4 ms (`tmux`: ~7.4 ms; 1.15× faster on x86-64 Linux).
+- **Memory:** ~2.2 MB RSS idle — `szn` uses ~2,224 kB vs `tmux`'s ~4,276 kB (-48.0%), and ~2,792 kB vs ~4,444 kB (-37.2%) across 5 windows / 50 panes.
+- **Session create/destroy:** ~7.2 ms (`tmux`: ~9.4 ms; 1.31× faster).
+- **Binary size:** 1,064,816 bytes stripped (~1,040 KB, x86-64 Linux) with Zig 0.17.1.
 
-A hyperfine-based benchmark suite is included at [`bench.sh`](bench.sh) for tracking these metrics.
+Hyperfine-based macrobenchmarks are included at [`bench.sh`](bench.sh) and [`tools/bench_throughput.sh`](tools/bench_throughput.sh), alongside an algorithmic microbenchmark suite via `zig build bench` ([`tools/bench_algo.zig`](tools/bench_algo.zig)).
 
 Check out [progress.md](docs/development/progress.md) for the full migration and feature breakdown. Development docs live under [`docs/development/`](docs/development/), and release notes under [`docs/releases/`](docs/releases/).
 
@@ -177,11 +178,11 @@ sudo dnf copr enable cwt/szn
 sudo dnf install szn
 ```
 
-> **Note:** EPEL 9 and EPEL 10 packages do not currently build due to the `ExclusiveArch: %{zig_arches}` macro constraint in [`szn.spec`](szn.spec), and will be enabled in a future release.
+Local RPM builds for Fedora 44/45 and Enterprise Linux 9/10 can also be produced with [`build_all.sh`](build_all.sh).
 
 ### Building from Source
 
-szn builds with **either Zig 0.16.0 or Zig 0.17.0** — the source is kept
+szn builds with **either Zig 0.16.0 or Zig 0.17.x** — the source is kept
 compatible with both toolchains. See
 [Zig version compatibility](#zig-version-compatibility).
 
@@ -200,7 +201,7 @@ zig build -Doptimize=ReleaseFast --prefix ~/.local
 
 ## Zig version compatibility
 
-szn compiles on **Zig 0.16.0** and **Zig 0.17.0** from the same source. Zig
+szn compiles on **Zig 0.16.0** and **Zig 0.17.x** from the same source. Zig
 0.17 renamed or removed a number of standard-library APIs, so the port sticks
 to the subset that exists in *both* releases and confines the unavoidable
 version branches to two places: comptime `@hasField` gates in `build.zig`, and
@@ -217,7 +218,7 @@ a small shim module at `src/compat.zig`.
 | `Build.build_root` | `Build.root` (selected via `@hasField`) |
 
 Both toolchains are verified locally: `zig build test -Doptimize=ReleaseFast`
-reports **1082/1082 passing on 0.16.0 and on 0.17.0** from a clean cache.
+reports **1,112/1,112 passing on 0.16.0 and on 0.17.1** from a clean cache.
 
 > **Testing note.** Zig 0.17's `std.testing.allocator` is a non-reusing
 > `SafeAllocator`, so a use-after-free in a test that passes silently on 0.16

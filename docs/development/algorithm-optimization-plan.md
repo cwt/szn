@@ -2,7 +2,7 @@
 type: project_priority
 title: "Algorithmic Performance Improvement Plan & Empirical Benchmark Methodology"
 description: "Prioritized optimization plan targeting quadratic and hot-path bottlenecks in szn, paired with a reproducible micro/macro benchmark harness and quantitative acceptance gates."
-status: draft
+status: stable
 sources:
   - src/grid.zig
   - src/thai.zig
@@ -20,13 +20,16 @@ sources:
 verified: machine-confirmed
 stale_after: 2027-01-01T00:00:00Z
 tags: [performance, algorithms, benchmarks, optimization, reflow, rendering, zig]
-timestamp: 2026-11-21T03:15:00Z
+timestamp: 2026-11-23T03:05:00Z
 generated:
   by: antigravity
   at: 2026-11-21T03:15:00Z
 ---
 
 # Algorithmic Performance Improvement Plan & Empirical Benchmark Methodology
+
+> [!NOTE]
+> **Implemented in `v0.12.0` (revs `839`–`845`):** Phases 0 through 5 below have been implemented, benchmarked against the `v0.11.1` baselines in `docs/development/benchmarks/`, and verified across Zig 0.16.0 and 0.17.1 (`1,112/1,112` tests passing, including follow-up fixes `#564` and `#565`).
 
 This document defines a staged, evidence-driven plan to eliminate the highest-impact algorithmic and hot-path bottlenecks identified in `szn` as of v0.11.1, together with an empirical benchmark methodology that proves each optimization delivers measurable improvements without regressions on either **Zig 0.16.0** or **Zig 0.17.0** (verified locally on 0.16.0 and 0.17.1).
 

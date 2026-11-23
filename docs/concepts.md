@@ -12,7 +12,7 @@ sources:
 verified: human-reviewed
 stale_after: 2027-01-01T00:00:00Z
 tags: [concepts, glossary, architecture, terminology]
-timestamp: 2026-08-30T16:20:00Z
+timestamp: 2026-11-23T03:05:00Z
 ---
 
 # Concepts Glossary
@@ -24,9 +24,10 @@ A reference for the domain vocabulary used throughout szn's code and docs.
 
 ## Structural concepts
 
-- **Session** (`session.zig`) — top-level unit, owns an arena allocator and a
-  list of windows. Has an `active_window`, `last_window`, size, and per-session
-  `Options`. The server serves one active session at a time.
+- **Session** (`session.zig`) — top-level unit; owns its backing allocator
+  reference, a list of windows, `active_window`, `last_window`, size,
+  per-session `Options`, and default `window_options`. The server serves one
+  active session at a time.
 - **Window** (`window.zig`) — a tab within a session; owns a list of panes
   and a binary-split `Layout` tree for pane geometry.
 - **Pane** (`window.zig`) — a rectangle showing one PTY/shell. Holds a

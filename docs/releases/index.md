@@ -7,7 +7,7 @@ sources:
   - docs/releases/
 verified: human-reviewed
 tags: [releases, changelog, index]
-timestamp: 2026-09-04T09:18:00Z
+timestamp: 2026-11-23T03:05:00Z
 ---
 
 # Releases
@@ -29,4 +29,5 @@ timestamp: 2026-09-04T09:18:00Z
 - [v0.9.1](v0.9.1.md)
 - [v0.10.0](v0.10.0.md)
 - [v0.11.0](v0.11.0.md)
+- [v0.12.0](v0.12.0.md)
 
