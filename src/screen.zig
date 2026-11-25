@@ -3,6 +3,7 @@ const testing = std.testing;
 const colour = @import("colour.zig");
 const grid = @import("grid.zig");
 const char_width = @import("char_width.zig");
+const hyperlink = @import("hyperlink.zig");
 
 /// Upper bound on a sixel's DCS payload. With the server/client output buffers
 /// raised to 16 MiB, sixels up to this size can be relayed in a single frame;
@@ -108,6 +109,10 @@ pub const Screen = struct {
     allocator: std.mem.Allocator,
     grid: Grid,
     alt_grid: ?Grid = null,
+    /// OSC 8 hyperlinks used by this pane. Kept per-screen (not global) so
+    /// cell IDs stay local and the renderer can remap them into its merged
+    /// grid without collisions between panes.
+    hyperlinks: hyperlink.Store = undefined,
     cursor: Cursor = .{},
     saved_cursor: ?Cursor = null,
     alt_cursor: Cursor = .{},
@@ -173,6 +178,7 @@ pub const Screen = struct {
         var screen = Screen{
             .allocator = allocator,
             .grid = try Grid.init(allocator, width, height),
+            .hyperlinks = hyperlink.Store.init(allocator),
             .copy_mode = null,
         };
         screen.setupGridEviction();
@@ -180,6 +186,7 @@ pub const Screen = struct {
     }
 
     pub fn deinit(self: *Screen) void {
+        self.hyperlinks.deinit();
         self.grid.deinit();
         if (self.alt_grid) |*g| g.deinit();
         if (self.pending_sixel) |p| p.deinit(self.allocator);
@@ -188,6 +195,44 @@ pub const Screen = struct {
                 img.deinit(self.allocator);
             }
         }
+    }
+
+    /// Resolve a display row to its backing cells, honoring copy-mode scroll.
+    /// Shared with the renderer and click hit-testing so the two cannot drift.
+    pub fn rowCells(self: *const Screen, y: usize) ?*const std.ArrayList(grid.Cell) {
+        const hist_len = self.grid.historyLen();
+        const scroll: isize = @intCast(if (self.copy_mode) |cm| cm.scroll_offset else 0);
+        const combined_idx = @as(isize, @intCast(hist_len)) - scroll + @as(isize, @intCast(y));
+        if (combined_idx < 0) return null;
+        if (combined_idx < hist_len) return &self.grid.getHistoryLine(@as(usize, @intCast(combined_idx))).cells;
+        const visible_y = combined_idx - @as(isize, @intCast(hist_len));
+        if (visible_y < self.grid.height) return &self.grid.getLine(@intCast(visible_y)).cells;
+        return null;
+    }
+
+    /// Cell at a display coordinate, or null when the coordinate is off-screen.
+    pub fn cellAt(self: *const Screen, x: u32, y: u32) ?grid.Cell {
+        const cells = self.rowCells(y) orelse return null;
+        if (x >= cells.items.len) return null;
+        return cells.items[x];
+    }
+
+    /// URI of the hyperlink under a display coordinate, if any.
+    pub fn hyperlinkAt(self: *const Screen, x: u32, y: u32) ?[]const u8 {
+        const cell = self.cellAt(x, y) orelse return null;
+        return self.hyperlinks.getUri(cell.link);
+    }
+
+    /// OSC 8 is independent of SGR: an SGR reset must not drop the active link.
+    fn resetSgrState(self: *Screen) void {
+        const link = self.cur_cell.link;
+        self.cur_cell = grid.Cell.empty();
+        self.cur_cell.link = link;
+    }
+
+    /// Set (or clear) the hyperlink applied to subsequently printed cells.
+    pub fn setActiveLink(self: *Screen, id: hyperlink.Id) void {
+        self.cur_cell.link = id;
     }
 
     /// Update cell pixel dimensions from terminal window size query response.
@@ -1597,7 +1642,7 @@ pub const Screen = struct {
 
     pub fn setSgr(self: *Screen, params: []const u32, sub_params: []const bool) void {
         if (params.len == 0) {
-            self.cur_cell = Cell.empty();
+            self.resetSgrState();
             return;
         }
         var i: usize = 0;
@@ -1605,7 +1650,7 @@ pub const Screen = struct {
             const p = params[i];
             i += 1;
             switch (p) {
-                0 => self.cur_cell = Cell.empty(),
+                0 => self.resetSgrState(),
                 1 => self.cur_cell.attr.bold = true,
                 2 => self.cur_cell.attr.dim = true,
                 3 => self.cur_cell.attr.italic = true,

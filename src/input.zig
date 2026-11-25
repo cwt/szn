@@ -1038,6 +1038,19 @@ pub const InputParser = struct {
                     }
                 }
             },
+            8 => {
+                // OSC 8 hyperlinks: 8;params;URI. Split only at the FIRST
+                // semicolon — URIs may legitimately contain more of them.
+                const sep = std.mem.indexOfScalar(u8, data, ';') orelse return;
+                const params = data[0..sep];
+                const uri = data[sep + 1 ..];
+                const id = self.screen.hyperlinks.put(uri, params) catch |err| {
+                    std.log.warn("OSC 8 hyperlink dropped: {any}", .{err});
+                    return;
+                };
+                self.screen.setActiveLink(id);
+                self.screen.dirty = true;
+            },
             else => {},
         }
     }
@@ -1807,6 +1820,69 @@ test "OSC 52 clipboard ignored no crash" {
     var parser = InputParser.init(&screen);
     defer parser.deinit();
     try parser.feed("\x1b]52;c;dGVzdA==\x07");
+    try testing.expectEqual(@as(u8, @intFromEnum(InputParser.State.ground)), @intFromEnum(parser.state));
+}
+
+test "OSC 8 hyperlink is attached to subsequently printed cells" {
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+    var parser = InputParser.init(&screen);
+    defer parser.deinit();
+
+    try parser.feed("\x1b]8;;https://example.com/a\x1b\\ABC");
+    const link = screen.grid.getCell(0, 0).link;
+    try testing.expect(link != 0);
+    try testing.expectEqual(link, screen.grid.getCell(1, 0).link);
+    try testing.expectEqual(link, screen.grid.getCell(2, 0).link);
+    try testing.expectEqualStrings("https://example.com/a", screen.hyperlinks.getUri(link).?);
+    try testing.expectEqualStrings("https://example.com/a", screen.hyperlinkAt(1, 0).?);
+
+    // SGR reset does not close an OSC 8 hyperlink.
+    try parser.feed("\x1b[mD");
+    try testing.expectEqual(link, screen.grid.getCell(3, 0).link);
+
+    // An empty URI closes it for cells printed afterwards.
+    try parser.feed("\x1b]8;;\x1b\\E");
+    try testing.expectEqual(@as(u32, 0), screen.grid.getCell(4, 0).link);
+    try testing.expect(screen.hyperlinkAt(4, 0) == null);
+}
+
+test "OSC 8 named id is reused and URI updates" {
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+    var parser = InputParser.init(&screen);
+    defer parser.deinit();
+
+    try parser.feed("\x1b]8;id=docs;https://example.com/old\x1b\\A");
+    const first = screen.grid.getCell(0, 0).link;
+    try parser.feed("\x1b]8;id=docs;https://example.com/new\x1b\\B");
+    const second = screen.grid.getCell(1, 0).link;
+    try testing.expectEqual(first, second);
+    try testing.expectEqual(@as(usize, 1), screen.hyperlinks.entries.items.len);
+    try testing.expectEqualStrings("https://example.com/new", screen.hyperlinks.getUri(first).?);
+}
+
+test "OSC 8 URI may contain semicolons" {
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+    var parser = InputParser.init(&screen);
+    defer parser.deinit();
+
+    try parser.feed("\x1b]8;;https://example.com/?a=1;b=2\x1b\\A");
+    try testing.expectEqualStrings(
+        "https://example.com/?a=1;b=2",
+        screen.hyperlinkAt(0, 0).?,
+    );
+}
+
+test "malformed OSC 8 is ignored without crashing" {
+    var screen = try Screen.init(testing.allocator, 80, 24);
+    defer screen.deinit();
+    var parser = InputParser.init(&screen);
+    defer parser.deinit();
+
+    try parser.feed("\x1b]8\x1b\\A");
+    try testing.expectEqual(@as(u32, 0), screen.grid.getCell(0, 0).link);
     try testing.expectEqual(@as(u8, @intFromEnum(InputParser.State.ground)), @intFromEnum(parser.state));
 }
 

@@ -42,6 +42,10 @@ the two. Less code, fewer surprises, and nothing left over from 1978.
   panes, programs run under `TERM=tmux-256color`. SGR mouse (1006), true-colour
   RGB, kitty extended keys, UTF-8, OSC 8 hyperlinks, and sixel image support
   are available out of the box.
+- **Clickable links** — OSC 8 hyperlinks are stored per pane and re-emitted to
+  the display terminal. A bare left click on a linked cell opens the URL with
+  `xdg-open`; drags still select text or resize pane borders. Programs that
+  request mouse mode keep receiving clicks themselves.
 - **Pragmatic mouse forwarding** — szn speaks SGR mouse (1006) natively, but
   also forwards legacy `\x1b[M` 3-byte format when a program only enables basic
   mouse mode (1000/1002). This keeps SGR as the default while tolerating

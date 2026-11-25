@@ -23,7 +23,9 @@ pub const Attr = packed struct(u16) {
     _padding: u4 = 0,
 };
 
-pub const Cell = packed struct(u128) {
+/// A terminal cell. `link` is a 1-based index into the owning Screen's OSC 8
+/// hyperlink store (0 = none). u160 is exactly the packed width of all fields.
+pub const Cell = packed struct(u160) {
     char: u21,
     comb1: u13 = 0,
     comb2: u13 = 0,
@@ -31,6 +33,7 @@ pub const Cell = packed struct(u128) {
     fg: Colour,
     bg: Colour,
     is_padding: bool = false,
+    link: u32 = 0,
 
     pub fn empty() Cell {
         return .{
@@ -48,7 +51,7 @@ pub const Cell = packed struct(u128) {
     }
 
     pub fn eql(self: Cell, other: Cell) bool {
-        return @as(u128, @bitCast(self)) == @as(u128, @bitCast(other));
+        return @as(u160, @bitCast(self)) == @as(u160, @bitCast(other));
     }
 };
 

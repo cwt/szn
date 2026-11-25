@@ -214,6 +214,10 @@ pub const Server = struct {
     copy_click_y: ?u32 = null,
     config_load_depth: u32 = 0,
     mouse_press_pane: ?*Pane = null,
+    /// Hook used when a bare click lands on an OSC 8 hyperlink. Tests inject a
+    /// recorder here; production wires `openUrlWithBrowser`.
+    open_url_cb: ?*const fn (ctx: ?*anyopaque, url: []const u8) void = null,
+    open_url_ctx: ?*anyopaque = null,
     /// When non-null, the current left-drag is resizing this pane from a border.
     /// `mouse_resize_axis` is the axis being dragged; `mouse_resize_start_x/y`
     /// is the drag origin so each drag event computes an incremental delta.
@@ -2140,6 +2144,15 @@ pub const Server = struct {
                                     } else if (!moved) {
                                         cm.clearSelection();
                                         pane.dirty = true;
+                                        // Bare click in copy mode (including
+                                        // scrollback) opens a hyperlink.
+                                        if (self.findPaneBounds(window, pane)) |pb| {
+                                            if (m.x >= pb.x and m.x < pb.x + pb.w and m.y >= pb.y and m.y < pb.y + pb.h) {
+                                                if (pane.screen.hyperlinkAt(m.x - pb.x, m.y - pb.y)) |url| {
+                                                    self.openUrl(url);
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -2358,6 +2371,9 @@ pub const Server = struct {
                                             if (self.mouse_press_pane) |press_pane| {
                                                 // bug #283: guard against a pane destroyed since the press.
                                                 if (self.isPaneValid(press_pane)) {
+                                                    // Remember whether the press turned into a selection
+                                                    // before the yank below clears copy mode.
+                                                    const selecting = if (press_pane.screen.copy_mode) |cm| cm.selection.active else false;
                                                     if (press_pane.screen.copy_mode) |*cm| {
                                                         if (cm.selection.active) {
                                                             const data = cm.yankSelection(self.allocator, &press_pane.screen.grid) catch null;
@@ -2367,6 +2383,18 @@ pub const Server = struct {
                                                             press_pane.screen.copy_mode = null;
                                                             press_pane.dirty = true;
                                                             self.dirty = true;
+                                                        }
+                                                    }
+                                                    // A bare click on an OSC 8 hyperlink opens it. Drags
+                                                    // (selection or border resize) never trigger this.
+                                                    const bare_click = m.x == self.mouse_press_x and m.y == self.mouse_press_y;
+                                                    if (bare_click and !selecting) {
+                                                        if (self.findPaneBounds(window, press_pane)) |pb| {
+                                                            if (m.x >= pb.x and m.x < pb.x + pb.w and m.y >= pb.y and m.y < pb.y + pb.h) {
+                                                                if (press_pane.screen.hyperlinkAt(m.x - pb.x, m.y - pb.y)) |url| {
+                                                                    self.openUrl(url);
+                                                                }
+                                                            }
                                                         }
                                                     }
                                                 }
@@ -2537,6 +2565,58 @@ pub const Server = struct {
                     }
                 }
             }
+        }
+    }
+
+    /// Open a hyperlink. The callback exists so tests can observe the URL
+    /// without launching a browser.
+    pub fn openUrl(self: *Server, url: []const u8) void {
+        if (url.len == 0) return;
+        if (self.open_url_cb) |cb| {
+            cb(self.open_url_ctx, url);
+            return;
+        }
+        spawnBrowser(self.allocator, url);
+    }
+
+    /// Launch xdg-open with the URL as a plain argv element (no shell), so a
+    /// URL cannot inject commands. The server's SIGCHLD reaper collects it.
+    fn spawnBrowser(allocator: std.mem.Allocator, url: []const u8) void {
+        const c_proc = struct {
+            extern "c" fn fork() c.pid_t;
+            extern "c" fn open(path: [*:0]const u8, oflag: c_int, ...) c_int;
+            extern "c" fn dup2(oldfd: c_int, newfd: c_int) c_int;
+            extern "c" fn execvp(file: [*:0]const u8, argv: [*:null]const ?[*:0]const u8) c_int;
+        };
+        const url_z = compat.dupeZ(allocator, url) catch {
+            std.log.warn("cannot open hyperlink: out of memory", .{});
+            return;
+        };
+        const pid = c_proc.fork();
+        if (pid < 0) {
+            std.log.warn("cannot open hyperlink: fork failed", .{});
+            return;
+        }
+        if (pid == 0) {
+            const devnull = c_proc.open("/dev/null", 2, @as(c_int, 0));
+            if (devnull >= 0) {
+                _ = c_proc.dup2(devnull, 0);
+                _ = c_proc.dup2(devnull, 1);
+                _ = c_proc.dup2(devnull, 2);
+                if (devnull > 2) _ = c.close(devnull);
+            }
+            var max_fd: c_int = 1024;
+            var rlim: std.c.rlimit = undefined;
+            if (std.c.getrlimit(.NOFILE, &rlim) == 0 and rlim.cur > 0) {
+                max_fd = @intCast(@min(rlim.cur, 65536));
+            }
+            var fd: c_int = 3;
+            while (fd < max_fd) : (fd += 1) {
+                _ = c.close(fd);
+            }
+            const argv = [_:null]?[*:0]const u8{ "xdg-open", url_z.ptr, null };
+            _ = c_proc.execvp("xdg-open", &argv);
+            std.process.exit(127);
         }
     }
 
@@ -5756,6 +5836,80 @@ test "mouse click and drag selection" {
     const pb = server.buffers.get(null);
     try testing.expect(pb != null);
     try testing.expectEqualStrings("xxxxxxxxxxx", pb.?);
+}
+
+const UrlCapture = struct {
+    url: ?[]const u8 = null,
+
+    fn callback(ctx: ?*anyopaque, url: []const u8) void {
+        const self: *UrlCapture = @ptrCast(@alignCast(ctx.?));
+        self.url = url;
+    }
+};
+
+test "bare click on OSC 8 hyperlink opens URL" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    var capture = UrlCapture{};
+    server.open_url_cb = UrlCapture.callback;
+    server.open_url_ctx = &capture;
+
+    const s = try server.newSession("test-hyperlink-click", 80, 24);
+    const pane = s.active_window.?.active_pane.?;
+    const id = try pane.screen.hyperlinks.put("https://example.com/click", "");
+    var cell = Cell.withChar('A');
+    cell.link = id;
+    pane.screen.grid.setCell(0, 0, cell);
+
+    try server.processInput("\x1b[<0;1;1M");
+    try server.processInput("\x1b[<3;1;1m");
+
+    try testing.expectEqualStrings("https://example.com/click", capture.url.?);
+}
+
+test "bare click on hyperlink in copy mode opens URL" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    var capture = UrlCapture{};
+    server.open_url_cb = UrlCapture.callback;
+    server.open_url_ctx = &capture;
+
+    const s = try server.newSession("test-hyperlink-copy-click", 80, 24);
+    const pane = s.active_window.?.active_pane.?;
+    const id = try pane.screen.hyperlinks.put("https://example.com/copy", "");
+    var cell = Cell.withChar('A');
+    cell.link = id;
+    pane.screen.grid.setCell(0, 0, cell);
+    try pane.enterCopyMode();
+
+    try server.processInput("\x1b[<0;1;1M");
+    try server.processInput("\x1b[<3;1;1m");
+
+    try testing.expectEqualStrings("https://example.com/copy", capture.url.?);
+}
+
+test "dragging from a hyperlink selects instead of opening it" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    var capture = UrlCapture{};
+    server.open_url_cb = UrlCapture.callback;
+    server.open_url_ctx = &capture;
+
+    const s = try server.newSession("test-hyperlink-drag", 80, 24);
+    const pane = s.active_window.?.active_pane.?;
+    const id = try pane.screen.hyperlinks.put("https://example.com/drag", "");
+    var cell = Cell.withChar('A');
+    cell.link = id;
+    pane.screen.grid.setCell(0, 0, cell);
+
+    try server.processInput("\x1b[<0;1;1M");
+    try server.processInput("\x1b[<32;3;1M");
+    try server.processInput("\x1b[<3;3;1m");
+
+    try testing.expect(capture.url == null);
 }
 
 test "mouse selection from inactive pane focus and drag" {

@@ -21,6 +21,7 @@ comptime {
     _ = @import("colour.zig");
     _ = @import("io.zig");
     _ = @import("grid.zig");
+    _ = @import("hyperlink.zig");
     _ = @import("screen.zig");
     _ = @import("key.zig");
     _ = @import("window.zig");

@@ -4,6 +4,7 @@ const testing = std.testing;
 const Screen = @import("../screen.zig").Screen;
 const SixelAnchor = @import("../screen.zig").SixelAnchor;
 const Cell = @import("../grid.zig").Cell;
+const hyperlink = @import("../hyperlink.zig");
 const Colour = @import("../colour.zig").Colour;
 const Attr = @import("../grid.zig").Attr;
 const Window = @import("../window.zig").Window;
@@ -334,7 +335,7 @@ pub const Display = struct {
                 const merged_line = merged_screen.grid.getLineMut(@intCast(pb.y + y));
 
                 if (fast_row_merge) {
-                    comptime std.debug.assert(@sizeOf(Cell) == @sizeOf(u128));
+                    comptime std.debug.assert(@sizeOf(Cell) == @sizeOf(u160));
                     const max_w = @min(@as(usize, merged_w), merged_line.cells.items.len);
                     if (pb.x >= max_w) continue;
                     const row_w = @min(@as(usize, pb.w), max_w - @as(usize, pb.x));
@@ -346,6 +347,15 @@ pub const Display = struct {
                         if (!std.mem.eql(u8, std.mem.sliceAsBytes(dst_slice), std.mem.sliceAsBytes(src_slice))) {
                             @memcpy(dst_slice, src_slice);
                             merged_line.dirty = true;
+                        }
+                        // Hyperlink IDs are local to the pane's store; remap
+                        // them into the merged store before rendering.
+                        for (dst_row) |*merged_cell| {
+                            merged_cell.link = remapLink(
+                                merged_cell.link,
+                                &pb.pane.screen.hyperlinks,
+                                &merged_screen.hyperlinks,
+                            );
                         }
                         if (copy_w < row_w) {
                             const empty_cell = Cell.empty();
@@ -371,6 +381,7 @@ pub const Display = struct {
                 for (0..pb.w) |x| {
                     if (pb.x + x >= merged_w) break;
                     var cell = if (cells) |cls| (if (x < cls.items.len) cls.items[x] else Cell.empty()) else Cell.empty();
+                    cell.link = remapLink(cell.link, &pb.pane.screen.hyperlinks, &merged_screen.hyperlinks);
                     if (pane_has_sixels and cell.attr.sixel) {
                         const contained_img = if (!any_contained_sixel) false else blk: {
                             const masked_id: u32 = cell.char;
@@ -683,14 +694,17 @@ pub const Display = struct {
     /// scroll. Shared by the merge stage and the single-pane content path so
     /// the history/visible mapping cannot drift between them (bug #477).
     fn resolveRowCells(screen: *const Screen, y: usize) ?*const std.ArrayList(Cell) {
-        const hist_len = screen.grid.historyLen();
-        const scroll: isize = @intCast(if (screen.copy_mode) |cm| cm.scroll_offset else 0);
-        const combined_idx = @as(isize, @intCast(hist_len)) - scroll + @as(isize, @intCast(y));
-        if (combined_idx < 0) return null;
-        if (combined_idx < hist_len) return &screen.grid.getHistoryLine(@as(usize, @intCast(combined_idx))).cells;
-        const visible_y = combined_idx - @as(isize, @intCast(hist_len));
-        if (visible_y < screen.grid.height) return &screen.grid.getLine(@intCast(visible_y)).cells;
-        return null;
+        return screen.rowCells(y);
+    }
+
+    /// Map a pane-local hyperlink ID into the merged screen's ID space. IDs
+    /// are per-screen, so cells copied into the merged grid must carry an ID
+    /// from the merged store before the renderer can emit OSC 8 for them.
+    fn remapLink(id: hyperlink.Id, src: *const hyperlink.Store, dst: *hyperlink.Store) hyperlink.Id {
+        if (id == hyperlink.none) return hyperlink.none;
+        const uri = src.getUri(id) orelse return hyperlink.none;
+        const params = src.getParam(id) orelse "";
+        return dst.put(uri, params) catch hyperlink.none;
     }
 
     /// Paint one border cell: merge with a perpendicular line into a cross,
@@ -787,6 +801,11 @@ pub const Display = struct {
 
         try emit.write(self, &out_buf, &out_len, "\x1b[m");
 
+        // A hyperlink opened in a previous frame must not leak into this one.
+        var active_link: hyperlink.Id = hyperlink.none;
+        try emit.write(self, &out_buf, &out_len, hyperlink.CloseSequence);
+        var hyperlink_buf: [hyperlink.MAX_URI_LEN + 64]u8 = undefined;
+
         // Scratch run of spaces used to emit consecutive blank cells in one
         // write instead of one writeBytes per cell (bug #483).
         var spaces: [256]u8 = undefined;
@@ -845,12 +864,30 @@ pub const Display = struct {
             while (x < w) : (x += 1) {
                 var cell = resolveCell(screen, row_cells, x, y);
 
+                // OSC 8 state is independent of SGR and survives cursor moves,
+                // so emit transitions explicitly. This happens before the
+                // unchanged-cell skip: a linked cell must be redrawn each frame
+                // to restore the terminal's link state, and an unlinked cell
+                // must close the previous link even when its glyph is unchanged.
+                if (cell.link != active_link) {
+                    if (cell.link == hyperlink.none) {
+                        try emit.write(self, &out_buf, &out_len, hyperlink.CloseSequence);
+                    } else if (screen.hyperlinks.formatOsc(cell.link, &hyperlink_buf)) |seq| {
+                        try emit.write(self, &out_buf, &out_len, seq);
+                    } else {
+                        try emit.write(self, &out_buf, &out_len, hyperlink.CloseSequence);
+                    }
+                    active_link = cell.link;
+                }
+
                 var force_erase = false;
                 if (self.last_cells) |lc| {
                     const cell_idx = row_base + x;
                     if (cell_idx < lc.items.len) {
                         const last_cell = lc.items[cell_idx];
-                        if (cell.eql(last_cell)) {
+                        // Linked cells are never skipped: the outer terminal
+                        // only keeps a link while it is re-emitted each frame.
+                        if (cell.eql(last_cell) and cell.link == hyperlink.none) {
                             anchored = false;
                             continue;
                         }
@@ -1026,6 +1063,9 @@ pub const Display = struct {
             }
         }
 
+        if (active_link != hyperlink.none) {
+            try emit.write(self, &out_buf, &out_len, hyperlink.CloseSequence);
+        }
         try emit.write(self, &out_buf, &out_len, "\x1b[m");
         try emit.flush(self, &out_buf, &out_len);
     }
@@ -1308,6 +1348,72 @@ test "renderContent double and curly underline" {
     // Verify SGR escape sequences are in the output
     try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1b[4:2m") != null);
     try std.testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1b[4:3m") != null);
+}
+
+test "renderContent emits OSC 8 open and close around linked cells" {
+    const allocator = std.testing.allocator;
+    var screen = try Screen.init(allocator, 10, 2);
+    defer screen.deinit();
+
+    const id = try screen.hyperlinks.put("https://example.com/a", "id=a");
+    var cell = Cell.withChar('A');
+    cell.link = id;
+    screen.grid.setCell(0, 0, cell);
+    screen.grid.setCell(1, 0, Cell.withChar('B'));
+
+    var capture_buf: std.ArrayList(u8) = .empty;
+    defer capture_buf.deinit(allocator);
+    const display = Display{
+        .fd = -1,
+        .sx = 10,
+        .sy = 2,
+        .capture = &capture_buf,
+        .capture_allocator = allocator,
+    };
+    try display.renderContent(&screen);
+
+    const out = capture_buf.items;
+    try testing.expect(std.mem.indexOf(u8, out, "\x1b]8;id=a;https://example.com/a\x1b\\") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "A") != null);
+    try testing.expect(std.mem.indexOf(u8, out, hyperlink.CloseSequence) != null);
+}
+
+test "renderAll remaps pane hyperlinks into the merged screen" {
+    const allocator = std.testing.allocator;
+    var capture_buf: std.ArrayList(u8) = .empty;
+    defer capture_buf.deinit(allocator);
+
+    const display = Display{
+        .fd = -1,
+        .sx = 10,
+        .sy = 2,
+        .capture = &capture_buf,
+        .capture_allocator = allocator,
+    };
+
+    var win = try Window.init(allocator, 1, "test-win", 10, 2, null, null);
+    defer win.deinit(allocator);
+    const pane = win.active_pane.?;
+
+    const id = try pane.screen.hyperlinks.put("https://example.com/merged", "id=merge");
+    var cell = Cell.withChar('Z');
+    cell.link = id;
+    pane.screen.grid.setCell(0, 0, cell);
+    pane.dirty = true;
+
+    const bounds = [_]PaneBounds{.{ .pane = pane, .x = 0, .y = 0, .w = 10, .h = 2 }};
+    const windows = [_]*Window{&win};
+    const Node = @import("../layout.zig").Node;
+    const node = Node{ .leaf = pane };
+    const theme = ThemeColours{
+        .status_fg = Colour.default_(),
+        .status_bg = Colour.default_(),
+        .pane_border_fg = Colour.fromIndexed(8),
+        .pane_active_border_fg = Colour.fromIndexed(2),
+    };
+    try display.renderAll(allocator, &bounds, pane, "sess", &windows, &win, &node, theme, null, false, "", 0, false, false, null, true);
+
+    try testing.expect(std.mem.indexOf(u8, capture_buf.items, "\x1b]8;id=merge;https://example.com/merged\x1b\\") != null);
 }
 
 test "renderContent delta SGR emissions emit 39 and 49 default resets" {
