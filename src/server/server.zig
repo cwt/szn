@@ -240,6 +240,9 @@ pub const Server = struct {
     /// test asserting pointer reuse must be able to stop the clock — otherwise
     /// it fails intermittently whenever a render straddles a second boundary.
     test_clock_sec: ?i64 = null,
+    /// Test-only: force `collectPaneBounds` to fail so the dirty-flag error
+    /// path in `renderToDisplayClient` can be exercised (#569).
+    test_collect_bounds_fail: bool = false,
 
     /// Cell pixel dimensions, learned from the display client's XTWINOPS
     /// response. A terminal property, so the same value applies to every pane.
@@ -2632,6 +2635,7 @@ pub const Server = struct {
     }
 
     fn collectPaneBounds(self: *Server, node: *const @import("../layout.zig").Node, lx: u32, ly: u32, lw: u32, lh: u32, result: *std.ArrayList(render.PaneBounds)) ServerError!void {
+        if (self.test_collect_bounds_fail) return error.OutOfMemory;
         switch (node.*) {
             .leaf => |pane| {
                 try result.append(self.allocator, .{ .pane = pane, .x = lx, .y = ly, .w = lw, .h = lh });
@@ -3679,6 +3683,9 @@ pub const Server = struct {
             dc.bounds_buf.clearRetainingCapacity();
             self.collectPaneBounds(window.layout.root, 0, 0, dc.sx, content_h, &dc.bounds_buf) catch |err| {
                 std.log.warn("collectPaneBounds error: {any}", .{err});
+                // No frame reached this client: keep the update dirty so the
+                // next tick regenerates it instead of dropping it (#569).
+                all_flushed = false;
                 continue;
             };
 
@@ -6657,6 +6664,33 @@ test "renderToDisplayClient does not free string literals for empty pane-border-
     server.dirty = true;
     server.renderToDisplayClient();
     try testing.expect(server.display_clients.items.len == 1);
+}
+
+test "renderToDisplayClient keeps dirty flags when collectPaneBounds fails — bug #569" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    const session = try server.newSession("bounds-fail", 80, 24);
+    const pane = session.active_window.?.active_pane.?;
+
+    var fds: [2]c_int = undefined;
+    if (std.c.pipe(&fds) != 0) return error.Unexpected;
+    defer _ = std.c.close(fds[0]);
+    defer _ = std.c.close(fds[1]);
+    _ = try server.addDisplayClient(.{ .fd = fds[1], .sx = 80, .sy = 24 });
+
+    server.dirty = true;
+    server.status_dirty = true;
+    pane.dirty = true;
+    server.test_collect_bounds_fail = true;
+
+    server.renderToDisplayClient();
+
+    // The client never got a frame, so the update must remain dirty for the
+    // next tick rather than being silently discarded.
+    try testing.expect(server.dirty);
+    try testing.expect(server.status_dirty);
+    try testing.expect(pane.dirty);
 }
 
 test "setMessage preserves old message on allocation failure — bug #285" {
