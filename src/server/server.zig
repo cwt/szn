@@ -4212,10 +4212,12 @@ pub const Server = struct {
                         extern "c" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
                         extern "c" fn unsetenv(name: [*:0]const u8) c_int;
                     };
-                    const name_z = compat.dupeZ(self.allocator, e.name) catch return;
+                    // `catch return` here used to report success while
+                    // silently skipping the rest of the config file (#573).
+                    const name_z = try compat.dupeZ(self.allocator, e.name);
                     defer self.allocator.free(name_z);
                     if (e.value) |val| {
-                        const val_z = compat.dupeZ(self.allocator, val) catch return;
+                        const val_z = try compat.dupeZ(self.allocator, val);
                         defer self.allocator.free(val_z);
                         _ = c_env.setenv(name_z, val_z, 1);
                     } else {
@@ -7408,4 +7410,21 @@ test "applyDirectives queues a slow if-shell without a blocking poll spin — bu
     // stalling every client during config load.
     try testing.expect(elapsed < 20);
     try testing.expectEqual(@as(usize, 1), server.pending_if_shells.items.len);
+}
+
+test "applyDirectives propagates set-environment OOM instead of reporting success — bug #573" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    var parsed = try cfg.parseConfig(testing.allocator, "set-environment -g SZN_OOM_TEST value");
+    defer parsed.deinit(testing.allocator);
+
+    var failing = std.testing.FailingAllocator.init(testing.allocator, .{ .fail_index = 0 });
+    const saved = server.allocator;
+    server.allocator = failing.allocator();
+    defer server.allocator = saved;
+
+    // A bare `catch return` made this look like a successfully applied
+    // config while skipping every following directive.
+    try testing.expectError(error.OutOfMemory, server.applyDirectives(&parsed));
 }
