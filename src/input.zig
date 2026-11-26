@@ -2087,14 +2087,15 @@ const VTIME: usize = switch (@import("builtin").os.tag) {
 };
 
 fn setRaw(fd: i32) void {
-    var raw: std.c.termios = undefined;
-    _ = std.c.tcgetattr(fd, &raw);
+    // std.posix, not std.c: Zig 0.17 miscompiles the std.c.tcgetattr/tcsetattr
+    // pattern below (it passes fd 0 to tcsetattr), which hangs this test.
+    var raw = std.posix.tcgetattr(fd) catch return;
     raw.iflag = .{ .BRKINT = true };
     raw.lflag = .{};
     raw.oflag = .{};
     raw.cc[VMIN] = 1;
     raw.cc[VTIME] = 0;
-    _ = std.c.tcsetattr(fd, std.c.TCSA.FLUSH, &raw);
+    std.posix.tcsetattr(fd, .FLUSH, raw) catch {};
 }
 
 test "input test helper VMIN and VTIME match the target platform — bug #497" {

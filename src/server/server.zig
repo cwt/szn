@@ -4599,12 +4599,13 @@ test "send-prefix forwards C-b to inner process" {
 
     // Put slave in raw mode so read() doesn't wait for newline.
     {
-        var term: std.c.termios = undefined;
-        _ = std.c.tcgetattr(slave_fd, &term);
+        // std.posix, not std.c: Zig 0.17 miscompiles the std.c variant and
+        // passes fd 0 to tcsetattr (see the DSR-test fix in input.zig).
+        var term = std.posix.tcgetattr(slave_fd) catch return;
         term.lflag.ICANON = false;
         term.lflag.ECHO = false;
         term.oflag.OPOST = false;
-        _ = std.c.tcsetattr(slave_fd, std.c.TCSA.FLUSH, &term);
+        std.posix.tcsetattr(slave_fd, .FLUSH, term) catch {};
     }
 
     // Feed C-b C-b — first enters prefix mode, second invokes send-prefix.

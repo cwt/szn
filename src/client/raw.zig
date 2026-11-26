@@ -25,18 +25,19 @@ const VTIME: u6 = switch (@import("builtin").os.tag) {
 
 pub const RawTerminal = struct {
     fd: i32,
-    original: std.c.termios = undefined,
+    original: std.posix.termios = undefined,
 
     pub fn init(fd: i32) Error!RawTerminal {
-        var original: std.c.termios = undefined;
-        if (c.tcgetattr(fd, &original) < 0) return error.GetAttrFailed;
+        // std.posix, not std.c: Zig 0.17 miscompiles the std.c termios pattern
+        // and passes fd 0 to tcsetattr.
+        const original = std.posix.tcgetattr(fd) catch return error.GetAttrFailed;
         return RawTerminal{ .fd = fd, .original = original };
     }
 
     pub fn deinit(self: *RawTerminal) void {
         // TCSANOW, not FLUSH: discarding pending output on restore could eat
         // the tail of whatever was on screen when szn exits (bug #389).
-        _ = c.tcsetattr(self.fd, c.TCSA.NOW, &self.original);
+        std.posix.tcsetattr(self.fd, .NOW, self.original) catch {};
     }
 
     pub fn setRaw(self: *RawTerminal) Error!void {
@@ -51,7 +52,7 @@ pub const RawTerminal = struct {
         raw.cflag.PARENB = false;
         raw.cc[VMIN] = 1;
         raw.cc[VTIME] = 0;
-        if (c.tcsetattr(self.fd, c.TCSA.NOW, &raw) < 0) return error.SetRawFailed;
+        std.posix.tcsetattr(self.fd, .NOW, raw) catch return error.SetRawFailed;
     }
 };
 

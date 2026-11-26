@@ -182,11 +182,14 @@ pub const Pty = struct {
             // is converted to \r\n before reaching the master.  openpty()
             // leaves c_oflag=0 which disables this conversion.
             {
-                var term: std.c.termios = undefined;
-                _ = std.c.tcgetattr(0, &term);
-                term.oflag.OPOST = true;
-                term.oflag.ONLCR = true;
-                _ = std.c.tcsetattr(0, std.c.TCSA.FLUSH, &term);
+                // std.posix, not std.c: Zig 0.17 miscompiles the std.c
+                // termios pattern (passes fd 0 to tcsetattr).
+                if (std.posix.tcgetattr(0)) |got| {
+                    var term = got;
+                    term.oflag.OPOST = true;
+                    term.oflag.ONLCR = true;
+                    std.posix.tcsetattr(0, .FLUSH, term) catch {};
+                } else |_| {}
             }
 
             if (cwd_z) |c| _ = chdir(c);
