@@ -3715,8 +3715,18 @@ pub const Server = struct {
                 var pane_idx_buf: [32]u8 = undefined;
                 const pane_idx_str = std.fmt.bufPrint(&pane_idx_buf, "{d}", .{pane_idx}) catch "0";
 
+                // Match buildStatusLine: the window's index is its slot in
+                // session.windows plus base-index, not its monotonic id (#570).
+                const base_index: i64 = session.options.asNumber("base-index") orelse 0;
+                var win_idx: i64 = base_index;
+                for (session.windows.items, 0..) |sw, wi| {
+                    if (sw == window) {
+                        win_idx = base_index + @as(i64, @intCast(wi));
+                        break;
+                    }
+                }
                 var win_idx_buf: [32]u8 = undefined;
-                const win_idx_str = std.fmt.bufPrint(&win_idx_buf, "{d}", .{window.id}) catch "0";
+                const win_idx_str = std.fmt.bufPrint(&win_idx_buf, "{d}", .{win_idx}) catch "0";
 
                 var ctx = format_mod.Context.init(self.allocator);
                 ctx.set("session_name", session.name) catch |err| std.log.warn("ctx.set failed: {any}", .{err});
@@ -6693,6 +6703,29 @@ test "renderToDisplayClient keeps dirty flags when collectPaneBounds fails — b
     try testing.expect(server.dirty);
     try testing.expect(server.status_dirty);
     try testing.expect(pane.dirty);
+}
+
+test "pane-border-format window_index uses base-index, not window.id — bug #570" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    const session = try server.newSession("test", 80, 24);
+    try session.options.set("base-index", .{ .number = 5 });
+    try session.options.set("pane-border-format", .{ .string = "#{window_index}" });
+
+    var fds: [2]c_int = undefined;
+    if (std.c.pipe(&fds) != 0) return error.Unexpected;
+    defer _ = std.c.close(fds[0]);
+    defer _ = std.c.close(fds[1]);
+    _ = try server.addDisplayClient(.{ .fd = fds[1], .sx = 80, .sy = 24 });
+
+    server.dirty = true;
+    server.renderToDisplayClient();
+
+    // window.id starts at 1; the status line shows base-index + slot, so the
+    // border must show 5 as well.
+    const pane = session.active_window.?.active_pane.?;
+    try testing.expectEqualStrings("5", pane.border_format_cached.?);
 }
 
 test "setMessage preserves old message on allocation failure — bug #285" {
