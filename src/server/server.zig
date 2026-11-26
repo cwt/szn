@@ -4924,11 +4924,9 @@ test "mouse SGR left-click forwarded when program enables 1006+1000" {
     pane.pty = try @import("pty.zig").Pty.open();
 
     const fd = pane.pty.?.slave;
-    const c_fcntl = struct {
-        extern "c" fn fcntl(fd: c_int, cmd: c_int, ...) c_int;
-    }.fcntl;
-    _ = c_fcntl(fd, 3, @as(c_int, 0));
-    _ = c_fcntl(fd, 4, c_fcntl(fd, 3, @as(c_int, 0)) | 0x0004);
+    // Use the shared helper: the old inline 0x0004 was the macOS value and
+    // left this fd blocking on Linux (#577).
+    io.setNonBlocking(fd);
 
     try s.options.set("mouse", .{ .flag = true });
 
@@ -5748,7 +5746,8 @@ test "multiple display clients attached simultaneously" {
     if (std.c.socketpair(std.c.AF.UNIX, std.c.SOCK.STREAM, 0, &fds_a) != 0) return error.Unexpected;
     const server_a = fds_a[0];
     const client_a = fds_a[1];
-    defer _ = std.c.close(server_a);
+    // server_a is handed to server.client_fds below; Server.deinit() closes
+    // it. Closing it here as well would double-close the fd (#577).
     defer _ = std.c.close(client_a);
 
     // Create client B socketpair
@@ -5756,7 +5755,7 @@ test "multiple display clients attached simultaneously" {
     if (std.c.socketpair(std.c.AF.UNIX, std.c.SOCK.STREAM, 0, &fds_b) != 0) return error.Unexpected;
     const server_b = fds_b[0];
     const client_b = fds_b[1];
-    defer _ = std.c.close(server_b);
+    // server_b is also owned by server.client_fds â€” see above.
     defer _ = std.c.close(client_b);
 
     // Set up message readers for both
@@ -6442,7 +6441,7 @@ test "handleClient .redraw resets display client diff state for a full repaint â
     if (std.c.socketpair(std.c.AF.UNIX, std.c.SOCK.STREAM, 0, &fds) != 0) return error.Unexpected;
     const server_fd = fds[0];
     const client_fd = fds[1];
-    defer _ = std.c.close(server_fd);
+    // server_fd goes into server.client_fds below; deinit owns its close.
     defer _ = std.c.close(client_fd);
 
     const reader = try testing.allocator.create(MessageReader);
