@@ -3991,6 +3991,28 @@ pub const Server = struct {
         }
     }
 
+    /// Hand a still-running `if-shell` child to the asynchronous reaper
+    /// instead of blocking the config-load thread on it (#572).
+    fn queuePendingIfShell(self: *Server, pid: c.pid_t, command: []const u8, depth: u32) void {
+        const owned_cmd = self.allocator.dupe(u8, command) catch {
+            _ = c.kill(pid, c.SIG.KILL);
+            var status: c_int = 0;
+            _ = c.waitpid(pid, &status, 0);
+            return;
+        };
+        self.pending_if_shells.append(self.allocator, .{
+            .pid = pid,
+            .command = owned_cmd,
+            .start_ms = currentMillis(),
+            .depth = depth,
+        }) catch {
+            self.allocator.free(owned_cmd);
+            _ = c.kill(pid, c.SIG.KILL);
+            var status: c_int = 0;
+            _ = c.waitpid(pid, &status, 0);
+        };
+    }
+
     pub fn applyDirectives(self: *Server, parsed: *const @import("../cfg.zig").ParseResult) ServerError!void {
         const key_binding = @import("../key_binding.zig");
         const log_mod = @import("../log.zig");
@@ -4203,40 +4225,19 @@ pub const Server = struct {
                     const pid = spawnIfShellChild(cmd_c.ptr) orelse continue;
 
                     var status: c_int = 0;
-                    var reaped = false;
-                    var attempt: usize = 0;
-                    while (attempt < 30) : (attempt += 1) {
-                        const rc = c.waitpid(pid, &status, WNOHANG);
-                        if (rc == pid) {
-                            reaped = true;
-                            if (ifShellExitedZero(status)) {
-                                self.runIfShellCommand(i.command, self.config_load_depth);
-                            }
-                            break;
+                    const rc = c.waitpid(pid, &status, WNOHANG);
+                    if (rc == pid) {
+                        // Fast path: a condition that already finished needs
+                        // no queue entry.
+                        if (ifShellExitedZero(status)) {
+                            self.runIfShellCommand(i.command, self.config_load_depth);
                         }
-                        if (rc < 0 and std.c.errno(rc) != .INTR) {
-                            reaped = true;
-                            break;
-                        }
-                        var req: c.timespec = .{ .sec = 0, .nsec = 1_000_000 };
-                        _ = c.nanosleep(&req, null);
-                    }
-                    if (!reaped) {
-                        const owned_cmd = self.allocator.dupe(u8, i.command) catch {
-                            _ = c.kill(pid, c.SIG.KILL);
-                            _ = c.waitpid(pid, &status, 0);
-                            continue;
-                        };
-                        self.pending_if_shells.append(self.allocator, .{
-                            .pid = pid,
-                            .command = owned_cmd,
-                            .start_ms = currentMillis(),
-                            .depth = self.config_load_depth,
-                        }) catch {
-                            self.allocator.free(owned_cmd);
-                            _ = c.kill(pid, c.SIG.KILL);
-                            _ = c.waitpid(pid, &status, 0);
-                        };
+                    } else if (rc < 0 and std.c.errno(rc) != .INTR) {
+                        // Child already gone / not our child: nothing to reap.
+                    } else {
+                        // Still running (or EINTR): let tickIfShells finish it
+                        // without stalling every connected client (#572).
+                        self.queuePendingIfShell(pid, i.command, self.config_load_depth);
                     }
                 },
             }
@@ -7357,4 +7358,21 @@ test "applyDirectives coerces quoted non-string options and applies side effects
         try testing.expectEqual(false, server.global_options.asFlag("mouse").?);
         try testing.expectEqual(false, session.options.asFlag("mouse").?);
     }
+}
+
+test "applyDirectives queues a slow if-shell without a blocking poll spin — bug #572" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    var parsed = try cfg.parseConfig(testing.allocator, "if-shell \"sleep 1\" \"set -g mouse off\"");
+    defer parsed.deinit(testing.allocator);
+
+    const start = Server.currentMillis();
+    try server.applyDirectives(&parsed);
+    const elapsed = Server.currentMillis() - start;
+
+    // The old path slept 30x1ms per directive before queueing the child,
+    // stalling every client during config load.
+    try testing.expect(elapsed < 20);
+    try testing.expectEqual(@as(usize, 1), server.pending_if_shells.items.len);
 }
