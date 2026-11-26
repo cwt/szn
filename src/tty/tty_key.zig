@@ -38,10 +38,14 @@ pub const InputReader = struct {
     state: State = .ground,
     buf: [256]u8 = undefined,
     pos: usize = 0,
+    /// Set when a UTF-8 sequence started in the ESC state (Alt+UTF-8), so
+    /// feedUtf8 can attach the Alt modifier when it completes (#576).
+    utf8_alt: bool = false,
 
     pub fn reset(self: *InputReader) void {
         self.state = .ground;
         self.pos = 0;
+        self.utf8_alt = false;
     }
 
     /// Process one byte; returns an Event when a complete sequence is recognised.
@@ -75,6 +79,7 @@ pub const InputReader = struct {
             return Event{ .key = .{ .char = .{ .code = c, .mod = .{ .ctrl = true } } } };
         }
         if (byte >= 0x20 and byte <= 0x7e) return Event{ .key = .{ .char = .{ .code = byte } } };
+        rd.utf8_alt = false;
         if (byte >= 0xc2 and byte <= 0xdf) {
             rd.buf[0] = byte;
             rd.pos = 1;
@@ -110,6 +115,23 @@ pub const InputReader = struct {
             rd.state = .ground;
             return Event{ .key = .{ .special = .{ .key = .escape } } };
         }
+        // Alt + a multibyte UTF-8 key (e.g. ESC E0 B8 97 for Alt+ท) must go
+        // through the UTF-8 decoder, not be emitted as a Latin-1 char with
+        // the continuation bytes dropped in ground state (#576).
+        if (std.unicode.utf8ByteSequenceLength(byte)) |len| {
+            if (len > 1) {
+                rd.buf[0] = byte;
+                rd.pos = 1;
+                rd.utf8_alt = true;
+                rd.state = switch (len) {
+                    2 => .utf8_2,
+                    3 => .utf8_3,
+                    4 => .utf8_4,
+                    else => unreachable,
+                };
+                return null;
+            }
+        } else |_| {}
         rd.state = .ground;
         return Event{ .key = .{ .char = .{ .code = byte, .mod = .{ .alt = true } } } };
     }
@@ -177,23 +199,28 @@ pub const InputReader = struct {
     fn feedUtf8(rd: *InputReader, byte: u8, expected: usize) ?Event {
         if (byte & 0xc0 != 0x80) {
             rd.state = .ground;
+            rd.pos = 0;
+            rd.utf8_alt = false;
             return rd.feed(byte);
         }
         if (rd.pos >= rd.buf.len) {
             std.log.debug("input: buffer overflow, dropping sequence", .{});
             rd.state = .ground;
             rd.pos = 0;
+            rd.utf8_alt = false;
             return null;
         }
         rd.buf[rd.pos] = byte;
         rd.pos += 1;
         if (rd.pos < expected) return null;
         rd.state = .ground;
+        const alt = rd.utf8_alt;
+        rd.utf8_alt = false;
         const codepoint = std.unicode.utf8Decode(rd.buf[0..expected]) catch {
             std.log.debug("input: invalid UTF-8 sequence", .{});
             return null;
         };
-        return Event{ .key = .{ .char = .{ .code = codepoint } } };
+        return Event{ .key = .{ .char = .{ .code = codepoint, .mod = .{ .alt = alt } } } };
     }
 
     fn dispatchCsi(seq: []const u8) ?Event {
@@ -380,6 +407,23 @@ test "alt char" {
     try testing.expect(ev == .key);
     try testing.expectEqual(@as(u21, 'a'), ev.key.char.code);
     try testing.expect(ev.key.char.mod.alt);
+}
+
+test "alt + multibyte UTF-8 key decodes with Alt modifier — bug #576" {
+    var rd = InputReader{};
+    try testing.expect(rd.feed(0x1b) == null);
+    try testing.expect(rd.feed(0xe0) == null);
+    try testing.expect(rd.feed(0xb8) == null);
+    const ev = rd.feed(0x97).?; // ESC E0 B8 97 = Alt+ท (U+0E17)
+    try testing.expect(ev == .key);
+    try testing.expectEqual(@as(u21, 0x0e17), ev.key.char.code);
+    try testing.expect(ev.key.char.mod.alt);
+
+    // The Alt flag must not leak into the next, plain UTF-8 key.
+    try testing.expect(rd.feed(0xc3) == null);
+    const next = rd.feed(0xa9).?;
+    try testing.expectEqual(@as(u21, 0x00e9), next.key.char.code);
+    try testing.expect(!next.key.char.mod.alt);
 }
 
 test "esc esc = escape key" {
