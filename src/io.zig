@@ -1,4 +1,5 @@
 const std = @import("std");
+const compat = @import("compat.zig");
 
 /// Result of a single `writeOnce` attempt.
 pub const WriteOutcome = union(enum) {
@@ -47,7 +48,6 @@ pub fn writeAll(fd: i32, buf: []const u8) error{WriteFailed}!void {
     }
 }
 
-extern "c" fn gettimeofday(tv: *std.c.timeval, tz: ?*anyopaque) c_int;
 extern "c" fn fcntl(fd: c_int, cmd: c_int, ...) c_int;
 
 pub const F_GETFL: c_int = 3;
@@ -57,10 +57,11 @@ pub const O_NONBLOCK: c_int = switch (@import("builtin").os.tag) {
     else => @as(c_int, 0x0004),
 };
 
+/// Monotonic milliseconds for timeout arithmetic. Wall-clock time (the old
+/// `gettimeofday` implementation) can step backwards on NTP adjustments and
+/// stall sixel waits / `if-shell` deadlines forever (#575).
 pub fn currentMillis() i64 {
-    var tv: std.c.timeval = undefined;
-    _ = gettimeofday(&tv, null);
-    return @as(i64, @intCast(tv.sec)) * 1000 + @divFloor(@as(i64, @intCast(tv.usec)), 1000);
+    return @as(i64, @intCast(compat.monotonicNs() / 1_000_000));
 }
 
 pub fn setNonBlocking(fd: i32) void {
@@ -212,6 +213,16 @@ pub const ByteQueue = struct {
 };
 
 const testing = std.testing;
+
+test "currentMillis is derived from CLOCK_MONOTONIC, not the wall clock — bug #575" {
+    const before = currentMillis();
+    const monotonic_ms = @as(i64, @intCast(compat.monotonicNs() / 1_000_000));
+    const after = currentMillis();
+    // The old gettimeofday implementation returned epoch milliseconds, which
+    // differ from uptime by orders of magnitude and can jump backwards.
+    try testing.expect(monotonic_ms >= before);
+    try testing.expect(monotonic_ms <= after);
+}
 
 test "ByteQueue pure drain advances head without shifting and reclaims oversized cap" {
     var q: ByteQueue = .{};
