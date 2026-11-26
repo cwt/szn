@@ -21,6 +21,12 @@ const Session = session_mod.Session;
 const window_mod = @import("../window.zig");
 const Window = window_mod.Window;
 const Pane = window_mod.Pane;
+/// A pane whose sixel is buffered awaiting a measured cell size, with its own
+/// start time. Concurrent waits must not share one server-wide timer (#568).
+const SixelWaitEntry = struct {
+    pane: *Pane,
+    pending_since: i64 = 0,
+};
 const Cell = @import("../grid.zig").Cell;
 const loop_mod = @import("loop.zig");
 const Loop = loop_mod.Loop;
@@ -247,10 +253,9 @@ pub const Server = struct {
     /// `cell_size_known` flag stays false so oversized-image drops wait for
     /// real dimensions (see #203).
     cell_size_known: bool = false,
-    /// `currentMillis()` captured when a pane was first seen with a buffered
-    /// sixel awaiting measurement, so we can bound the PTY-feed pause (#204).
-    cell_size_pending_since: i64 = 0,
-
+    /// Each waiting pane carries its own `pending_since` timestamp in
+    /// `sixel_wait_panes`. A single server-wide timer let one pane's read reset
+    /// another pane's wait, so the latter never timed out (#568).
     /// When true, a sixel was added to a screen and the server hasn't yet
     /// asked the display client to query the terminal for current cell pixel
     /// dimensions. Set true in handlePtyEvent after feedPty; cleared after
@@ -296,8 +301,9 @@ pub const Server = struct {
     /// (#204). Maintained by the Pane feed hook set in watchPanePty, so
     /// tickSixelWait no longer walks every session/window/pane each tick
     /// (bug #479). Entries are removed when the sixel resolves or the pane is
-    /// torn down.
-    sixel_wait_panes: std.ArrayListUnmanaged(*Pane) = .empty,
+    /// torn down. The start time lives with each entry so panes time out
+    /// independently (#568).
+    sixel_wait_panes: std.ArrayListUnmanaged(SixelWaitEntry) = .empty,
 
     /// Active background `if-shell` condition processes (bug #557). Reaped
     /// non-blockingly from `reapZombies` / `tickIfShells` so an `if-shell`
@@ -996,22 +1002,27 @@ pub const Server = struct {
                 // Make sure the query actually goes out (the normal path that
                 // propagates this flag is skipped while we're paused).
                 self.needs_cell_size_refresh = true;
-                if (self.cell_size_pending_since == 0) {
-                    self.cell_size_pending_since = currentMillis();
+                var entry = self.findSixelWaitEntry(pane);
+                if (entry == null) {
+                    self.addSixelWaitPane(pane);
+                    entry = self.findSixelWaitEntry(pane);
                 }
-                const now = currentMillis();
-                if (now - self.cell_size_pending_since > cell_size_wait_ms) {
-                    // Measurement is taking too long — give up waiting and
-                    // place with whatever cell size we have so we never stall
-                    // the pane.
-                    pane.screen.flushPendingSixel();
-                    self.cell_size_pending_since = 0;
+                // The timeout belongs to this pane only: an unrelated pane's
+                // read must not restart it (#568).
+                if (entry) |e| {
+                    if (currentMillis() - e.pending_since > cell_size_wait_ms) {
+                        // Measurement is taking too long — give up waiting and
+                        // place with whatever cell size we have so we never
+                        // stall the pane.
+                        pane.screen.flushPendingSixel();
+                        // Restart if the sixel is still buffered (#454).
+                        e.pending_since = currentMillis();
+                    }
                 }
                 // Don't block — PTY data stays in the kernel buffer and the
                 // event loop will re-poll with a 1 ms timeout.
                 return .handled;
             }
-            self.cell_size_pending_since = 0;
             pane.feedPty() catch |err| {
                 if (err == error.ProcessExited) {
                     std.log.info("pty process exited", .{});
@@ -2837,18 +2848,26 @@ pub const Server = struct {
         self.addSixelWaitPane(pane);
     }
 
-    fn addSixelWaitPane(self: *Server, pane: *Pane) void {
-        for (self.sixel_wait_panes.items) |p| {
-            if (p == pane) return;
+    fn findSixelWaitEntry(self: *Server, pane: *Pane) ?*SixelWaitEntry {
+        for (self.sixel_wait_panes.items) |*entry| {
+            if (entry.pane == pane) return entry;
         }
-        self.sixel_wait_panes.append(self.allocator, pane) catch |err| {
+        return null;
+    }
+
+    fn addSixelWaitPane(self: *Server, pane: *Pane) void {
+        if (self.findSixelWaitEntry(pane) != null) return;
+        self.sixel_wait_panes.append(self.allocator, .{
+            .pane = pane,
+            .pending_since = currentMillis(),
+        }) catch |err| {
             std.log.warn("sixel wait list append failed: {any}", .{err});
         };
     }
 
     pub fn removeSixelWaitPane(self: *Server, pane: *Pane) void {
-        for (self.sixel_wait_panes.items, 0..) |p, i| {
-            if (p == pane) {
+        for (self.sixel_wait_panes.items, 0..) |entry, i| {
+            if (entry.pane == pane) {
                 _ = self.sixel_wait_panes.swapRemove(i);
                 return;
             }
@@ -3488,29 +3507,26 @@ pub const Server = struct {
         const flow_controlled = self.anyDisplayClientBehind();
         var i: usize = 0;
         while (i < self.sixel_wait_panes.items.len) {
-            const p = self.sixel_wait_panes.items[i];
+            const entry = &self.sixel_wait_panes.items[i];
+            const p = entry.pane;
             const pty = p.pty orelse {
                 _ = self.sixel_wait_panes.swapRemove(i);
                 continue;
             };
             if (p.screen.pending_sixel != null) {
                 self.needs_cell_size_refresh = true;
-                if (self.cell_size_pending_since == 0) {
-                    self.cell_size_pending_since = now;
-                }
                 self.loop.removeFdEvents(pty.master, std.posix.POLL.IN);
-                if (now - self.cell_size_pending_since > cell_size_wait_ms) {
+                if (now - entry.pending_since > cell_size_wait_ms) {
                     p.screen.flushPendingSixel();
-                    self.cell_size_pending_since = 0;
+                    // A still-unknown cell size keeps the sixel pending (#454);
+                    // restart this pane's timer without touching other panes.
+                    entry.pending_since = now;
                 }
                 i += 1;
             } else {
                 // Sixel resolved (measured or timed out): allow the pane to be
                 // read again.
                 _ = self.sixel_wait_panes.swapRemove(i);
-                if (self.cell_size_pending_since != 0) {
-                    self.cell_size_pending_since = 0;
-                }
                 if (!flow_controlled) {
                     self.loop.addFdEvents(pty.master, std.posix.POLL.IN);
                 }
@@ -4726,6 +4742,48 @@ test "sixel wait list tracks panes without a tree walk — bug #479" {
     try testing.expectEqual(@as(usize, 1), server.sixel_wait_panes.items.len);
     try server.killSession("test");
     try testing.expectEqual(@as(usize, 0), server.sixel_wait_panes.items.len);
+}
+
+test "sixel wait timeout is tracked per pane, not shared — bug #568" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    const Pty = @import("pty.zig").Pty;
+    const s1 = try server.newSession("wait-a", 80, 24);
+    const s2 = try server.newSession("wait-b", 80, 24);
+    const pane_a = s1.active_window.?.active_pane.?;
+    const pane_b = s2.active_window.?.active_pane.?;
+    pane_a.pty = try Pty.open();
+    pane_b.pty = try Pty.open();
+    try server.watchPanePty(pane_a);
+    try server.watchPanePty(pane_b);
+
+    // Both panes buffer a sixel while their cell size is unknown.
+    for ([_]*Pane{ pane_a, pane_b }) |pane| {
+        pane.screen.cell_size_known = false;
+        pane.screen.cursor = .{};
+        const dcs = try testing.allocator.dupe(u8, "\x1bPqWAIT\x1b\\");
+        try pane.screen.addSixelImage(dcs, 100, 200);
+        try testing.expect(pane.screen.pending_sixel != null);
+        server.addSixelWaitPane(pane);
+    }
+    try testing.expectEqual(@as(usize, 2), server.sixel_wait_panes.items.len);
+
+    // A measured size has arrived for both. Only pane A has been waiting long
+    // enough to time out; pane B must keep its own, more recent start time.
+    pane_a.screen.cell_size_known = true;
+    pane_b.screen.cell_size_known = true;
+    const now = Server.currentMillis();
+    server.findSixelWaitEntry(pane_a).?.pending_since = now - cell_size_wait_ms - 1;
+    const b_since = server.findSixelWaitEntry(pane_b).?.pending_since;
+
+    server.tickSixelWait();
+
+    try testing.expect(pane_a.screen.pending_sixel == null);
+    try testing.expect(pane_b.screen.pending_sixel != null);
+    // Resolving A must not reset B's timer — the old shared timestamp did,
+    // leaving B's sixel (and its paused PTY) stuck forever.
+    try testing.expectEqual(b_since, server.findSixelWaitEntry(pane_b).?.pending_since);
 }
 
 test "resolve shell option and env and database" {
