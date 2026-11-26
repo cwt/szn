@@ -4040,8 +4040,16 @@ pub const Server = struct {
                     }
                     if (std.mem.eql(u8, s.option, "client-log-file")) {
                         if (s.value == .string) {
+                            // Dupe before freeing: an OOM must leave the
+                            // previously configured path intact (#579). An
+                            // empty value maps to the static "" so deinit
+                            // does not try to free rodata.
+                            const new_path: ?[]u8 = if (s.value.string.len > 0)
+                                try self.allocator.dupe(u8, s.value.string)
+                            else
+                                null;
                             if (self.client_log_file.len > 0) self.allocator.free(self.client_log_file);
-                            self.client_log_file = self.allocator.dupe(u8, s.value.string) catch "";
+                            self.client_log_file = if (new_path) |p| p else "";
                         }
                         continue;
                     }
@@ -7452,4 +7460,21 @@ test "loadConfigFile rejects a directory instead of treating it as empty — bug
 
     // fopen("/tmp", "r") succeeds on POSIX; fread then returns 0 with EISDIR.
     try testing.expectError(error.ReadFailed, server.loadConfigFile("/tmp"));
+}
+
+test "client-log-file reassignment keeps the old path on OOM — bug #579" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    server.client_log_file = try testing.allocator.dupe(u8, "/tmp/first.log");
+    var parsed = try cfg.parseConfig(testing.allocator, "set -g client-log-file \"/tmp/second.log\"");
+    defer parsed.deinit(testing.allocator);
+
+    var failing = std.testing.FailingAllocator.init(testing.allocator, .{ .fail_index = 0 });
+    const saved = server.allocator;
+    server.allocator = failing.allocator();
+    defer server.allocator = saved;
+
+    try testing.expectError(error.OutOfMemory, server.applyDirectives(&parsed));
+    try testing.expectEqualStrings("/tmp/first.log", server.client_log_file);
 }
