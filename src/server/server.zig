@@ -54,6 +54,9 @@ extern "c" fn fclose(stream: ?*anyopaque) c_int;
 extern "c" fn fseek(stream: ?*anyopaque, offset: c_long, whence: c_int) c_int;
 extern "c" fn ftell(stream: ?*anyopaque) c_long;
 extern "c" fn fread(ptr: ?*anyopaque, size: usize, n: usize, stream: ?*anyopaque) usize;
+extern "c" fn ferror(stream: ?*anyopaque) c_int;
+extern "c" fn opendir(name: [*c]const u8) ?*anyopaque;
+extern "c" fn closedir(dir: ?*anyopaque) c_int;
 extern "c" fn access(pathname: [*c]const u8, mode: c_int) c_int;
 extern "c" fn gettimeofday(tv: *std.c.timeval, tz: ?*anyopaque) c_int;
 extern "c" fn time(t: ?*i64) i64;
@@ -4278,8 +4281,20 @@ pub const Server = struct {
         const resolved_path_z = try compat.dupeZ(self.allocator, resolved_path);
         defer self.allocator.free(resolved_path_z);
 
-        const f = fopen(resolved_path_z.ptr, "r") orelse return;
+        const f = fopen(resolved_path_z.ptr, "r") orelse {
+            std.log.warn("loadConfigFile: cannot open {s}", .{resolved_path});
+            return;
+        };
         defer _ = fclose(f);
+
+        // fopen() succeeds on directories and fread() then returns 0 with
+        // EISDIR — without this check that looks like a valid empty config
+        // (#574).
+        if (opendir(resolved_path_z.ptr)) |dir| {
+            _ = closedir(dir);
+            std.log.warn("loadConfigFile: {s} is a directory, ignoring", .{resolved_path});
+            return error.ReadFailed;
+        }
 
         // Bounded read: avoid unbounded fseek/ftell allocation and support
         // non-seekable inputs (bug #545).
@@ -4293,6 +4308,8 @@ pub const Server = struct {
             if (content.items.len + n > MAX_CONFIG_FILE_SIZE) return error.ReadFailed;
             try content.appendSlice(self.allocator, buf[0..n]);
         }
+        // A short read caused by an I/O error must not masquerade as EOF.
+        if (ferror(f) != 0) return error.ReadFailed;
         if (content.items.len == 0) return;
 
         const cfg_mod = @import("../cfg.zig");
@@ -7427,4 +7444,12 @@ test "applyDirectives propagates set-environment OOM instead of reporting succes
     // A bare `catch return` made this look like a successfully applied
     // config while skipping every following directive.
     try testing.expectError(error.OutOfMemory, server.applyDirectives(&parsed));
+}
+
+test "loadConfigFile rejects a directory instead of treating it as empty — bug #574" {
+    var server = try Server.init(testing.allocator);
+    defer server.deinit();
+
+    // fopen("/tmp", "r") succeeds on POSIX; fread then returns 0 with EISDIR.
+    try testing.expectError(error.ReadFailed, server.loadConfigFile("/tmp"));
 }
