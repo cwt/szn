@@ -166,6 +166,9 @@ pub const Session = struct {
         self.name = self.name_buf[0..len];
         if (changed) {
             self.active_window_dirty = true;
+            // session_name is baked into every expanded pane-border-format;
+            // all windows in the session must re-expand after a rename (#571).
+            for (self.windows.items) |win| win.invalidateBorderFormat();
         }
     }
 };
@@ -228,6 +231,29 @@ test "rename session" {
 
     session.rename(testing.allocator, "newname");
     try testing.expectEqualStrings("newname", session.name);
+}
+
+test "session rename invalidates every window's cached pane-border-format — bug #571" {
+    var session: Session = undefined;
+    try session.init(testing.allocator, 1, "old", 80, 24, null, null);
+    defer session.deinit(testing.allocator);
+    _ = try session.newWindow(testing.allocator, "second");
+
+    for (session.windows.items) |win| {
+        for (win.panes.items) |pane| {
+            pane.border_format_cached = try pane.screen.grid.allocator.dupe(u8, "#{session_name}:old");
+            pane.border_format_gen = 9;
+        }
+    }
+
+    session.rename(testing.allocator, "new");
+
+    for (session.windows.items) |win| {
+        for (win.panes.items) |pane| {
+            try testing.expect(pane.border_format_cached == null);
+            try testing.expectEqual(@as(u32, 0), pane.border_format_gen);
+        }
+    }
 }
 
 test "session active window persists after kill" {

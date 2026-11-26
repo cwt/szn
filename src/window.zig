@@ -339,6 +339,9 @@ pub const Window = struct {
         self.name = self.name_buf[0..len];
         if (changed) {
             self.name_dirty = true;
+            // pane_title / window_name are baked into the expanded border
+            // string, so a rename must drop the cached expansion (#571).
+            self.invalidateBorderFormat();
         }
     }
 
@@ -867,6 +870,23 @@ test "window resize and split invalidate cached pane-border-format — bug #433"
 
     // Splitting window should also invalidate border format cache
     _ = try window.splitPane(testing.allocator, pane, true, 0.5);
+    try testing.expect(pane.border_format_cached == null);
+    try testing.expectEqual(@as(u32, 0), pane.border_format_gen);
+}
+
+test "window rename invalidates cached pane-border-format — bug #571" {
+    var window = try Window.init(testing.allocator, 1, "old", 80, 24, null, null);
+    defer window.deinit(testing.allocator);
+
+    const pane = window.active_pane.?;
+    pane.border_format_cached = try pane.screen.grid.allocator.dupe(u8, "#{window_name}:old");
+    pane.border_format_gen = 5;
+
+    window.setName("new");
+
+    try testing.expect(window.name_dirty);
+    // pane_title / window_name are baked into the expansion; the cached
+    // string must be dropped so the next render re-expands it.
     try testing.expect(pane.border_format_cached == null);
     try testing.expectEqual(@as(u32, 0), pane.border_format_gen);
 }
