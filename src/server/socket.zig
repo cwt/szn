@@ -18,8 +18,6 @@ pub const Error = error{
     NotConnected,
     BrokenPipe,
     ConnectionTimedOut,
-    ListenerFailed,
-    AcceptFailed,
     Unexpected,
 };
 
@@ -39,8 +37,6 @@ fn mapErr(rc: c_int) Error!i32 {
         else => error.Unexpected,
     };
 }
-
-extern "c" fn chmod(path: [*:0]const u8, mode: c_uint) c_int;
 
 pub const ProbeResult = enum {
     live,

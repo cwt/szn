@@ -12,7 +12,6 @@ pub const Event = union(enum) {
     focus_out: void,
     paste_start: void,
     paste_end: void,
-    resize: struct { cols: u32, rows: u32 },
 };
 
 pub const MouseEvent = struct {
@@ -158,12 +157,9 @@ pub const InputReader = struct {
             rd.pos += 1;
             return null;
         }
-        if (rd.pos >= rd.buf.len) {
-            std.log.debug("input: buffer overflow, dropping sequence", .{});
-            rd.state = .ground;
-            rd.pos = 0;
-            return null;
-        }
+        // The earlier bounds check still holds: both branches above return,
+        // so pos cannot have grown since it. The old second check was dead
+        // code (#578).
         rd.state = .ground;
         rd.buf[rd.pos] = byte;
         rd.pos += 1;
@@ -294,7 +290,7 @@ pub fn parseSgrMouse(params: []const u8, release: bool) ?Event {
         .ctrl = btn & 0x10 != 0,
     };
 
-    const btn_type = btn & 0x03;
+    const btn_type: u2 = @truncate(btn);
     const wheel_up = (btn & 0xC3) == 0x40;
     const wheel_down = (btn & 0xC3) == 0x41;
     const wheel_left = (btn & 0xC3) == 0x42;
@@ -315,7 +311,6 @@ pub fn parseSgrMouse(params: []const u8, release: bool) ?Event {
         1 => .middle,
         2 => .right,
         3 => .release,
-        else => .left,
     };
 
     const drag = (btn & 0x20) != 0;
