@@ -5,12 +5,12 @@ description: "Chronological log of modifications to the szn OKF documentation bu
 status: stable
 sources:
   - docs/
-verified: unverified
+verified: machine-confirmed
 tags: [log, changelog, okf]
-timestamp: 2026-11-26T14:45:00Z
+timestamp: 2026-11-27T03:07:00Z
 generated:
-  by: opencode/hy4-flash-free
-  at: "2026-11-26T14:45:00Z"
+  by: antigravity/gemini
+  at: "2026-11-27T03:07:00Z"
 ---
 
 # Documentation Bundle Log
@@ -19,6 +19,8 @@ This file tracks all modifications, extensions, and updates to the `szn` documen
 
 | Timestamp | Document | Action | Description |
 |---|---|---|---|
+| 2026-11-27T03:07:00Z | [v0.13.0.md](releases/v0.13.0.md), [releases/index.md](releases/index.md) | Created / Updated | Created release notes for v0.13.0 (OSC 8 hyperlinks with per-screen storage, merged-screen re-emission, and click-to-open via `xdg-open`; Zig 0.17 `std.posix` termios fix; 12-bug audit sweep `#568`–`#579`; and Copr SRPM tarball exclusions) and linked it from the releases index. |
+| 2026-11-27T03:07:00Z | [README.md](https://github.com/cwt/szn/blob/main/README.md), [build-run.md](build-run.md), [architecture.md](architecture.md), [concepts.md](concepts.md), [progress.md](development/progress.md), [build.zig.zon](https://github.com/cwt/szn/blob/main/build.zig.zon), [szn.spec](https://github.com/cwt/szn/blob/main/szn.spec), [.copr/Makefile](https://github.com/cwt/szn/blob/main/.copr/Makefile) | Updated | Bumped version to 0.13.0; refreshed test count (`1,137`), stripped Linux binary size (`1,079,152` bytes on Zig 0.17.1), and Linux `bench.sh` figures; documented `src/hyperlink.zig`, `Cell` expansion (`u160`), `std.posix` termios Zig 0.17 portability, and 577/0-open bug tracker state; excluded `.cache`, `tmux`, and `*.tar.gz` from `.copr/Makefile` SRPM builds. |
 | 2026-11-26T14:45:00Z | [bugs/568-579](development/bugs/), [bugs/index.md](development/bugs/index.md) | Created / Updated | Filed 12 confirmed, unfixed defects (#568–#579) extracted from a line-by-line validation of an external 2026-11-26 audit report (since removed): shared sixel cell-size timer, dropped-frame dirty flags, pane-border `window_index` and rename cache staleness, blocking `if-shell` nanosleep spin, `set_environment` OOM success return, `loadConfigFile` `ferror`/`EISDIR` blind spot, wall-clock timeouts in `io.currentMillis`, Alt+UTF-8 `feedEsc` corruption, two test-only fd bugs, a dead-code cluster, and `client-log-file` OOM path loss. Refuted, already-filed (#401, #433, #534, #559, #560) and intentional test-only findings were excluded. Regenerated `bugs/index.md` (**577 entries — 540 resolved / 25 false_positive / 12 open**). |
 | 2026-11-23T03:05:00Z | [v0.12.0.md](releases/v0.12.0.md), [releases/index.md](releases/index.md) | Created / Updated | Created release notes for v0.12.0 (5-phase algorithmic performance overhaul, `zig build bench`, mouse drag-to-resize panes, 10 ms default `escape-time`, and bug fixes `#563`–`#567`) and linked it from the releases index. |
 | 2026-11-23T03:05:00Z | [README.md](https://github.com/cwt/szn/blob/main/README.md), [build-run.md](build-run.md), [architecture.md](architecture.md), [concepts.md](concepts.md), [progress.md](development/progress.md), [algorithm-optimization-plan.md](development/algorithm-optimization-plan.md), [build.zig.zon](https://github.com/cwt/szn/blob/main/build.zig.zon), [szn.spec](https://github.com/cwt/szn/blob/main/szn.spec) | Updated | Bumped version to 0.12.0; refreshed test count (`1,112`), stripped Linux binary size (`1,064,816` bytes on Zig 0.17.1), and benchmark figures; documented `zig build bench`, `tools/bench_throughput.sh`, `src/io.zig`, `49` `CMD_TABLE` entries, and post-`#542` owner-scoped memory lifecycle; removed stale `ExclusiveArch` Copr note; marked `algorithm-optimization-plan.md` `stable` (Phases 0–5 implemented). |

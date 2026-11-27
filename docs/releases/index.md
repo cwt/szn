@@ -5,9 +5,9 @@ description: "szn release notes."
 status: stable
 sources:
   - docs/releases/
-verified: human-reviewed
+verified: machine-confirmed
 tags: [releases, changelog, index]
-timestamp: 2026-11-23T03:05:00Z
+timestamp: 2026-11-27T03:07:00Z
 ---
 
 # Releases
@@ -30,4 +30,5 @@ timestamp: 2026-11-23T03:05:00Z
 - [v0.10.0](v0.10.0.md)
 - [v0.11.0](v0.11.0.md)
 - [v0.12.0](v0.12.0.md)
+- [v0.13.0](v0.13.0.md)
 

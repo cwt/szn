@@ -8,11 +8,12 @@ sources:
   - src/window.zig
   - src/screen.zig
   - src/grid.zig
+  - src/hyperlink.zig
   - src/options.zig
-verified: human-reviewed
+verified: machine-confirmed
 stale_after: 2027-01-01T00:00:00Z
 tags: [concepts, glossary, architecture, terminology]
-timestamp: 2026-11-23T03:05:00Z
+timestamp: 2026-11-27T03:07:00Z
 ---
 
 # Concepts Glossary
@@ -45,18 +46,23 @@ A reference for the domain vocabulary used throughout szn's code and docs.
 - **Grid** (`grid.zig`) — the scrollable content: a ring-buffer of
   `GridLine`s plus a `history` scrollback buffer (limit 2000). `GridLine` =
   `cells` + `dirty` + `wrapped` (soft-wrap continuation, used by reflow).
-- **Cell** (`grid.zig`) — one screen position: `packed struct(u128)` with
-  `char`, up to two combining codepoints, `attr`, `fg`, `bg`, and an
-  `is_padding` flag for the trailing half of a wide character.
+- **Cell** (`grid.zig`) — one screen position: `packed struct(u160)` with
+  `char`, up to two combining codepoints, `attr`, `fg`, `bg`, an
+  `is_padding` flag for the trailing half of a wide character, and `link`
+  (1-based index into `Screen.hyperlinks`, `0` = none).
 - **Attr** (`grid.zig`) — `packed struct(u16)` of boolean style flags
   (bold, dim, italic, underline, blink, reverse, strikethrough, overline,
   double/curly underline).
 - **Colour** (`colour.zig`) — `packed struct(u32)`: `tag` (indexed/rgb/
   default/terminal) + `u24` value.
+- **Hyperlink store** (`hyperlink.zig`) — per-screen `Store` holding OSC 8
+  URIs and parameter strings (`MAX_LINKS = 4096`, `MAX_URI_LEN = 4096`)
+  referenced by `Cell.link` and remapped into the merged screen during
+  rendering.
 - **Screen** (`screen.zig`) — wraps a `Grid` plus an optional `alt_grid`
-  (alternate screen), cursor + saved cursor, `Mode` (`packed struct(u32)`:
-  line-wrap, alt-screen, cursor, paste, mouse-sgr, sync, …), `copy_mode`, and
-  `sixel_images`.
+  (alternate screen), per-screen `hyperlinks` (`hyperlink.Store`), cursor +
+  saved cursor, `Mode` (`packed struct(u32)`: line-wrap, alt-screen, cursor,
+  paste, mouse-sgr, sync, …), `copy_mode`, and `sixel_images`.
 - **SixelImage** (`screen.zig`) — a stored sixel graphic: the raw DCS bytes
   plus anchor `col`/`row` and parsed pixel dimensions (`px_width`/`px_height`
   from the raster attributes). Rendered verbatim at its absolute position.

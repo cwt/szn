@@ -11,13 +11,14 @@ sources:
   - src/window.zig
   - src/screen.zig
   - src/grid.zig
+  - src/hyperlink.zig
   - src/input.zig
   - src/io.zig
   - src/cmd/cmd.zig
-verified: human-reviewed
+verified: machine-confirmed
 stale_after: 2027-01-01T00:00:00Z
 tags: [architecture, overview, server, client, process-model]
-timestamp: 2026-11-23T03:05:00Z
+timestamp: 2026-11-27T03:07:00Z
 ---
 
 # Architecture Overview
@@ -89,9 +90,12 @@ packet).
 
 - `renderAll()` builds a merged grid (last row reserved for the status bar),
   copies each pane's grid (including scrollback, offset by copy-mode scroll),
-  draws UTF-8 box borders, and positions the cursor.
+  remaps pane-local OSC 8 hyperlink IDs into the merged screen's store
+  (`remapLink`), draws UTF-8 box borders, and positions the cursor.
 - `renderContent()` keeps `last_cells` per display client and skips unchanged
-  cells (incremental diff). On dirty lines, an O(w) pre-pass detects shaped
+  unlinked cells (incremental diff; cells carrying an OSC 8 hyperlink are
+  re-emitted with explicit open/close transitions so the outer terminal retains
+  link state across frames). On dirty lines, an O(w) pre-pass detects shaped
   precomposed vowel pairs (Thai SARA AM `U+0E33` and Lao SARA AM `U+0EB3`): if
   either the vowel or its preceding base consonant changes, the other half's
   cache entry in `last_cells` is invalidated with a poison sentinel (`0x1FFFFF`).
@@ -121,20 +125,21 @@ It handles cursor moves, erase, insert/delete line/char, scroll,
 `XTSMGRAPHICS` sixel negotiation), sixel DCS (accumulated then
 `Screen.addSixelImage`, which buffers the image in `pending_sixel` until a
 measured cell size is known — see `cell_size_needs_refresh`), OSC
-title/clipboard, and kitty keyboard (`CSI u`).
+title/clipboard/hyperlinks (OSC 8), and kitty keyboard (`CSI u`).
 
 ## Screen & grid
 
-- `Cell` (`grid.zig`): `packed struct(u128)` — `char: u21`, `comb1`/`comb2`
-  combining codepoints (`u13`), `attr: Attr`, `fg`/`bg: Colour`, `is_padding`.
+- `Cell` (`grid.zig`): `packed struct(u160)` — `char: u21`, `comb1`/`comb2`
+  combining codepoints (`u13`), `attr: Attr`, `fg`/`bg: Colour`, `is_padding`,
+  `link: u32` (1-based index into `Screen.hyperlinks`, `0` = none).
 - `Attr` (`grid.zig`): `packed struct(u16)` of boolean style flags.
 - `Colour` (`colour.zig`): `packed struct(u32)` — `tag: enum(u8)` + `u24`.
 - `Grid` (`grid.zig`): ring-buffer `lines` (+ `start_index`) plus `history`
   (scrollback, `history_limit = 2000`). `GridLine` = `cells` + `dirty` +
   `wrapped` (for reflow).
-- `Screen` (`screen.zig`): wraps a `Grid` + optional `alt_grid`, cursor, saved
-  cursor, `Mode` (`packed struct(u32)`), `copy_mode`, `sixel_images`,
-  kitty-kbd state.
+- `Screen` (`screen.zig`): wraps a `Grid` + optional `alt_grid`, per-screen
+  `hyperlinks: hyperlink.Store`, cursor, saved cursor, `Mode`
+  (`packed struct(u32)`), `copy_mode`, `sixel_images`, kitty-kbd state.
 - `SixelImage` (`screen.zig`): stores the raw DCS bytes + anchor position.
 
 ## Command subsystem
@@ -149,9 +154,10 @@ calls `exec(server)` and returns a `DispatchResult`
 ## Directory layout
 
 - `src/` root — core modules: `main`, `session`, `window`, `screen`, `grid`,
-  `input`, `io`, `colour`, `char_width`, `key`, `key_binding`, `options`, `cfg`,
-  `layout`, `choose`, `mode_copy`, `clock`, `buffer`, `format`, `status`,
-  `thai`, `socket_path`, `log`, `integration`, `bench_exports`, `compat`
+  `hyperlink`, `input`, `io`, `colour`, `char_width`, `key`, `key_binding`,
+  `options`, `cfg`, `layout`, `choose`, `mode_copy`, `clock`, `buffer`,
+  `format`, `status`, `thai`, `socket_path`, `log`, `integration`,
+  `bench_exports`, `compat`
   (cross-toolchain shims for Zig 0.16/0.17 — see
   [Zig version compatibility](https://github.com/cwt/szn/blob/main/README.md#zig-version-compatibility)).
 - `src/server/` — `server`, `loop`, `protocol`, `socket`, `pty`,

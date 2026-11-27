@@ -8,10 +8,10 @@ sources:
   - build.zig.zon
   - src/main.zig
   - src/test.zig
-verified: human-reviewed
+verified: machine-confirmed
 stale_after: 2027-01-01T00:00:00Z
 tags: [runbook, build, test, benchmark, zig]
-timestamp: 2026-11-23T03:05:00Z
+timestamp: 2026-11-27T03:07:00Z
 ---
 
 # Build, Run, and Test
@@ -77,8 +77,8 @@ Nested szn is blocked (env `SZN` set → `detectNested` returns true).
 `src/test.zig` is a **comptime aggregator** that `@import`s every module so
 their top-level `test {}` blocks compile into one test binary (see the
 `b.addTest` call in `build.zig`). There is no separate `tests/` directory —
-tests live next to the code they cover. As of 2026-11-23 the suite is
-**1,112 tests**, all passing on a clean tree under both Zig 0.16.0 and 0.17.1
+tests live next to the code they cover. As of 2026-11-27 the suite is
+**1,137 tests**, all passing on a clean tree under both Zig 0.16.0 and 0.17.1
 (`-Doptimize=ReleaseFast`, fresh cache).
 
 ```bash

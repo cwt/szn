@@ -10,9 +10,12 @@ srpm:
 	TMP_DIR=$$(mktemp -d /tmp/szn-srpm.XXXXXX); \
 	tar --exclude='.git' \
 	    --exclude='.hg' \
+	    --exclude='.cache' \
 	    --exclude='.zig-cache' \
 	    --exclude='zig-out' \
 	    --exclude='dist' \
+	    --exclude='tmux' \
+	    --exclude='*.tar.gz' \
 	    --transform 's,^\.,$(NAME)-$(VERSION),' \
 	    -czf "$$TMP_DIR/$(NAME)-$(VERSION).tar.gz" . && \
 	rpmbuild -bs \
